@@ -57,9 +57,9 @@ graph TD
 
 | Unit | 状态 | 轮次 | 证据指针 |
 |---|---|---|---|
-| u1 | pending | 0 | — |
-| u2 | pending | 0 | — |
-| u3 | pending | 0 | — |
+| u1 | committed | 1 | `6018f70de`；typecheck 绿；49 passed；删除符号 grep 0 命中；cast 去留=删；deviation：fixture 多补 settings 必填字段（SDK 类型实测） |
+| u2 | committed | 1 | `$(git rev-parse --short HEAD)`；51 passed；typecheck 绿；P2 主路径跑通；deviation：逐消息 ceil 微差（pi 同源语义）+ debugLog 多行格式化 |
+| u3 | committed | 1 | `f9d5b86f6`；51 passed；门控单一来源达成；deviation：index.ts:113/114 为跨界通知对比非门控双写（已核实设计基线） |
 | u4 | pending | 0 | — |
 
 ## 7 残留风险与变更历史

@@ -17,7 +17,7 @@
 | 06 | ext-simplify-06-plan.md | plan | C8 isolation×execMode 矩阵（正确性）；M1 三源模板机制；M2 extractPlanSteps 脱节；M3 动态 import×3；+peer 依赖 optional 化（审计发现 5） | session-view-01a09070-77dd-*.md | 待设计 |
 | 07 | ext-simplify-07-todo.md | todo | M4 UpdateResult 双字段双协议；low：handleAutoClear 双布尔、completed 计数×4 | session-view-01a09070-77fc-*.md | 待设计 |
 | 08 | ext-simplify-08-scheduler.md | scheduler | M18 croner optional peer 误报；M19 queuedInDeliveryAt 补偿机制（contested→设计裁决：登记跨包债务 vs 根修 session-delivery settled 回调）；low：errorCode、delivery handle 中转、void ctx | session-view-01a09053-242e-*.md | 待设计 |
-| 09 | ext-simplify-09-smart-context.md | smart-context | C12 estimateShadowedTokens→SDK estimateTokens；门控谓词双写；deps 注入缝；details 五字段；Like*Event×5（contested→裁决：导入 SDK 类型+边界断言） | session-view-01a09070-77fd-*.md | 待设计 |
+| 09 | ext-simplify-09-smart-context.md | smart-context | C12 estimateShadowedTokens→SDK estimateTokens；门控谓词双写；deps 注入缝；details 五字段；Like*Event×5（contested→裁决：SDK 直标/省略标注推断，边界断言不可达——包根缺席 2 符号见设计 §5.1 审计修正） | session-view-01a09070-77fd-*.md | 已实施（设计审查 2 轮至 0 must-fix；u1-u4 20260912） |
 | 10 | ext-simplify-10-structured-output.md | structured-output | M24 assertSafeTimerDelay+锚点漂移；low：RetryState.reset、Symbol.for slot（contested→裁决：C-ext-06 惯例 vs 回退）、env 重读、出口面测试专用导出 | session-view-01a09070-7809-*.md | 待设计 |
 | 11 | ext-simplify-11-ask-user.md | ask-user | M23 Other label 校验缺失（正确性）；low：AnswerValueSchema/ResultSchema、TUI 样板双份、channel registry 外沿（resolve/list 死成员 + gui_widget 空置登记 doc-right） | session-view-01a09053-2422-*.md | 待设计 |
 | 12 | ext-simplify-12-pending-notifications.md | pending-notifications | C4 W4 死代码区 ~100 行 + registry 现算化（contested→设计裁决）+ 导出面收敛（14 具名导出仅 1 消费）+ PENDING_LIFECYCLE 注释失实 | session-view-01a0907b-727b-*.md | 设计就绪（审查 2 轮至 0 must-fix，20260912） |
