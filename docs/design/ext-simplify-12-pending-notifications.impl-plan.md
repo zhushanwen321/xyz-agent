@@ -155,3 +155,4 @@ Commit 映射（执行期 subagent 禁 git，commit 由主会话核验验收条�
 - v1（2026-09-12）：初稿。基于设计 v3（0 must-fix 收敛）+ 两份 R2 审查报告（各 0 must-fix，suggestion 已全修）；领地全量实读核实（E1-E10 行号锚点、测试入口、消费方回归面、changeset/config 惯例）；设计 §9.2 u1-u5 重整为 u0-u4 五单元（偏差 D-1/D-2/D-3），DAG 关键路径深度 4、反链宽度 2。
 - v1.1（2026-09-12）：u0-u4 全部完成，状态表回填；§7 探针检查点 P1/P2/P3 经 u4 真实场景复核全 PASS（失败降级路径未触发），流水线收口。
 - v1.2（2026-09-12）：阶段 3 一致性审查修复（§ 镜像目标段落随设计校准三条边缘差异）+ 阶段 5 双级验收 pass 回填（Gate A 全绿 + Gate B 注册→归零抽验 pass，报告 .review/stage5-gate-{a,b}-report.md）。
+- v1.3（2026-09-12）：阶段 6 design-code-sync r1 修复（b6b9c1cb0，5 条 finding + 4 涟漪，聚焦复审 must-fix==0）：bte pending-reconcile.ts 头注/emit 注释 registry 时代失实描述重写为终态口径、本包头注 emit 端三组同口径、chat-domain 两文档 6 处过时断言补删除标注/终态口径。
