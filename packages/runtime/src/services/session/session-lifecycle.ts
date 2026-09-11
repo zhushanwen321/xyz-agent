@@ -1059,14 +1059,14 @@ export class SessionLifecycle implements ISessionRegistry {
       void deps.reapBackgroundTasks?.(sessionId)?.catch((e: unknown) => {
         console.warn(`[session-lifecycle] reclaim background-task reap failed (sessionId=${sessionId}):`, e)
       })
-      // ⑥ 代际校验（D6-3，摘除前）：占座期间若发生并发重建（未来绕过 ensureActive 的
+      // ⑥a 代际校验（D6-3，摘除前）：占座期间若发生并发重建（未来绕过 ensureActive 的
       // 恢复入口——restore/create 注册必产生新条目对象 + 新 pm client），引用比对即检出。
       // 检出不摘除：新条目/新进程是无辜的，杀/摘它们 = 误杀并发重建的 session。
       if (this.get(sessionId) !== session || this.pm.hasClient(sessionId)) {
         console.warn(`[session-lifecycle] reclaim ${sessionId} cancelled: session was re-created concurrently (generation check, D6-3)`)
         return false
       }
-      // ⑥ 最小摘除：lifecycle sessions Map 删条目 + pendingReload 定向清（防御性 no-op：
+      // ⑥b 最小摘除：lifecycle sessions Map 删条目 + pendingReload 定向清（防御性 no-op：
       // pendingReload 有条目 ⇒ session busy ⇒ 恒非回收候选，真发生的窗口极窄）。
       this.removeEntry(sessionId)
       deps.clearPendingReload?.(sessionId)
@@ -1075,7 +1075,8 @@ export class SessionLifecycle implements ISessionRegistry {
       // 再杀——两段式（异步 kill 后二次复查再杀）可能误杀 restore 后新 session 经 relay
       // 合法 spawn 的子进程（P6 尾扫项）。快照采集点放在代际校验通过之后：校验失败（并发
       // 重建）路径不采集不杀，新 session 的 relay 条目天然不在任何快照里（fail-safe 方向）。
-      // setImmediate 先例同后台任务收殓：kill 链（SIGTERM→3s grace→SIGKILL）移出占座区间，
+      // setImmediate 先例同后台任务收殓：kill 链（SIGCONT→SIGTERM→3s grace→SIGKILL，
+      // relay-registry killRelayChild 同款语义）移出占座区间，
       // 不可杀的 D 状态子进程等极端阻塞不拖累占座释放。
       const relayTargets = deps.listRelayChildrenByMainSession?.(sessionId) ?? []
       if (relayTargets.length > 0) {

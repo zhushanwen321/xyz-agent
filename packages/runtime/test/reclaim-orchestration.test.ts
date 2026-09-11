@@ -257,12 +257,12 @@ describe('reclaimManagedSession 七步编排（D3）', () => {
     expect(ok).toBe(true)
     // ③ detach（adapter 停事件流）
     const record = lifecycle.get('s-1')
-    expect(record).toBeUndefined() // ⑥ Map 条目已摘除（detach 后置断言见 detach spy 行）
+    expect(record).toBeUndefined() // ⑥b Map 条目已摘除（detach 后置断言见 detach spy 行）
     expect((deps.registerDeps.adapterFactory as ReturnType<typeof vi.fn>).mock.results[0]?.value.detach).toHaveBeenCalled()
     // ④ 进程销毁
     expect(pm.destroySession).toHaveBeenCalledWith('s-1')
     expect(pm.clientsById.has('s-1')).toBe(false)
-    // ⑥ pendingReload 定向清
+    // ⑥b pendingReload 定向清
     expect(reclaimDeps.clearPendingReload).toHaveBeenCalledWith('s-1')
     // ⑤① relay 尾扫：setImmediate 后 kill 执行（fire-and-forget 不占座）
     await flushSetImmediate()

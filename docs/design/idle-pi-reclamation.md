@@ -20,7 +20,7 @@ xyz-agent 的 runtime（Node 子进程）为每个活跃 session spawn 一个 pi
 1. **session 权威状态在磁盘**：pi 把 entry 流式写入 session JSONL 文件；进程死亡/被杀不丢已写入历史；`restoreSession`（`session-lifecycle.ts:890`）可重新 spawn + `switchSession` 附着旧文件恢复对话——日常冷启动恢复路径，非新机制。
 2. **主动杀是静默的**：`RpcClient.kill()` 置 `_killing` 标志后走 SIGCONT→SIGTERM→2s→SIGKILL（`rpc-client.ts:1160-1195`）；exit handler 对 `_killing` 跳过 `writeCrashLogIfNeeded` 与 `exitCallbacks` 多播（`rpc-client.ts:489-504`）——「计划内杀」在既有语义里就不产生崩溃记录与死亡广播。
 3. **侧栏对「持久化但未附着」的 session 已有天然表示**：scanner 投影 `status = outcome ?? 'idle'`（done/error/stopped/idle，`session-scanner.ts:66-87`）——runtime 重启后全部 session 就是这个形态。
-4. **renderer 是全量订阅**：侧栏 list 内每个 session 都在 MessageBus 订阅（加入 list 即订阅、移除才退订，切 pane 不退订，`useSessionStreamSync.ts:59-99` + `useChat.ts:450-456`）——这个现状决定了「查看豁免」不能用订阅者信号（恒真），见 D2 #6。
+4. **renderer 是全量订阅**：侧栏 list 内每个 session 都在 MessageBus 订阅（加入 list 即订阅、移除才退订，切 pane 不退订，`useSessionStreamSync.ts:59-99` 的 `bindSessionStreamSync` watch 编排 + `packages/core/src/domain/chat/useChat.ts` `ensureStreamSubscription`（:476 起，模块级 `streamSubscriptions` Map 分区））——这个现状决定了「查看豁免」不能用订阅者信号（恒真），见 D2 #6。
 
 > 术语锚定：**「回收（reclaim）」** = 本设计新增的计划内动作——静默终止空闲 session 的 pi 进程并把它从 runtime 内存态摘除（`processes`/`sessions` Map），session 本身（磁盘文件 + 侧栏条目 + renderer 已加载消息 + bus 分区）不动。**「最小摘除」** = 区别于死亡清理汇聚点 `removeSessionEntry`（九步销毁：PTY 连杀/插件 destroy 投递/bus 分区清除/历史缓存清除等）的回收专用编排——只做「停事件流 + 杀进程 + 摘 Map + 定向清两小项」，逐项声明被跳过步骤的归属（D3 表格）。**「豁免集」** = 回收判定时检查的「有在途工作」信号集合。**「惰性恢复」** = 既有 `ensureActive` 路径。
 
@@ -70,14 +70,14 @@ session attach（create/restore/fork）
 
 **失败模式 D（耦合 3：死亡清理汇聚点做回收的三重冲突）**：直觉方案「回收 = 调 `removeSessionEntry`」与三个既有机制冲突：
 1. **PTY 连杀**：onSessionDelete 腿绑 `terminalService.destroyPty(sid)`（`index.ts:706-709`）——用户在 drawer 终端跑的 dev server/watch 会被静默杀掉，且 PTY 工作不属于任何 pi 侧豁免信号；
-2. **广播断流**：尾步 `bus.clearSession`（`session-service.ts:1108`）拆除服务端订阅者集合——而 renderer 侧订阅失效钩子 `invalidateStreamSubscription` **只在 `session.exited` handler 内调用**（`useMessageEffects.ts:38-50`，注释原文预言了此故障）；回收若不发 `session.exited`，恢复后新事件 publish 到空订阅者集合 → UI 卡「进行中…」；且新分区 seqCounter 从 0 起与 renderer 旧基线冲突（基线重置仅存在于 WS 重连路径）；
+2. **广播断流**：尾步 `bus.clearSession`（`session-service.ts:1108`）拆除服务端订阅者集合——而 renderer 侧订阅失效钩子 `invalidateStreamSubscription` **只在 `session.exited` handler 内调用**（`useMessageEffects.ts` `handleSessionExited`，:82 起、调用在 :88，注释原文预言了此故障）；回收若不发 `session.exited`，恢复后新事件 publish 到空订阅者集合 → UI 卡「进行中…」；且新分区 seqCounter 从 0 起与 renderer 旧基线冲突（基线重置仅存在于 WS 重连路径）；
 3. **插件 destroy 语义污染**：`didDestroy` 定向投递（`plugin-service.ts:445-447`）让插件把「回收」当「销毁」处理 per-session 状态——而回收后同 sid 恢复，插件状态本应连续（sessionData 是磁盘 KV，与进程解耦，`session-data-store.ts:41-60`）。
 
 ## 3. 解决方案
 
 ### 3.1 终态（使用者视角）
 
-**场景一（日常回收）**：用户上午用了 session A/B/C，午饭前转向别的工作。两小时后 reaper 一拍：B、C 空闲超阈值且无在途工作 → 静默回收（日志 `[pi-reaper] reclaimed sid=… idle=2h13m rss=96MB`）；A 因有一台后台 bash 任务在跑而豁免。侧栏 B/C 状态从 active 回落 idle/done，消息流不动，**无任何报错提示**。
+**场景一（日常回收）**：用户上午用了 session A/B/C，午饭前转向别的工作。两小时后 reaper 一拍：B、C 空闲超阈值且无在途工作 → 静默回收（日志 `[pi-reaper] reclaimed sid=… idleMs=7980000 runtimeRssMB=96`——实装格式，`idleMs` 毫秒数 + `runtimeRssMB` 记 runtime 进程水位，见 D7）；A 因有一台后台 bash 任务在跑而豁免。侧栏 B/C 状态从 active 回落 idle/done，消息流不动，**无任何报错提示**。
 
 **场景二（无感恢复，含广播流连续）**：下午用户点回 session B：侧栏点击触发既有 `session.switch` → runtime `getSummary` miss（Map 已摘）→ 既有 `ensureActive → restoreSession`（典型 ~600ms，大 session 数秒）→ 对话继续。**用户发新消息，新回复的流式 delta 正常到达 UI**（bus 分区未清，订阅与 seq 连续）。被回收期间 renderer 已加载的消息原样保留（回收从不触碰 renderer 状态）。
 
@@ -100,7 +100,7 @@ session attach（create/restore/fork）
 
 **D1：空闲信号 = RpcClient 双向 touch + 维护通道排除（选定）**
 
-- **采用**：`RpcClient` 新增 `lastActivityAt`，两个唯一咽喉各 touch——出站 `sendCommand()`（`rpc-client.ts:765-831`；`sendRaw` 仅内部调试旁路）、入站 `handleMessage()`（`:617-665`）。初值 = spawn 时刻（start 前 client 以构造时刻兜底）。**排除维护通道（双腿闭合）**：出站腿 = `promptReload` 的调用带 `{ maintenance: true }` 标记，`sendCommand` 跳过 touch；回程腿 = maintenance pending 被其 response 解析时入站同样跳过 touch（标记随 pending 注册携带——出站与回程同频，只闭出站腿则 skill 变更风暴下空闲时钟仍被回声重置）。标记经语义方法 `prompt` 透传至 `sendCommand`（promptReload 实际调用形态是 `client.prompt`）。skill 目录任一文件变动会对全部活跃 session 触发它（`skill-registry.ts:359-366` → `reload-orchestrator.ts:87-94`），若计入 touch，skill 开发常态（本仓库日常）下全部空闲时钟被周期性重置、回收饿死且不体现为豁免命中（日志看不到）。
+- **采用**：`RpcClient` 新增 `lastActivityAt`，两个唯一咽喉各 touch——出站 `sendCommand()`（`rpc-client.ts:765-831`）、入站 `handleMessage()`（`:617-665`）。`sendRaw`（`:751`）不在 touch 咽喉内——它是 `extension_ui_response` 的无回执生产通道（pi 对该命令不回 RPC reply，`sendExtensionUiResponse` 经它写入，`:1144-1155`）：用户交互场景已由入站 `ui_request` 事件帧 touch + 豁免 #1 occupancy 双重覆盖，无需出站腿；**未来新增维护类命令若走 sendRaw 需另行排除**（`pending.maintenance` 标记机制只覆盖 sendCommand 的 pending 生命周期，不覆盖 sendRaw）。初值 = spawn 时刻（start 前 client 以构造时刻兜底）。**排除维护通道（双腿闭合）**：出站腿 = `promptReload` 的调用带 `{ maintenance: true }` 标记，`sendCommand` 跳过 touch；回程腿 = maintenance pending 被其 response 解析时入站同样跳过 touch（标记随 pending 注册携带——出站与回程同频，只闭出站腿则 skill 变更风暴下空闲时钟仍被回声重置）。标记经语义方法 `prompt` 透传至 `sendCommand`（promptReload 实际调用形态是 `client.prompt`）。skill 目录任一文件变动会对全部活跃 session 触发它（`skill-registry.ts:359-366` → `reload-orchestrator.ts:87-94`），若计入 touch，skill 开发常态（本仓库日常）下全部空闲时钟被周期性重置、回收饿死且不体现为豁免命中（日志看不到）。
 - **被否**：① 复用 `IManagedSessionView.lastActiveAt`——只记「最后出站 prompt」（写点仅 dispatcher/delivery），语义不对；② 不排除维护通道 + 接受污染——饿死是静默失效，违背 G4 可发现原则。
 - **证据**：pi 空闲期无周期性 stdout（ADR-0047 ping 只在 turn 内 `event-interpreter.ts:457-458`；gen-stats/trace-sync 均按需非周期）——用户态空闲判定干净；唯一污染源即维护通道，已双腿排除（出站 touch 跳过 + 回程 maintenance pending 的 response 跳过，一致性审查后补齐——初版只闭出站腿，回程回声同频重置时钟的缺口由审查发现并修复）。
 - **效果**：场景一的 2h 判定成立；「被使用即活跃」by construction。
@@ -128,7 +128,7 @@ session attach（create/restore/fork）
 - **采用**：lifecycle 层新增 `reclaimManagedSession(sessionId)`，七步（全程持占座）：
 
   1. `ReclaimSeat.tryAcquire(sid)`（占座，D6-2）；
-  2. 最终豁免检查（同步块，零 await——原子性见 D6-1）；
+  2. 最终豁免检查（同步块，零 await——原子性见 D6-1。复查面 = 条目存在性 + occupancy 三维 idle（#1），实装即只复查这两项；其余豁免项不进复查面，其窗口关闭归 D6-1 入口 touch（prompt 类活动）/ 第 5 步①②定向收殓（#2/#3 在检查与 kill 间隙的退出）/ D6-3 代际校验（并发重建））；
   3. `adapter.detach`（停事件流）；
   4. `pm.destroySession`（SIGCONT→SIGTERM→2s→SIGKILL，`_killing` 语义零 crash log 零 exitCallbacks；先删 pm 双 Map 再 kill，`process-manager.ts:242-257`）；
   5. kill 完成后两个定向收尾（**fire-and-forget，`setImmediate` 先例同后台任务收殓——移出占座区间，不可杀的 D 状态子进程等极端阻塞不拖累占座释放**）：① relay 尾扫（`hasByMainSessionId` 复查，新条目 `killRelayChild`——scheduler 类 extension 可在 pi 空闲期经 relay socket spawn，不经 RPC touch，检查与 kill 之间可能落地。**实现前提（单段快照语义）**：复查读取与 kill 目标列表须同步一次完成，异步执行阶段禁止再查再杀——两段式（异步 kill 后二次复查再杀）可能误杀 restore 后新 session 经 relay 合法 spawn 的子进程。**快照采集点在代际校验（第 6 步，D6-3）通过之后**——校验失败（并发重建取消）路径零采集零杀，新 session 的 relay 条目天然不在任何快照里，fail-safe）；② 该 sid 的后台任务收殓检查（复用 background-task-reaper 的单 session 入口——正常情况豁免 #2 已保证无 running 任务，此步兜「任务在检查与 kill 间的毫秒窗口退出/registry 写半截」的边角）；
@@ -147,6 +147,7 @@ session attach（create/restore/fork）
   | genStats `modelBySid` 映射清（已内聚 `gen-stats-service.ts`，装配经 `registerSessionCleanup` 注册，`index.ts:659`） | **刻意跳过（有益）**：映射保留使恢复后 gen-stats 降级链②直接命中（`gen-stats-service.ts:135` 读点），无需重建 |
   | 挂起 UI 请求清理 | **跳过**：**ui_request 无超时自清理**（超时机制已整体取消——`extension-timeout-manager.ts:91-93`（2026-07-16 注释）：confirm/select/input/editor/ask-user 统一不超时、block 等待用户决策，`registerTimeout` 体内不再排定时器；5min 常量仅保留供单测）。跳过安全的真实依据是**双重保护**：①挂起 ask-user ⇒ pi turn 进行中 ⇒ occupancy=generating ⇒ 豁免 #1 拦截；②ui_request 事件经 pi stdout 到达 ⇒ 入站 touch 刷新空闲时钟 ⇒ 2h 阈值不满足——回收候选基本不可能带挂起弹窗（极端形态：turn 外 extension 主动弹窗且挂起超 2h，保护①的 turn 绑定假设不成立——后果经核极轻：回收后弹窗滞留 renderer、恢复后经 `pendingRequests` 的「session 重新激活时推送」重推，与未回收行为等价，无崩溃无数据损失）。条目残留由下一次真删除清理（`clearForSession` 挂在本汇聚点），量级恒小（每挂起请求一条） |
   | 后台任务 unwatch + 收殓触发面 | **改为定向触发**（第 5 步②）：不再经汇聚点连带，只在 kill 后定向检查该 sid；unwatch 保留至真删除（回收态保留 watch 无行为副作用——pi 死后 registry 不再变化，恢复后 watch 仍有效） |
+  | `respawn.cancel`（取消 pending 自动恢复 timer） | **刻意跳过**：回收的主动 kill 走 `_killing` 静默链、不经 onSessionExit，不排 respawn timer——回收态无 pending timer 可取消（respawn timer 只在 pi 意外退出路径 schedule，`session-service.ts` `onSessionExit`）；恢复路径若真有在途 respawn，则被豁免 #7 `isRestoring` 拦在判定阶段，到不了本编排 |
 
 - **被否**：① 复用 `removeSessionEntry`（方案 D——三重冲突见 §2.3/§3.2）；② 复用 `forceQuitSession`（`message-dispatcher.ts:481-501`）——它发 `session.exited` + 强写 stopped，是死亡语义；③ 只 destroy 不摘 sessions Map——`getSummary` 命中死条目直接 reply，`ensureActive` 永不触发（僵尸形态，[pi-exit-notification-and-respawn.md](../architecture/pi-exit-notification-and-respawn.md) 失败模式 A 的复刻）。
 - **证据**：静默先例 = restoreSession 清场与 lifecycle.delete（零广播）；`destroySession` 的 exit 回调按 `clientToId` 无条目守卫静默跳过（`process-manager.ts:166-182`）。
@@ -154,7 +155,7 @@ session attach（create/restore/fork）
 
 **D4：周期与阈值（选定）**
 
-- **采用**：reaper 周期 5 分钟（`setInterval(...).unref()`，对齐 `BackgroundTaskService.start()` 形态，挂载进 `startup-background-init` 后台序列）；空闲阈值默认 **2 小时**；查看豁免窗口 30 分钟（D2 #6）；env 覆盖命名**钉死 `XYZ_RUNTIME_PI_RECLAIM_*` 前缀**（`ENV_WHITELIST_PREFIXES` 只放行 `XYZ_` 前缀进打包版 runtime，`apps/electron/main/supervisor/safe-env.ts:18` + `shared/constants.ts:72`——非此前缀的测试 env 在打包版静默失效），三旋钮实装为 `XYZ_RUNTIME_PI_RECLAIM_TICK_MS` / `_IDLE_MS` / `_VIEWED_WINDOW_MS`（SSOT = `shared/constants.ts`，解析收口 `resolveReclaimConfig`，非法/非正数回落默认）。默认值双源：shared SSOT（生产权威，装配恒传）+ reaper 模块内联兜底（仅 DI 单测场景），等值由守卫测试锁定（idle-pi-reaper.test.ts）。无「总进程数硬上限强制回收」——硬上限会把「用户真开很多活跃 session」误伤为异常。
+- **采用**：reaper 周期 5 分钟（`setInterval(...).unref()`，对齐 `BackgroundTaskService.start()` 形态，挂载进 `startup-background-init` 后台序列）；空闲阈值默认 **2 小时**；查看豁免窗口 30 分钟（D2 #6）；env 覆盖命名**钉死 `XYZ_RUNTIME_PI_RECLAIM_*` 前缀**（`ENV_WHITELIST_PREFIXES` 只放行 `XYZ_` 前缀进打包版 runtime，`apps/electron/main/supervisor/safe-env.ts:18` + `shared/constants.ts:72`——非此前缀的测试 env 在打包版静默失效），三旋钮实装为 `XYZ_RUNTIME_PI_RECLAIM_TICK_MS` / `_IDLE_MS` / `_VIEWED_WINDOW_MS`（SSOT = `shared/constants.ts`，解析收口 `resolveReclaimConfig`，非法/非正数回落默认）。默认值双源：shared SSOT（生产权威，装配恒传）+ reaper 模块内联兜底（仅 DI 单测场景），等值由守卫测试锁定（idle-pi-reaper.test.ts）。无「总进程数硬上限强制回收」——硬上限会把「用户真开很多活跃 session」误伤为异常。**实现辅助面**（idle-pi-reaper.ts）：`runOnce()` 手动一拍入口（测试与未来手动触发，与周期 tick 共用同一实现）+ 单拍重入保护 `inProgress` + post-reclaim broadcast try-catch 失败仅 warn（best-effort 通知不阻断回收主流程）。
 - **被否**：30 分钟阈值——切换频繁的工作模式下回收/恢复抖动变常态；24 小时——对「午饭/会议」级离开太迟。
 - **证据**：恢复成本 ~600ms 端到端（spawn ~500ms + RPC <1ms，`session-lifecycle.ts:731-732`）。
 - **效果**：G1 平台期由「2h 内活跃 session 数 + 30min 内查看的 session 数」决定。
@@ -188,19 +189,19 @@ session attach（create/restore/fork）
 
 **代价声明（已接受，共两条）**：
 
-1. **bus 分区与历史缓存保留的内存**：**正确论证 = 回收净效果**——释放 80-141MB/进程，保留项是**既有占用**（分区与缓存在回收前即已存在，回收不新增任何一份），且各自有界（ring ≤1000 帧/分区、空闲后不再增长；历史缓存受 LRU=8 换出约束——注意大 session 的缓存可达数百 MB，是既有的 E6 治理对象而非本设计引入）。**真实回收通道** = 用户真删除 session（lifecycle.delete → `bus.clearSession`）或 runtime 重启（`unsubscribe` 只动订阅者集合不删分区，`message-bus.ts:297-308`——分区仅 `clearSession` 删，`:335-348`）。重审触发 = D7 每拍汇总含 runtime `process.memoryUsage()` 水位（U3 落地），回收态存量导致水位长期不回落即重审保留策略；判定：**可接受**。
+1. **bus 分区与历史缓存保留的内存**：**正确论证 = 回收净效果**——释放 80-141MB/进程，保留项是**既有占用**（分区与缓存在回收前即已存在，回收不新增任何一份），且各自有界（ring ≤1000 帧/分区、空闲后不再增长；历史缓存受 LRU=8 换出约束——注意大 session 的缓存可达数百 MB，是既有的 E6 治理对象而非本设计引入）。**真实回收通道** = 用户真删除 session（lifecycle.delete → `bus.clearSession`）或 runtime 重启（`unsubscribe` 只动订阅者集合不删分区，`message-bus.ts` `unsubscribe`（:378-391）——分区仅 `clearSession` 删（:416-429））。重审触发 = D7 每拍汇总含 runtime `process.memoryUsage()` 水位（U3 落地），回收态存量导致水位长期不回落即重审保留策略；判定：**可接受**。
 2. **缓存保留的净价值由 P7 收益门裁决**：门通过 → 恢复零重建（收益兑现）；门失败 → 退化为全量重建（量级 = 大 session 数秒 + 内存尖峰为文件量级，`getEntries` 全量 + entry 树重建）+ 缓存白驻留至 LRU 换出；恢复路径 = 门失败时改回收时定向清缓存（消除白驻留）；重审触发 = 大 session（>50MB）恢复 >5s 频繁发生时引入分级阈值；判定：**可接受**（两条路径行为均安全，悬而未决的只是收益大小；即便门失败，最小摘除相对方案 D 的 PTY/广播流/插件语义收益不变）。
 
 ### 3.4 探针清单
 
 | ID | 验证的行为断言 | 探针方式 | 状态 | 失败时的降级路径 |
 |---|---|---|---|---|
-| P1 | 静默杀空闲 pi 后 session 文件完整、restore 复活历史无损 | 实施期实测：真 pi + 一轮对话 + 空闲 + 回收 + restore，比对 entry 数（先例佐证：restore 清场 safeDestroy 后再附着是日常路径） | ⛔ 实施门 | 失败 → 回收前 RPC 触发 flush；仍失败 → 设计回炉（数据完整性不可妥协） |
+| P1 | 静默杀空闲 pi 后 session 文件完整、restore 复活历史无损 | 实施期实测：真 pi + 一轮对话 + 空闲 + 回收 + restore，比对 entry 数（先例佐证：restore 清场 safeDestroy 后再附着是日常路径） | ✅ u4 集成 + Gate B V1 真机（2026-09-11）：历史完整比对过、restore elapsed=544ms、零 crash log | 失败 → 回收前 RPC 触发 flush；仍失败 → 设计回炉（数据完整性不可妥协） |
 | P2 | occupancy 对 handoff 直 prompt（不经 dispatcher）的覆盖窗口 | 实施期实测 handoff 全程 occupancy 曲线 | ✅ 免测（内建覆盖）——D2 #4 handoff 硬豁免已实装（`hasInflightHandoff` + 装配接线 + 真生命周期链用例），occupancy 覆盖窗口不再构成误回收面（2026-09-11 一致性审查裁决，实施计划 §7 登记） | — |
-| P3 | 恢复后广播流连续：订阅者不丢新事件、seq 无断裂 | 实施期实测：回收 → restore → 发消息，断言 renderer 收到流式 delta 且无 gap 重连 | ⛔（D3 核心断言） | 失败 → 回收改发轻量 `session.detached` 通知触发 renderer 失效订阅（renderer 需小改，In-scope 同步修订） |
-| P4 | scheduler 类 extension 空闲期经 relay spawn 的尾扫收殓 | 实施期实测：scheduler 定时任务在回收窗口触发，验证尾扫杀 relay 子进程并记日志 | ⛔ | 失败 → relay 注册加主 session 存在性校验（D6 被否方案回炉） |
+| P3 | 恢复后广播流连续：订阅者不丢新事件、seq 无断裂 | 实施期实测：回收 → restore → 发消息，断言 renderer 收到流式 delta 且无 gap 重连 | ✅ u4 集成 + Gate B V1 真机（2026-09-11）：流式 delta 实时到达 + per-sid seq 跨回收边界 gaps=0（D3 核心断言成立） | 失败 → 回收改发轻量 `session.detached` 通知触发 renderer 失效订阅（renderer 需小改，In-scope 同步修订） |
+| P4 | scheduler 类 extension 空闲期经 relay spawn 的尾扫收殓 | 实施期实测：scheduler 定时任务在回收窗口触发，验证尾扫杀 relay 子进程并记日志 | ✅ 单测腿已实测（reclaim-orchestration 尾扫单段快照 kill + 不误杀用例）+ Gate B V4 真机无孤儿残留（2026-09-11；V4 的 subagent 为 pi 进程内 turn 形态，relay socket 形态未被真机触发——Gate B 观察登记②裁决两物种各自有防线无缺口）；scheduler relay 真机形态归 V6 长跑观察 | 失败 → relay 注册加主 session 存在性校验（D6 被否方案回炉） |
 | P5 | 维护通道不污染 touch：skill 变更风暴下空闲时钟不被重置 | 单测锁定双腿（出站跳过 + maintenance pending 回程跳过 + 事件帧/非维护 response 照常 touch）+ 真机变更 skill 目录验证候选不被饿死 | ✅ 单测腿已实测（rpc-client-activity.test.ts 双腿用例）；真机腿归 V6 长跑观察 | 失败 → touch 排除面扩大（get_state 等其余维护 RPC 一并排除） |
-| P6 | 竞态三窗口全部关闭 | 单测三场景：① dispatcher 入口 touch 关 hook 窗口；② kill await 期间并发 `session.switch`（占座让路、等待方不抢跑、释放后 existing 分支 no-op、无二次销毁）；③ 摘除前代际校验（注入重建竞态）。**另含尾扫不误杀**：restore 完成后新 session 经 relay 合法 spawn 的子进程不被迟到的尾扫命中（单段快照语义） | ⛔ | 失败 → 对应窗口的兜底机制回炉（入口 touch 提前 / 占座范围扩大 / 校验强化 / 尾扫改两段式前的存在性校验） |
+| P6 | 竞态三窗口全部关闭 | 单测三场景：① dispatcher 入口 touch 关 hook 窗口；② kill await 期间并发 `session.switch`（占座让路、等待方不抢跑、释放后 existing 分支 no-op、无二次销毁）；③ 摘除前代际校验（注入重建竞态）。**另含尾扫不误杀**：restore 完成后新 session 经 relay 合法 spawn 的子进程不被迟到的尾扫命中（单段快照语义） | ✅ 单测三场景 + Gate B V7 真机（2026-09-11）：并发冒烟零僵尸 / 零双重销毁 / 零消息丢失，时序故障不复现 | 失败 → 对应窗口的兜底机制回炉（入口 touch 提前 / 占座范围扩大 / 校验强化 / 尾扫改两段式前的存在性校验） |
 | P7 | **收益门（非仅验证）**：缓存 leafId 跨进程存活——回收 → 再进入的 getHistory 命中增量而非 "Entry not found" fallback（与 `session-service.ts` 旧注释的正冲突由此定案，见 D5） | 实施期实测：回收 → 再进入，日志断言 `getHistory incremental`；若走 fallback 则门失败 | ✅ 已实测 **PASS（incremental）**（2026-09-11，idle-pi-reclaim-integration.test.ts 阶段 4：`cache fresh (empty delta)`，restore elapsed=535ms；裁决登记实施计划 §7） | 已兑现，降级路径归档不启用（见 D5） |
 | P8 | 大 session 恢复端到端耗时 | 50MB+/198MB 级真实 session 实测 restore + getHistory 全链 | ⛔ | 超 5s → 触发代价声明 2 的重审条件 |
 
@@ -231,9 +232,9 @@ session attach（create/restore/fork）
 | U3 | 挂载与配置 | startup-background-init 挂载 + `XYZ_RUNTIME_PI_RECLAIM_*` 常量（shared 登记，`XYZ_` 前缀钉死）+ restore elapsed 日志 + 按拍合并广播 + 每拍 `process.memoryUsage()` 水位（代价声明 1 的重审观测）+ **projection 前提约束登记 `docs/constraints.json`**（改 json 后跑 `node scripts/render-constraints.mjs`） | 接线与旋钮独立 | V1（env 调小）、V6（默认值） |
 | U4 | 集成测试 + 真机验收 | relay-integration 模式端到端 + V1-V7 真机脚本 | 真进程验证独立于单测节奏 | V1-V7 |
 
-**文件改动地图**：改写 `rpc-client.ts`（touch + 排除标记）、`session-message-handler.ts`（switch 记录 lastViewedAt）、`message-dispatcher.ts`（入口 touch）、`session-lifecycle.ts`（`reclaimManagedSession` + Map 最小摘除）、`relay-registry.ts`（只读查询）、`session-service.ts`（ensureActive 占座让路 + restore elapsed 日志）、`startup-background-init.ts`（挂载）、`packages/shared/src/constants.ts`（阈值常量）；新增 `packages/runtime/src/services/session/idle-pi-reaper.ts`（DI 形态）；登记 `docs/constraints.json`（projection 前提约束）。
+**文件改动地图**：改写 `rpc-client.ts`（touch + 排除标记）、`session-message-handler.ts`（switch 记录 lastViewedAt）、`message-dispatcher.ts`（入口 touch）、`session-lifecycle.ts`（`reclaimManagedSession` + Map 最小摘除 + restore elapsed 耗时日志——restoreSession 体内）、`relay-registry.ts`（只读查询）、`session-service.ts`（ensureActive 占座让路）、`startup-background-init.ts`（挂载）、`packages/shared/src/constants.ts`（阈值常量）；新增 `packages/runtime/src/services/session/idle-pi-reaper.ts`（DI 形态）；登记 `docs/constraints.json`（projection 前提约束）。
 
-**待验证检查点**：P1-P8 全部；阈值 2h 与查看窗口 30min 的校准（V6 数据后复核）。ui_request 超时机制疑点已在审查中定案（机制不存在，归属表已按双重保护改写）。
+**待验证检查点**：P4 的 scheduler relay 真机形态（V6 长跑自然触发）+ P8 大 session 恢复耗时；阈值 2h 与查看窗口 30min 的校准（V6 数据后复核）。P1/P3/P6 已由 u4 集成 + Gate B 真机闭环、P4 真机腿见探针表状态列（2026-09-11）。ui_request 超时机制疑点已在审查中定案（机制不存在，归属表已按双重保护改写）。
 
 ## 附录：与既有文档的关系
 
