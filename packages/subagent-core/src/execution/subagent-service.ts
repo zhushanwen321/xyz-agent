@@ -47,8 +47,14 @@ import {
 import { assertTaskShapeSupported } from "./engine/common/capability-gate.ts";
 import { ExecutionNestingContext } from "./engine/common/nesting-guard.ts";
 import { JOURNAL_INITIAL_POOL_KEY, wireEventJournal } from "./engine/common/journal-wiring.ts";
+// [H2 W2 迁移步⑥] mergeRunSignals 提公共 helper（原 SAR 模块内直调）——workflow
+// 派发的 timeout+watchdog+外部 signal 三源合流。
+import { mergeRunSignals, type MergedRunSignalHandle } from "./engine/common/run-signals.ts";
 import { executeOptionsToEngineTaskSpec } from "./engine/host-task-spec.ts";
 import type { AgentCallOpts } from "../orchestration/models/types.ts";
+// [H2 W2] workflow 域 record slug 推导（与 pump dispatchAgentCall 的 trace 命名同源：
+// description ?? agent ?? "unknown" + SLUG_MAX_LENGTH 截断）
+import { SLUG_MAX_LENGTH } from "../orchestration/models/types.ts";
 import { setHostUiRequestEndpoint } from "./engine/host/host-ui-endpoint.ts";
 // [W3 chat 域收口] chat 轮次与 run 域同路：经 pi-host-binding 解析 registry 'pi' 的
 // cli 形态 port（RemoteEngine），协议 run(interact) 发往 pi-subagent-cli 引擎进程。
@@ -1796,6 +1802,206 @@ export class SubagentService {
     return wfResult;
   }
 
+  /**
+   * [H2 W2] workflow 域统一派发入口（设计 subagent-workflow-record-unification
+   * §3.5 / G1 等同语义）：workflow 脚本 agent() 经 pump 薄转调进此（W3 接线；本
+   * 单元入口就位，测试直接调用），与手动 subagent 同一 service 编排——共享池
+   * （DefaultConcurrencyPool）、record 注册进 store（origin:"workflow" +
+   * parentRunId）、journal / no-progress 守护 / spawned-children 治理、终态收口
+   * （D7 成功即终态化）。编排接管自 SAR.run 八步迁移（W4 将 SAR.run 掏空为纯转调，
+   * ctxModel 孪生守卫按清单放弃——resolveIdentity 已有 model 解析，禁止双轨）。
+   *
+   * 顺序红线（D3）：路由/预检/model 校验**先于**池 acquire——失败零池占用；路由
+   * 失败/预检命中/嵌套超限同步抛错回脚本且不产生孤儿 record（与 executeViaEngine
+   * 「全部同步拒绝发生在 record 创建前」同一不变量）。
+   *
+   * 错误规格（§3.4）：池排队被 abort → run 域 cancelled 收口（acquirePoolOrFinalize
+   * 同款 S1 分支）；record 创建失败 → 同步抛错；引擎死亡 → catch 合成 failed result
+   * 回脚本（swallow 语义，脚本观察到失败结果非异常）+ record 由失败路径立即终态化
+   * （adopt 豁免——workflow record 无脚本可回，resumable 等待无意义）。
+   */
+  async executeWorkflowAgent(
+    opts: AgentCallOpts,
+    parentRunId: string,
+    signal?: AbortSignal,
+    onEvent?: (event: AgentEvent) => void,
+    stream?: SubagentStream,
+  ): Promise<WorkflowAgentResult> {
+    this.assertReady();
+    // 入口校验与嵌套护栏（与 execute/executeAndAwait 同款 BC-12 / T4②）。
+    const execOpts = workflowCallToExecuteOptions(opts);
+    this.assertIdleTimeoutMsSafe(execOpts);
+    const parentNesting = this.execNesting.current();
+    const nestingDepth = parentNesting ? parentNesting.depth + 1 : 0;
+    if (nestingDepth > MAX_FORK_DEPTH) {
+      throw new ForkDepthExceededError(
+        `subagent nesting depth ${nestingDepth} > ${MAX_FORK_DEPTH} (max recursion), refusing to spawn deeper`,
+      );
+    }
+
+    // ── 八步迁移 ①②③：路由 → 预检 → identity（含非 pi 引擎 model 校验）──
+    // 全部先于 record 创建与池 acquire（D3 失败零池占用）。agentConfig 取宽松面
+    //（getAgentConfig——路由输入只要 frontmatter engine；显式 ref 解析失败的报错归
+    // identity 阶段的 getRequiredAgentConfig，不在路由层重复）。
+    const agentConfig = opts.agent ? this.modelService.getAgentConfig(opts.agent) : undefined;
+    const routed = routeEngineForHost({
+      routing: {
+        callEngine: opts.engine,
+        agentEngine: agentConfig?.engine,
+        globalDefaultEngine: this.modelService.getGlobalConfig().defaultEngine,
+      },
+      taskModel: opts.model,
+      strict: this.modelService.getGlobalConfig().engineRouting?.strict === true,
+      probe: (engineId) => getEngine(engineId).probe(),
+      piEngine: this.resolveChatEnginePort(),
+    });
+    const route: EngineRouteResult = routed instanceof Promise ? await routed : routed;
+    // ② 预检（capability-gate 单点；AgentCallOpts 直传——TaskShapeForGate 是结构子集）
+    assertTaskShapeSupported(route.engineId, route.engine.capabilities(), opts);
+    // ③ 非 pi 引擎 model 校验：经 resolveIdentityForEngine 内的 validateModelForEngine
+    //（与 chat 域 executeViaEngine 同一入口同一文案；model 源 = 显式 opts.model >
+    // agent frontmatter——u-h2 D2-1③ 同款）。
+    const isPiRoute = route.engineId === DEFAULT_ENGINE_ID;
+    const engineModel = isPiRoute ? undefined : (opts.model ?? agentConfig?.model);
+    const identity = isPiRoute
+      ? await this.resolveIdentity(execOpts)
+      : this.resolveIdentityForEngine(
+          route.engine,
+          engineModel,
+          execOpts.agent ?? DEFAULT_AGENT_NAME,
+          agentConfig,
+          execOpts,
+        );
+    if (!isPiRoute && engineModel !== undefined) execOpts.model = engineModel;
+    // record 引擎留痕（对齐 executeViaEngine 盖章规则：pi 纯缺省不盖键；pi 兜底盖
+    // 'pi'+from；非 pi 盖 engineId）。
+    if (!isPiRoute) {
+      execOpts.engine = route.engineId;
+    } else if (route.engineFallback !== undefined) {
+      execOpts.engine = DEFAULT_ENGINE_ID;
+    }
+    if (route.engineFallback !== undefined) execOpts.engineFallback = route.engineFallback;
+
+    // ── record 注册（origin:"workflow" + parentRunId；record 级 pending:register
+    //    照旧——与既有派发路径同款）──
+    const record = this.createRecordForMode(identity, execOpts, "background", {
+      origin: "workflow",
+      parentRunId,
+    });
+    this.notifyHost.emitPendingRegister(record.id, record.agent);
+
+    const effectiveSignal = signal ?? record.controller?.signal;
+    return this.runWorkflowEngineTask(record, opts, identity, route.engine, effectiveSignal, onEvent, stream);
+  }
+
+  /**
+   * executeWorkflowAgent 的执行核（acquire 后主体 + finally 回收）。八步迁移 ④⑤⑥⑦
+   * 的落点：
+   *   ④ journal 接线（wireEventJournal 单点；taskId = record.id——真实 record 在
+   *      store，不再用 SAR 的占位 id）；
+   *   ⑤ no-progress 守护（arm/disarm 键 = record.id（D4）；双刷新源 = journal.onEvent
+   *      包装 ∪ stream.onDelta 包装；fire 后失败结果追注恢复指引——M3 语义逐项复刻）；
+   *   ⑥ mergeRunSignals（timeoutMs + 守护 abort + 外部 signal 合流）；
+   *   ⑦ spawned-children 注册（dispose killAll 收割兜底，键 = record.id）。
+   * 池 = DefaultConcurrencyPool 共享（acquirePoolOrFinalize 同链，D3）；成功收口 =
+   * settleOneShotOutcome 顶部 D7 origin 分支（closed/gc 立即终态化）。
+   */
+  private async runWorkflowEngineTask(
+    record: ExecutionRecord,
+    opts: AgentCallOpts,
+    identity: ResolvedIdentity,
+    engine: EnginePort,
+    signal: AbortSignal | undefined,
+    onEvent?: (event: AgentEvent) => void,
+    stream?: SubagentStream,
+  ): Promise<WorkflowAgentResult> {
+    const pooled = record.mode === "background";
+    let acquired = false;
+    if (pooled) {
+      const acquireFailure = await this.acquirePoolOrFinalize(record, signal, PRIORITY_BACKGROUND);
+      if (acquireFailure !== undefined) return mapToWorkflowAgentResult(acquireFailure);
+      acquired = true;
+    }
+
+    const journal = wireEventJournal({ engineId: engine.id, taskId: record.id, forwardEvents: onEvent });
+    let runSignal: MergedRunSignalHandle | undefined;
+    let unbindStream: (() => void) | undefined;
+    let noProgress: WorkflowNoProgressGuard | undefined;
+    // [W4] 在途记账（监督器「该等」判据源；与 kickOffEngineRun/kickOffChatRound 同款
+    //——运行期监督对 workflow record 照旧纳管，只豁免 adopt 接管）。
+    this.roundSupervisor.noteRunStarted(record.id);
+    try {
+      // ⑤ arm（池槽已到手、engine.run 派发前——排队窗口不计入 no-progress 静默，
+      // kickOffChatRound 同款窗语义）。
+      noProgress = armWorkflowNoProgressWatchdog(record.id);
+      // ⑥ timeoutMs + 守护 abort 并入同一合流（第三信号源）
+      runSignal = mergeRunSignals(
+        signal ?? new AbortController().signal,
+        opts.timeoutMs,
+        noProgress.signal,
+      );
+      // ⑤ 双刷新源（两路缺一不可——只接 journal 会漏纯流式产出的活性信号）：
+      // journal.onEvent 包装（协议事件）∪ stream.onDelta 包装（流式增量反向帧）。
+      const journalOnEvent = journal.onEvent;
+      const observedEvent = (event: AgentEvent): void => {
+        refreshFromProtocolEvent(record.id);
+        journalOnEvent(event);
+      };
+      unbindStream = stream === undefined ? undefined : bindWorkflowStreamRefresh(stream, record.id);
+
+      const runCtx: RunContext = {
+        taskId: record.id,
+        poolKey: JOURNAL_INITIAL_POOL_KEY,
+        signal: runSignal.signal,
+        ctxModel: identity.resolved.model,
+        onEvent: observedEvent,
+        onPoolResolved: journal.onPoolResolved,
+        ...(stream !== undefined ? { stream } : {}),
+        ...(record.engineFallback !== undefined ? { engineFallback: record.engineFallback } : {}),
+        ...(this.sessionRootId !== null && this.sessionRootId !== ""
+          ? { sessionRootId: this.sessionRootId }
+          : {}),
+        // ⑦ D10 终止链：引擎 spawn 的子进程注册进 spawnedChildren 记账（cancel
+        // SIGTERM / dispose killAll 收割兜底，键 = record.id）
+        onChildSpawned: (child) => registerSpawnedChildForRecord(record.id, child),
+      };
+      // 任务声明：opts 直传（D6 合流——AgentCallOpts 即 EnginePort 任务形状，SAR 同款
+      // 零映射），model 覆写为 record 留痕词形（resolveIdentity 解析产物，与
+      // runAndFinalize 的 taskSpecWithModel 同源权威）。
+      const taskSpec: AgentCallOpts = {
+        ...opts,
+        ...(record.model !== undefined ? { model: record.model } : {}),
+      };
+      const { handle, outcome } = await engine.run(taskSpec, runCtx);
+      journal.backfillHandle(handle);
+      record.engineHandle = {
+        sessionRef: handle.data.sessionRef,
+        poolKey: handle.data.poolKey,
+        journalPath: journal.path,
+      };
+      const result = this.outcomeToAgentResult(record, outcome);
+      // D7 收口（origin 分支在 settleOneShotOutcome 函数顶部；aborted 判外部 signal
+      // ——timeout/watchdog 的 abort 走失败 result 语义，不映射 cancelled）。
+      await this.settleOneShotOutcome(record, result, signal?.aborted === true);
+      return noteIfWorkflowNoProgressFired(outcomeToWorkflowResult(outcome), noProgress);
+    } catch (err) {
+      // swallow（不 re-throw）：脚本观察到合成 failed result 而非异常（引擎死亡
+      // engine_crashed 同路）；record 由失败路径立即终态化（finalizeFailed CAS →
+      // finalizeRecord；adopt 豁免——workflow record 不保持 resumable 交监督器）。
+      const failed = await this.finalizeFailed(record, err);
+      return noteIfWorkflowNoProgressFired(mapToWorkflowAgentResult(failed), noProgress);
+    } finally {
+      // 先摘 stream 包裹与信号桥接（不残留 listener/覆写），再清守护，再归还池槽与
+      // journal 收口（SAR 同序）。
+      runSignal?.dispose();
+      unbindStream?.();
+      disarmSettledWatchdog(record.id);
+      this.releaseRoundResources(record, pooled && acquired, stream);
+      await journal.close();
+      this.roundSupervisor.noteRunEnded(record.id);
+    }
+  }
+
   // ── 状态查询（TUI 调）──────────────────────────────────
 
   /** 订阅 store 变更（widget/list requestRender）。返回取消订阅。 */
@@ -1938,11 +2144,14 @@ export class SubagentService {
   }
 
   /** 步骤 2：按 mode 生成 id + controller，创建 record 并注册。
-   *  [L-1] ExecutionMode 类型固定 "background"（sync 已删除），id/controller 分支简化。 */
+   *  [L-1] ExecutionMode 类型固定 "background"（sync 已删除），id/controller 分支简化。
+   *  [H2 W2] originFields：workflow 域派发（executeWorkflowAgent）的来源身份——
+   *  origin:"workflow" + parentRunId 进 record（D1）；缺省不传 = tool 来源（存量零迁移）。 */
   private createRecordForMode(
     identity: ResolvedIdentity,
     opts: ExecuteOptions,
     mode: ExecutionMode,
+    originFields?: { origin: "workflow"; parentRunId: string },
   ): ExecutionRecord {
     // FR-1: record id 用全局 UUID，不依赖 transcript/PID
     const id = `sa-${crypto.randomUUID()}`;
@@ -1957,7 +2166,7 @@ export class SubagentService {
     const parentRecordId = parentCtx?.recordId;
     const depth = parentCtx ? parentCtx.depth + 1 : 0;
 
-    const record = createRecord(id, {
+    const base = createRecord(id, {
       agent: identity.agent,
       // model 留痕词形与拆分同源（joinEngineModelRef）：provider 为空串只写 id——
       // 契约变更④的无斜杠 ref（provider=""/id=ref）不得落成 "/ref" 或 "ref/" 畸形；
@@ -1983,6 +2192,12 @@ export class SubagentService {
       collectMode: opts.collect === "sync" ? "sync" : undefined,
       controller,
     });
+    // [H2 W2] 来源身份在对象构造点落位（origin/parentRunId 为 readonly，创建期一次性
+    // 写入——与 createRecord 的 identity 语义同款「创建时确定，不可变」）。
+    const record: ExecutionRecord =
+      originFields !== undefined
+        ? { ...base, origin: originFields.origin, parentRunId: originFields.parentRunId }
+        : base;
 
     this.store.register(record);
     return record;
@@ -2256,10 +2471,15 @@ export class SubagentService {
       // 禁直接 closed 终局——resume 锚点在盘，逻辑任务可续）。prepare 期失败
       // （handshake/protocol/model 拒——进程创建前）维持现状 closed（确定性失败，
       // 保持 resumable 无意义）。
+      // [H2 W2 / adopt 豁免点一] workflow origin 豁免 adopt 链：引擎死亡即 run 失败
+      // 即 record 终态化（失败路径表），adopt 链「唤醒→guidance→2h 看门狗→giveUp」
+      // 对无脚本可回的 record 全程无意义——豁免落空即落入下方 finalizeFailed 立即
+      // 终态化（防「无监督、永不终态化、pending 永不注销」的 resumable 僵尸）。
       if (
         err instanceof EngineSdkError &&
         err.code === "engine_crashed" &&
         record.chatMode !== true &&
+        record.origin !== "workflow" &&
         record.status === "running"
       ) {
         this.adoptResumableAfterEngineDeath(record, toErrorMessage(err));
@@ -2317,6 +2537,9 @@ export class SubagentService {
       outcome.error !== undefined &&
       outcome.exitCode === null &&
       record.chatMode !== true &&
+      // [H2 W2 / adopt 豁免点二] workflow origin 豁免（同 runEngineTask catch 分诊点一
+      //——豁免落空走下方 tryTransition+finalizeRecord 立即终态化，不交监督器）。
+      record.origin !== "workflow" &&
       record.status === "running"
     ) {
       this.adoptResumableAfterEngineDeath(record, outcome.error);
@@ -2422,6 +2645,21 @@ export class SubagentService {
     result: AgentResult,
     aborted: boolean,
   ): Promise<void> {
+    // [H2 W2 / D7] workflow origin 成功收口 = 立即终态化（closed/"gc"）——G1 显式例外：
+    // SP-5 running-resumable 为「父 agent 可 message 续聊」设计，workflow agent 结果
+    // 由脚本返回值承载、无 message 对端，保持 running-idle 会绑架 hasRunning / 恒挂
+    // 30 天 idle-gc / 被误升级为对话容器 / goal defer 恒挂（设计 D7 四面连带）。
+    // 分支置于现有 CAS 之前：防其先把 memory closedReason 写成 "user-close" 与
+    // finalizeRecord 的 "gc" 参数分叉。条件含 !aborted：aborted+success 竞态边缘
+    // 照旧落现有 cancelled 分支，不漂移为 gc。自带 tryTransition 抢锁（承接现状
+    // 「cancel/dispose 抢先 → 静默跳过」守卫语义）；失败/取消分支照旧终态化
+    // （下方既有四分支零改动）。
+    if (record.origin === "workflow" && !aborted && result.success) {
+      if (tryTransition(record, "closed", "gc")) {
+        await this.finalizeRecord(record, result, "closed", "gc");
+      }
+      return;
+    }
     if (!tryTransition(record, "closed", aborted ? "cancelled" : result.success ? "user-close" : "gc")) return;
     if (!aborted && result.success && record.closeAfterRound === true) {
       // [M5] busy 时 close(force:false) 置的标志在本轮完成时消费终态化。
@@ -3108,6 +3346,141 @@ export class SubagentService {
       );
     }
   }
+}
+
+// ── [H2 W2] workflow 域派发 helper（executeWorkflowAgent 专用，M3 语义逐项复刻）──
+
+/**
+ * [H2 W2 迁移步⑤] workflow 派发路径 no-progress 守护句柄：signal 供 mergeRunSignals
+ * 合流（步⑥），fired 供 run 收敛后判定是否追注恢复指引（fire 是异步 timer 事件）。
+ * 与 SAR 的 armRunNoProgressWatchdog 同一原语（settled-watchdog）同一量级（30min
+ * 连续静默 = 回收层有界兜底，非任务级墙钟）；差异仅 arm 键 = record.id（D4 守护
+ * 单点——真实 record 在 store，SAR 的占位 taskId 随编排接管消亡）。
+ */
+interface WorkflowNoProgressGuard {
+  signal: AbortSignal;
+  fired(): boolean;
+}
+
+/**
+ * arm workflow 派发路径 no-progress 守护（复用 settled-watchdog 原语，不新造第二套
+ * 计时器）。fire 回调契约：timer 同步上下文内只做 warn + AbortController.abort()
+ * （abort 幂等不抛）；真正终止由 abort 经 mergedSignal → RemoteEngine
+ * wireAbortSignal 阶梯（cancel 帧 → 收敛窗 → killAll）承载。onSettleTimeout 与
+ * onMidTimeout 同体（workflow 域无 agent_end 交棒点，同体保证未来接交棒语义不变）。
+ */
+function armWorkflowNoProgressWatchdog(recordId: string): WorkflowNoProgressGuard {
+  const controller = new AbortController();
+  let fired = false;
+  const fire = (info: SettledWatchdogFireInfo): void => {
+    fired = true;
+    // 恢复指引闭环（错误 → 权威源 → 重试）：killAll 组杀连带面在此显式出声——
+    // 引擎对 cancel 帧 >收敛窗无响应时组杀引擎 CLI，同引擎其余并发 run 会以
+    // engine_crashed 失败终态化（失败结果照回脚本、executeAgentCall 重试通道仍在）。
+    logger.warn(
+      `[subagents] workflow no-progress watchdog (${info.phase}) fired for ${recordId}: ` +
+        `no valid protocol event for ${info.waitedMs / MS_PER_SECOND / SECONDS_PER_MINUTE} min after run dispatched — ` +
+        `aborting run (cancel frame → settle grace window → killAll if the engine does not settle). ` +
+        `Note: a killAll group-kills the engine CLI process, so other concurrent runs on the same ` +
+        `engine may end as engine_crashed (they still get a failure result and retry). ` +
+        `Recovery: check state with subagents action:'list' includeWorkflow:true, then re-dispatch the workflow.`,
+    );
+    controller.abort();
+  };
+  armMidRoundNoProgress(recordId, { onMidTimeout: fire, onSettleTimeout: fire });
+  return { signal: controller.signal, fired: () => fired };
+}
+
+/**
+ * streamDelta 刷新接线（守护双刷新源之二）：在**原实例**上包裹 onDelta（先刷新再
+ * 委托原实现），返回 unbind 函数由 finally 调用恢复。保持对象 identity（不建代理）
+ * ——下游 stream 透传契约要求同一实例，而 host/streamDelta 反向帧只经
+ * `ctx.stream.onDelta` 到达，原地包裹是唯一既保 identity 又能观测 delta 的接法。
+ */
+function bindWorkflowStreamRefresh(stream: SubagentStream, recordId: string): () => void {
+  const originalOnDelta = stream.onDelta;
+  const hadOwnOnDelta = Object.prototype.hasOwnProperty.call(stream, "onDelta");
+  stream.onDelta = (delta: string): void => {
+    refreshFromProtocolEvent(recordId);
+    originalOnDelta.call(stream, delta);
+  };
+  return () => {
+    if (hadOwnOnDelta) stream.onDelta = originalOnDelta;
+    else Reflect.deleteProperty(stream, "onDelta");
+  };
+}
+
+/**
+ * fire 判定 + 追注的单一出口（正常收敛与 catch 两路共用同一判定，消除「两路文案
+ * 分叉」）。只对已带 error 的结果追注——成功收敛或被外部 cancel 的形态保持原样，
+ * 不伪造失败（M3 U-B2 语义复刻）。
+ */
+function noteIfWorkflowNoProgressFired(
+  result: WorkflowAgentResult,
+  guard: WorkflowNoProgressGuard | undefined,
+): WorkflowAgentResult {
+  return guard?.fired() === true && result.error !== undefined
+    ? {
+      ...result,
+      error:
+        `${result.error} | workflow no-progress watchdog fired: the run was aborted after a long ` +
+        `silence window with no protocol event or stream delta. ` +
+        `Recovery: check state with subagents action:'list' includeWorkflow:true, then re-dispatch the workflow.`,
+    }
+    : result;
+}
+
+/**
+ * AgentOutcome → workflow AgentResult 直映射（SAR outcomeToRunnerResult 的 service
+ * 侧等价物）：保留 usage/sessionFile/worktreePath/failureKind 等引擎层字段——
+ * outcomeToAgentResult（execution AgentResult）不含这些字段，经它中转会丢 workflow
+ * 消费面（usage 进预算、sessionFile/worktreePath 进 returnMeta、failureKind 进
+ * 失败分诊）依赖的字段。
+ */
+function outcomeToWorkflowResult(outcome: AgentOutcome): WorkflowAgentResult {
+  return {
+    content: outcome.content,
+    ...(outcome.failureKind !== undefined ? { failureKind: outcome.failureKind } : {}),
+    parsedOutput: outcome.parsedOutput,
+    usage: outcome.usage,
+    durationMs: outcome.durationMs,
+    error: outcome.error,
+    sessionId: outcome.sessionId,
+    sessionFile: outcome.sessionFile,
+    worktreePath: outcome.worktreePath,
+    toolCalls: outcome.toolCalls,
+  };
+}
+
+/**
+ * AgentCallOpts → ExecuteOptions 的最小正向映射（record 创建 + identity 解析消费面；
+ * host-task-spec.executeOptionsToEngineTaskSpec 的逆映射）。slug 推导与 pump
+ * dispatchAgentCall 的 trace 命名同源（description ?? agent ?? "unknown"，超长按
+ * SLUG_MAX_LENGTH 截断）。returnMeta/scene 等 worker 层/引擎层独有字段不入 record
+ * 消费面（taskSpec 装配走 opts 原样直传，不经本映射）。
+ */
+function workflowCallToExecuteOptions(opts: AgentCallOpts): ExecuteOptions {
+  const agentName = opts.description ?? opts.agent ?? "unknown";
+  const slug = agentName.length > SLUG_MAX_LENGTH ? agentName.slice(0, SLUG_MAX_LENGTH) : agentName;
+  return {
+    task: opts.prompt,
+    slug,
+    ...(opts.agent !== undefined ? { agent: opts.agent } : {}),
+    ...(opts.model !== undefined ? { model: opts.model } : {}),
+    ...(opts.thinkingLevel !== undefined ? { thinkingLevel: opts.thinkingLevel } : {}),
+    ...(opts.skillPath !== undefined ? { skillPath: opts.skillPath } : {}),
+    ...(opts.appendSystemPrompt !== undefined ? { appendSystemPrompt: opts.appendSystemPrompt } : {}),
+    ...(opts.schema !== undefined ? { schema: opts.schema } : {}),
+    ...(opts.schemaEnv !== undefined ? { schemaEnv: opts.schemaEnv } : {}),
+    ...(opts.maxTurns !== undefined ? { maxTurns: opts.maxTurns } : {}),
+    ...(opts.graceTurns !== undefined ? { graceTurns: opts.graceTurns } : {}),
+    ...(opts.fork !== undefined ? { fork: opts.fork } : {}),
+    ...(opts.forkSource !== undefined ? { forkFromSessionFile: opts.forkSource } : {}),
+    ...(opts.worktree !== undefined ? { worktree: opts.worktree } : {}),
+    ...(opts.cwd !== undefined ? { cwd: opts.cwd } : {}),
+    ...(opts.conversation !== undefined ? { conversation: opts.conversation } : {}),
+    ...(opts.idleTimeoutMs !== undefined ? { idleTimeoutMs: opts.idleTimeoutMs } : {}),
+  };
 }
 
 // ── 进程单例访问器 ────────────────────────────────────

@@ -27,16 +27,28 @@ export type SupervisorDomain =
   /** run 域一次性任务（非 chatMode record）——监督域主体。 */
   | "run"
   /** conversation/chat 形态（record.chatMode）——豁免，现状机制管辖。 */
-  | "conversation";
+  | "conversation"
+  /**
+   * [H2 W2] workflow 脚本 agent() record（origin="workflow"）——adopt 链豁免域：
+   * 引擎死亡即 run 失败即 record 终态化（service 分诊两处豁免），无脚本可回的
+   * resumable 等待无意义（adopt 链「唤醒→guidance→2h 看门狗→giveUp」全程死路，
+   * 还制造 2h 挂账）。豁免只覆盖 adopt 接管入口（adoptOnProcessDeath / boot 分区
+   * 重认领）——运行期记账（noteRunStarted/noteRunEnded）与 reconcile-sweep 对账
+   * 对 workflow record 照旧（H1 D8「非 chatMode 全量纳管」不因本豁免收窄）。
+   */
+  | "workflow";
 
 /**
  * 域分类（裁决表 conversation 行「任何触发不入监督域」的判定锚）。
+ * record.origin === "workflow" → workflow（adopt 链豁免域，[H2 W2]）；否则
  * record.chatMode === true → conversation（豁免）；否则 → run 域。
- * （workflow 域 resumable run 的活性收口 = kill-9 恢复链 + idle-gc startedAt 锚
- * 归档 + sweep 对账——workflow run 不在 RecordStore，其注册对账按 type=workflow
+ * （workflow run 不在 RecordStore，其注册对账按 type=workflow
  * 保守跳过，见 reconcile-sweep.ts。）
  */
-export function classifySupervisorDomain(record: Pick<ExecutionRecord, "chatMode">): SupervisorDomain {
+export function classifySupervisorDomain(
+  record: Pick<ExecutionRecord, "chatMode" | "origin">,
+): SupervisorDomain {
+  if (record.origin === "workflow") return "workflow";
   return record.chatMode === true ? "conversation" : "run";
 }
 

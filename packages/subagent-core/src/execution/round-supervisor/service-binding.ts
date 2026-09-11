@@ -63,6 +63,7 @@ function supervisorRecordView(binding: RoundSupervisorBinding, id: string): Supe
       resumable: memory.resumable === true,
       hasResult: memory.result !== undefined,
       chatMode: memory.chatMode === true,
+      origin: memory.origin,
       rootSessionId: memory.rootSessionId,
       agent: memory.agent,
       slug: memory.slug,
@@ -78,6 +79,7 @@ function supervisorRecordView(binding: RoundSupervisorBinding, id: string): Supe
     resumable: disk.resumable === true,
     hasResult: disk.result !== undefined,
     chatMode: disk.chatMode === true,
+    origin: disk.origin,
     rootSessionId: disk.rootSessionId,
     agent: disk.agent,
     slug: disk.slug,
@@ -86,7 +88,9 @@ function supervisorRecordView(binding: RoundSupervisorBinding, id: string): Supe
   };
 }
 
-/** 本 root session 的 running record 候选（内存 ∪ 磁盘重建投影）。 */
+/** 本 root session 的 running record 候选（内存 ∪ 磁盘重建投影）。
+ *  [H2 W2] origin 透传——superseded 对账的 workflow 候选豁免判据（supervisor.evaluate
+ *  消费面，W1 已把 origin 投影进 SubagentRecord）。 */
 function supervisorCandidates(binding: RoundSupervisorBinding): SupervisorCandidateRecord[] {
   const rootFilter = binding.getSessionRootId() ?? undefined;
   return binding
@@ -98,6 +102,7 @@ function supervisorCandidates(binding: RoundSupervisorBinding): SupervisorCandid
       agent: r.agent,
       slug: r.slug,
       startedAt: r.startedAt,
+      origin: r.origin,
     }));
 }
 

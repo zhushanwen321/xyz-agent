@@ -122,6 +122,13 @@ export function createNotifyHost(deps: NotifyHostDeps): NotifyHost {
    *  正在执行（running + 活进程 + 非 timer-armed）返回 undefined（调用方 notifyComplete 跳过）。
    *  SP-1: closed 统一终态，closedReason 由 BgNotifyRecord 携带。 */
   const toNotifyRecord = (record: ExecutionRecord): BgNotifyRecord | undefined => {
+    // [H2 W2 / D6] workflow origin 回注全静默（单漏斗 origin gate）：完成/关闭/失败
+    // 回注经此全部拒绝——workflow agent 结果由脚本返回值承载（无 message 对端），
+    // 回注只会把已隐藏的 record 通知主 agent（设计 D6 出口枚举化；失败回注同静默，
+    // v3 扩）。单漏斗盖住全部调用点（notifyComplete/notifyClosed/collectCoordinator
+    // route 六调用面全经此，禁止散改调用点）；监督器 steer 通知族不经本漏斗——随
+    // adopt 豁免对 workflow record 零触发。
+    if (record.origin === "workflow") return undefined;
     const snap = snapshot(record);
     const s = snap.status;
     // [N1] isResumable 放行：SP-5 one-shot 成功完成后 finalizeRoundToIdle 把 record 回退
