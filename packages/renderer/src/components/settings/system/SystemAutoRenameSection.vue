@@ -184,7 +184,9 @@ async function onRenameModelChange(value: unknown): Promise<void> {
 }
 
 /** Select change（设计 D1 求值时点边界）：事件面 live 生效、工具面（rename_session 注册）只对新
- *  会话生效——成功提示用该边界文案替代通用 saved，失败回滚 + saveFailed。 */
+ *  会话生效——成功提示用该边界文案替代通用 saved，失败回滚 + saveFailed。开关关 + 自动模式组合下
+ *  自动路径被 enabled flag 拦截（D1 正交契约：flag 只门控自动路径），换提示指明恢复动作，
+ *  不承诺不会发生的「已生效」。 */
 async function onRenameModeChange(value: unknown): Promise<void> {
   if (savingRenameMode.value) return
   if (!isRenameModeValue(value) || value === renameMode.value) return
@@ -193,7 +195,11 @@ async function onRenameModeChange(value: unknown): Promise<void> {
   renameMode.value = value
   try {
     await setRenameMode(value)
-    toastInfo(t('settings.system.renameModeSwitched'))
+    toastInfo(
+      !autoRenameEnabled.value && value !== 'agent-tool'
+        ? t('settings.system.renameModeSwitchedAutoDisabled')
+        : t('settings.system.renameModeSwitched'),
+    )
   } catch (_e) {
     renameMode.value = prev
     toastError(t('settings.system.saveFailed'))
