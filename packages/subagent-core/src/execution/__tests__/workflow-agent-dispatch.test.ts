@@ -513,6 +513,54 @@ describe("executeWorkflowAgent D7 成功收口", () => {
 });
 
 // ============================================================
+// 4.5 [H2 A3] live usage 喂入（fake engine 事件 → record.totalTokens/turns 保真）
+// ============================================================
+
+describe("executeWorkflowAgent live usage 喂入（H2 A3）", () => {
+  it("fake engine message_end(usage) 事件 → live record 实时累积，终态 entry 落盘保真", async () => {
+    const { service, store, fake, entries } = makeHarness();
+    const pending = service.executeWorkflowAgent(baseOpts(), "run-usage");
+    await flush();
+    const run = soleRun(fake);
+
+    // 引擎协议事件：message_end 携带 usage（pi-subagent-cli spawn-event-translator
+    // accumulateMessageEnd 的协议产物形态），turn_end 闭合 turn。
+    run.emitEvent({ type: "message_end", usage: { input: 100, output: 50, cacheRead: 20, cacheWrite: 10, cost: 0.5 } });
+    run.emitEvent({ type: "text_delta", delta: "working" });
+    run.emitEvent({ type: "message_end", usage: { input: 7, output: 3, cacheRead: 0, cacheWrite: 0 } });
+    run.emitEvent({ type: "turn_end" });
+
+    // live record 实时累积（Gate B A3 现象面：agent 实际消耗 LLM 而 record 恒 0）
+    const record = runningRecord(store);
+    expect(record.totalTokens).toBe(190); // (100+50+20+10) + (7+3)
+    expect(record.turnCount).toBe(1);
+
+    // 终态 entry（持久化链）保真：list / 重启重建源读到非零 tokens
+    run.settle({ content: "done" });
+    await pending;
+    const finalEntry = entries.at(-1);
+    expect(finalEntry).toMatchObject({ id: record.id, status: "closed", totalTokens: 190, turns: 1 });
+  });
+
+  it("error 事件 → lastError 记录（reducer 喂入不破坏失败语义）", async () => {
+    const { service, store, fake, entries } = makeHarness();
+    const pending = service.executeWorkflowAgent(baseOpts(), "run-usage-err");
+    await flush();
+    const run = soleRun(fake);
+
+    run.emitEvent({ type: "error", message: "boom" });
+    run.settle({ content: "", error: "boom" });
+    await pending;
+
+    // 失败收口不受喂入影响（终态 entry 正常落盘）
+    const finalEntry = entries.at(-1);
+    expect(finalEntry).toBeDefined();
+    expect(finalEntry!.status).toBe("closed");
+    expect(store.getMutable(finalEntry!.id)).toBeUndefined();
+  });
+});
+
+// ============================================================
 // 5. D6 gate（workflow 回注全静默）
 // ============================================================
 

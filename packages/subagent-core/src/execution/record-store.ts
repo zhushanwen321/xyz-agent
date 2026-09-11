@@ -1179,6 +1179,15 @@ export class RecordStore {
     if (header === undefined && payloads.binding?.round !== undefined) {
       entry.light.round = payloads.binding.round;
     }
+    // [H2 A3] 终态 usage 快照补投影（round 同款先例）：binding 快照只在终态写点
+    // （finalizeRecord Step3a）更新，存在即代表终值——light 列表面据此恢复
+    // totalTokens/turns/endedAt，不再恒 0（list 与通知显示消耗真实值）。
+    if (header === undefined && payloads.binding) {
+      const b = payloads.binding;
+      if (b.totalTokens !== undefined) entry.light.totalTokens = b.totalTokens;
+      if (b.turns !== undefined) entry.light.turns = b.turns;
+      if (b.endedAt !== undefined) entry.light.endedAt = b.endedAt;
+    }
     this.fileCache.set(file, entry);
     this.idToFile.set(base.id, file);
     return entry;
@@ -1205,6 +1214,11 @@ export class RecordStore {
       forkDepth: undefined,
       chatMode: binding.chatMode,
       worktree: binding.worktree,
+      // [H2 S3] 来源域透传：漏本两行则引擎子文件身份面（binding sidecar）重建丢
+      // origin，归档/重启后 workflow record 逃过 D1 投影过滤（Gate B S3 FAIL 根因）。
+      // binding 读侧（readRecordBinding）已字面量守卫归一，此处直传。
+      origin: binding.origin,
+      parentRunId: binding.parentRunId,
       model: binding.model,
       thinkingLevel: binding.thinkingLevel,
       sessionFile: file,
@@ -1231,7 +1245,21 @@ export class RecordStore {
       return null;
     }
     const payloads = readSidecarPayloads(file, stamps);
-    const entry = RecordStore.buildFileCacheEntry({ ...hit, forkDepth: undefined, sessionFile: file }, file, stamps, payloads, now);
+    const entry = RecordStore.buildFileCacheEntry(
+      {
+        ...hit,
+        forkDepth: undefined,
+        sessionFile: file,
+        // [H2 S3] 显式归一（exactOptionalPropertyTypes：索引可选属性 → recon 必填）；
+        // 值已过 loadIndex 守卫（undefined/字面量白名单），直传即安全。
+        origin: hit.origin,
+        parentRunId: hit.parentRunId,
+      },
+      file,
+      stamps,
+      payloads,
+      now,
+    );
     this.fileCache.set(file, entry);
     this.idToFile.set(hit.id, file);
     return entry;
@@ -1298,6 +1326,10 @@ export class RecordStore {
           depth: cached.light.depth,
           model: cached.light.model,
           thinkingLevel: cached.light.thinkingLevel,
+          // [H2 S3] 来源域随投影入索引：light→索引→重建往返闭合（origin 丢失面与
+          // binding 缺失面互补，索引命中路径不再静默抹掉 workflow 身份）。
+          origin: cached.light.origin,
+          parentRunId: cached.light.parentRunId,
         });
       }
     }
@@ -1405,6 +1437,9 @@ export class RecordStore {
         rootSessionId: base.rootSessionId,
         parentRecordId: base.parentRecordId,
         depth: base.depth,
+        // [H2 S3] 来源域落位（identity 面已守卫归一）：缺省 undefined = "tool" 语义。
+        origin: base.origin,
+        parentRunId: base.parentRunId,
         endedAt: undefined,
         turns: base.turnCount,
         totalTokens: base.totalTokens,
@@ -1432,6 +1467,9 @@ export class RecordStore {
         rootSessionId: base.rootSessionId,
         parentRecordId: base.parentRecordId,
         depth: base.depth,
+        // [H2 S3] 来源域落位（同全量分支）。
+        origin: base.origin,
+        parentRunId: base.parentRunId,
         endedAt: undefined,
         turns: 0,
         totalTokens: 0,

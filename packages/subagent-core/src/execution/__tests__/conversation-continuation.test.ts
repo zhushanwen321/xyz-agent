@@ -34,7 +34,8 @@ import type {
 import type { RoundSettlementOutcome } from "../finalize-record.ts";
 import { createNotifier, type BgNotifyRecord } from "../notifier.ts";
 import { bindNotifyLedgerHost } from "../notify-ledger.ts";
-import type { AgentOutcome } from "../engine/types.ts";
+import type { AgentOutcome, EngineCapabilities, EngineHandle } from "../engine/types.ts";
+import type { EnginePort, EngineRunResult, RunContext } from "../engine/port.ts";
 import { registerFakePiEngine, type FakePiEnginePort } from "./helpers/fake-engine-port.ts";
 import { clearEngines, registerEngine } from "../engine/registry.ts";
 import { createRecord } from "../execution-record.ts";
@@ -55,6 +56,7 @@ import {
   registerSpawnedChildForRecord,
 } from "../engine/host/spawned-children.ts";
 import type { ExecutionRecord } from "../types.ts";
+import { SUBAGENT_RECORD_CUSTOM_TYPE, type SubagentRecordEntryData } from "../record-entry.ts";
 
 // ============================================================
 // Continuation 单测（mock host）
@@ -1123,5 +1125,221 @@ describe("集成：[A5] D5 gate 判定本体直测（canUpgradeToConversation—
   it("引擎未注册 → fail-closed false（catch 分支）；engine 缺省 → 默认引擎（pi conversation=native）放行", () => {
     expect(service.canUpgradeToConversation({ engine: "no-such-engine" })).toBe(false);
     expect(service.canUpgradeToConversation({})).toBe(true);
+  });
+});
+
+// ============================================================
+// 集成：live usage 喂入（H2 Gate B 修复）——chat 轮 / pi one-shot / 非 pi 引擎
+// ============================================================
+//
+// [H2 Gate B] W3 删 inproc pi 引擎（session-runner.ts agentEvent 出口）时，协议化
+// service 侧 chat 轮与 tool one-shot 的 live reducer 喂入（updateFromEvent）一并断链
+// ——record.turns/totalTokens 恒 0，而 journal-replay / session-view-service 重放路径
+// 保真（live 落后于 replay 的倒挂）。修复 = runWorkflowEngineTask observedEvent 同款
+// 喂入恢复（reducer 与重放同源，C5 守护）。本组用例锁三形态：
+//   1. chat 轮（kickOffChatRound chatMode 分支）：实时累积 + 轮终 entry 保真 + 跨轮持续
+//      （Continuation 轮间共用同一 record 实例）+ close 终态 entry 保真；
+//   2. pi one-shot（kickOffChatRound 非 chatMode 分支——修复前连 onEvent 都不传）：
+//      实时累积 + outcome 写入不重置（completeRecord 只读不重置契约）；
+//   3. 非 pi 引擎（kickOffEngineRun → runEngineTask——修复前事件只喂 journal）：
+//      实时累积 + 终态 entry 保真（非 pi one-shot 一次 run 即终态化）。
+// 红锚：任一形态喂入行移除即转红（totalTokens 恒 0）。
+
+/** 非 pi 引擎替身（run 挂起捕获；settle 由用例驱动——runEngineTask 喂入用例专用）。 */
+class FeedCaptureEngine implements EnginePort {
+  readonly id = "zcode";
+  readonly runs: Array<{
+    ctx: RunContext;
+    emitEvent: (event: unknown) => void;
+    settle: (content: string) => void;
+  }> = [];
+
+  capabilities(): EngineCapabilities {
+    return {
+      schemaEnforcement: "emulated",
+      steer: "unsupported",
+      conversation: "unsupported",
+      personaInjection: "prompt",
+      eventGranularity: "stream",
+      sandbox: "none",
+      sessionRead: "full",
+      resume: "cold",
+      interrupt: "kill-only",
+      permissionMode: "native",
+      maxTurns: false,
+    };
+  }
+
+  async probe(): Promise<{ ok: true; engineVersion: string; checks: Array<{ name: string; ok: true }> }> {
+    return { ok: true, engineVersion: "fake-zcode", checks: [{ name: "bin", ok: true }] };
+  }
+
+  run(_task: unknown, ctx: RunContext): Promise<EngineRunResult> {
+    return new Promise<EngineRunResult>((resolve) => {
+      this.runs.push({
+        ctx,
+        emitEvent: (event) => ctx.onEvent?.(event as never),
+        settle: (content) =>
+          resolve({
+            handle: {
+              data: {
+                v: 1,
+                engineId: this.id,
+                sessionRef: { recordId: ctx.taskId },
+                poolKey: "shared",
+                adapterVersion: "feed-capture-engine",
+              } satisfies EngineHandle["data"],
+            },
+            outcome: { content, engineId: this.id },
+          }),
+      });
+    });
+  }
+
+  async read(): Promise<{ engineId: string; turns: never[]; source: "outcome-only" }> {
+    return { engineId: this.id, turns: [], source: "outcome-only" };
+  }
+}
+
+describe("集成：live usage 喂入（H2 Gate B）——chat 轮 / pi one-shot / 非 pi 引擎", () => {
+  let agentDir: string;
+  let service: SubagentService;
+  let store: RecordStore;
+  let pi: PiLike;
+  let fake: FakePiEnginePort;
+  let entries: SubagentRecordEntryData[];
+  let prevDataDirEnv: string | undefined;
+
+  beforeEach(() => {
+    vi.restoreAllMocks();
+    killChildSpy.mockClear();
+    prevDataDirEnv = process.env["XYZ_AGENT_DATA_DIR"];
+    // journal 落盘隔离（非 pi 引擎用例 wireEventJournal 写盘；测试红线：不触真实数据目录）
+    agentDir = fs.mkdtempSync(path.join(os.tmpdir(), "cont-usage-feed-"));
+    process.env.XYZ_AGENT_DATA_DIR = path.join(agentDir, "engine-data");
+    clearEngines();
+    fake = registerFakePiEngine();
+    const modelService = new ModelConfigService({ agentDir, cwd: agentDir });
+    modelService.initModel({
+      modelRegistry: { getAvailable: () => [], find: () => undefined, hasConfiguredAuth: () => true },
+      sessionId: "root-session",
+      ctxModel: { id: "m", name: "M", provider: "prov", reasoning: false },
+    });
+    service = new SubagentService({ cwd: agentDir, modelService });
+    pi = makePi();
+    entries = [];
+    (pi.appendEntry as ReturnType<typeof vi.fn>).mockImplementation(
+      (customType: string, data: unknown) => {
+        if (customType === SUBAGENT_RECORD_CUSTOM_TYPE) entries.push(data as SubagentRecordEntryData);
+      },
+    );
+    service.initSession({ pi, sessionId: "root-session" });
+    store = (service as unknown as ServiceInternals).store;
+  });
+
+  afterEach(() => {
+    service.dispose();
+    clearEngines();
+    _resetLifecycleState();
+    _resetSettledWatchdogsForTest();
+    _resetCoreSpawnedChildrenMirrorForTest();
+    if (prevDataDirEnv === undefined) delete process.env["XYZ_AGENT_DATA_DIR"];
+    else process.env["XYZ_AGENT_DATA_DIR"] = prevDataDirEnv;
+    fs.rmSync(agentDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
+  });
+
+  /** 本 record 的 entry 序列（appendEntry 捕获投影）。 */
+  function entriesFor(id: string): SubagentRecordEntryData[] {
+    return entries.filter((e) => (e as { id?: string }).id === id);
+  }
+
+  it("chat 轮：message_end(usage) → totalTokens/turnCount 实时累积；轮终 entry 保真；跨轮持续；close 终态 entry 保真", async () => {
+    const record = makeChatRecord("sa-usage-chat", agentDir);
+    store.register(record);
+
+    await service.chatActions.deliverChatMessage(record, "round one");
+    await vi.waitFor(() => expect(fake.runs.length).toBe(1));
+
+    // 引擎协议事件（pi-subagent-cli spawn-event-translator 的协议产物形态）
+    fake.runs[0]!.emitEvent({
+      type: "message_end",
+      usage: { input: 100, output: 50, cacheRead: 20, cacheWrite: 10, cost: 0.5 },
+    });
+    fake.runs[0]!.emitEvent({ type: "text_delta", delta: "working" });
+    fake.runs[0]!.emitEvent({ type: "turn_end" });
+    fake.runs[0]!.emitEvent({ type: "message_end", usage: { input: 7, output: 3, cacheRead: 0, cacheWrite: 0 } });
+
+    // live record 实时累积（修复前：轮实际消耗 LLM 而 record 恒 0）
+    expect(record.totalTokens).toBe(190); // (100+50+20+10) + (7+3)
+    expect(record.turnCount).toBe(1);
+
+    // 轮终 settle → 轮终簿记 entry 携带非零 usage（chat 域轮终不终态——终态 = close）
+    fake.runs[0]!.settle({ content: "round one reply" });
+    await vi.waitFor(() => expect(record.round).toBe(2));
+    expect(record.totalTokens).toBe(190);
+    const roundEntry = entriesFor(record.id).at(-1);
+    expect(roundEntry).toMatchObject({ id: record.id, totalTokens: 190 });
+
+    // 跨轮持续：Continuation 轮间共用同一 record 实例，第二轮继续累积
+    await service.chatActions.deliverChatMessage(record, "round two");
+    await vi.waitFor(() => expect(fake.runs.length).toBe(2));
+    fake.runs[1]!.emitEvent({
+      type: "message_end",
+      usage: { input: 5, output: 5, cacheRead: 0, cacheWrite: 0, cost: 0 },
+    });
+    fake.runs[1]!.emitEvent({ type: "turn_end" });
+    expect(record.totalTokens).toBe(200);
+
+    // close 终态 → 终态 entry totalTokens/turns 保真（list / 重启重建源读到的形态）
+    fake.runs[1]!.settle({ content: "round two reply" });
+    await vi.waitFor(() => expect(record.round).toBe(3));
+    await service["closeSubagent"](record, false);
+    await vi.waitFor(() => expect(record.status).toBe("closed"));
+    const finalEntry = entriesFor(record.id).at(-1);
+    expect(finalEntry).toMatchObject({ id: record.id, status: "closed", totalTokens: 200, turns: 2 });
+  });
+
+  it("pi one-shot：message_end(usage) → totalTokens/turnCount 实时累积；outcome 写入不重置", async () => {
+    const handle = await service.execute({ task: "oneshot usage", slug: "oneshot-usage" });
+    await vi.waitFor(() => expect(fake.runs.length).toBe(1));
+
+    fake.runs[0]!.emitEvent({
+      type: "message_end",
+      usage: { input: 100, output: 50, cacheRead: 20, cacheWrite: 10, cost: 0.5 },
+    });
+    fake.runs[0]!.emitEvent({ type: "turn_end" });
+
+    const record = store.getMutable(handle.subagentId);
+    expect(record).toBeDefined();
+    expect(record!.totalTokens).toBe(180);
+    expect(record!.turnCount).toBe(1);
+
+    // settle → outcome 字段写入不重置 turns/totalTokens（completeRecord 只读契约）
+    fake.runs[0]!.settle({ content: "done" });
+    await vi.waitFor(() => expect(record!.result).toBe("done"));
+    expect(record!.totalTokens).toBe(180);
+    expect(record!.turnCount).toBe(1);
+  });
+
+  it("非 pi 引擎（runEngineTask）：message_end(usage) → totalTokens 实时累积；终态 entry 保真", async () => {
+    const zcode = new FeedCaptureEngine();
+    registerEngine("zcode", () => zcode);
+
+    const handle = await service.execute({ task: "zcode usage", slug: "zc-usage", engine: "zcode" });
+    await vi.waitFor(() => expect(zcode.runs.length).toBe(1));
+
+    zcode.runs[0]!.emitEvent({
+      type: "message_end",
+      usage: { input: 30, output: 12, cacheRead: 0, cacheWrite: 0, cost: 0 },
+    });
+    const record = store.getMutable(handle.subagentId);
+    expect(record).toBeDefined();
+    expect(record!.totalTokens).toBe(42); // 修复前：事件只喂 journal，record 恒 0
+
+    // 非 pi one-shot 一次 run 即终态化（finalizeEngineOutcome → closed/gc + entry 落盘）
+    zcode.runs[0]!.settle("done");
+    await vi.waitFor(() => expect(record!.status).toBe("closed"));
+    const finalEntry = entriesFor(record!.id).at(-1);
+    expect(finalEntry).toMatchObject({ id: record!.id, status: "closed", totalTokens: 42 });
   });
 });

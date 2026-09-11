@@ -43,6 +43,7 @@ import { RecordStore } from "../record-store.ts";
 import { _resetSettledWatchdogsForTest } from "../settled-watchdog.ts";
 import {
   readRecordBinding,
+  updateRecordBinding,
   writeFinalizedState,
   writeRecordBinding,
   RECORD_BINDING_SIDECAR_EXT,
@@ -288,6 +289,169 @@ describe("[UF-1] record-store 据绑定 sidecar 重建（跨重启空内存场�
     const store = new RecordStore(sessionsDir);
     expect(store.collectRecords(10, "all", undefined)).toHaveLength(0);
     expect(store.findLightById("sa-bind-1")).toBeUndefined();
+  });
+});
+
+// ============================================================
+// D. [H2 S3] 来源身份（origin/parentRunId）经 binding 身份面往返保真
+// ============================================================
+//
+// Gate B S3 FAIL 根因：引擎子文件身份面（binding sidecar）重建丢 origin →
+// 归档/重启后 workflow record 逃过 D1 投影过滤（默认 list / TUI overlay 显示
+// 已归档 workflow record）。本套件锁定：写（writeBindingForRecord 载荷）→
+// 读（readRecordBinding 守卫）→ 重建（identityFromBinding → buildRecord）→
+// 过滤（collectRecords 缺省排除 / includeWorkflow + parentRunId 下钻可见）全链。
+
+describe("[H2 S3] binding 身份面 origin/parentRunId 往返保真", () => {
+  let dir: string;
+
+  beforeEach(() => {
+    dir = fs.mkdtempSync(path.join(os.tmpdir(), "record-binding-origin-"));
+  });
+
+  afterEach(() => {
+    fs.rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
+  });
+
+  it("读侧守卫归一：origin=workflow + parentRunId 保真；缺省 → undefined；非法值 → undefined", () => {
+    const sessionFile = path.join(dir, "child.jsonl");
+    fs.writeFileSync(sessionFile, "{}\n", "utf-8");
+
+    // 往返保真（正例）
+    writeBindingFixture(sessionFile, { origin: "workflow", parentRunId: "run-77" });
+    expect(readRecordBinding(sessionFile)).toMatchObject({ origin: "workflow", parentRunId: "run-77" });
+
+    // 缺省负向（存量 binding 零迁移）：undefined = "tool" 语义
+    writeBindingFixture(sessionFile);
+    const absent = readRecordBinding(sessionFile)!;
+    expect(absent.origin).toBeUndefined();
+    expect(absent.parentRunId).toBeUndefined();
+
+    // 非法值负向（字面量守卫，对齐 readEntryOriginFields）
+    for (const badOrigin of ["bogus", 1, null]) {
+      writeBindingFixture(sessionFile, { origin: badOrigin as unknown as "workflow" });
+      expect(readRecordBinding(sessionFile)!.origin).toBeUndefined();
+    }
+    writeBindingFixture(sessionFile, { parentRunId: 42 as unknown as string });
+    expect(readRecordBinding(sessionFile)!.parentRunId).toBeUndefined();
+  });
+
+  it("[H2 A3] updateRecordBinding merge 更新 usage 快照：合法值保真、非法守卫、binding 缺失不造新", () => {
+    const sessionFile = path.join(dir, "child-usage.jsonl");
+    fs.writeFileSync(sessionFile, "{}\n", "utf-8");
+
+    // binding 缺失 → 跳过不造新（updateRecordBinding 不承担身份创建职责）
+    updateRecordBinding(sessionFile, { totalTokens: 100 });
+    expect(readRecordBinding(sessionFile)).toBeUndefined();
+
+    // 合并语义：既有身份字段不动，usage 快照写入
+    writeBindingFixture(sessionFile, { origin: "workflow", parentRunId: "run-u" });
+    updateRecordBinding(sessionFile, { totalTokens: 1234, turns: 3, endedAt: 999 });
+    expect(readRecordBinding(sessionFile)).toMatchObject({
+      recordId: "sa-bind-1", // 身份字段保留
+      origin: "workflow",
+      totalTokens: 1234,
+      turns: 3,
+      endedAt: 999,
+    });
+
+    // 非法值守卫：写侧不会写非法值（类型约束），读侧对磁盘垃圾值归一 undefined
+    fs.writeFileSync(
+      `${sessionFile}${RECORD_BINDING_SIDECAR_EXT}`,
+      JSON.stringify({
+        v: 1, recordId: "sa-bind-1", agent: "a", task: "t", mode: "background",
+        startedAt: STARTED_AT, chatMode: false, depth: 0, slug: "s", model: "m", worktree: false,
+        totalTokens: "garbage", turns: null, endedAt: false,
+      }),
+      "utf-8",
+    );
+    const guarded = readRecordBinding(sessionFile)!;
+    expect(guarded.totalTokens).toBeUndefined();
+    expect(guarded.turns).toBeUndefined();
+    expect(guarded.endedAt).toBeUndefined();
+  });
+});
+
+describe("[H2 S3] record-store 据绑定重建 origin（D1 投影过滤端到端）", () => {
+  let agentDir: string;
+  let sessionsDir: string;
+
+  beforeEach(() => {
+    agentDir = fs.mkdtempSync(path.join(os.tmpdir(), "record-binding-origin-store-"));
+    sessionsDir = getSubagentSessionDir(agentDir, agentDir);
+    fs.mkdirSync(sessionsDir, { recursive: true });
+  });
+
+  afterEach(() => {
+    fs.rmSync(agentDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
+  });
+
+  it("binding(workflow) → collectRecords 重建 origin/parentRunId 保真；缺省过滤排除；includeWorkflow / parentRunId 下钻可见", () => {
+    const file = writePlainChildSession(sessionsDir);
+    writeBindingFixture(file, { origin: "workflow", parentRunId: "wf-run-1" });
+    const store = new RecordStore(sessionsDir);
+
+    // 默认 list（includeWorkflow 缺省 false）：workflow record 被排除（S3 FAIL 的验收面）
+    expect(store.collectRecords(10, "all", undefined)).toHaveLength(0);
+    // includeWorkflow:true：可见且字段保真
+    const visible = store.collectRecords(10, "all", undefined, true);
+    expect(visible).toHaveLength(1);
+    expect(visible[0]!.origin).toBe("workflow");
+    expect(visible[0]!.parentRunId).toBe("wf-run-1");
+    // W2/W3 下钻：按 parentRunId 显式查询命中
+    expect(store.collectRecordsByParentRunId("wf-run-1", 10).map((r) => r.id)).toEqual(["sa-bind-1"]);
+  });
+
+  it("binding(tool 缺省) → 重建 origin undefined，默认 list 保留（零迁移）", () => {
+    const file = writePlainChildSession(sessionsDir);
+    writeBindingFixture(file); // 不带 origin（存量形态）
+    const store = new RecordStore(sessionsDir);
+
+    const records = store.collectRecords(10, "all", undefined);
+    expect(records).toHaveLength(1);
+    expect(records[0]!.origin).toBeUndefined();
+    expect(records[0]!.parentRunId).toBeUndefined();
+  });
+
+  it("归档（.state finalized）后重建仍保 origin：终态 workflow record 默认 list 不出现（S3 真机场景）", () => {
+    const file = writePlainChildSession(sessionsDir);
+    writeBindingFixture(file, { origin: "workflow", parentRunId: "wf-run-2" });
+    writeFinalizedState(file, "gc"); // 模拟归档/重启后终态重建
+    const store = new RecordStore(sessionsDir);
+
+    expect(store.collectRecords(10, "all", undefined)).toHaveLength(0);
+    const visible = store.collectRecords(10, "all", undefined, true);
+    expect(visible).toHaveLength(1);
+    expect(visible[0]!.status).toBe("closed");
+    expect(visible[0]!.origin).toBe("workflow");
+    expect(visible[0]!.parentRunId).toBe("wf-run-2");
+  });
+
+  it("[H2 A3] 终态快照补投影：collectRecords 重建 light 恢复 totalTokens/turns/endedAt（list 面不再恒 0）", () => {
+    const file = writePlainChildSession(sessionsDir);
+    writeBindingFixture(file, { origin: "workflow", parentRunId: "wf-run-u" });
+    // 终态写点同款：.state + binding usage 快照
+    writeFinalizedState(file, "gc");
+    updateRecordBinding(file, { totalTokens: 60725, turns: 4, endedAt: STARTED_AT + 55_000 });
+    const store = new RecordStore(sessionsDir);
+
+    const visible = store.collectRecords(10, "all", undefined, true);
+    expect(visible).toHaveLength(1);
+    expect(visible[0]!.totalTokens).toBe(60725);
+    expect(visible[0]!.turns).toBe(4);
+    expect(visible[0]!.endedAt).toBe(STARTED_AT + 55_000);
+  });
+
+  it("[H2 A3] 快照缺省（存量 binding）→ 不投影，保持 light 缺省 0/0/undefined（零迁移）", () => {
+    const file = writePlainChildSession(sessionsDir);
+    writeBindingFixture(file);
+    const store = new RecordStore(sessionsDir);
+
+    const records = store.collectRecords(10, "all", undefined);
+    expect(records).toHaveLength(1);
+    expect(records[0]!.totalTokens).toBe(0);
+    expect(records[0]!.turns).toBe(0);
+    expect(records[0]!.endedAt).toBeUndefined();
   });
 });
 

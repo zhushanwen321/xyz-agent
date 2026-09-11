@@ -37,6 +37,8 @@ import * as fs from "node:fs";
 
 import { getLogger } from "../core/logger.ts";
 
+import type { RecordOrigin } from "./types.ts";
+
 const logger = getLogger("subagents");
 
 /** 终态 sidecar 扩展名（写侧新名 + 读侧兼容旧名；GC 清理名单与此同源语义）。 */
@@ -252,6 +254,29 @@ export interface RecordBinding {
   thinkingLevel?: string;
   /** 创建时启用 worktree 隔离（重建面 hadWorktree 恢复源）。 */
   worktree: boolean;
+  /**
+   * 来源身份（H2 S3 修复：引擎子文件身份面 origin 透传）。undefined（存量 binding）
+   * = "tool" 语义，消费方零迁移——engine-CLI 化后子 session 文件无 identity entry，
+   * 本 sidecar 是磁盘重建面 origin 过滤（subagents list / TUI overlay）的唯一承载，
+   * 漏本字段则归档/重启后 workflow record 逃过投影过滤（Gate B S3 FAIL 根因）。
+   */
+  origin?: RecordOrigin;
+  /**
+   * origin="workflow" 时所属 workflow run id；tool 来源恒缺省。W2/W3 run 视图按
+   * collectRecordsByParentRunId 从本字段回查本 run 的 record 集。
+   */
+  parentRunId?: string;
+  /**
+   * 终态 usage 快照（[H2 A3]，终态写点 Step3a 随 .state 同步更新 binding）：
+   * totalTokens/turns/endedAt 三字段的 record 终值。light 列表面据此恢复 usage
+   * （子文件无 identity entry，全量重建面不可用；round 补投影同款先例）。
+   * undefined（存量 binding / 非终态写点）= 不投影（读侧守卫归一）。
+   */
+  totalTokens?: number;
+  /** 终态 turn 计数快照（见 totalTokens 注）。 */
+  turns?: number;
+  /** 终态结束时间快照 ms（精确值，优于 light 路径的 jsonl mtime 近似）。 */
+  endedAt?: number;
 }
 
 /**
@@ -333,5 +358,26 @@ export function readRecordBinding(sessionFile: string): RecordBinding | undefine
     model: typeof parsed.model === "string" ? parsed.model : "",
     thinkingLevel: typeof parsed.thinkingLevel === "string" ? parsed.thinkingLevel : undefined,
     worktree: parsed.worktree === true,
+    // 来源身份两字段（H2 S3）：字面量守卫归一（非法/缺省 → undefined = "tool" 语义），
+    // 对齐 record-store.readEntryOriginFields 主 entry 重建侧的同名守卫。
+    origin:
+      parsed.origin === "workflow" || parsed.origin === "tool" ? parsed.origin : undefined,
+    parentRunId: typeof parsed.parentRunId === "string" ? parsed.parentRunId : undefined,
+    // 终态 usage 快照三字段（H2 A3）：number 守卫（非法/缺省 → undefined = 不投影）。
+    totalTokens: typeof parsed.totalTokens === "number" ? parsed.totalTokens : undefined,
+    turns: typeof parsed.turns === "number" ? parsed.turns : undefined,
+    endedAt: typeof parsed.endedAt === "number" ? parsed.endedAt : undefined,
   };
+}
+
+/**
+ * merge 更新 record 绑定 sidecar（[H2 A3] 终态写点专用）：读现有 binding → 合并
+ * patch → 原子重写。现有 binding 缺失/损坏时**跳过不造新**（updateRecordBinding 不
+ * 承担身份创建职责——binding 缺失 = 回填点也未跑过的异常窗口，用部分字段造 binding
+ * 会产出残缺身份；writeRecordBinding 才是创建入口）。best-effort 语义同写侧。
+ */
+export function updateRecordBinding(sessionFile: string, patch: Partial<RecordBinding>): void {
+  const existing = readRecordBinding(sessionFile);
+  if (existing === undefined) return;
+  writeRecordBinding(sessionFile, { ...existing, ...patch });
 }

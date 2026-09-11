@@ -35,6 +35,7 @@ import {
   project,
   snapshot,
   tryTransition,
+  updateFromEvent,
 } from "./execution-record.ts";
 import { doFinalizeRecord, doFinalizeRoundToIdle, writeManifestBestEffort, type RoundSettlementOutcome } from "./finalize-record.ts";
 // [H1 U2] chat 域统一进 run 域：ConversationContinuation（§3.4 全规格）——每 chatMode
@@ -127,7 +128,7 @@ import { EngineSdkError } from "@zhushanwen/subagent-engine-sdk";
 import type { ResumeAnchor } from "@zhushanwen/subagent-engine-sdk";
 import type { StreamSink, SubagentStream } from "./stream-sink.ts";
 import { createBackgroundStream } from "./stream-sink.ts";
-import { writeCancelledState, writeRecordBinding } from "./state-marker.ts";
+import { updateRecordBinding, writeCancelledState, writeRecordBinding } from "./state-marker.ts";
 import type { WorktreeHandle } from "./types.ts";
 import type {
   AgentEvent,
@@ -1571,6 +1572,10 @@ export class SubagentService {
       model: record.model,
       thinkingLevel: record.thinkingLevel,
       worktree: record.worktreeHandle !== undefined || record.hadWorktree === true,
+      // [H2 S3] 来源身份随绑定落盘：引擎子文件身份面（binding sidecar）是磁盘重建
+      // origin 的唯一现行载体，漏写则归档/重启后 workflow record 逃过 D1 投影过滤。
+      origin: record.origin,
+      parentRunId: record.parentRunId,
     });
   }
 
@@ -1868,12 +1873,12 @@ export class SubagentService {
     const identity = isPiRoute
       ? await this.resolveIdentity(execOpts)
       : this.resolveIdentityForEngine(
-          route.engine,
-          engineModel,
-          execOpts.agent ?? DEFAULT_AGENT_NAME,
-          agentConfig,
-          execOpts,
-        );
+        route.engine,
+        engineModel,
+        execOpts.agent ?? DEFAULT_AGENT_NAME,
+        agentConfig,
+        execOpts,
+      );
     if (!isPiRoute && engineModel !== undefined) execOpts.model = engineModel;
     // record 引擎留痕（对齐 executeViaEngine 盖章规则：pi 纯缺省不盖键；pi 兜底盖
     // 'pi'+from；非 pi 盖 engineId）。
@@ -1959,6 +1964,14 @@ export class SubagentService {
       // 内构 stream 同样经本包裹——refresh 与 widget flush 在同一 onDelta 调用点）。
       const journalOnEvent = journal.onEvent;
       const observedEvent = (event: AgentEvent): void => {
+        // [H2 A3 修复] live reducer 喂入恢复：W3 删 inproc pi 引擎时，原
+        // engines/pi/session-runner.ts agentEvent 出口的 updateFromEvent(record, event)
+        // 一并消失，协议化 service 侧未重建——record.turns/totalTokens 在 live 通路
+        // 零喂入，终态 entry 落盘同为 0（Gate B A3：workflow agent 实际消耗 LLM 而
+        // record 恒 0）。此处恢复 workflow 域喂入：reducer 与 journal-replay /
+        // session-view-service 重放路径同源（C5 守护），live ≡ replay 构造性成立；
+        // 事件序 = 引擎协议事件序，message_end(usage) 携带 token 增量。
+        updateFromEvent(record, event);
         refreshFromProtocolEvent(record.id);
         journalOnEvent(event);
       };
@@ -2445,12 +2458,25 @@ export class SubagentService {
     };
     // 对齐点③：journal 路径权威 = 引擎声明的池 key（writer 初始用占位，retarget 后
     // 与 handle.poolKey 同源）。
+    // [H2 Gate B 修复] live reducer 喂入恢复（runWorkflowEngineTask observedEvent 同款）：
+    // 非 pi 引擎派发此前 onEvent 直连 journal.onEvent——事件只落 ②级 journal，live record
+    // 零喂入（turns/totalTokens 恒 0，chat 域 record 与 tool one-shot 经非 pi 引擎同病）。
+    // 此处恢复 updateFromEvent 喂入：reducer 与 journal-replay / session-view-service
+    // 重放路径同源（C5 守护），live ≡ replay 构造性成立。喂入窗口 = run await 窗口，
+    // 终态后残余事件仅写内存 record 不落盘——与 workflow 域修法同一取舍。不接
+    // refreshFromProtocolEvent：非 pi 派发无轮次 no-progress 守护（arm 点在轮次域），
+    // 恒 no-op 不加。
+    const journalOnEvent = journal.onEvent;
+    const observedEvent = (event: AgentEvent): void => {
+      updateFromEvent(record, event);
+      journalOnEvent(event);
+    };
     const runCtx: RunContext = {
       taskId: record.id,
       poolKey: JOURNAL_INITIAL_POOL_KEY,
       signal,
       ctxModel: opts.ctxModel,
-      onEvent: journal.onEvent,
+      onEvent: observedEvent,
       onPoolResolved: journal.onPoolResolved,
       // [R4 §3.4 不变量 3] 运行中句柄回填通道（engine/port.ts RunContext.onHandleReady）
       onHandleReady: backfillEngineHandle,
@@ -2849,6 +2875,23 @@ export class SubagentService {
         // 续聊——[H1 U6] 键切换后恒构造 `resume` 键；应答时点 = agent_settled——轮末
         // 分流归属 Continuation onRunSettled）；非 chatMode = 一次性 run（协议面无
         // resume 键，终态语义对齐 settleOneShotOutcome）。
+        // [H2 Gate B 修复] live reducer 喂入恢复（runWorkflowEngineTask observedEvent
+        // 同款）：W3 删 inproc pi 引擎时，原 engines/pi/session-runner.ts agentEvent
+        // 出口的 updateFromEvent(record, event) 一并消失——chat 轮（Continuation）与
+        // tool one-shot 在 live 通路零喂入，record.turns/totalTokens 恒 0（journal-
+        // replay / session-view-service 重放路径反而保真，live ≡ replay 契约被破坏）。
+        // 此处恢复：reducer 与重放路径同源（C5 守护），事件序 = 引擎协议事件序，
+        // message_end(usage) 携带 token 增量。Continuation 轮间共用同一 record 实例
+        //（continuationFor 绑定），跨轮累积天然持续。喂入窗口 = run await 窗口——
+        // cancel/watchdog 抢先终态化后 run 收敛前到达的残余事件仅写内存 record 不落盘
+        //（终态 entry 已写，后续无 reportRecordTransition），且事件流随 kill 枯竭，
+        // 与 workflow 域修法同一取舍（不加状态守卫，维持单一形态）。中段守护刷新源①
+        // 照旧（refreshFromProtocolEvent 在已交棒/已 fire 时幂等 no-op；one-shot 分支
+        // 此前不接 onEvent，本修复顺带补齐其刷新源①）。
+        const observedEvent = (event: AgentEvent): void => {
+          updateFromEvent(record, event);
+          refreshFromProtocolEvent(record.id);
+        };
         const { outcome } = await engine.run(
           // resume 锚点轮引擎侧覆盖 model 解析（taskSpec 装配单一来源见 taskSpecWithModel）。
           this.taskSpecWithModel(opts, record.model),
@@ -2858,6 +2901,7 @@ export class SubagentService {
             signal,
             ...(stream !== undefined ? { stream } : {}),
             ctxModel: identity.resolved.model,
+            onEvent: observedEvent,
             // [F6] 根 session id 注入（relay 归属键 SESSION_ID 权威源；null/空串不上 wire）。
             // 本方法是 pi 引擎 background 派发的主路径（isPiRoute 恒路由至此，含 workflow
             // 域一次性 run——非 chatMode 不带 resume 键但同经此处），漏注 = pi child exit 13。
@@ -2871,9 +2915,6 @@ export class SubagentService {
                   recordId: record.id,
                   ...(resume !== undefined ? { resume } : {}),
                 },
-                // 中段守护刷新源①：轮内协议事件行（message_*/tool_*/turn_end——有效
-                // 事件到达即刷新；不接 journal，事件仅作活性信号消费）。
-                onEvent: () => refreshFromProtocolEvent(record.id),
               }
               : {}),
           },
@@ -3195,6 +3236,13 @@ export class SubagentService {
     // 写终态 sidecar（best-effort，sessionFile 可能为 undefined——窗口期 cancel）。
     if (record.sessionFile) {
       writeCancelledState(record.sessionFile, record.endedAt ?? Date.now());
+      // [H2 A3] 终态 usage 快照随 binding 落盘（finalizeRecord Step3a 同款语义，
+      // cancel 独立终态链的镜像补点——绕过 writeTerminalState，故在此补）。
+      updateRecordBinding(record.sessionFile, {
+        totalTokens: record.totalTokens,
+        turns: record.turnCount,
+        endedAt: record.endedAt,
+      });
     }
     this.store.archive(record);
     // [M2 Gate B] manifest 反查索引补写（best-effort fire-and-forget）。本路径原不写
@@ -3441,7 +3489,7 @@ function noteIfWorkflowNoProgressFired(
         `${result.error} | workflow no-progress watchdog fired: the run was aborted after a long ` +
         `silence window with no protocol event or stream delta. ` +
         `Recovery: check state with subagents action:'list' includeFinished:true (add includeWorkflow:true to also see workflow-dispatched subagents), then re-dispatch the workflow.`,
-      }
+    }
     : result;
 }
 

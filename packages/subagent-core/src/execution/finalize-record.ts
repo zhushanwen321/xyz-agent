@@ -21,7 +21,7 @@ import { getLogger } from "../core/logger.ts";
 import { removeAliveMarker } from "./alive-store.ts";
 import { bestEffort } from "./best-effort.ts";
 import { completeRecord } from "./execution-record.ts";
-import { writeCancelledState, writeFinalizedState } from "./state-marker.ts";
+import { updateRecordBinding, writeCancelledState, writeFinalizedState } from "./state-marker.ts";
 import type { ManifestStore } from "./manifest-store.ts";
 import type { ModelConfigService } from "./model-config-service.ts";
 import { getSubagentSessionDir } from "./path-encoding.ts";
@@ -148,6 +148,15 @@ function writeTerminalState(record: ExecutionRecord, closedReason: ClosedReason 
     } else {
       writeFinalizedState(record.sessionFile, closedReason);
     }
+    // [H2 A3] 终态 usage 快照随 binding 落盘：light 列表面（collectRecords 磁盘重建）
+    // 无 turns/totalTokens 数据源（子文件无 identity entry，全量重建面不可用），
+    // 恒 0——binding 快照是该面的唯一低成本文本源。best-effort（内部已吞 IO 错）；
+    // binding 缺失（回填点异常窗口）时内部跳过，不造残缺身份。
+    updateRecordBinding(record.sessionFile, {
+      totalTokens: record.totalTokens,
+      turns: record.turnCount,
+      endedAt: record.endedAt,
+    });
   } catch (err) {
     bestEffort(err, "writeTerminalState (finalizeRecord Step3)");
   }
