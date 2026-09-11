@@ -37,7 +37,7 @@ export const RENAME_INSTRUCTION =
  *
  * 跨包路径耦合（constraints.json C-ext-21）：`subagents` 目录布局由 xyz-agent 的
  * `packages/subagent-core/src/execution/path-encoding.ts`（getSubagentSessionDir /
- * encodeProjectPath）定义并写入。本包 role=universal，不 import subagent-core
+ * encodeCwd）定义并写入。本包 role=universal，不 import subagent-core
  * （import 会把 universal 包绑死在 xyz-agent 体系上），只按路径形态守卫——
  * path-encoding.ts 侧有对向注释互指。改 subagent 目录布局必须双侧同步改。
  * 三模式的新入口（message_end / rename_session 工具）同样复用本守卫。

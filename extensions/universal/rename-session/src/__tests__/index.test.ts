@@ -867,6 +867,27 @@ describe("rename_session 工具注册与 execute 守卫（D3）", () => {
 
 		expect(setup.setSessionNameMock).toHaveBeenCalledWith("agent 的新名字");
 	});
+
+	it("TC-T8: execute 时 subagent session 路径 → isError（throw 守卫，D7 三入口闭环 / C-ext-21）且不调 setSessionName；正常 session 路径不受影响", async () => {
+		setupWithMode(AGENT_TOOL_CONFIG);
+		const tool = setup.registeredTool as RegisteredRenameTool;
+
+		// subagent 路径：throw 且不落库（文案只说结论与指引，不暴露 subagents 目录路径细节）
+		await expect(
+			tool.execute(
+				"call-1",
+				{ title: "子会话标题" },
+				undefined,
+				undefined,
+				createMockCtx({ sessionDir: "/home/u/.pi/agent/subagents/--proj--/sessions" }),
+			),
+		).rejects.toThrow(/subagent.*不支持重命名/);
+		expect(setup.setSessionNameMock).not.toHaveBeenCalled();
+
+		// 对照：正常 session 路径（默认 sessionDir 不含 subagents 段）同一工具照常落库
+		await tool.execute("call-2", { title: "正常标题" }, undefined, undefined, createMockCtx());
+		expect(setup.setSessionNameMock).toHaveBeenCalledWith("正常标题");
+	});
 });
 
 // ────────────────────────────────────────────────────

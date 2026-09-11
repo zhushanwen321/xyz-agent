@@ -48,10 +48,21 @@ const RENAME_TOOL_MODE_GUARD_MESSAGE =
 	"模式已切换，rename_session 仅在 agent-tool 模式可用；本会话可切回 agent-tool 立即恢复（live 读 mode），或手动改名（GUI rename / pi 原生 /name）。";
 
 /**
+ * subagent session 的 rename_session 工具 execute 守卫文案（D7 守卫闭环，C-ext-21 三入口
+ * 复用；isError 经 throw 产生）。不暴露内部路径细节——subagents 目录形态是跨包实现耦合，
+ * 面向 agent 的报错只说结论与指引。
+ */
+const RENAME_TOOL_SUBAGENT_GUARD_MESSAGE =
+	"当前会话是 subagent 子任务会话（临时产物，不参与会话命名体系），不支持重命名；请继续当前任务，无需重试。";
+
+/**
  * 注册 rename_session 工具（D3 agent-tool 模式）。
  *
  * 关键语义：
- * - execute 内先 live 读 config 守卫：mode !== "agent-tool"（mode 切走后本工具残留在
+ * - subagent session 守卫（D7）：isSubagentSession 命中即 throw isError——subagent
+ *   子进程同样加载本 extension（全局 mode=agent-tool 时 subagent 也注册本工具），
+ *   子会话是临时产物不参与 rename 体系，与 message_end / turn_end 两入口同语义。
+ * - execute 内 live 读 config 守卫：mode !== "agent-tool"（mode 切走后本工具残留在
  *   已存活 session 的工具清单——pi 无 unregisterTool）→ throw isError（pi 0.84.4 实装：
  *   execute 正常返回的 isError 字段被丢弃，isError 状态只能经 throw 产生，
  *   agent-loop.js executePreparedToolCall catch → createErrorToolResult(message)）。
@@ -75,8 +86,13 @@ function registerRenameSessionTool(pi: ExtensionAPI): void {
 			params: { title: string },
 			_signal: AbortSignal | undefined,
 			_onUpdate: undefined,
-			_ctx: ExtensionContext,
+			ctx: ExtensionContext,
 		): Promise<AgentToolResult<Record<string, never>>> {
+			// subagent session 守卫先于 mode 守卫：subagent 拒绝与 mode 无关（即便 mode 仍为
+			// agent-tool 也不该命名临时子会话），且文案归因到 subagent 而非误导性的「模式已切换」
+			if (isSubagentSession(ctx.sessionManager.getSessionDir())) {
+				throw new Error(RENAME_TOOL_SUBAGENT_GUARD_MESSAGE);
+			}
 			const config = loadRenameConfig();
 			if (config.mode !== "agent-tool") {
 				throw new Error(RENAME_TOOL_MODE_GUARD_MESSAGE);

@@ -1,11 +1,11 @@
 # rename-session E2E 验收资产
 
-E2E wave（P0 探针 + T1 harness + A1-A5 场景）的探针结论与运行指南。
+E2E wave（P0 探针 + T1 harness + A1-A7 场景）的探针结论与运行指南。
 
 - 测试模型固定 `xiaomi-token-plan-cn/mimo-v2.5-pro`（项目规范，禁 kimi）
 - 本 E2E 定位为**本地人工触发的验收资产**（真实模型 API，不进常规 CI）
-- 场景 runner：`node e2e/run-a1.mjs` ~ `node e2e/run-a5.mjs`（单场景独立可跑）、`node e2e/run-all.mjs`（顺序全跑 + 汇总 + exit code），harness 见 `e2e/harness.mjs`
-- run-all 两种模式：默认全量 A1-A5（真实 pi + 真实模型，约 2-15 分钟，人工验收用）；`E2E_QUICK=1` 只跑 harness 断言工具单测（秒级，cw test gate 用——cw testRunner 硬编码 120s 命令超时，真实模型全量必超；E2E 场景正式验收证据 = RESULTS.md + 各场景跑记录）；vitest 入口等价物：`npx vitest run --config e2e/vitest.e2e.config.ts`（A1-A5 各一个 test；专用 e2e config 的 include 才含 scenarios.test.mjs，根 vitest.config.ts 白名单不含，不带 `--config` 直跑会 No test files found）
+- 场景 runner：`node e2e/run-a1.mjs` ~ `node e2e/run-a7.mjs`（单场景独立可跑）、`node e2e/run-all.mjs`（顺序全跑 + 汇总 + exit code），harness 见 `e2e/harness.mjs`
+- run-all 两种模式：默认全量 A1-A7（真实 pi + 真实模型，约 2-15 分钟，人工验收用）；`E2E_QUICK=1` 只跑 harness 断言工具单测（秒级，cw test gate 用——cw testRunner 硬编码 120s 命令超时，真实模型全量必超；E2E 场景正式验收证据 = RESULTS.md + 各场景跑记录）；vitest 入口等价物：`npx vitest run --config e2e/vitest.e2e.config.ts`（A1-A7 各一个 test；专用 e2e config 的 include 才含 scenarios.test.mjs，根 vitest.config.ts 白名单不含，不带 `--config` 直跑会 No test files found）
 
 ## P0 探针结论（2026-08-15 实测）
 
@@ -135,7 +135,7 @@ data:    { error: "unknown error" }   ← 结构化 data 字段，message 不含
 
 - **进程编排**：`spawnPi(opts)`（tmp 初始化 + auth 迁移 + 交错时间轴 + RPC client）、`startHangServer()`（A5 stub socket）
 - **RPC client**（spawnPi 返回值的 `rpc`）：`request(cmd)`（id 关联）、`waitFor(type, opts)`、`waitForSessionLog(pattern, opts)`（轮询 session JSONL 的 rename-session:log entry，pattern 匹配 message）、`prompt(msg)`、`setSessionName(name)`、`getState()`
-- **断言纯函数**（场景脚本与单测共用）：`rebuildPreview` / `parseLogMessages` / `extractRenameLogEntries` / `extractLastStopAssistant` / `assertTitleGuards` / `classifyFailure`
+- **断言纯函数**（场景脚本与单测共用）：`rebuildPreview` / `parseLogMessages` / `extractRenameLogEntries` / `extractLastStopAssistant` / `firstAssistantStartT` / `lastStopAssistantEndT` / `countToolCalls` / `countLlmRequestLogs` / `countSessionInfoEntries` / `assertTitleGuards` / `classifyFailure`
 - **清理**：handle 的 `kill()`（按 PID）与 `cleanup()`（kill + 删 tmp；`E2E_KEEP_TMP=1` 保留现场）
 
 单测：`cd extensions/universal/rename-session && npx vitest run e2e/harness.test.mjs`（根 vitest.config.ts 的 include 白名单精确列 `e2e/harness.test.mjs`；scenarios.test.mjs 只在专用 e2e/vitest.e2e.config.ts 的 include 里）。

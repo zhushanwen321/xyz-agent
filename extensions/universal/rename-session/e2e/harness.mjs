@@ -378,7 +378,8 @@ export function countSessionInfoEntries(lines) {
 }
 
 /** 英文 kebab-case：小写字母/数字 + 连字符分段。 */
-const KEBAB_RE = /^[a-z0-9]+(-[a-z0-9]+)*$/;/** 英文代词开头（We/I/This 作为独立词开头，\b 保证不误伤 widget/ios 等前缀拼接词）。 */
+const KEBAB_RE = /^[a-z0-9]+(-[a-z0-9]+)*$/;
+/** 英文代词开头（We/I/This 作为独立词开头，\b 保证不误伤 widget/ios 等前缀拼接词）。 */
 const EN_PRONOUN_START_RE = /^(?:we|i|this)\b/i;
 /** 中文代词/指示词开头。 */
 const ZH_PRONOUN_START = ["我", "你", "它"];
