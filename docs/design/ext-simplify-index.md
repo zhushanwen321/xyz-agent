@@ -9,8 +9,8 @@
 
 | # | 设计文档 | 覆盖包 | 覆盖发现（审计编号） | 四问记录（~/.pi/agent/tmp/） | 状态 |
 |---|---|---|---|---|---|
-| 01 | ext-simplify-01-unified-hooks-llm-shared.md | unified-hooks（删包）、llm-shared | C1 整包删除；low：MigrationResult 死导出、dependsOn reason 漂移（随删包消解）、session_start 上报机制（随删包） | session-view-01a0907b-7243-*.md | 设计就绪（审查 3 轮至 0 must-fix，20260912） |
-| 02 | ext-simplify-02-system-prompt-trace.md | taiji/system-prompt-trace | C2 baseline 持久化机制删除（前置：CLI 探针验证 reload 时序）；C11 Like*Event×4 + SessionStartReason/normalize 冗余；low：parseTraceEntryData/computePromptHash export 收敛 | session-view-01a0907b-7242-*.md | 设计就绪（审查 4 轮至 0 must-fix，20260912） |
+| 01 | ext-simplify-01-unified-hooks-llm-shared.md | unified-hooks（删包）、llm-shared | C1 整包删除；low：MigrationResult 死导出、dependsOn reason 漂移（随删包消解）、session_start 上报机制（随删包） | session-view-01a0907b-7243-*.md | 已实施（审查 3 轮至 0 must-fix；u 单元 committed，见 impl-plan 状态表，20260912） |
+| 02 | ext-simplify-02-system-prompt-trace.md | taiji/system-prompt-trace | C2 baseline 持久化机制删除（前置：CLI 探针验证 reload 时序）；C11 Like*Event×4 + SessionStartReason/normalize 冗余；low：parseTraceEntryData/computePromptHash export 收敛 | session-view-01a0907b-7242-*.md | 已实施（审查 4 轮至 0 must-fix；u 单元 committed，见 impl-plan 状态表，20260912） |
 | 03 | ext-simplify-03-goal.md | goal | C3-goal Like*Event×7；C10 VALID_TRANSITIONS 绕过；M14 write-only 必填字段（持久化兼容）；M15 message_end 三重表述；M16 UiPort theme 声明；M17 SessionPort 死成员；low：budget dimension 死字段、formatBudget 转发层、event-handlers 微碎片（contested→裁决）、port/ctx 双通道惯例 | session-view-01a09053-242a / 01a09053-2419 / 01a0904a-4e4d | 已实施（双审查至 0 must-fix；u1-u5 20260912） |
 | 04 | ext-simplify-04-session-reader.md | session-reader | C5 find 三次全量扫盘；low 群：doctor 缓存机（+设计 §6.3 回写）、测试 re-export 块×4 域模块、RESULT_ACTION_DEPS、err 双轨、fullEntry、formatLine/formatOutlineText 双份、family enrichRefs（contested→裁决）、readTailIdentity 双写、SessionRoot.id、byteBudget、OutlineOptions.budget、content 提取 5 变体 | session-view-01a08ff3-3bba / 3ba8 / 3b9a / 3b81 | 待设计 |
 | 05 | ext-simplify-05-permission.md | permission | C6 注入仪式（setDefaultListAvailableModels）；C7 rpcDeps 注入面；M6 审批卡双份；M7 CommandDeps×2；M8 cancel() 孤儿；M9 ResolvedModelEntry 三字段；M10 pattern 双写；M11 ui 适配闭包×3；low：rules barrel、pipeline export 面、winner 循环×3、toolName 守卫、SelectItem、rerender() | session-view-01a0904a-4e93 / 4e7e / 4e69 / 4e4b / 01a08ff3-3bae | 待设计 |
@@ -40,4 +40,4 @@
 | 起草（16 份，tech-design 五段骨架） | 01-15 已落盘（16 未起草）；20260912 收窄为仅 01/02/12 推进，后扩大：03/09/14 亦审查实施完成 |
 | 双审查（tech-design-review + tech-design-impact-review） | 01/02/03/09/12/14 完成；04-08/10/11/13/15/16 未审查 |
 | 修复循环（Step 7：每轮全修 must-fix+suggestion 至 0） | 01（3 轮）/ 02（4 轮）/ 12（2 轮）/ 09（2 轮）/ 03（聚焦复审 R1 双 0）/ 14（主审 R1 + 影响面 R2）均收敛至 0 must-fix |
-| 设计就绪宣告 + commit | ✅ 01/02/12 就绪，20260912 commit；03/09/14 随后就绪并实施完成（u 单元全部 committed，见各自 impl-plan 状态表） |
+| 设计就绪宣告 + commit | ✅ 01/02/03/09/12/14 六份全部就绪并实施完成（u 单元全部 committed，见各自 impl-plan 状态表；20260912） |
