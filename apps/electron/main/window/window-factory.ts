@@ -16,7 +16,8 @@
  *   错误页（重试按钮导航回应用源时重置该窗口计数）
  *
  * 依赖方向：window-factory → electron + input-validators + main/interfaces（type-only）
- *   + logs/main-logger（render-process-gone 详情落盘，u3）+ window/recovery-policy（熔断）
+ *   + logs/main-logger（render-process-gone 详情落盘，u3）+ logs/crash-journal（renderer
+ *   事件台账，crash-forensics D1）+ window/recovery-policy（熔断）
  */
 import path from 'node:path'
 import { pathToFileURL } from 'node:url'
@@ -24,6 +25,7 @@ import { app, BrowserWindow, shell } from 'electron'
 import type { WindowOptions } from '../interfaces.js'
 import { isAllowedAppNavigation, isValidExternalUrl } from '../gateway/input-validators.js'
 import { mainLogger } from '../logs/main-logger.js'
+import { crashJournal } from '../logs/crash-journal.js'
 import { RecoveryPolicy } from './recovery-policy.js'
 import { getDataDir } from '@xyz-agent/shared/paths'
 
@@ -377,14 +379,36 @@ export async function createWindow(
     if (win.isDestroyed()) return
     const action = rendererRecovery.recordCrash(windowId, Date.now())
     if (action === 'reload') {
+      // 崩溃台账（crash-forensics D1 renderer 行）：reload 事件，reason 透传 Electron
+      // RenderProcessGoneDetails 枚举（'oom' 真实存在——renderer OOM 可与普通崩溃
+      // 'crashed' 在台账区分；评估器 #9 数 reload、#10 按 reason 分类）。
+      crashJournal.append({ layer: 'renderer', event: 'reload', reason: details?.reason ?? null })
       reloadWindowAfterCrash(win, windowId, options?.sessionId, deps.isDev, details?.reason)
     } else {
+      // 熔断转静态页事件（D1 renderer 行「熔断转静态页事件」；挂在 RecoveryPolicy
+      // 决策的消费点——recovery-policy 本体保持零 IO 纯逻辑，见其文件头约束）。
+      crashJournal.append({ layer: 'renderer', event: 'crash', reason: 'circuit-breaker' })
       showStaticErrorPage(win, windowId, options?.sessionId, deps.isDev)
     }
   })
   // 窗口关闭清熔断计数：windowId 条目不残留（长寿 main 进程 Map 泄漏防护）
   win.once('closed', () => {
     rendererRecovery.reset(windowId)
+  })
+
+  // renderer 假死台账（crash-forensics D1 renderer 行第三事件：unresponsive）。
+  // 卡死是持续状态：记行后置位标记，'responsive'（恢复）复位——同一次持续卡死不
+  // 重复记行，卡死↔恢复循环每次各记一行；窗口销毁后监听器与闭包标记随 webContents
+  // 一起回收，无清理面。main 侧此前无 webContents unresponsive 处理器（C-proc-12
+  // 只覆盖 render-process-gone 崩溃恢复链），本挂点为纯新增，不改变既有行为。
+  let unresponsiveJournaled = false
+  win.webContents.on('unresponsive', () => {
+    if (unresponsiveJournaled) return
+    unresponsiveJournaled = true
+    crashJournal.append({ layer: 'renderer', event: 'unresponsive', reason: 'renderer-unresponsive' })
+  })
+  win.webContents.on('responsive', () => {
+    unresponsiveJournaled = false
   })
 
   // Cmd/Ctrl+W 拦截：drawer 打开时优先关 drawer，而非关窗口。

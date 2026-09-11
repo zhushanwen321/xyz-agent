@@ -77,6 +77,7 @@ import { isPathInAllowedPrefixes } from './gateway/input-validators.js'
 import { fixPathEnv } from './supervisor/shell-env.js'
 import { flushStderrSink } from './supervisor/process-control.js'
 import { initMainLogger, closeMainLogger } from './logs/main-logger.js'
+import { initCrashJournal, crashJournal } from './logs/crash-journal.js'
 import { expandLocalFilePath } from './utils/path.js'
 import { computeLocalFilePrefixes } from './utils/local-file-prefixes.js'
 
@@ -141,6 +142,13 @@ if (isDev) {
 // 早于一切业务初始化（render-process-gone / 启动期异常的落盘通道先于消费者就绪）。
 // writer 未 init 时 no-op，这里失败（磁盘满/权限）不阻断 app 启动。
 initMainLogger({ isPackaged: app.isPackaged })
+
+// ── 崩溃台账 writer init（crash-forensics §3.3 D1）────────────────
+// main 写 <dataDir>/logs/crashes/main.jsonl（main 自身 + renderer 事件；runtime 侧
+// 事件也经本文件写入——main 侧事件接线单元 u1f 的挂点在 supervisor/window-factory）。
+// initMainLogger 之后（同读 getDataDir() 动态推导）+ 早于一切业务挂接；纯惰性 IO
+// 零副作用，未 init 时各挂点 append 为 no-op（writer 契约）。
+initCrashJournal()
 
 // ── 单实例锁（integrity-hardening §3.2 D2d）───────────────────────
 // 双开 = 两个实例并发 spawn runtime、并发读写同一数据目录，会命中「pi session 文件
@@ -333,6 +341,16 @@ let isQuitting = false
 app.on('before-quit', (event) => {
   if (isQuitting) return // 第二次进入（app.quit() 触发），放行
   isQuitting = true
+  // 崩溃台账 before-quit 上下文（crash-forensics D1 shutdown 行）：app 级正常退出
+  // 的 shutdown 行在此写，runtime 随后的 exit 落 supervisor stopping 早退分支零写入
+  // （stopping 被 stop() 全部调用方置位，按 stopping 写行会把正常退出记假事件——
+  // 判别式详见 classifyRuntimeExit）。markAppQuitting 无条件（退出上下文是事实）；
+  // shutdown 行仅在 runtime 子进程在场时写——mock 模式 / 已崩溃 / 第二实例等形态
+  // runtime 并未发生「关闭」，写行即假事件。
+  runtime.markAppQuitting()
+  if (runtime.isRunning) {
+    crashJournal.append({ layer: 'runtime', event: 'shutdown', reason: 'planned' })
+  }
   // D6：curl 子进程非 detached，退出前同步清杀防孤儿进程继续占用带宽
   // （无活跃下载时 no-op；半下载产物由 .downloading 后缀 + sha256 校验兜底）
   killActiveCurlDownloads()

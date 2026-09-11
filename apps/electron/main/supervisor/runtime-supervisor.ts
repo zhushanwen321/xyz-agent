@@ -46,6 +46,7 @@ import { writePortFile } from './port-file.js'
 import { RestartPolicy, MAX_RESTARTS } from './restart-policy.js'
 import { LivenessMonitor, LIVENESS_FAIL_THRESHOLD } from './liveness-probe.js'
 import { mainLogger } from '../logs/main-logger.js'
+import { crashJournal } from '../logs/crash-journal.js'
 
 /**
  * 重启决策的触发源（杀链决策日志 D6-⑥ 的 trigger 字段）：
@@ -73,6 +74,42 @@ const RESTART_DECISION_REASONS: Record<SupervisorRestartTrigger, string> = {
   restart_failure: 'previous restart attempt failed to reach healthy state; continue backoff sequence',
 }
 
+// ── 崩溃台账：runtime 自身死亡判别式（crash-forensics §3.3 D1 shutdown 行第四挂点群）──
+
+/**
+ * 滚动重启专用退出码（设计 D5；产生方 = runtime 滚动重启执行链，u7c 交付）。
+ * main 侧是唯一在场消费者：runtime 被 SIGKILL 时自己写不了台账，supervisor 按此码
+ * 识别 planned 退出。模块级导出供 u7c supervisor 侧接线（86→立即重启零退避）复用。
+ */
+export const PLANNED_EXIT_CODE = 86
+
+/** onRuntimeExit 台账分类结果（D1 runtime 自身事件三挂点 + 第四挂点的 exit 侧归宿）。 */
+export type RuntimeExitJournalClass = 'planned-shutdown' | 'crash' | 'suppressed'
+
+/**
+ * runtime 退出分类判别式（crash-forensics D1 shutdown 行原文显式化，纯函数可单测）：
+ *
+ * **异常死亡 ⇔ 非 before-quit 上下文 且 退出码≠86 且 stopping=false**；三条件任一
+ * 命中即不写 crash。逐条件依据：
+ * - 86 优先 → planned-shutdown：专用退出码无论被谁观察到都是滚动重启计划内退出，
+ *   识别写入点在此立起（86 的产生方 u7c 后续交付）。
+ * - stopping → suppressed：stopping 被 stop() 全部调用方置位（app 退出 / liveness
+ *   强杀共用），按 stopping 写 crash 会把每次正常退出记假 crash 污染归因 #3——
+ *   app 退出的 exit 落本分支**不写任何行**（shutdown 行由 before-quit 上下文写），
+ *   liveness 强杀的行在 forceRestartForLiveness 杀链发起处双写（exit 时无行可写）。
+ * - appQuitting（before-quit 上下文）→ suppressed：防御纵深——标记与 stop() 置位
+ *   stopping 之间理论存在窗口，任一条件独立兜住「不把正常退出记 crash」。
+ */
+export function classifyRuntimeExit(input: {
+  exitCode: number | null
+  stopping: boolean
+  appQuitting: boolean
+}): RuntimeExitJournalClass {
+  if (input.exitCode === PLANNED_EXIT_CODE) return 'planned-shutdown'
+  if (input.appQuitting || input.stopping) return 'suppressed'
+  return 'crash'
+}
+
 /**
  * RuntimeSupervisor 实现。
  *
@@ -95,6 +132,13 @@ export class RuntimeSupervisor implements IRuntimeSupervisor {
   private restartTimer: ReturnType<typeof setTimeout> | null = null
   /** 存活探针定时器（start 成功后启动，stop 时关闭） */
   private livenessMonitor: LivenessMonitor | null = null
+  /**
+   * before-quit 上下文标记（main.ts before-quit handler 置位）——classifyRuntimeExit
+   * 判别式输入。stopping 被 stop() 全部调用方置位（app 退出/liveness 强杀共用），
+   * 单看 stopping 无法区分「app 级退出」与「强杀」；本标记使两类上下文可区分
+   * （crash-forensics D1 v6 第三挂点判别式显式化的配套输入）。
+   */
+  private appQuitting = false
 
   /** 当前监听端口（未启动为 null） */
   get port(): number | null {
@@ -104,6 +148,26 @@ export class RuntimeSupervisor implements IRuntimeSupervisor {
   /** 当前 runtime 的 WS auth token（未启动为 null）。renderer 经 get-runtime-token IPC 读取 */
   get token(): string | null {
     return this._token
+  }
+
+  /**
+   * runtime 子进程在场性（main.ts before-quit 的 shutdown 行判据）：child 在且未退出。
+   * before-quit 在 stop() 之前触发，此刻 child 大概率在场；runtime 未启动（mock）、
+   * 已崩溃（onRuntimeExit 已清 child）、重启用尽等待手动重试等形态均为 false——
+   * 这些形态写 runtime shutdown 行是假事件（runtime 并未发生「关闭」）。
+   * 判活形态对齐 start()/restartRuntime() 的 exitCode===null 守卫（killed 不可靠的
+   * [HISTORICAL] 教训）。
+   */
+  get isRunning(): boolean {
+    return this.child !== null && this.child.exitCode === null
+  }
+
+  /**
+   * 标记进入 app 级退出上下文（main.ts before-quit 调用；app 退出链不可逆，无复位面——
+   * start() 的复位仅为防御万一，正常时序不会在标记后再 start）。
+   */
+  markAppQuitting(): void {
+    this.appQuitting = true
   }
 
   /** 端口偏移量（dev 模式 +DEV_PORT_OFFSET），clamp 到合法范围 */
@@ -122,6 +186,9 @@ export class RuntimeSupervisor implements IRuntimeSupervisor {
   async start(): Promise<number> {
     // 重置停止标志（start 是新生命周期的开始，无论上次是崩溃还是主动 stop）
     this.policy.reset()
+    // 同理复位 before-quit 上下文标记（防御性：正常时序 start 先于 before-quit，
+    // 此处覆盖「标记后又有新 start」的非常规编排，防判别式误抑制真崩溃）
+    this.appQuitting = false
 
     // 幂等：已有活进程则复用，不重复 spawn
     // [HISTORICAL] 用 exitCode===null 判活而非 !killed：自然崩溃时 killed 仍为 false，
@@ -272,6 +339,11 @@ export class RuntimeSupervisor implements IRuntimeSupervisor {
       reason: 'process alive (exitCode null) but HTTP liveness probe failed threshold '
         + `(${LIVENESS_FAIL_THRESHOLD} consecutive times); killing process tree before backoff restart`,
     })
+    // 崩溃台账双写（crash-forensics D1 第四挂点）：必须与 kill decision 同点在杀链
+    // 发起处记——下方 markStopping 后，本强杀的 exit 落 onRuntimeExit 的 stopping
+    // 早退分支无行可写（D1：按 stopping 写 crash 会把正常退出记假 crash，故该分支
+    // 零写入），不在发起处记则 liveness 判死在台账永久缺席。
+    crashJournal.append({ layer: 'runtime', event: 'unresponsive', reason: 'liveness-unhealthy' })
     // markStopping 防止 stop 触发的 exit 被 onRuntimeExit 当崩溃重复重启
     this.policy.markStopping()
     // kill 半活进程 + 清 child/port（不触发 onRuntimeExit 的重启逻辑）
@@ -309,6 +381,24 @@ export class RuntimeSupervisor implements IRuntimeSupervisor {
     this.child = null
     this._port = null
     this._token = null
+
+    // 崩溃台账（crash-forensics D1：runtime 自身事件由 main 侧写——runtime 被 SIGKILL
+    // 时自己写不了，supervisor 是唯一在场者）。分类判别式见 classifyRuntimeExit：
+    // - planned-shutdown（exit 86）→ shutdown/planned；reason='planned' 是 schema 已知值
+    // - crash → crash/process_exit；reason 用既有 SupervisorRestartTrigger 词（台账
+    //   reason 为开放枚举，未登记进 shared KNOWN_REASONS——那是 u1a 领地，开放语义允许携带）
+    // - suppressed（stopping / before-quit 上下文）→ 零写入：本分支覆盖 app 级正常退出
+    //   与 liveness 强杀两类 exit（后者的行在 forceRestartForLiveness 杀链发起处）
+    const verdict = classifyRuntimeExit({
+      exitCode: code,
+      stopping: this.policy.stopping,
+      appQuitting: this.appQuitting,
+    })
+    if (verdict === 'planned-shutdown') {
+      crashJournal.append({ layer: 'runtime', event: 'shutdown', reason: 'planned', exitCode: code })
+    } else if (verdict === 'crash') {
+      crashJournal.append({ layer: 'runtime', event: 'crash', reason: 'process_exit', exitCode: code })
+    }
 
     // 主动停止：不重启（stop() 已 markStopping）
     if (this.policy.stopping) {

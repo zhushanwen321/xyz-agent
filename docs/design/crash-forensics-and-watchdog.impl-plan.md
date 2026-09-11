@@ -167,7 +167,11 @@ graph TD
 | 13 | u10b O3-C 注记落 deep-dive.md（计划领地误写 stale-ctx-audit.md）；stale-ctx-audit.md 补登 4 包（system-prompt/ask-user/todo/ext-guards，逐包源码实锚判定排除） | 计划领地笔误；补登是守卫首跑暴露的真实普查表漏登（26 包 exit 0 真实绿），按 blocker 裁决「补登不削弱」处理 | 实施期登记 |
 | 14 | u7a 契约面增补 ack 常量 + 初始上报时点实现为 session_start（设计原文「extension 加载完成」在 pi 0.84.4 无 ctx 可用） | ack 使 fire-and-forget 的「送达 vs 超时」可判定（D5 errs 语义前提）；session_start = 设计「session 就绪、非懒触发」的真实意图，factory 阶段拿不到 ctx 是 pi 0.84.4 事实约束。u7b 承接 ack resolve | 实施期登记 |
 | 15 | u7a 领地实际 16 文件（含 6 测试）超出 ≤5 粒度线；subagent-core/src/index.ts barrel 导出属领地字面外 | 发射点接线是出口的必要件（session-runner/pi-engine 在 execution/engine/ 领地内）；barrel 是壳层消费的唯一通路（exports 面已收窄）且无其他单元认领。拆分成本 > 一致性收益，事后追认 | 实施期登记 |
-| 16 | extensions:test 1 个失败与本流水线无关：session-reader TC-m3b-real-data-guard 硬编码本机 FAM session id 静态断言，本机数据演化致过期 | 非本次改动引入（u10b 未改任何 extension 源码）；但会挡 Gate A 全绿——派独立小修（fixture 化），登记为流水线外债 | 实施期登记 |
+| 16 | extensions:test 1 个失败与本流水线无关：session-reader TC-m3b-real-data-guard 硬编码本机 FAM session id 静态断言，本机数据演化致过期 | 非本次改动引入（u10b 未改任何 extension 源码）；已派独立小修 fixture 化/动态发现，登记为流水线外债 | 已销账（23e2ffaf9） |
+| 17 | u1f main.ts before-quit shutdown 行加 runtime.isRunning 在场性 guard（设计原文无条件写） | mock 模式/runtime 已崩/第二实例形态下 runtime 并未「关闭」，无条件写产生假 shutdown 行（设计自己反对的污染形态）；markAppQuitting 标记本身无条件。**阶段 6 回写设计措辞** | 实施期登记 |
+| 18 | 接线单元产生的全部新 reason 值（scheduled/attempt/succeeded/retry-scheduled/breaker-tripped/process_exit/liveness-unhealthy/renderer-unresponsive 等）未登记 shared CRASH_JOURNAL_KNOWN_REASONS 元组 | schema SSOT 属 u1a 领地而各接线单元领地互斥；开放枚举语义下值可携带不影响功能。**阶段 3 一致性审查统一扩充**（与 endAndAwait 双实现评估同批） | 实施期登记 |
+| 19 | 存量 supervisor 邻接风险（u1f 顺带发现，未修）：宽限超时 liveness 强杀的迟到 exit 落 crash 分类（stopping 已被 reset 清除）；onRuntimeExit 清 child 引用不分新旧进程代际 | 均为既有行为非本次引入；修复属行为变更超出台账接线单元 scope。登记残留风险待办 | 实施期登记 |
+| 20 | u7b 的 spawn 形态预置 0 生命周期接线分发：u4（session-service 钩子：新 session/respawn，fork 归属核实）/ u5（reattach/lazy restore）；u7b 只交付 mirror API + 事件适配 + 协议 | 领地互斥约束下的必要拆分；设计契约（五形态预置 0 + 对账 + errs 判别）不变，u4/u5 任务书承接 | 实施期登记 |
 
 ## 6 状态表
 
@@ -179,7 +183,7 @@ graph TD
 | u1d1 | committed | 1 | 抑制语义下 deleted/shutdown 仍产生 + planned 不误记 crash；新增 6 用例 + 全量 5380 零回归 + typecheck 绿（编排者重跑核验） |
 | u1d2 | pending | — | — |
 | u1e | pending | — | — |
-| u1f | pending | — | — |
+| u1f | committed | 2（轮次 2 补 renderer unresponsive 接线） | 判别式 8 组合真值表 + liveness 双写 + renderer oom/crashed/熔断/unresponsive（卡死期单行+responsive 复位）；18 tests + tsc 0（编排者重跑核验） |
 | u2 | pending | — | — |
 | u3a | pending | — | — |
 | u3b | pending | — | — |
