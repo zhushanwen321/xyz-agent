@@ -59,7 +59,7 @@
 - E6 `extensions/shared/llm-shared/src/index.ts`（:8 移除 `type MigrationResult`，保留 `migrateLegacyConfig` 导出；`src/migrate.ts` :22/:34 不动）+ 新增 `.changeset/pi-llm-shared-remove-migration-result.md`（frontmatter `"@zhushanwen/pi-llm-shared": minor`，body 载明移除内容与「全仓零消费」依据）
 - E8 五处：`docs/extensions/logging-conventions.md`（:158 行号引用改 git 历史锚点，:14/:162 保留）；`docs/design/base-tool-enhance.md`（:8 相对链接改纯文字「unified-hooks（已删除，git 历史即归档）」；:388 路径条目整条改写为「unified-hooks：已删除（2026-09，ext-simplify-01），原 timeout-guard 源码 `git log --follow` 可查」）；`docs/todo/extension-log-cleanup-design.md`（:142 原路径行改写为「原 unified-hooks 包 tool-error-handler.ts（已删除，`git log --follow` 可查）（tool_execution_end isError 分支）」+ P4 节首加设计指定状态行）；`docs/architecture/builtin-extension-dev-build-split.md`（:70 下方既有历史注记补「unified-hooks 已于 2026-09 删除（ext-simplify-01）」）。改写文案以设计 §3.4 E8 行为权威。
 
-**u1 领地负清单（禁改）**：附录 A 白名单全部条目（bte `src/tool-error-audit.ts` / `force-patterns.ts` / `bash-tool.ts` / `index.ts` 及其 `__tests__`、subagent-workflow 两处注释、`extensions/shared/extension-logger/src/index.ts:222`、`packages/runtime/scripts/record-get-entries-fixtures.mjs:30`、`packages/shared/src/mandatory-extensions.json:18`、根 `README.md:138` / `README_EN.md:138`、各包 CHANGELOG）；`extensions/universal/permission/src/index.ts:102-104`（只读核对，不动）；pi 源码、npm registry 侧（Out-of-scope）。
+**u1 领地负清单（禁改）**：附录 A 白名单全部条目（bte `src/tool-error-audit.ts` / `force-patterns.ts` / `bash-tool.ts` / `index.ts` 及其 `__tests__`、subagent-workflow 两处注释、`extensions/shared/extension-logger/src/index.ts:226`（原 :222，14 号流水线 +4 行注释漂移后行号）、`packages/runtime/scripts/record-get-entries-fixtures.mjs:30`、`packages/shared/src/mandatory-extensions.json:18`、根 `README.md:138` / `README_EN.md:138`、各包 CHANGELOG）；`extensions/universal/permission/src/index.ts:102-104`（只读核对，不动）；pi 源码、npm registry 侧（Out-of-scope）。
 
 **u1 验收条款**（A1-A12，全部可机械核验；前置检查 P 列于 §7 探针转入）：
 
@@ -174,3 +174,4 @@ graph TD
 
 - v1（2026-09-12）：初稿。依据设计 v3（双审 0 must-fix 收官）+ DAG 判据（`~/.agents/skills/dev-flow/references/dag-authoring.md`）起草；单元领地全部路径/行号/现状基数（19 命中、junit 38、config.json:21、lock:697）于起草时点实读核实。
 - v1.1（2026-09-12）：阶段 3 一致性审查修复（impl-plan:48 计数笔误 12→10、设计附录 A 行号锚点 :222→:226 漂移更新、§5 补 E8① 措辞偏差登记）+ 阶段 5 双级验收 pass 回填（Gate A 全绿 + Gate B 退役态三查抽验 pass，报告 .review/stage5-gate-{a,b}-report.md）。
+- v1.2（2026-09-12）：阶段 6 design-code-sync r1 修复（本计划 :62 负清单行号 :222→:226 与设计附录 A 对齐——v1.1 只修了设计端漏了计划端）。
