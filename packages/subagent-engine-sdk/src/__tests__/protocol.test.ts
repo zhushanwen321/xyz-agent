@@ -116,15 +116,14 @@ describe("量级常量（impl-plan §2.1 逐项写死）", () => {
   });
 });
 
-describe("10 正向方法全集", () => {
-  it("恰好 10 个方法，无多无少（v1 方法集冻结）", () => {
-    expect(PROTOCOL_METHODS).toHaveLength(10);
+describe("9 正向方法全集", () => {
+  it("恰好 9 个方法，无多无少（v1 方法集；[H1] interact 已随 chat-run 统一退役）", () => {
+    expect(PROTOCOL_METHODS).toHaveLength(9);
     expect([...PROTOCOL_METHODS]).toEqual([
       "initialize",
       "probe",
       "run",
       "cancel",
-      "interact",
       "read",
       "listModels",
       "validateModel",
@@ -144,9 +143,9 @@ describe("10 正向方法全集", () => {
   });
 });
 
-describe("9 反向通道全集与超时二分（R9-2；v1.x 增 host/roundLifecycle）", () => {
-  it("恰好 9 个通道", () => {
-    expect(REVERSE_CHANNELS).toHaveLength(9);
+describe("8 反向通道全集与超时二分（R9-2；[H1] v1.x 曾增的轮次相位通道已退役）", () => {
+  it("恰好 8 个通道", () => {
+    expect(REVERSE_CHANNELS).toHaveLength(8);
     expect([...REVERSE_CHANNELS]).toEqual([
       "host/log",
       "host/askUser",
@@ -156,11 +155,10 @@ describe("9 反向通道全集与超时二分（R9-2；v1.x 增 host/roundLifecy
       "host/handleReady",
       "host/childSpawned",
       "host/childStateChanged",
-      "host/roundLifecycle",
     ]);
   });
 
-  it("二分：数据面 7 通道 10s 超时；人机交互 2 通道不设统一超时", () => {
+  it("二分：数据面 6 通道 10s 超时；人机交互 2 通道不设统一超时", () => {
     const dataPlane = REVERSE_CHANNELS.filter(
       (ch) => REVERSE_CHANNEL_TIMEOUT_CLASS[ch] === "data-plane",
     );
@@ -174,7 +172,6 @@ describe("9 反向通道全集与超时二分（R9-2；v1.x 增 host/roundLifecy
       "host/handleReady",
       "host/childSpawned",
       "host/childStateChanged",
-      "host/roundLifecycle",
     ]);
     expect(interaction).toEqual(["host/askUser", "host/permission"]);
   });

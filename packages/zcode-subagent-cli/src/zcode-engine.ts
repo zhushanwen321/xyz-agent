@@ -60,8 +60,6 @@ import type {
   AgentEvent,
   AgentOutcome,
   EngineCapabilities,
-  InteractAction,
-  InteractResult,
   ProbeReport,
   SessionView,
 } from "@zhushanwen/subagent-engine-sdk";
@@ -865,21 +863,6 @@ export class ZcodeEngine implements EnginePort {
     }
     // coarse 事件（不变量 5：事件 emit 完成先于 run resolve——journal 完整性）
     for (const ev of synthesizeCoarseEvents(payload.response, payload.usage)) emit(ev);
-  }
-
-  /**
-   * D1 可选面：zcode 首期不支持 conversation（capabilities 声明）——同步拒绝、
-   * 不创建进程，文案给可操作建议（A11）。
-   */
-  async interact(_handle: EngineHandle, _action: InteractAction): Promise<InteractResult> {
-    return {
-      ok: false,
-      code: "engine_capability_unsupported",
-      message:
-        "zcode 引擎不支持 conversation 交互控制面（capabilities.conversation = 'unsupported'，" +
-        "每任务自包含会话，无同进程 idle 复用）。恢复指引：改用单次 subagent 调用重新派发任务，" +
-        "或使用 engine: 'pi'（chatMode idle 复用，支持 message/close/cancel）。",
-    };
   }
 
   /** [U7] 模型可发现性：v2 桌面登录态聚合（带凭据 provider × models），失败安全返回清单本身可能为空。 */

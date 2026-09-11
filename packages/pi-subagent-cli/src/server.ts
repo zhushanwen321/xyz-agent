@@ -6,7 +6,7 @@
 //
 //   core EngineClient（spawn+握手+请求关联+反向路由） ←NDJSON stdio→ 本服务器
 //
-// 10 正向方法逐个映射到 EnginePort（本地 port-types 镜像）成员；run 期间事件经
+// 9 正向方法逐个映射到 EnginePort（本地 port-types 镜像）成员；run 期间事件经
 // `event` 通知（runId + 单调 seq）外发，onPoolResolved/onHandleReady/onChildSpawned/
 // stream 经 host/* 反向请求上抛。
 //
@@ -15,6 +15,10 @@
 //     （PiEngine.bindAskUser → ui-request-queue 两阶段等待体；ack 后等待不计
 //     in-flight 自灭计时——R9-2）；
 //   - host/childSpawned / host/childStateChanged：spawn-runner 镜像回调 → 协议帧。
+//
+// [H1 U5] chat 会话反向通道面（bindHostChannels：轮次相位帧/active 心跳/
+// recordId 键 streamDelta/会话级 askUser）已随 chat-session.ts 删除——chat 轮 =
+// run 派发形态（每轮一进程），askUser 与镜像帧同走 per-run 绑定（run ctx 还原面）。
 //
 // 反向请求客户端：帧④ {id:"rev-N", method:"host/*", params} 必须应答；每个请求
 // 登记进 ReverseRequestClock（armEngineSelfDestruct 的辅助判据面）。
@@ -30,8 +34,6 @@ import {
   type EngineHandleData,
   type InitializeParams,
   type InitializeResult,
-  type InteractAction,
-  type InteractResult,
   type ProbeReport,
   type ReadParams,
   type ReverseRequestClock,
@@ -44,7 +46,6 @@ import {
 
 import { PI_ADAPTER_VERSION } from "./constants.ts";
 import { PiEngine } from "./pi-engine.ts";
-import type { ChatHostChannels } from "./chat-session.ts";
 import { parseCtxModel, type EnginePort, type EngineStream, type EngineCtxModel, type RunContext } from "./port-types.ts";
 import { toErrorMessage } from "./error-message.ts";
 
@@ -58,8 +59,6 @@ export interface EngineProtocolServerOptions {
   /** 引擎实例（缺省 createDefaultPiEngine——测试注入 fake/DI 实例）。 */
   engine?: EnginePort & {
     bindAskUser?(handler: ((req: UiRequest) => Promise<UiResponse>) | undefined): void;
-    /** [v1.x] chat 会话反向通道发射面绑定（roundLifecycle / recordId 键 streamDelta）。 */
-    bindHostChannels?(channels: ChatHostChannels | undefined): void;
   };
   /** 反向请求计时面（armEngineSelfDestruct 产物；缺省不计时——测试用）。 */
   reverseClock?: ReverseRequestClock;
@@ -98,7 +97,7 @@ export class EngineProtocolServer {
   private readonly reverseTimeoutMs: number;
   private readonly activeRuns = new Map<string, ActiveRun>();
   private readonly reversePending = new Map<string, ReversePending>();
-  /** 10 正向方法 → EnginePort 装配表（构造期冻结；表驱动分发）。 */
+  /** 9 正向方法 → EnginePort 装配表（构造期冻结；表驱动分发）。 */
   private readonly dispatchTable: Record<string, (params: unknown) => unknown>;
   private revSeq = 0;
   private initialized = false;
@@ -109,24 +108,6 @@ export class EngineProtocolServer {
     this.reverseClock = opts.reverseClock;
     this.reverseTimeoutMs = opts.reverseTimeoutMs ?? REVERSE_TIMEOUT_DEFAULT_MS;
     this.dispatchTable = this.buildDispatchTable();
-    // [v1.x → U5 退役面] chat 会话反向通道发射面绑定（进程生命周期级）：U3 起
-    // ChatSessionRegistry 的注册链路已解耦（run 路径不再 startRound），本绑定仅剩
-    // registry 残余消费面（无注册即无发射），保留到 U5 随 chat-session.ts 删除：
-    // roundLifecycle 三终态 + active 轮内心跳 + recordId 键 streamDelta +
-    // 会话级 askUser + 子进程退出态（SR-4）。
-    this.engine.bindHostChannels?.({
-      streamDelta: (p) => {
-        void this.reverseRequestInternal("host/streamDelta", p);
-      },
-      roundLifecycle: (p) => {
-        void this.reverseRequestInternal("host/roundLifecycle", p);
-      },
-      askUser: (runId, request) =>
-        this.reverseRequestInternal("host/askUser", { runId, request }) as Promise<UiResponse>,
-      childStateChanged: (p) => {
-        void this.reverseRequestInternal("host/childStateChanged", p);
-      },
-    });
   }
 
   /** 入站帧消费（请求帧 + 反向请求应答帧；main.ts 的行解析器拆行后喂入）。 */
@@ -163,7 +144,7 @@ export class EngineProtocolServer {
     // 无法归类的帧：静默忽略（stdout 是独占协议通道，不回显坏帧防对端解析器混乱）。
   }
 
-  /** 10 正向方法 → EnginePort 装配表（协议载荷 cast 收敛在各方法适配行）。 */
+  /** 9 正向方法 → EnginePort 装配表（协议载荷 cast 收敛在各方法适配行）。 */
   private buildDispatchTable(): Record<string, (params: unknown) => unknown> {
     return {
       initialize: (params) => this.initialize(params as InitializeParams),
@@ -171,7 +152,6 @@ export class EngineProtocolServer {
         this.engine.probe(typeof params === "object" && params !== null ? (params as { force?: boolean }) : undefined) as Promise<ProbeReport>,
       run: (params) => this.run(params as RunParams),
       cancel: (params) => this.cancel(params as { runId: string; reason: string }),
-      interact: (params) => this.interact(params as { handle: EngineHandleData; action: InteractAction }),
       read: (params) => this.read(params as ReadParams),
       listModels: () => ({ models: this.engine.listModels?.() ?? null }),
       validateModel: (params) => this.validateModel(params as { modelRef?: string }),
@@ -183,7 +163,7 @@ export class EngineProtocolServer {
     };
   }
 
-  /** 10 正向方法分发（表驱动；未知方法 → engine_protocol_unknown_method）。 */
+  /** 9 正向方法分发（表驱动；未知方法 → engine_protocol_unknown_method）。 */
   private async dispatch(id: number, method: string, params: unknown): Promise<unknown> {
     const handler = this.dispatchTable[method];
     if (handler === undefined) {
@@ -237,7 +217,7 @@ export class EngineProtocolServer {
     // ack 后等待不计 in-flight 自灭计时——R9-2；run 结束解绑防跨 run 串扰）。
     // [H1 U3] chat 轮 = run 派发形态（每轮一进程，agent_settled 收敛即收割），
     // 同走 per-run 绑定；「会话跨 run 存活、askUser 固定绑定」的 chat 特判随
-    // ChatSessionRegistry 解耦退役（bindHostChannels 面保留到 U5 删）。
+    // ChatSessionRegistry 退役（bindHostChannels 面已随 U5 删除）。
     this.engine.bindAskUser?.((request: UiRequest) =>
       this.reverseRequestInternal("host/askUser", { runId, request }) as Promise<UiResponse>,
     );
@@ -326,10 +306,6 @@ export class EngineProtocolServer {
     const active = this.activeRuns.get(params.runId);
     if (active !== undefined) active.controller.abort(new Error(`cancelled by host: ${params.reason}`));
     return { ok: true };
-  }
-
-  private async interact(params: { handle: EngineHandleData; action: InteractAction }): Promise<InteractResult> {
-    return this.engine.interact({ data: params.handle }, params.action);
   }
 
   private read(params: ReadParams): Promise<SessionView> {

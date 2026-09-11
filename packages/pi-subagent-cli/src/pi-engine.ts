@@ -3,13 +3,14 @@
 // PiEngine 协议化引擎适配器（W7，impl-plan §2.7）——core engines/pi/pi-engine.ts
 // 的引擎进程内形态。
 //
-// 归属对照（设计 §3.8 D2 表；[H1 U3] chat-run 统一 docs/design/subagent-chat-run-unification.md
+// 归属对照（设计 §3.8 D2 表；[H1 U3/U5] chat-run 统一 docs/design/subagent-chat-run-unification.md
 // §3.3 D6/D7 后形态）：
 //   - spawn 执行链（runSpawn 本体 / sendPromptCommand / EPIPE 兜底 / stdin 驱动）
 //     → 本包 spawn-runner（迁移物）；
 //   - chat 轮次 → run 派发形态（每轮一进程：首轮无锚点新建，续聊 resume 锚点
-//     --session 续写原文件；agent_settled resolve + 收割——D7）。ChatSessionRegistry
-//     的注册/消费链路已解耦（registry 本体与 interact 控制面 U5 退役）；
+//     --session 续写原文件；agent_settled resolve + 收割——D7）。U5 起 registry 本体
+//     与 interact 控制面已删除（续聊不经 interact——deliverChatMessage 面 = U2 建
+//     ConversationContinuation 后的 run 域派发）；
 //   - HostBridge 编排面（executeAndAwait / record 状态回写 / idle+activate lock 定时器）
 //     → core（W3 改线消费本引擎的事件面）；
 //   - read：①级 pi 原生读取依赖 core session-reconstructor（§2.7「保持 core」），
@@ -30,8 +31,6 @@ import {
   type AgentEvent,
   type AgentOutcome,
   type EngineCapabilities,
-  type InteractAction,
-  type InteractResult,
   type ProbeReport,
   type SessionView,
   type UiRequest,
@@ -43,22 +42,14 @@ import { toErrorMessage } from "./error-message.ts";
 import type { AgentCallOpts, EngineHandle, EnginePort, EngineCtxModel, RunContext } from "./port-types.ts";
 import type { PiInvocation } from "./pi-invocation.ts";
 import { getPiInvocation } from "./pi-invocation.ts";
+import { resetAllEpipeFailures } from "./stdin-writer.ts";
 import {
-  clearEpipeFailure,
-  EPIPE_FAILURE_THRESHOLD,
-  recordEpipeFailure,
-  sendPromptCommand,
-  resetAllEpipeFailures,
-} from "./stdin-writer.ts";
-import {
-  getActiveChild,
   killAllActiveChildren,
   type SpawnRunCallbacks,
   type SpawnRunParams,
   type SpawnRunResult,
   runSpawnOnce,
 } from "./spawn-runner.ts";
-import { ChatSessionRegistry, type ChatHostChannels } from "./chat-session.ts";
 import { replayJournalToSessionView } from "./read-fallback.ts";
 
 const logger = getLogger("pi-engine");
@@ -100,18 +91,9 @@ export class PiEngine implements EnginePort {
 
   private readonly deps: PiEngineDeps;
   private probeCache: ProbeReport | undefined;
-  /**
-   * [U5 退役面] chat 会话注册表——U3 起注册/消费链路已解耦（run 路径不再
-   * startRound，interact 的 chatSessions.has 路由恒未命中、走 run 域分支）；
-   * 实例与 bindHostChannels 面保留到 U5 随 chat-session.ts 一并删除。
-   */
-  private readonly chatSessions: ChatSessionRegistry;
 
   constructor(deps: PiEngineDeps = {}) {
     this.deps = deps;
-    this.chatSessions = new ChatSessionRegistry(
-      deps.spawnRunner !== undefined ? { spawnRunner: deps.spawnRunner } : {},
-    );
   }
 
   /** pi 链路实际接通的能力（与 core PiEngine.capabilities() 逐位一致——manifest 同源）。 */
@@ -121,8 +103,8 @@ export class PiEngine implements EnginePort {
       schemaEnforcement: "native",
       // pi RPC 有 steer，但 spawn 链路未接通（turn-limiter steer no-op）
       steer: "unsupported",
-      // chat 轮 = run 派发形态（每轮新 run + resume 锚点续写，D7）；interact 控制
-      // 面保留到 U5 退役（ChatSessionRegistry 链路已解耦，不再承载轮次）
+      // chat 轮 = run 派发形态（每轮新 run + resume 锚点续写，D7）——conversation 位
+      // 语义收窄为 resume 能力位（D5）
       conversation: "native",
       // persona 经 --skill / --append-system-prompt flag 通道注入
       personaInjection: "flag",
@@ -212,94 +194,6 @@ export class PiEngine implements EnginePort {
   }
 
   /**
-   * D1 交互控制面。[H1 U3] ChatSessionRegistry 的注册链路已解耦（run 路径不再
-   * startRound），chatSessions.has 恒未命中——全量走 run 域分支：message 热路径
-   * 直写、close = SIGTERM、cancel = SIGTERM（无收敛等待——run 域 cancel 帧另有
-   * AbortController 通道，收敛由 run 应答承载）。chat 会话命中分支保留到 U5
-   * 随 registry 一并删除（续聊语义 = 新 run + resume 锚点，不再经 interact）。
-   */
-  async interact(handle: EngineHandle, action: InteractAction): Promise<InteractResult> {
-    try {
-      const recordId = refString(handle.data.sessionRef, "recordId");
-      if (recordId === undefined) return notResumable(handle);
-      if (this.chatSessions.has(recordId)) return this.interactChatSession(recordId, action);
-      return this.interactRunDomain(recordId, action);
-    } catch (err) {
-      return {
-        ok: false,
-        code: "engine_interact_failed",
-        message: toErrorMessage(err),
-      };
-    }
-  }
-
-  /** chat 会话命中分支（长驻）：cancel/close/message 直派 chat-session
-   *  （close force=杀链立即收割 / 缺省=优雅；message streamingBehavior 由 interrupt 决定）。 */
-  private async interactChatSession(recordId: string, action: InteractAction): Promise<InteractResult> {
-    if (action.kind === "cancel") return this.chatSessions.cancel(recordId);
-    if (action.kind === "close") return this.chatSessions.close(recordId, action.payload?.force === true);
-    return this.chatSessions.deliverMessage(recordId, action.payload, action.interrupt === true);
-  }
-
-  /** 未命中分支：一次性 run 的活跃子进程 / 冷句柄——message 热路径直写 stdin、
-   *  close/cancel = SIGTERM（run 域 cancel 帧另有 AbortController 通道，收敛由 run 应答承载）。 */
-  private interactRunDomain(recordId: string, action: InteractAction): InteractResult {
-    if (action.kind === "cancel") {
-      const child = getActiveChild(recordId);
-      if (child === undefined) return { ok: true, delivered: true };
-      child.kill("SIGTERM");
-      return { ok: true, delivered: true };
-    }
-    if (action.kind === "close") {
-      killRecordChild(recordId);
-      return { ok: true, delivered: true };
-    }
-    return this.deliverHotPathMessage(recordId, action);
-  }
-
-  /** message 热路径（进程活）sendPromptCommand 直写 stdin + EPIPE 兜底
-   *  （连续失败达阈值 → 抛错升级为 engine_interact_failed；未达 → not_resumable 降级）。 */
-  private deliverHotPathMessage(
-    recordId: string,
-    action: Extract<InteractAction, { kind: "message" }>,
-  ): InteractResult {
-    const child = getActiveChild(recordId);
-    if (child === undefined || child.killed) {
-      return {
-        ok: false,
-        code: "engine_session_not_resumable",
-        message:
-          `the pi session behind this handle has no live process in this engine instance (cold path). ` +
-          `Recovery: dispatch a new run with ctx resume (pi --session cold resume), or start a new subagent.`,
-      };
-    }
-    try {
-      sendPromptCommand(child, action.payload, {
-        streamingBehavior: action.interrupt === true ? "steer" : "followUp",
-      });
-      clearEpipeFailure(recordId);
-      return { ok: true, delivered: true };
-    } catch (err) {
-      if (err instanceof Error && err.message.includes("EPIPE")) {
-        const count = recordEpipeFailure(recordId);
-        if (count >= EPIPE_FAILURE_THRESHOLD) {
-          clearEpipeFailure(recordId);
-          throw new Error(
-            `[subagents] EPIPE fallback exhausted for ${recordId}: ${count} consecutive EPIPE failures. ` +
-              `Recovery: use action:'close' to clean up, then action:'start' a new subagent.`,
-          );
-        }
-        return {
-          ok: false,
-          code: "engine_session_not_resumable",
-          message: `EPIPE on hot path for ${recordId} (stdin pipe broken, child likely exited; attempt ${count}/${EPIPE_FAILURE_THRESHOLD}). Recovery: retry after close, or start a new subagent run.`,
-        };
-      }
-      throw err;
-    }
-  }
-
-  /**
    * read 三级降级（协议化形态）：②级 journal 重放（SDK journal-replay 纯投影）
    * → ③级 outcome-only。①级 pi 原生读取（session-reconstructor）按 §2.7 保持
    * core，不随迁（deviations 登记）。
@@ -325,15 +219,6 @@ export class PiEngine implements EnginePort {
   /** server 层注入 host/askUser 两阶段等待体（ui-request-queue 消费）。 */
   bindAskUser(handler: ((req: UiRequest) => Promise<UiResponse>) | undefined): void {
     this.askUserHandler = handler;
-  }
-
-  /**
-   * server 层注入 [v1.x] chat 会话的反向通道发射面（host/roundLifecycle、recordId 键
-   * host/streamDelta、会话级 host/askUser）。会话跨 run 存活，绑定是引擎进程生命周期
-   * 级（区别于一次性 run 的 per-run askUser 绑定）。
-   */
-  bindHostChannels(channels: ChatHostChannels | undefined): void {
-    this.chatSessions.bindHostChannels(channels);
   }
 }
 
@@ -474,25 +359,6 @@ function toOutcomeUsage(result: SpawnRunResult): import("@zhushanwen/subagent-en
 function refString(ref: Record<string, string>, key: string): string | undefined {
   const v = ref[key];
   return typeof v === "string" ? v : undefined;
-}
-
-/** 杀单个 record 的活跃子进程（SIGTERM；升级链由 killAll 兜底）。 */
-function killRecordChild(recordId: string): void {
-  const child = getActiveChild(recordId);
-  if (child === undefined || child.killed) return;
-  child.kill("SIGTERM");
-}
-
-/** 死/不可定位 handle 的统一拒绝（D1 推论：指向冷续路径）。 */
-function notResumable(handle: EngineHandle): InteractResult {
-  return {
-    ok: false,
-    code: "engine_session_not_resumable",
-    message:
-      `the pi session behind this handle is not resumable via interact (record not found for ` +
-      `sessionRef ${JSON.stringify(handle.data.sessionRef)}). Recovery: use a cold resume path ` +
-      `(pi --session with the session file), or start a new subagent.`,
-  };
 }
 
 /** 默认版本探测：spawn `<command> --version`（probe 超时按探针失败处理）。 */

@@ -6,16 +6,14 @@
 // §3.3 D6/D7 + §5 U3 验收「resume run 续写同文件、历史召回」）：
 //   ① 首轮 run chat（无 resume）→ 反向帧链（poolResolved/childSpawned[recordId]/
 //      handleReady/streamDelta[runId]）→ run 应答（handle 锚 recordId）→ 收割
-//      （childStateChanged exited 上报）；不经 ChatSessionRegistry——无
-//      roundLifecycle 相位帧；
+//      （childStateChanged exited 上报）；不经 ChatSessionRegistry——无轮次相位帧；
 //   ② 续聊 = 新 run chat + resume（首轮 sessionFile）→ fake 从同文件读到首轮写入
 //      的历史（构造性召回断言：当且仅当 --session 穿透正确）→ run 应答 sessionFile
 //      与首轮一致（同文件续写）；
-//   ③ 过渡兼容面：首轮收割后 interact message → 冷拒绝
-//      engine_session_not_resumable（registry 解耦 + 进程已收割，恢复指引指向
-//      resume run——正 chains 到 ② 的续聊形态）。
-// cancel 收敛的升级路径（fake timers 杀链）在 chat-session.test 单元覆盖（registry
-// 本体，U5 删面）；one-shot 收割对照见 run-spawn-once.integration。
+//   ③ 反向帧面收缩断言：全部反向帧 ∈ run 域 8 通道白名单（[H1 U5] 轮次相位
+//      通道已退役——轮终 = run 应答本身，无相位帧）。
+// cancel 收敛的升级路径（fake timers 杀链）见 run-spawn-once 集成面；one-shot 收割
+// 对照见 run-spawn-once.integration。
 
 import { spawn } from "node:child_process";
 import * as fs from "node:fs";
@@ -157,7 +155,7 @@ describe("pi-subagent-cli chat 轮 run 派发形态 e2e（bin 真机 NDJSON 往�
     }
   });
 
-  it("首轮 → resume 续聊（同文件续写 + 历史召回）→ 收割后 interact 冷拒绝", async () => {
+  it("首轮 → resume 续聊（同文件续写 + 历史召回）→ 收割 + 反向帧面收缩", async () => {
     dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-cli-chat-"));
     host = new FakeHost(dataDir);
     await initialize(host, dataDir);
@@ -193,12 +191,19 @@ describe("pi-subagent-cli chat 轮 run 派发形态 e2e（bin 真机 NDJSON 往�
     expect(runResult.handle.sessionRef.sessionFile).toBe(sessionFile);
     expect(runResult.outcome.content).toBe("chat-first-answer");
 
-    // [H1 U3] 不经 registry：run 路径零 roundLifecycle 相位帧（轮终 = agent_settled
-    // 的 run 应答本身）
-    expect(host.reverseFrames.filter((f) => f.method === "host/roundLifecycle")).toHaveLength(0);
-
     // agent_settled 后杀链收割（每轮一进程）：exited 镜像上报（killed）
     await awaitReaped(host, "rec-chat-1");
+
+    // [H1 U5] 反向帧面收缩（收割后 = 首轮全程帧齐备）：全部反向帧 ∈ run 域 8 通道
+    // 白名单（轮次相位通道已随协议退役——轮终 = agent_settled 的 run 应答本身，
+    // 无相位帧）
+    expect([...new Set(host.reverseFrames.filter((f) => f.method !== "event").map((f) => f.method))].sort()).toEqual([
+      "host/childSpawned",
+      "host/childStateChanged",
+      "host/handleReady",
+      "host/poolResolved",
+      "host/streamDelta",
+    ]);
 
     // ② 续聊 = 新 run chat + resume（首轮 sessionFile，--session 续写同文件）：
     //    fake 从同文件读到首轮写入的 1 行历史 → 回复 resumed-history:1（构造性召回
@@ -230,13 +235,7 @@ describe("pi-subagent-cli chat 轮 run 派发形态 e2e（bin 真机 NDJSON 往�
 
     await awaitReaped(host, "rec-chat-1");
 
-    // ③ 过渡兼容面：收割后 interact message → 冷拒绝（恢复指引指向 resume run）
-    const handle = { v: 1, engineId: "pi", sessionRef: { recordId: "rec-chat-1", sessionFile }, poolKey: "shared", adapterVersion: "1.0.0" };
-    const afterReap = await host.request("interact", {
-      handle,
-      action: { kind: "message", payload: "cold?" },
-    });
-    expect((afterReap.result as { ok: boolean; code: string }).ok).toBe(false);
-    expect((afterReap.result as { code: string }).code).toBe("engine_session_not_resumable");
+    // ③ [H1 U5] 收割后进程无保活——续聊只能经 ② 的 resume run 形态（interact 面
+    // 已随协议退役，此处不再有冷拒绝断言载体）。
   }, 60_000);
 });

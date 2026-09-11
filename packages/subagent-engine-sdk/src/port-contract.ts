@@ -28,8 +28,6 @@ import type {
   AgentOutcome,
   EngineCapabilities,
   EngineHandleData,
-  InteractAction,
-  InteractResult,
   ProbeReport,
   ResumeAnchor,
   SessionView,
@@ -107,7 +105,7 @@ export interface RunContext {
   }) => void;
   /**
    * [v1.x] chat 会话形态参数（协议 run.params.chat 的进程内还原；缺省 = 一次性任务
-   * 形态）。recordId = chat 轮次关联键与 interact 定位键；resume 锚点存在 = 冷续
+   * 形态）。recordId = chat 轮次关联键与镜像帧锚定键；resume 锚点存在 = 冷续
    * （--session 续写原文件），不存在 = 首轮新建。
    * @deprecated [H1] chat-run 统一退役对象：U6 单批切换读/写端后本字段删除（读端
    * pi 引擎届时改读下方 `resume` 字段；退役依据见 methods.ts RunResumeParams 注释）。
@@ -137,12 +135,6 @@ export interface EnginePort {
   capabilities(): EngineCapabilities;
   probe(opts?: { force?: boolean }): Promise<ProbeReport>;
   run(task: EngineAgentCallOpts, ctx: RunContext): Promise<EngineRunResult>;
-  /**
-   * @deprecated [H1] chat-run 统一退役对象（设计 docs/design/subagent-chat-run-unification.md
-   * §3.3 D5）：续聊轮统一为「新 run + resume 锚点」后本方法退役，U5 删除。本单元
-   * （U1）只标注不删除——现行 chat 链路（core deliverChatMessage 三处调用）仍在消费。
-   */
-  interact(handle: EngineHandle, action: InteractAction): Promise<InteractResult>;
   read(handle: EngineHandle): Promise<SessionView>;
   listModels?(): Array<{ id: string; name?: string }> | null;
   validateModel?(modelRef: string | undefined): { canonicalRef: string };

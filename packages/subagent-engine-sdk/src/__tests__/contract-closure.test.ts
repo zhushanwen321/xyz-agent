@@ -23,7 +23,6 @@ import type {
   AssertMutuallyAssignable,
   EngineCapabilities,
   EngineHandleData,
-  InteractAction,
   ProbeReport,
   SessionView,
 } from "../protocol/contract-types.ts";
@@ -36,7 +35,6 @@ type _SelfEngineHandleData = AssertMutuallyAssignable<EngineHandleData, EngineHa
 type _SelfSessionView = AssertMutuallyAssignable<SessionView, SessionView>;
 type _SelfEngineCapabilities = AssertMutuallyAssignable<EngineCapabilities, EngineCapabilities>;
 type _SelfProbeReport = AssertMutuallyAssignable<ProbeReport, ProbeReport>;
-type _SelfInteractAction = AssertMutuallyAssignable<InteractAction, InteractAction>;
 type _SelfAgentOutcome = AssertMutuallyAssignable<AgentOutcome, AgentOutcome>;
 type _SelfUiRequest = AssertMutuallyAssignable<UiRequest, UiRequest>;
 type _SelfUiResponse = AssertMutuallyAssignable<UiResponse, UiResponse>;

@@ -18,11 +18,10 @@
 //   - relay 归属键按 W8/H12 重写：SOCKET/NODE/SCRIPT 原样转发，SESSION_ID/
 //     RECORD_ID 从 run ctx 重写（不靠 env 继承——spawn env 的 deny 清单已剥）。
 //
-// 保留在 core 的面（deviations 登记）：chatMode 长驻轮次 / idle timer / 冷续轮
-// resume 的宿主编排（ChatRoundTicket / HostBridge 消费面）——v1.x（chat-domain 设计
-// §3.2 D1-A）后轮次执行与轮终事件已由本包承载（chatMode 参数 + chat-session 会话
-// 管理器），core 侧保留的是编排面（record 状态回写 / idle+activate lock 定时器 /
-// 交互编排——host-bridge 头注裁定），engines/pi inproc 分支待 W3 删除。
+// 保留在 core 的面（deviations 登记）：chatMode 编排（record 状态回写 / 续聊轮
+// 派发——ConversationContinuation）在 core 侧。轮次执行与 agent_settled 轮终已由
+// 本包承载（chatMode 参数；[H1 U5] 原 chat-session 会话管理器已删除——chat-run
+// 统一后续聊 = 新 run + resume 锚点，见 SpawnRunParams.chatMode 注释）。
 
 import type { ChildProcess } from "node:child_process";
 
@@ -106,14 +105,16 @@ export interface SpawnRunCallbacks {
   onDelta?: (delta: string) => void;
   /**
    * [chatMode] agent_end（非 willRetry，队列排空）到达：本轮收敛。不 kill 子进程
-   * （等 agent_settled——pi 的 compact/收尾在 agent_end 后执行），由调用方
-   * （chat-session，U5 退役面）上报 roundLifecycle settled 相位。
+   * （等 agent_settled——pi 的 compact/收尾在 agent_end 后执行）。[H1 U5] 原
+   * chat-session 会话管理器的 settled 相位上报消费已随 registry 删除；本回调保留为
+   * chatMode 语义的可观测面（run-spawn-once.integration 断言轮次时序）。
    */
   onChatRoundEnd?: () => void;
   /**
    * [chatMode] agent_settled（真空闲边界）到达：run 在此 resolve（exit 0 口径）并
-   * 收割子进程（runSpawnOnce 内建，见 SpawnRunParams.chatMode 注释）。回调本体仅剩
-   * chat-session 会话管理器的 idle 相位上报消费（U5 退役面）。
+   * 收割子进程（runSpawnOnce 内建，见 SpawnRunParams.chatMode 注释）。[H1 U5] 原
+   * chat-session 会话管理器的 idle 相位上报消费已随 registry 删除；本回调保留为
+   * chatMode 语义的可观测面。
    */
   onChatAgentSettled?: () => void;
 }
@@ -161,9 +162,9 @@ export interface SpawnRunParams {
    * §3.3 D7）：agent_end 不 kill（pi 的 compact/收尾在 agent_end 后执行，提前 kill
    * 截断收尾截断 session 文件），agent_settled（真空闲）resolve run（exit 0 口径）
    * **并收割子进程**——每轮一进程，续聊 = 新 run + resume 锚点（--session 续写），
-   * 进程不再保活（ChatSessionRegistry 长驻语义随 U3 解耦退役，registry 本体 U5 删）。
+   * 进程不再保活（[H1 U5] ChatSessionRegistry 长驻语义已随 registry 删除）。
    * run 的 resolve 与 kill 均以 agent_settled 为准。缺省 = 一次性 run（agent_end 即
-   * 终态）。字段名保留 chat-session 会话管理器的构造面（startRound 传 chatMode:true）。
+   * 终态）。字段名沿用 chat 会话形态参数的构造面（run.params.chat 传入）。
    */
   chatMode?: boolean;
 }
@@ -337,7 +338,7 @@ function buildTranslatorOpts(
     abort: () => killChild("turn limiter abort"),
     onAgentEnd: chatMode
       ? () => {
-        // [chatMode] 轮收敛（输出完整）：不 kill，交 chat-session 上报 settled 相位；
+        // [chatMode] 轮收敛（输出完整）：不 kill（等 agent_settled 收割边界）；
         // endedCleanly 置位让「end 与 settled 之间被杀」的 close 也按 0 口径收尾。
         runEnd.endedCleanly = true;
         callbacks.onChatRoundEnd?.();
@@ -502,7 +503,7 @@ export async function runSpawnOnce(
 }
 
 // 活跃子进程记账（自本文件提取至 active-children.ts，行为等价）：
-// re-export 保持既有导入面（index.ts / pi-engine.ts / chat-session.ts / __tests__）。
+// re-export 保持既有导入面（index.ts / pi-engine.ts / __tests__）。
 export {
   getActiveChild,
   killAllActiveChildren,

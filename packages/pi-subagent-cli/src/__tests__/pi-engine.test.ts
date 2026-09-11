@@ -9,9 +9,9 @@
 //   - run 一次性任务：SpawnRunParams 还原（字段透传 / ctxModel 覆盖 / forkSource）、
 //     回调接线（onEvent/onHandleReady/onChildSpawned/onDelta/askUser）、
 //     EngineHandle + AgentOutcome 应答装配（usage 域映射 / toolCalls 投影）；
-//   - run chat 轮（[H1 U3] run 派发形态）：chatMode 分派 + resume 锚点透传（--session
-//     穿透）+ recordId 锚定 handle，不经 ChatSessionRegistry；
-//   - interact 三分派：chat 命中直派 / run 域热路径（EPIPE 兜底）/ 冷句柄拒绝；
+//   - run chat 轮（[H1 U3] run 派发形态，续聊 = 新 run + resume 锚点——[H1 U5] 起
+//     引擎侧无 interact 面）：chatMode 分派 + resume 锚点透传（--session 穿透）+
+//     recordId 锚定 handle；
 //   - read 三级降级形态（journal 重放 / outcome-only）、dispose 收割幂等；
 //   - dataDir 缺失 → engine_not_found（prepare 期 reject，不产生 handle）。
 
@@ -28,7 +28,6 @@ import { EngineSdkError } from "@zhushanwen/subagent-engine-sdk";
 import { PiEngine, type PiEngineDeps } from "../pi-engine.ts";
 import type {
   AgentCallOpts,
-  EngineHandle,
   RunContext,
 } from "../port-types.ts";
 import {
@@ -515,126 +514,14 @@ describe("PiEngine.run（chat 轮 run 派发形态）", () => {
   });
 });
 
-describe("PiEngine.interact", () => {
-  it("sessionRef 无 recordId → not_resumable（恢复指引指向冷续路径）", async () => {
-    const { engine } = makeEngine();
-    const handle: EngineHandle = {
-      data: { v: 1, engineId: PI_ENGINE_ID, sessionRef: { sessionId: "s1" }, poolKey: PI_POOL_KEY, adapterVersion: PI_ADAPTER_VERSION },
-    };
-    const r = await engine.interact(handle, { kind: "message", payload: "hi" });
-    expect(r.ok).toBe(false);
-    if (!r.ok) {
-      expect(r.code).toBe("engine_session_not_resumable");
-      expect(r.message).toContain("cold resume path");
-    }
-  });
-
-  it("run 域热路径：message 直写 stdin（followUp / steer）+ close/cancel SIGTERM", async () => {
-    const { engine } = makeEngine();
-    const child = new FakeChild();
-    registerActiveChild("rec-hot", child as unknown as ChildProcess);
-    const handle: EngineHandle = {
-      data: { v: 1, engineId: PI_ENGINE_ID, sessionRef: { recordId: "rec-hot" }, poolKey: PI_POOL_KEY, adapterVersion: PI_ADAPTER_VERSION },
-    };
-
-    const delivered = await engine.interact(handle, { kind: "message", payload: "next" });
-    expect(delivered).toEqual({ ok: true, delivered: true });
-    expect(JSON.parse(child.stdinWrites[0]!)).toMatchObject({ type: "prompt", message: "next" });
-    // run 域热路径缺省挂 followUp（interrupt 缺省 ≠ 省略 streamingBehavior）
-    expect(JSON.parse(child.stdinWrites[0]!).streamingBehavior).toBe("followUp");
-
-    await engine.interact(handle, { kind: "message", payload: "urgent", interrupt: true });
-    expect(JSON.parse(child.stdinWrites[1]!).streamingBehavior).toBe("steer");
-
-    const closed = await engine.interact(handle, { kind: "close", payload: { force: true } });
-    expect(closed).toEqual({ ok: true, delivered: true });
-    expect(child.kills).toEqual(["SIGTERM"]);
-
-    const cancelled = await engine.interact(handle, { kind: "cancel" });
-    expect(cancelled).toEqual({ ok: true, delivered: true });
-    expect(child.kills).toHaveLength(2);
-  });
-
-  it("run 域冷路径：无活进程 message 拒绝；无 child 的 close/cancel 受理即返回", async () => {
-    const { engine } = makeEngine();
-    const handle: EngineHandle = {
-      data: { v: 1, engineId: PI_ENGINE_ID, sessionRef: { recordId: "rec-gone" }, poolKey: PI_POOL_KEY, adapterVersion: PI_ADAPTER_VERSION },
-    };
-    const cold = await engine.interact(handle, { kind: "message", payload: "hi" });
-    expect(cold.ok).toBe(false);
-    if (!cold.ok) expect(cold.code).toBe("engine_session_not_resumable");
-
-    const killedChild = new FakeChild();
-    killedChild.killed = true; // 已死子进程：killRecordChild 不重复杀
-    registerActiveChild("rec-dead", killedChild as unknown as ChildProcess);
-    const closeDead = await engine.interact(
-      { data: { v: 1, engineId: PI_ENGINE_ID, sessionRef: { recordId: "rec-dead" }, poolKey: PI_POOL_KEY, adapterVersion: PI_ADAPTER_VERSION } },
-      { kind: "close" },
-    );
-    expect(closeDead).toEqual({ ok: true, delivered: true });
-    expect(killedChild.kills).toHaveLength(0);
-
-    // cancel：无 child（未注册）→ 受理即返回
-    const cancelNoop = await engine.interact(handle, { kind: "cancel" });
-    expect(cancelNoop).toEqual({ ok: true, delivered: true });
-  });
-
-  it("EPIPE 兜底：未达阈值 not_resumable 降级；达阈值抛错 → interact catch 转 engine_interact_failed", async () => {
-    const { engine } = makeEngine();
-    const child = new FakeChild();
-    child.epipeMode = true;
-    registerActiveChild("rec-epipe", child as unknown as ChildProcess);
-    const handle: EngineHandle = {
-      data: { v: 1, engineId: PI_ENGINE_ID, sessionRef: { recordId: "rec-epipe" }, poolKey: PI_POOL_KEY, adapterVersion: PI_ADAPTER_VERSION },
-    };
-
-    const first = await engine.interact(handle, { kind: "message", payload: "m1" });
-    expect(first.ok).toBe(false);
-    if (!first.ok) {
-      expect(first.code).toBe("engine_session_not_resumable");
-      expect(first.message).toContain("attempt 1/2");
-    }
-
-    const exhausted = await engine.interact(handle, { kind: "message", payload: "m2" });
-    expect(exhausted.ok).toBe(false);
-    if (!exhausted.ok) expect(exhausted.code).toBe("engine_interact_failed");
-
-    // 成功写清零计数（阈值重启）
-    child.epipeMode = false;
-    const ok = await engine.interact(handle, { kind: "message", payload: "m3" });
-    expect(ok).toEqual({ ok: true, delivered: true });
-  });
-
-  it("chat 轮 interact 走 run 域分支（registry 已解耦）：message 热路径直写 + close SIGTERM", async () => {
-    // [H1 U3] chat 轮 = run 派发形态：registry 无注册（chatSessions.has 恒 false），
-    // interact 全量走 interactRunDomain——recordId 锚定的活跃子进程可热路径投递
-    // （过渡期兼容面，U5 随 interact 方法退役）。
-    const { engine, captured, children } = makeEngine();
-    const runP = engine.run({ prompt: "chat" }, {
-      taskId: "run-i1",
-      poolKey: PI_POOL_KEY,
-      chat: { recordId: "rec-i1" },
-    });
-    const cap = captured[0]!;
-    cap.resolve(spawnRunResult({ sessionId: "s-i1", sessionFile: "/tmp/s-i1.jsonl" }));
-    await Promise.resolve();
-    await runP;
-
-    const handle: EngineHandle = {
-      data: { v: 1, engineId: PI_ENGINE_ID, sessionRef: { recordId: "rec-i1", sessionFile: "/tmp/s-i1.jsonl" }, poolKey: PI_POOL_KEY, adapterVersion: PI_ADAPTER_VERSION },
-    };
-    // message 热路径（fake child stdin 捕获，followUp 缺省——run 域投递形态）
-    const delivered = await engine.interact(handle, { kind: "message", payload: "round 2" });
-    expect(delivered).toEqual({ ok: true, delivered: true });
-    expect(children[0]!.stdinWrites.some((w) => w.includes("round 2"))).toBe(true);
-
-    // close：run 域 SIGTERM 收割（registry 优雅/force 分流已不在链路上）
-    const closed = await engine.interact(handle, { kind: "close", payload: { force: true } });
-    expect(closed).toEqual({ ok: true, delivered: true });
-    expect(children[0]!.kills).toEqual(["SIGTERM"]);
-  });
-});
-
+// [H1 U5] PiEngine.interact 三分派用例族（message 投递 / close / cancel / 冷路径 /
+// EPIPE 兜底 / chat 轮 run 域分支过渡兼容面）已随 interact 方法退役删除：
+//   - 续聊投递的 run 通道形态覆盖 = 上方「PiEngine.run（chat 轮 run 派发形态）」
+//     （resume 锚点透传 + chatMode 分派 + recordId 锚定 handle）；
+//   - EPIPE 兜底语义由 stdin-writer.test（writeStdinLine EPIPE 检测）单元直测；
+//   - cancel/abort 通道 = run 域 cancel 帧（server AbortController → signal），
+//     server.test cancel 用例覆盖；
+//   - 收割链（agent_settled resolve + 杀链）由 run-spawn-once.integration 覆盖。
 describe("PiEngine.read / dispose", () => {
   it("journalPath 在 → ②级 journal 重放（source journal）；不在 → ③级 outcome-only", async () => {
     const dir = fs.mkdtempSync(join(tmpdir(), "pi-cli-test-engine-read-"));

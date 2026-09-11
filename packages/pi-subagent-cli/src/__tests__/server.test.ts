@@ -4,14 +4,15 @@
 // engine = EnginePort 内存 fake（无子进程 / 无真实数据目录——本文件零 fs 触碰），
 // stdout 写入面注入内存 sink。覆盖：
 //   ① 帧分类路由：请求帧分发 / 反向应答落位 / 入站反向请求 bad_frame / 坏帧静默；
-//   ② 10 正向方法表驱动路由（逐方法 → EnginePort 成员）+ 未知方法
-//      engine_protocol_unknown_method（错误原文含方法名与 request id）；
+//   ② 9 正向方法表驱动路由（逐方法 → EnginePort 成员；[H1 U5] interact 已退役）+
+//      未知方法 engine_protocol_unknown_method（错误原文含方法名与 request id）；
 //   ③ run 协议载荷还原：ctx.model 合回 task / ctxModel canonical 词形解析 /
 //      streamMode onDelta → host/streamDelta / 事件通知 seq 单调 / cancel abort /
 //      onChildSpawned 记录键锚定（非 chat = runId，chat = recordId）；
 //   ④ pi 专有通道：bindAskUser 两阶段绑定体（run 前绑定 + run 结束解绑；[H1 U3]
-//      chat 轮 = run 派发形态同走 per-run 绑定）、bindHostChannels 构造期
-//      三分通道接线、run.chat recordId 前置校验 + conversation 能力位 gate；
+//      chat 轮 = run 派发形态同走 per-run 绑定）、run.chat recordId 前置校验 +
+//      conversation 能力位 gate（[H1 U5] bindHostChannels 构造期三分通道面已随
+//      chat-session.ts 删除）；
 //   ⑤ 反向请求客户端：rev-N 帧形状 / {ack:true} 两阶段第一段只 ack 不终结等待
 //      （R9-2，zcode 姊妹包无此语义）/ result+error 应答落位 / 超时兜底（fake timers）。
 
@@ -23,8 +24,6 @@ import {
   type EngineCapabilities,
   type EngineHandleData,
   type InitializeParams,
-  type InteractAction,
-  type InteractResult,
   type ProbeReport,
   type SessionView,
   type UiRequest,
@@ -33,7 +32,6 @@ import {
 
 import { EngineProtocolServer } from "../server.ts";
 import { PI_ADAPTER_VERSION } from "../constants.ts";
-import type { ChatHostChannels } from "../chat-session.ts";
 import type { AgentCallOpts, EnginePort, EngineRunResult, RunContext } from "../port-types.ts";
 
 // ── fixture（合成的引擎数据形态；sessionFile 等路径只是内存字符串，无 fs 语义）──
@@ -108,11 +106,10 @@ function makeSink() {
   };
 }
 
-/** EnginePort 内存 fake（含 pi 专有 bindAskUser / bindHostChannels 双绑定面）：
+/** EnginePort 内存 fake（含 pi 专有 bindAskUser 绑定面）：
  * 逐成员 vi.fn，overrides 直替换（undefined = 未实现分支）。 */
 type FakeEngine = EnginePort & {
   bindAskUser(handler: ((req: UiRequest) => Promise<UiResponse>) | undefined): void;
-  bindHostChannels(channels: ChatHostChannels | undefined): void;
 };
 
 function makeEngine(overrides: Partial<FakeEngine> = {}): FakeEngine {
@@ -123,13 +120,11 @@ function makeEngine(overrides: Partial<FakeEngine> = {}): FakeEngine {
     run: vi.fn(async (_task: AgentCallOpts, _ctx: RunContext): Promise<EngineRunResult> => {
       return { handle: { data: { ...HANDLE } }, outcome: { ...FAKE_OUTCOME } };
     }),
-    interact: vi.fn(async (): Promise<InteractResult> => ({ ok: true, delivered: true })),
     read: vi.fn(async (): Promise<SessionView> => ({ ...SESSION_VIEW })),
     listModels: vi.fn((): Array<{ id: string; name?: string }> => [{ id: "prov/m1", name: "M1" }]),
     validateModel: vi.fn((modelRef: string | undefined) => ({ canonicalRef: modelRef ?? "" })),
     dispose: vi.fn(async (): Promise<void> => undefined),
     bindAskUser: vi.fn((_handler: ((req: UiRequest) => Promise<UiResponse>) | undefined): void => undefined),
-    bindHostChannels: vi.fn((_channels: ChatHostChannels | undefined): void => undefined),
   };
   return { ...base, ...overrides };
 }
@@ -301,14 +296,9 @@ describe("dispatchTable 表驱动路由（逐方法 → EnginePort 成员）", (
     expect(r2.error?.code).toBe("engine_capability_unsupported");
   });
 
-  it("interact/read：handle 以 {data} 包装传给引擎（协议面裸 handle），action 透传", async () => {
+  it("read：handle 以 {data} 包装传给引擎（协议面裸 handle）", async () => {
     const engine = makeEngine();
     const { server, sink } = makeServer(engine);
-    const action: InteractAction = { kind: "message", payload: "继续", interrupt: false };
-    const r1 = await request(server, sink, 1, "interact", { handle: HANDLE, action });
-    expect(r1.result).toEqual({ ok: true, delivered: true });
-    expect(vi.mocked(engine.interact)).toHaveBeenLastCalledWith({ data: HANDLE }, action);
-
     const r2 = await request(server, sink, 2, "read", { handle: HANDLE, dataDir: "/d" });
     expect(r2.result).toEqual(SESSION_VIEW);
     expect(vi.mocked(engine.read)).toHaveBeenLastCalledWith({ data: HANDLE });
@@ -633,37 +623,9 @@ describe("bindAskUser 两阶段绑定体（pi 专有）", () => {
   });
 });
 
-describe("bindHostChannels 构造期接线（会话级反向通道）", () => {
-  it("构造期注入三分通道：streamDelta/roundLifecycle → host/* 反向帧；askUser 应答闭环", async () => {
-    const engine = makeEngine();
-    const { server, sink } = makeServer(engine);
-    expect(vi.mocked(engine.bindHostChannels)).toHaveBeenCalledTimes(1);
-    const channels = vi.mocked(engine.bindHostChannels).mock.calls[0]![0]!;
-    expect(channels).toBeDefined();
-
-    channels.streamDelta({ recordId: "rec-1", delta: "d" });
-    const delta = await sink.waitFor((f) => f.id === "rev-1" && f.method === "host/streamDelta", "ch delta");
-    expect(delta.params).toEqual({ recordId: "rec-1", delta: "d" });
-    server.handleFrame({ id: "rev-1", result: { ok: true } });
-
-    channels.roundLifecycle({ recordId: "rec-1", phase: "idle" });
-    const lifecycle = await sink.waitFor((f) => f.id === "rev-2" && f.method === "host/roundLifecycle", "ch lifecycle");
-    expect(lifecycle.params).toEqual({ recordId: "rec-1", phase: "idle" });
-    server.handleFrame({ id: "rev-2", result: { ok: true } });
-
-    const askP = channels.askUser("run-chat", { method: "confirm", id: "ui-9" });
-    const ask = await sink.waitFor((f) => f.id === "rev-3" && f.method === "host/askUser", "ch askUser");
-    expect(ask.params).toEqual({ runId: "run-chat", request: { method: "confirm", id: "ui-9" } });
-    server.handleFrame({ id: "rev-3", result: { confirmed: true } });
-    await expect(askP).resolves.toEqual({ confirmed: true });
-  });
-
-  it("引擎未实现 bindHostChannels：构造不抛（可选绑定面）", () => {
-    const engine = makeEngine();
-    delete (engine as Partial<FakeEngine>).bindHostChannels;
-    expect(() => new EngineProtocolServer({ write: () => undefined, engine })).not.toThrow();
-  });
-});
+// [H1 U5] bindHostChannels 构造期三分通道接线（streamDelta/轮次相位/会话级
+// askUser）已随 chat-session.ts 删除——askUser/runId 键 streamDelta/childStateChanged
+// 的 run 域形态断言保留在上方「run：协议载荷还原」与「bindAskUser」用例中。
 
 // ── 反向请求客户端 ──
 

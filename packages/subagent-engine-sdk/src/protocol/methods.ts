@@ -1,11 +1,12 @@
 // src/protocol/methods.ts
 //
-// 10 正向方法（core → 引擎）params/result 逐方法写死（v1）。设计权威源：
+// 9 正向方法（core → 引擎）params/result 逐方法写死（v1）。设计权威源：
 // 设计 §3.3 方法集表 + impl-plan §2.1「10 正向方法」。
 //
-// [v1.x 增量（chat-domain 设计 §3.2 D1-A）]：方法集不变（chat 轮次 = run 会话形态
-// + 既有 interact，不新造 chatRound 方法——D1-B 被否）；增量以可选参数形态落在
-// run.params.chat（会话形态参数 + 冷续 resume 锚点），major 不 bump。
+// [v1.x 增量（chat-domain 设计 §3.2 D1-A）]：增量以可选参数形态落在 run.params.chat
+// （会话形态参数 + 冷续 resume 锚点），major 不 bump。[H1] chat-run 统一后续聊 =
+// 新 run + resume 锚点（docs/design/subagent-chat-run-unification.md §3.3 D5/D7），
+// 既有 interact 方法已随 U5 删除，方法集收敛为 9 个。
 //
 // 应答面补充约定（设计 §3.3）：initialize 应答仅诊断（与 manifest 不一致 → warn 留痕，
 // 不参与同步成员判据；唯一阻断面 = 被 gate 能力位多声明 → engine_capability_mismatch）；
@@ -17,8 +18,6 @@ import type {
   EngineCapabilities,
   EngineHandleData,
   AgentOutcome,
-  InteractAction,
-  InteractResult,
   ModelCatalogEntry,
   ProbeReport,
   ResumeAnchor,
@@ -26,15 +25,15 @@ import type {
 } from "./contract-types.ts";
 
 /**
- * 正向方法名联合（恰好 10 个；PROTOCOL_METHODS 常量数组与之同源互证）。
- * [H1] `interact` 成员已判退役（U5 删除；联合成员无法单独标 @deprecated，登记于此）。
+ * 正向方法名联合（恰好 9 个；PROTOCOL_METHODS 常量数组与之同源互证）。
+ * [H1] `interact` 成员已随 chat-run 统一退役（docs/design/subagent-chat-run-unification.md
+ * §3.3 D5：续聊轮统一为「新 run + resume 锚点」，U5 删除）。
  */
 export type ProtocolMethod =
   | "initialize"
   | "probe"
   | "run"
   | "cancel"
-  | "interact"
   | "read"
   | "listModels"
   | "validateModel"
@@ -47,7 +46,6 @@ export const PROTOCOL_METHODS = [
   "probe",
   "run",
   "cancel",
-  "interact",
   "read",
   "listModels",
   "validateModel",
@@ -93,7 +91,7 @@ export interface RunContextParams {
  * [v1.x] chat 会话形态参数——HostChatRoundTicket 五字段过协议映射中「record」的
  * 承载位（docs/design/chat-domain-v1x-liveness-governance.md §3.2 D1 五字段映射）：
  *   - recordId：core 预建 record 的关联键（引擎据此回填 handle.sessionRef、上报
- *     host/childSpawned|childStateChanged 与 host/roundLifecycle 的 record 键形态）；
+ *     host/childSpawned|childStateChanged 的 record 键形态）；
  *   - resume：冷续锚点（重开已 idle 的 session 续聊；缺省 = 新 session）。对照
  *     core SpawnResumeOpts——sessionFile 经 anchor.sessionRef 携带，model/
  *     thinkingLevel 防漂移覆盖走既有 task/ctx 字段，不双写。
@@ -154,7 +152,7 @@ export interface RunParams {
   /**
    * [v1.x 可选增量] chat 会话形态参数（task.conversation=true 的 chat 路由承载）。
    * 缺省 = 一次性任务形态，v1 引擎/宿主语义不变（向后兼容：旧引擎忽略未知字段，
-   * 帧级 schema params 不做深校验）。续聊/关断不经此参数——走既有 interact。
+   * 帧级 schema params 不做深校验）。
    * [H1] 退役倒计时：chat-run 统一后本键整体退役（U6 删除，读/写端同批切 `resume`）。
    */
   chat?: RunChatParams;
@@ -184,17 +182,6 @@ export interface CancelParams {
  */
 export interface CancelResult {
   ok: true;
-}
-
-/**
- * @deprecated [H1] chat-run 统一退役对象（设计 docs/design/subagent-chat-run-unification.md
- * §3.3 D5）：续聊轮统一为「新 run + resume 锚点」后，interact 控制面（message/close/cancel）
- * 整方法退役，U5 删除。本单元（U1）只标注不删除——现行 chat 链路（core deliverChatMessage /
- * pi ChatSessionRegistry）仍在消费，删除前置 = U2/U3 建路完成。
- */
-export interface InteractParams {
-  handle: EngineHandleData;
-  action: InteractAction;
 }
 
 export interface ReadParams {
@@ -245,8 +232,6 @@ export interface ProtocolParamsMap {
   probe: ProbeParams;
   run: RunParams;
   cancel: CancelParams;
-  /** @deprecated [H1] chat-run 统一退役对象，U5 删除（见 InteractParams 注释）。 */
-  interact: InteractParams;
   read: ReadParams;
   listModels: ListModelsParams;
   validateModel: ValidateModelParams;
@@ -260,8 +245,6 @@ export interface ProtocolResultMap {
   probe: ProbeReport;
   run: RunResult;
   cancel: CancelResult;
-  /** @deprecated [H1] chat-run 统一退役对象，U5 删除（载荷声明在 contract-types.ts）。 */
-  interact: InteractResult;
   read: SessionView;
   listModels: ListModelsResult;
   validateModel: ValidateModelResult;
