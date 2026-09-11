@@ -27,7 +27,7 @@ import { reportRendererLog } from '../lib/ipc'
 import { usePanelStore } from '../stores/panel'
 
 /** 终止阀生效中的 session 集合（只读投影；InboundFrameDroppedNotice / 面板消费）。 */
-// taste:allow-no-data-owner W24-EX-B（模块级单例 UI 瞬态，登记草稿）：终止阀 tripped 集合投影（状态源 = core ws-client 模块级单例）
+// taste:allow-no-data-owner W24-EX-B（模块级单例 UI 瞬态，已登记）：终止阀 tripped 集合投影（状态源 = core ws-client 模块级单例；登记见 docs/architecture/data-source-registry.md §4 ⑧）
 const trippedSessionIds = ref<ReadonlySet<string>>(new Set())
 
 let installed = false
