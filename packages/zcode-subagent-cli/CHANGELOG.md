@@ -1,5 +1,11 @@
 # @zhushanwen/zcode-subagent-cli
 
+## 0.1.2
+
+### Patch Changes
+
+- ab07bdb4a: Align test-guard comments with the v2 data-directory layout (comment-only; no runtime behavior change).
+
 ## 0.1.1
 
 ### Patch Changes

@@ -1,6 +1,6 @@
 {
   "name": "@zhushanwen/pi-subagent-cli",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "pi subagent engine as an independent CLI package (W7 of subagent-engine-protocolization): speaks engine-protocol v1 over NDJSON stdio, depends only on @zhushanwen/subagent-engine-sdk (never subagent-core)",
   "type": "module",
   "license": "MIT",

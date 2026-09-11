@@ -1,5 +1,11 @@
 # @zhushanwen/pi-subagent-workflow
 
+## 8.10.1
+
+### Patch Changes
+
+- ab07bdb4a: chore: refresh dependency range (triggered by @zhushanwen/pi-subagent-cli@0.1.1 → @zhushanwen/pi-subagent-cli@0.1.2, @zhushanwen/zcode-subagent-cli@0.1.1 → @zhushanwen/zcode-subagent-cli@0.1.2)
+
 ## 8.10.0
 
 ### Minor Changes

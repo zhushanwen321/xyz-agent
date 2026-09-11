@@ -1,5 +1,11 @@
 # @zhushanwen/subagent-core
 
+## 0.7.1
+
+### Patch Changes
+
+- ab07bdb4a: chore: refresh dependency range (triggered by @zhushanwen/subagent-engine-sdk@0.2.0 → @zhushanwen/subagent-engine-sdk@0.2.1)
+
 ## 0.7.0
 
 ### Minor Changes
