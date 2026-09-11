@@ -8,7 +8,9 @@
  * chat store 的 isCompacting 活跃消费方（ActivityStrip / deriveStatus / composer）不受影响。
  *
  * 从 MessageStream.vue 拆出（vue_rules_checker.py 的 script setup ≤300 行规范拆分惯例，
- * [cw wave w3]）——现仅剩常量导出，文件名保留（历史拆分谱系 + import 面稳定）。
+ * [cw wave w3]）。[u07 2026-09-11] 原 useMessageStreamNotices.ts 改名为本文件：use* 命名
+ * 是同名 composable 的遗留（该 composable 已随 D6 死路径清理删除，见上），现仅剩常量导出，
+ * 按实际内容（布局常量族）命名。
  */
 
 /**

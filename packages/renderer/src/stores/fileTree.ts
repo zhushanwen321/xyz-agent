@@ -29,7 +29,7 @@ import type { FileNode, GitFileStatus } from '@xyz-agent/shared'
 import { findNodeByPath, nodeMatchesFilter } from '@/composables/logic/file-tree-utils'
 
 /** 节点加载态（②§5 状态机：5 态） */
-export type LoadStatus = 'unloaded' | 'loading' | 'loaded' | 'error' | 'invalidated'
+type LoadStatus = 'unloaded' | 'loading' | 'loaded' | 'error' | 'invalidated'
 
 /**
  * 节点状态对象（D-021：加载态复合对象，单一权威源）。
@@ -50,7 +50,7 @@ type SessionPathMap<T> = Map<string, PathMap<T>>
 type SessionMap<T> = Map<string, T>
 
 /** [W2] 文件行数结构：tracked 改动 {add/del}，untracked 降级 {size}，无数据 null */
-export interface LineStats {
+interface LineStats {
   add?: number
   del?: number
   size?: number

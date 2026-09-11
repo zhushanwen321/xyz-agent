@@ -26,7 +26,7 @@
  * 由 pre-commit 按路径控制，检查本身毫秒级无需增量）
  */
 import { createRequire } from 'node:module'
-import { readFileSync, readdirSync, statSync } from 'node:fs'
+import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs'
 import path from 'node:path'
 
 const require = createRequire(import.meta.url)
@@ -57,6 +57,50 @@ const ENV_NAME_ALLOW_RE = /^(XYZ_|PI_|NODE_|ELECTRON_|ZCODE_)[A-Z0-9_]+$/
 const ERRNO_STRING_ALLOW_RE = /^(UND_ERR_|E[A-Z]{3,})/
 /** export 声明的 5 种节点类别（对应 ts.isFunctionDeclaration 等类型守卫） */
 const EXPORTED_DECL_KINDS = ['FunctionDeclaration', 'ClassDeclaration', 'InterfaceDeclaration', 'TypeAliasDeclaration', 'EnumDeclaration']
+
+// ─── 第二检查：活跃测试/策略文档的引用路径存在性（R6）───────────────────
+// [HISTORICAL] 2026-09-11 renderer 审计阶段 6（impl-plan §7 残余⑦）：DOC_MODULE_MAP
+// 长期不覆盖 TEST-STRATEGY.md / docs/testing/，u01 删除搜索域测试文件后，回归基线表
+// 指向已删文件数日无机器信号。符号漂移检查需要「文档 ↔ 模块」语义映射（维护成本高、
+// 不宜全量登记）；路径存在性检查零映射成本，恰好覆盖该次全部真实案例。
+// 书写约定与符号检查一致：反引号 = 现行引用。历史性提及已删除路径（描述事故/迁移史）
+// 不带反引号或加入下方豁免表（须附理由）。
+
+/** 检查范围：回归基线 SSOT + 测试手册目录（递归 .md） */
+const PATH_REF_FILES = ['TEST-STRATEGY.md']
+const PATH_REF_DIRS = ['docs/testing']
+
+/** 反引号 span 内的仓库相对文件路径候选（必须带扩展名，防误伤命令行目录与散文）。
+ *  左边界断言防中缀误配（`shared/src/x.ts` 匹配整段而非内部的 `src/x.ts`；
+ *  `base-tool-enhance/src/x.ts` 同理）。 */
+const REPO_PATH_RE = /(?<![\w@.\-/])(?:src|shared|packages|apps|scripts|e2e|docs|extensions)\/[\w@.\/-]+\.(?:ts|tsx|mts|cts|mjs|cjs|vue|json|sh|py|md)/g
+
+/**
+ * 路径级豁免（精确字面量）。每项必须附理由；路径对应文件重新存在时移除条目。
+ * 禁止为「新文档里的悬空路径」加豁免——那走改写文档。
+ */
+const PATH_REF_EXEMPT = new Map([
+  ['src/index.ts', '04/05 手册 testid 表中的示例节点路径（「path 如 README.md、src/index.ts」），非仓库文件引用'],
+  ['src/new-feature.ts', '04 手册 testid 表中的示例节点路径（「新增文件 src/new-feature.ts」演示），非仓库文件引用'],
+  ['packages/ai/src/providers/faux.ts', 'pi 上游仓（badlogic/pi-mono）路径参照，非本仓文件（12 号手册 §4 读者指引）'],
+  ['packages/agent/src/harness/agent-harness.ts', 'pi 上游仓路径参照，非本仓文件（12 号手册 §4.2 读者指引）'],
+  ['packages/agent/test/harness/agent-harness.test.ts', 'pi 上游仓路径参照，非本仓文件（12 号手册 §4.2 黄金参照）'],
+  ['packages/coding-agent/src/modes/rpc/rpc-client.ts', 'pi 上游仓路径参照，非本仓文件（12 号手册 §4.3 读者指引）'],
+  ['packages/coding-agent/src/modes/rpc/rpc-mode.ts', 'pi 上游仓路径参照，非本仓文件（12 号手册 §4.3 real-LLM gated 模式）'],
+])
+
+/** 文档路径 → 仓库实际位置：`src/` 是 renderer 包相对约定，`shared/` 是 shared 包相对约定，其余仓库根相对。
+ *  span 内含 `cd packages/<pkg>` 时以该包为 `src/` 基准（运行命令场景，如 cd packages/ui）。 */
+function resolveDocPath(p, span) {
+  if (p.startsWith('src/')) {
+    const cdMatch = span && /cd\s+(packages\/[\w-]+)/.exec(span)
+    if (cdMatch) return path.join(PROJECT_ROOT, cdMatch[1], p)
+    return path.join(PROJECT_ROOT, 'packages/renderer', p)
+  }
+  if (p.startsWith('shared/')) return path.join(PROJECT_ROOT, 'packages/shared', p.slice('shared/'.length))
+  return path.join(PROJECT_ROOT, p)
+}
+
 
 // ─── 源码侧：收集合法符号表 ─────────────────────────────────────────
 
@@ -194,6 +238,59 @@ function extractDocCandidates(mdText) {
 
 // ─── 主流程 ─────────────────────────────────────────────────────────
 
+/** 收集路径检查域的文档（明列文件 + 目录递归 .md） */
+function collectPathRefDocs() {
+  const docs = []
+  for (const rel of PATH_REF_FILES) docs.push(rel)
+  for (const dirRel of PATH_REF_DIRS) {
+    const absDir = path.join(PROJECT_ROOT, dirRel)
+    try {
+      const walk = (abs) => {
+        for (const name of readdirSync(abs)) {
+          const full = path.join(abs, name)
+          if (statSync(full).isDirectory()) {
+            if (name === 'node_modules') continue
+            walk(full)
+          } else if (name.endsWith('.md')) {
+            docs.push(path.relative(PROJECT_ROOT, full))
+          }
+        }
+      }
+      walk(absDir)
+    } catch {
+      // 目录不存在：映射随之调整，不算错误
+    }
+  }
+  return docs
+}
+
+/** 路径存在性检查：返回悬空引用列表 */
+function checkPathRefs() {
+  const missing = []
+  for (const docRel of collectPathRefDocs()) {
+    let mdText
+    try {
+      mdText = readFileSync(path.join(PROJECT_ROOT, docRel), 'utf-8')
+    } catch {
+      continue
+    }
+    const lines = mdText.split('\n')
+    lines.forEach((line, i) => {
+      for (const span of line.matchAll(/`([^`\n]+)`/g)) {
+        for (const m of span[1].matchAll(REPO_PATH_RE)) {
+          const p = m[0].replace(/\.+$/, '')
+          if (p.includes('*')) continue
+          if (PATH_REF_EXEMPT.has(p)) continue
+          if (!existsSync(resolveDocPath(p, span[1]))) {
+            missing.push({ doc: docRel, line: i + 1, path: p })
+          }
+        }
+      }
+    })
+  }
+  return missing
+}
+
 function main() {
   const drifts = []
   for (const [docRel, modulePaths] of Object.entries(DOC_MODULE_MAP)) {
@@ -214,17 +311,27 @@ function main() {
     }
   }
 
-  if (drifts.length > 0) {
-    console.error(`[doc-symbol-drift] 发现 ${drifts.length} 个文档引用了源码中不存在的符号：`)
-    for (const d of drifts) {
-      console.error(`  ✗ ${d.doc}:${d.lines.join(',')}  \`${d.sym}\` 不在映射源码模块的导出表/对象键中`)
+  const missingPaths = checkPathRefs()
+
+  if (drifts.length > 0 || missingPaths.length > 0) {
+    if (drifts.length > 0) {
+      console.error(`[doc-symbol-drift] 发现 ${drifts.length} 个文档引用了源码中不存在的符号：`)
+      for (const d of drifts) {
+        console.error(`  ✗ ${d.doc}:${d.lines.join(',')}  \`${d.sym}\` 不在映射源码模块的导出表/对象键中`)
+      }
+    }
+    if (missingPaths.length > 0) {
+      console.error(`[doc-path-refs] 发现 ${missingPaths.length} 处文档引用的仓库路径不存在：`)
+      for (const m of missingPaths) {
+        console.error(`  ✗ ${m.doc}:${m.line}  \`${m.path}\` 文件不存在`)
+      }
     }
     console.error('')
-    console.error('恢复动作：该符号已被删除或改名——同步修正文档（改用现行导出名或文字描述），')
-    console.error('或在 scripts/check-doc-symbol-drift.mjs 的 DOC_MODULE_MAP 登记新文档映射。')
+    console.error('恢复动作：该符号/路径已被删除或改名——同步修正文档（改用现行导出名/现路径或文字描述），')
+    console.error('或在 scripts/check-doc-symbol-drift.mjs 登记：符号走 DOC_MODULE_MAP 映射，路径走 PATH_REF_EXEMPT（须附理由）。')
     process.exit(1)
   }
-  console.log(`[doc-symbol-drift] OK：${Object.keys(DOC_MODULE_MAP).length} 个映射文档 × 源码导出表，零悬空符号`)
+  console.log(`[doc-symbol-drift] OK：${Object.keys(DOC_MODULE_MAP).length} 个映射文档 × 源码导出表，零悬空符号；${collectPathRefDocs().length} 个活跃测试文档 × 路径存在性，零悬空引用`)
 }
 
 main()

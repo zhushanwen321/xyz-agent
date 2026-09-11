@@ -59,6 +59,8 @@ const props = defineProps<{
   projects: RankRow[]
   metric: 'tokens' | 'cost'
   totalMetric: number
+  /** pid -> CSS 变量映射（aggregate() 结果的 providerColors，取色随数据返回，无全局态） */
+  providerColors: Record<string, string>
 }>()
 
 interface StackSeg {
@@ -82,7 +84,7 @@ function stackSegments(row: RankRow): StackSeg[] {
     .map((pid) => ({
       pid,
       pct: (metricValue(provs[pid], props.metric) / total) * PERCENT_MULTIPLIER,
-      color: getProviderColor(pid),
+      color: getProviderColor(props.providerColors, pid),
     }))
     .sort((a, b) => b.pct - a.pct)
 }

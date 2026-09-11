@@ -2,7 +2,7 @@
  * CommandPopover skill-only 候选构建（多 skill 注入 u4，D1 数据源 + D2 已选禁选）。
  *
  * 从 CommandPopover.vue 拆出（script 行数约束，vue_rules_checker ≤300），
- * 与 command-popover-file-candidates.ts / command-popover-symbols.ts 同模式：
+ * 与 command-popover-symbols.ts / CommandPopover.vue 内联 file 分支同模式：
  * 纯函数、零组件依赖，items computed 委托调用。
  *
  * 数据源（D1）：
@@ -25,7 +25,7 @@ interface SkillCommandLike {
 }
 
 /** skill 候选项（CommandPopover items 的 skill 分支返回形状） */
-export interface SkillCandidate {
+interface SkillCandidate {
   id: string
   name: string
   displayName: string
@@ -45,7 +45,7 @@ export function bareSkillCommandName(name: string): string {
 }
 
 /** skill 候选源（CommandPopover props 的结构子集，直接透传） */
-export interface SkillCandidateSource {
+interface SkillCandidateSource {
   sessionId?: string
   globalSkills?: SkillInfo[]
   projectSkills?: SkillInfo[]

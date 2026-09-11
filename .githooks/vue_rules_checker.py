@@ -6,6 +6,7 @@
 2. 禁止使用 Emoji 图标（应使用 lucide-vue-next）
 3. 禁止编写自定义 CSS（应使用 Tailwind 工具类）
 4. <template> 行数上限 400 行，<script setup> 行数上限 300 行
+   （文件头登记 `split-justified: <语义域>` 后 script 上限放行至 500 行，见 MAX_SCRIPT_LINES_JUSTIFIED）
 5. 禁止使用 Tab 缩进（仅允许 Space）
 6. 组件上优先使用 v-model 而非 :value + @input
 
@@ -46,6 +47,16 @@ NATIVE_ELEM_WHITELIST: list[str] = []
 # .vue 文件各区块行数上限
 MAX_TEMPLATE_LINES = 400
 MAX_SCRIPT_LINES = 300
+# [HISTORICAL] split-justified 行数豁免（2026-09-11 renderer 过度设计审计候选 3，用户裁决 1）。
+# 行数门禁曾驱动对超 300 行 script 的机械拆分，产出微包装/转发壳模块（如 command-popover
+# 三个 ~30 行微文件），拆分本身反而新增间接层——门禁目标（控制单文件复杂度）与手段（强制拆分）倒挂。
+# 经裁决改为登记制替代强制拆分：文件头注释块登记 `<!-- split-justified: <语义域> -->`
+# （或 script 内 `// split-justified: <语义域>`，语义域须非空）后，该文件 script 上限放行至
+# MAX_SCRIPT_LINES_JUSTIFIED（更高的绝对上限，防无限膨胀）。豁免不是静默的：放行时输出 INFO 行。
+# 无登记文件行为不变（300 行拦截逻辑与报错文案均保持原样）。
+MAX_SCRIPT_LINES_JUSTIFIED = 500
+# 豁免标记只在文件头注释块（前 30 行）内有效，防止文件中段的标记造成隐式放行
+SPLIT_JUSTIFIED_SCAN_LINES = 30
 
 # 允许保留 <style scoped> 的文件（子串匹配）
 # [HISTORICAL] MainPanel.vue 的 .main-panel { box-shadow: var(--shadow-1), var(--shadow-2) }
@@ -204,6 +215,39 @@ def check_vue_component_usage(content: str, relative_path: str) -> tuple[int, li
                 exit_code = 2
 
     return exit_code, issues
+
+
+def find_split_justified_domain(content: str) -> str | None:
+    """提取文件头登记的 split-justified 豁免语义域；未登记或登记无效返回 None。
+
+    认可的登记形态（均须在注释语境内、位于文件头前 SPLIT_JUSTIFIED_SCAN_LINES 行）：
+      <!-- split-justified: <语义域> -->   （SFC 文件头 HTML 注释，须同行闭合）
+      // split-justified: <语义域>         （script 内行注释；/* 块注释与 * 续行同样接受）
+    标记存在但语义域为空（`split-justified:` / 纯空白）视为未登记；首个标记定性，
+    不向后继续扫描（防止堆叠多个标记直到某个通过）。
+    """
+    for line in content.split('\n')[:SPLIT_JUSTIFIED_SCAN_LINES]:
+        if 'split-justified:' not in line:
+            continue
+        stripped = line.strip()
+        if not (stripped.startswith('<!--') or stripped.startswith('//')
+                or stripped.startswith('/*') or stripped.startswith('*')):
+            continue  # 标记必须出现在注释语境，正文/字符串中的文字不算登记
+        text = stripped
+        if text.startswith('<!--'):
+            m = re.match(r'<!--(.*)-->\s*$', text)
+            if not m:
+                continue  # 跨行 HTML 注释首行（未同行闭合）不认，登记须单行自足
+            text = m.group(1)
+        else:
+            text = re.sub(r'^(?:/{2}|/\*|\*)\s*', '', text)
+        m = re.search(r'split-justified:\s*(\S.*?)\s*$', text)
+        if m:
+            domain = m.group(1).strip()
+            if domain:
+                return domain
+        return None  # 找到标记但语义域为空：显式视为未登记
+    return None
 
 
 def check_vue_file(content: str, relative_path: str) -> tuple[int, list[str]]:
@@ -403,12 +447,31 @@ def check_vue_file(content: str, relative_path: str) -> tuple[int, list[str]]:
         exit_code = 2
 
     if script_lines > MAX_SCRIPT_LINES:
-        issues.append(
-            f"  <script setup> 共 {script_lines} 行，"
-            f"超出上限 {MAX_SCRIPT_LINES} 行"
-        )
-        issues.append("    请提取 composable 或子组件拆分逻辑")
-        exit_code = 2
+        justified_domain = find_split_justified_domain(content)
+        if justified_domain is None:
+            # 无登记（或登记无效）：拦截行为与报错文案保持原样
+            issues.append(
+                f"  <script setup> 共 {script_lines} 行，"
+                f"超出上限 {MAX_SCRIPT_LINES} 行"
+            )
+            issues.append("    请提取 composable 或子组件拆分逻辑")
+            exit_code = 2
+        elif script_lines > MAX_SCRIPT_LINES_JUSTIFIED:
+            # 已登记但超绝对上限：豁免不无限膨胀
+            issues.append(
+                f"  <script setup> 共 {script_lines} 行，"
+                f"超出豁免上限 {MAX_SCRIPT_LINES_JUSTIFIED} 行（split-justified: {justified_domain}）"
+            )
+            issues.append("    请提取 composable 或子组件拆分逻辑")
+            exit_code = 2
+        else:
+            # 已登记且在绝对上限内：放行，但豁免不是静默的，输出 INFO 留痕
+            print(
+                f"  [INFO] {relative_path}: <script setup> 共 {script_lines} 行，"
+                f"split-justified 豁免生效（登记域: {justified_domain}），"
+                f"上限 {MAX_SCRIPT_LINES_JUSTIFIED} 行",
+                file=sys.stderr,
+            )
 
     # 检查 7: 组件使用规范
     comp_exit, comp_issues = check_vue_component_usage(content, relative_path)

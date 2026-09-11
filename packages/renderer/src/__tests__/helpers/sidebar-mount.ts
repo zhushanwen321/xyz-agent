@@ -87,7 +87,7 @@ export function fileTreeStoreModule() {
 export function panelStoreModule() {
   return {
     usePanelStore: () => ({
-      currentLeaf: { type: 'panel', id: 'panel-root', sessionId: null },
+      currentLeaf: { id: 'panel-root', sessionId: null },
       activePanelId: 'panel-root',
       focusedSessionId: ref<string | null>(null),
       findPanelBySession: () => null,
@@ -160,17 +160,10 @@ export function sessionDerivationsModule() {
   }
 }
 
-/** '@/composables/features/chat/useSubagentListSync' mock 工厂。 */
-export function subagentListSyncModule() {
+/** '@/composables/features/chat/useListSync' mock 工厂（屏蔽 Sidebar 挂载时的列表首拉 watch）。 */
+export function listSyncModule() {
   return {
-    useSubagentListSync: vi.fn(),
-  }
-}
-
-/** '@/composables/features/chat/useWorkflowListSync' mock 工厂。 */
-export function workflowListSyncModule() {
-  return {
-    useWorkflowListSync: vi.fn(),
+    useListSync: vi.fn(),
   }
 }
 

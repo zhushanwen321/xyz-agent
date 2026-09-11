@@ -27,9 +27,23 @@ echo ""
 # [HISTORICAL] bare repo + worktree 模式下，git 读 hook 从 commondir（即 .bare/）的 hooks，
 # 不是 per-worktree 的 git-dir。曾用 --git-dir 导致 hook 写到 worktree 局部目录，git 根本不读，
 # 整个项目的 pre-commit 静默失效（2026-06-20 v3 重建审查发现）。改用 --git-common-dir。
+# [2026-09-11 独立 hooks 改造] 共享 commondir/hooks 的代价暴露：任一 worktree 重装 hooks
+# 即覆盖全部 worktree，版本错位的分支被不属于它的检查拦死（实测 14:50 extensions worktree
+# 的 C-pi-14 段覆盖后，renderer 分支含 packages/ 的 commit 全部被 208 处存量字面量拦下）。
+# 现改为 per-worktree 独立 hooks：extensions.worktreeConfig=true +
+# core.hooksPath(--worktree) 指向本 worktree 的 git-dir/hooks——worktree 级配置优先于
+# commondir 共享副本，各 worktree 各自安装互不覆盖。hooksPath 必须绝对路径（相对路径
+# 按 CWD 解析不可靠）。
+IS_WORKTREE=false
 if [ -f "$PROJECT_ROOT/.git" ]; then
-    # worktree 模式（.git 是文件）→ 用 commondir（bare repo 根），所有 worktree 共享 hook
-    GIT_DIR=$(git -C "$PROJECT_ROOT" rev-parse --git-common-dir)
+    # worktree 模式（.git 是文件）→ 本 worktree 独立 hooks
+    IS_WORKTREE=true
+    git -C "$PROJECT_ROOT" config extensions.worktreeConfig true
+    # [2026-09-11] 手动开启 extensions.worktreeConfig 时 git 不会代写 core.bare——
+    # worktree 会继承共享 config 的 core.bare=true，被当成 bare 仓库（status/show-toplevel
+    # 报 "must be run in a work tree"）。显式置 false，幂等。
+    git -C "$PROJECT_ROOT" config --worktree core.bare false
+    GIT_DIR=$(git -C "$PROJECT_ROOT" rev-parse --absolute-git-dir)
     GIT_HOOKS_DIR="$GIT_DIR/hooks"
 elif [ -d "$PROJECT_ROOT/.git" ]; then
     GIT_HOOKS_DIR="$PROJECT_ROOT/.git/hooks"
@@ -1359,15 +1373,15 @@ fi
 #   不设独立 SKIP_* 开关（R1 后惯例，总闸 SKIP_ALL_CHECKS 兜底）。
 # ============================================================================
 
-DOC_SYMBOL_STAGED=$(git diff --cached --name-only -- docs/design/ apps/electron/main/update/ scripts/check-doc-symbol-drift.mjs)
-if echo "$DOC_SYMBOL_STAGED" | grep -qE "^docs/design/|^apps/electron/main/update/|^scripts/check-doc-symbol-drift\.mjs$"; then
+DOC_SYMBOL_STAGED=$(git diff --cached --name-only -- docs/design/ apps/electron/main/update/ scripts/check-doc-symbol-drift.mjs TEST-STRATEGY.md docs/testing/)
+if echo "$DOC_SYMBOL_STAGED" | grep -qE "^docs/design/|^apps/electron/main/update/|^scripts/check-doc-symbol-drift\.mjs$|^TEST-STRATEGY\.md$|^docs/testing/"; then
     print_section "[文档-代码符号漂移守卫]"
     if [ ! -f "scripts/check-doc-symbol-drift.mjs" ]; then
         echo -e "${RED}[ERROR] 找不到 scripts/check-doc-symbol-drift.mjs（守卫脚本被删除）${NC}"
         exit 1
     fi
     if ! node scripts/check-doc-symbol-drift.mjs; then
-        echo -e "${RED}[ERROR] 文档符号漂移：设计文档引用了源码中不存在的符号（删除/改名未同步文档）——按上方 ✗ 明细修正文档后重试${NC}"
+        echo -e "${RED}[ERROR] 文档符号/路径漂移：文档引用了源码中不存在的符号或仓库路径（删除/改名未同步文档）——按上方 ✗ 明细修正文档后重试${NC}"
         echo -e "${RED}[原则] 无论是否本次改动引入的问题，都必须正面修复解决，不允许跳过。${NC}"
         exit 1
     fi
@@ -1521,6 +1535,20 @@ exit 0
 HOOK_EOF
 
 chmod +x "$GIT_HOOKS_DIR/pre-commit"
+
+# [2026-09-11 独立 hooks 改造] worktree 模式：将本 worktree 的 hooksPath 指向独立目录并自检。
+# worktree 级 core.hooksPath 覆盖 commondir 共享副本，是本 worktree 隔离生效的开关本身——
+# 缺失即退回共享行为，必须显式校验，不能静默。
+if [ "$IS_WORKTREE" = true ]; then
+    git -C "$PROJECT_ROOT" config --worktree core.hooksPath "$GIT_HOOKS_DIR"
+    INSTALLED_HOOKS_PATH=$(git -C "$PROJECT_ROOT" config --worktree --get core.hooksPath 2>/dev/null || true)
+    if [ "$INSTALLED_HOOKS_PATH" != "$GIT_HOOKS_DIR" ]; then
+        echo -e "${RED}[ERROR] worktree 独立 hooksPath 设置失败（期望 $GIT_HOOKS_DIR，实得 ${INSTALLED_HOOKS_PATH:-<空>}）${NC}"
+        echo -e "${YELLOW}[FIX] 确认 extensions.worktreeConfig 已开启：git config extensions.worktreeConfig true；再重跑本脚本${NC}"
+        exit 1
+    fi
+    echo -e "${GREEN}[OK] worktree 独立 hooks 已生效：core.hooksPath=$GIT_HOOKS_DIR${NC}"
+fi
 
 # 安装后自检：生成的 pre-commit 必须含流写逃逸护栏段。
 # 防「源缺段/heredoc 生成失败」——本脚本源若缺护栏段或 heredoc 损坏，此处 exit 1 拦下。

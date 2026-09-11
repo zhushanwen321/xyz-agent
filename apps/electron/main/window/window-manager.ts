@@ -105,7 +105,7 @@ export class WindowManager implements IWindowManager {
     const panelId = `panel-${windowId}`
     return {
       windowId,
-      panel: { type: 'panel', id: panelId, sessionId: null },
+      panel: { id: panelId, sessionId: null },
       focusedPanelId: panelId,
       sessionIds: [],
     }

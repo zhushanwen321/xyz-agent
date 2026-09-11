@@ -1,5 +1,5 @@
 /**
- * useCommandSync —— slash 命令补拉闭环（修复 composer skill 消失缺陷）。
+ * useCommandSync —— slash 命令投递闭环（拉 + 推两路；修复 composer skill 消失缺陷）。
  *
  * 根因：session.commands 帧是「一次性投递、零补拉」——session 激活时 runtime
  * 播种拉取并广播一帧，渲染端消费组件异步就位，帧到达早于订阅建立即永久丢失。
@@ -8,7 +8,14 @@
  *
  * 触发点（D1）：
  * 1. watch(sessionIdRef, immediate) —— sid 变化 / 挂载即拉（null/undefined 不拉）
- * 2. onOpenPull() —— 浮层打开时调用（CommandPopover watch open && type==='slash'）
+ * 2. onOpenPull() —— 浮层打开时调用（CommandPopover watch open && type==='slash'）。
+ *    注意：浮层 open 边沿拉取实际统一由 command-popover-open-fetch 承接（带 1s 节流），
+ *    不经本处——双路并存会重复 RPC（dev-0.9.9 补拉闭环 × dev-0.9.8 符号系统 open-fetch
+ *    合并产物）
+ * 3. 推路：订阅 session.commands（D8 走 session 通道）→ 写 commandStore（跨组件重建
+ *    持久化；u20 自 command-popover-delivery 并回——同「命令投递」域）。FM4 修复
+ *    （ADR-0049）：使用 useSessionEvents 注入的第二参数 sid（订阅时捕获，不随调用方
+ *    ref 实时值变化），消除切 sid 时序竞态导致的跨分区污染。
  *
  * 数据模式（D5）：打开即拉（权威透传 pi）+ SWR 旧值先行。拉取应答 ms 级回写覆盖。
  *
@@ -22,6 +29,8 @@ import { type Ref, watch } from 'vue'
 import { session as sessionApi } from '@/api'
 import { createInflightDedup } from '@xyz-agent/core/foundation/create-inflight-dedup'
 import { useCommandStore } from '@/composables/features/command/useCommandStore'
+import { useSessionEvents } from '@/composables/features/chat/useSessionEvents'
+import type { RawCommand } from '@xyz-agent/core'
 
 /** getCommands RPC 应答形状（D2 分区写入的消费面）。 */
 type CommandsReply = {
@@ -93,6 +102,13 @@ export function useCommandSync(
     },
     { immediate: true },
   )
+
+  // D1 触发点 3：推路订阅——session.commands 广播写 store（第二参数 sid 是订阅时捕获的
+  // 消息所属分区，写它而非当前 ref 值，FM4/ADR-0049 跨分区污染防护）
+  const onMessage = useSessionEvents(sessionIdRef)
+  onMessage('session.commands', (msg, sid) => {
+    commandStore.applyCommands(sid, msg.payload.commands as RawCommand[])
+  })
 
   // D1 触发点 2：浮层打开时调用（CommandPopover watch open && type==='slash'）
   function onOpenPull(): void {

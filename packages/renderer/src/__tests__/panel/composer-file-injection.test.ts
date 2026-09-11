@@ -98,14 +98,14 @@ vi.mock('@xyz-agent/ui/features/composer', async (importOriginal) => {
 })
 
 import Composer from '@/components/panel/Composer.vue'
-import { useComposerInjectionStore } from '@/composables/panel/composer-injection-store'
+import { composerInjectionStore } from '@/composables/panel/composer-injection-store'
 
 beforeEach(() => {
   setActivePinia(createPinia())
   composerInputSpies = []
   // W4：store 改为模块级单例（composer-injection-store.ts），跨用例需显式清槽
   // （原 pinia wrapper 每次 setActivePinia 重建实例，单例没有该语义）
-  useComposerInjectionStore().clearInjection()
+  composerInjectionStore.clearInjection()
 })
 
 // W4：模块级单例 store 的 watch 随组件存活——跨用例必须卸载组件，
@@ -139,7 +139,7 @@ function mountComposer(props: { sessionId: string | null; variant?: 'panel' | 'l
 describe('Composer file 注入 watch（W2）', () => {
   it('U6 target=current 按 sessionId 匹配消费 + 清空 pendingInjection', async () => {
     const { spy: insertSpy } = mountComposer({ sessionId: 's1', variant: 'panel' })
-    const store = useComposerInjectionStore()
+    const store = composerInjectionStore
     store.requestInjection({ target: 'current', path: 'foo.ts', sessionId: 's1' })
     await flushPromises()
 
@@ -150,7 +150,7 @@ describe('Composer file 注入 watch（W2）', () => {
 
   it('U6b target=current 带 lineRange 透传给 insertFileChip', async () => {
     const { spy: insertSpy } = mountComposer({ sessionId: 's1', variant: 'panel' })
-    const store = useComposerInjectionStore()
+    const store = composerInjectionStore
     store.requestInjection({
       target: 'current',
       path: 'foo.ts',
@@ -165,7 +165,7 @@ describe('Composer file 注入 watch（W2）', () => {
 
   it('U7 target=current sessionId 不匹配不消费不误清', async () => {
     const { spy: insertSpy } = mountComposer({ sessionId: 's1', variant: 'panel' })
-    const store = useComposerInjectionStore()
+    const store = composerInjectionStore
     store.requestInjection({ target: 'current', path: 'foo.ts', sessionId: 's2' })
     await flushPromises()
 
@@ -176,7 +176,7 @@ describe('Composer file 注入 watch（W2）', () => {
 
   it('U8 target=new 仅 landing composer（variant=landing）消费', async () => {
     const { spy: insertSpy } = mountComposer({ sessionId: null, variant: 'landing' })
-    const store = useComposerInjectionStore()
+    const store = composerInjectionStore
     store.requestInjection({ target: 'new', path: 'foo.ts', sessionId: 's1' })
     await flushPromises()
 
@@ -186,7 +186,7 @@ describe('Composer file 注入 watch（W2）', () => {
 
   it('U9 target=new 不被 session composer（variant=panel）消费', async () => {
     const { spy: insertSpy } = mountComposer({ sessionId: 's1', variant: 'panel' })
-    const store = useComposerInjectionStore()
+    const store = composerInjectionStore
     store.requestInjection({ target: 'new', path: 'foo.ts', sessionId: 's1' })
     await flushPromises()
 

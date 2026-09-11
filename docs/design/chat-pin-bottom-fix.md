@@ -29,7 +29,7 @@ xyz-agent 是 Electron + Vue 3 的 AI Agent 桌面工作台。聊天窗口的消
 
 > **贴底（stuck）** = `stickToBottom === true` 的状态。就是 §3.2 失败模式里「用户没有主动上滑、期望窗口跟着新内容走」的状态。初始为 true；脱离与恢复的信号集由 §4.3 D7 定义（本设计把脱离信号从「仅滚轮上滑」扩展为「一切用户上滑」，见根因 R5）；恢复贴底 = `onScroll` 检测到距底 ≤ 40px（`BOTTOM_THRESHOLD`，useVirtuaFollow.ts:43）。
 
-> **尾部块（trailing blocks）** = 渲染在 `<Virtualizer>` **之后、仍在滚动容器内文档流中**的非虚拟列表内容：`ActivityStrip` 活动条（compacting/bash/thinking/settling 指示行，每行实测约 24px，常量 `COMPACTING_NOTICE_HEIGHT=24`，useMessageStreamNotices.ts:23）、`PendingBubble` 待投递气泡列表、`ForkNotice` 分支反馈行。它们位于 MessageStream.vue 模板中 Virtualizer 之后的文档流区块，是 virtua 坐标系**看不见**的内容——这是 §3.3 根因 R2 的舞台。
+> **尾部块（trailing blocks）** = 渲染在 `<Virtualizer>` **之后、仍在滚动容器内文档流中**的非虚拟列表内容：`ActivityStrip` 活动条（compacting/bash/thinking/settling 指示行，每行实测约 24px，常量 `COMPACTING_NOTICE_HEIGHT=24`，message-stream-layout.ts:25）、`PendingBubble` 待投递气泡列表、`ForkNotice` 分支反馈行。它们位于 MessageStream.vue 模板中 Virtualizer 之后的文档流区块，是 virtua 坐标系**看不见**的内容——这是 §3.3 根因 R2 的舞台。
 
 > **INVAR-M4-2（既有不变量，本设计修订为 INVAR-M4-2′）** = 原版：「脱离锚定只由 `onWheel deltaY<0` 驱动，`onScroll` 永远不把 stickToBottom 翻 false（只单向翻真），任何程序性滚动不得把用户扯回底部」。修订版（D7）：脱离信号扩展为「滚轮上滑（恒即时生效）+ onScroll 复合判据（offset 递减 ∧ 距底 >40px，force 强滚后的测量收敛抑制窗内暂停）」，「程序性滚动不扯回」的核心保护不变。修订理由与回归反例重演见 §4.3 D7。
 
@@ -58,7 +58,7 @@ pi 进程（token 流 / 工具结果 / compaction entry）
         └─→ ② toRenderItemsIncremental：消息数组 → renderItems（turn/system/bash/skillNotice 穿插）
               └─→ ③ MessageStream <Virtualizer :data="streamItems">（:key=sessionId）
                     │   virtua 内部：新 item 先按 ESTIMATED_TURN_HEIGHT=200 估算
-                    │   （useMessageStreamNotices.ts:40），渲染后由 virtua 自己的
+                    │   （message-stream-layout.ts:42），渲染后由 virtua 自己的
                     │   ResizeObserver 实测回写测量缓存
                     ├─→ ④ MarkdownRenderer / useMarkdownStreaming（rAF 节流 + latest-wins
                     │     串行 + fence 静默 finalize）——DOM 高度比 store 内容晚 ≥1 帧，
@@ -78,7 +78,7 @@ pi 进程（token 流 / 工具结果 / compaction entry）
 
 - **F1 流式回复定格后差 1-2 行（最高频）**：助手回复流式输出，结束后最后 1-2 行（常是一个代码块的首行或收尾行）被裁在视口外。触发条件：每次流式回复结束。机制：末次文本增长的 DOM 高度经 rAF 节流渲染 + virtua RO 实测后才生效，而最后一次 follow 在此之前已执行完毕（环节 ③④⑥ 接缝，根因 R1）。
 - **F2 发送消息后活动条/末行不可见**：用户发送消息，turn 进入 dispatching，「思考中…」活动条（24px，在 Virtualizer 外）出现；跟随滚动只滚到虚拟列表末端，活动条被压在视口底外 24px——约 1-2 行（环节 ⑤，根因 R2）。
-- **F3 长会话压缩完成后通知整条不可见**：长会话（显示「加载更多」→ virtua `startMargin=44`，LOAD_MORE_RESERVED_HEIGHT，useMessageStreamNotices.ts:46）中自动/手动压缩完成，「上下文已压缩」SystemNotice（`py-1` + `--text-xs`，实测约 24-25px < 44px）成为末项，但跟随滚动钉到了**倒数第二项**——通知整行沉在视口外，且 `stickToBottom` 仍为 true（距底为负值 ≤ 40 阈值），**不浮出「回到底部」按钮**，用户无任何提示（环节 ⑥，根因 R3）。skill 注入提示行（SkillNoticeInline，`py-0.5` 约 21px）作为末项时同样命中。
+- **F3 长会话压缩完成后通知整条不可见**：长会话（显示「加载更多」→ virtua `startMargin=44`，LOAD_MORE_RESERVED_HEIGHT，message-stream-layout.ts:48）中自动/手动压缩完成，「上下文已压缩」SystemNotice（`py-1` + `--text-xs`，实测约 24-25px < 44px）成为末项，但跟随滚动钉到了**倒数第二项**——通知整行沉在视口外，且 `stickToBottom` 仍为 true（距底为负值 ≤ 40 阈值），**不浮出「回到底部」按钮**，用户无任何提示（环节 ⑥，根因 R3）。skill 注入提示行（SkillNoticeInline，`py-0.5` 约 21px）作为末项时同样命中。
 - **F4 session 占用时发送的消息"消失"**：session 忙时发送的消息进 defer 队列，以 PendingBubble 形式渲染在 Virtualizer 外；`messages.length` 不变 → 4 个 watch 一个都不触发 → 没有任何滚动发生，用户必须手动下滚才能看到自己刚发的消息（环节 ⑤⑥，根因 R2 的触发缺口面）。
 - **F5 滚动条拖拽/键盘上滑后被持续扯回（既有缺陷，本设计若不管会被放大）**：`useVirtuaFollow.ts:162-173` 实装证实脱离锚定**只**由 `onWheel deltaY<0` 驱动——滚动条拖拽、键盘 PageUp/Home 上滑不触发 wheel，`stickToBottom` 保持 true，下一个跟随触发就把用户扯回底部。现状下触发源只有 4 个 watch（低频，多数场景碰巧躲过一次扯回）；若不修，本设计的 RO 兜底网会把扯回频率放大到「每一次内容高度变化」（如阅读历史期间中部图片加载完成）——这是对 G2 的结构性侵犯，必须在本次一并修复（根因 R5）。
 
@@ -304,7 +304,7 @@ virtua 实装语义：`findItemIndex` 入参按**绝对滚动坐标**解释，�
 ### 参考锚点
 
 - virtua 实装（0.50.0，`npm ls virtua` 核）：`node_modules/virtua/lib/core/index.js:78`（findItemIndex 减 startMargin）、`:114-140`（case-3 顶锚补偿）、`:287`（scrollToIndex 公式）；`node_modules/virtua/lib/vue/index.js:348`（scrollRef prop 声明）、`:368`（viewport=contentRect）、`:430-431`（scroll 事件同步 emit + store 实时读）、`:446`（scrollRef ?? parentElement 挂载）、`:470-471`（scrollSize 不含 startMargin）
-- 本仓实装（行号核对基准 2026-09-09，D6 清理后；行号漂移时以括号内符号为 grep 主锚）：`useVirtuaFollow.ts:43`（BOTTOM_THRESHOLD=40）、`:162-173`（wheel-only 脱离现场）；`useMessageStreamNotices.ts:23/33/40/46`（24/24/200/44 常量族）；`MessageStream.vue:16`（padding）、`:50`（startMargin 接线）；`style.css:120`（--message-stream-pad-top:20px）；`packages/ui/src/features/chat/composables/useMarkdownStreaming.ts:102-107`（rAF 逐帧 trailing 节流）与 `packages/renderer/src/composables/logic/markdown.ts:974`（fence 静默阈值 200ms）
+- 本仓实装（行号核对基准 2026-09-09，D6 清理后；行号漂移时以括号内符号为 grep 主锚）：`useVirtuaFollow.ts:43`（BOTTOM_THRESHOLD=40）、`:162-173`（wheel-only 脱离现场）；`message-stream-layout.ts:25/35/42/48`（24/24/200/44 常量族；2026-09-11 由 `useMessageStreamNotices.ts` 改名，原行号 :23/33/40/46 已失效）；`MessageStream.vue:16`（padding）、`:50`（startMargin 接线）；`style.css:120`（--message-stream-pad-top:20px）；`packages/ui/src/features/chat/composables/useMarkdownStreaming.ts:102-107`（rAF 逐帧 trailing 节流）与 `packages/renderer/src/composables/logic/markdown.ts:974`（fence 静默阈值 200ms）
 - 本仓实装·历史现场（以下锚点指向的代码均已于 v9 D6 死路径清理删除，留痕供追溯，grep 不到属预期）：`useVirtuaFollow.ts:131/166` findItemIndex 误用现场（D1 索引直取取代，事故背景注释现存 :27）；`MessageStream.vue:304` vlistBottom 计算块；`useNoticeStack.ts:14-17` fork 定位链死路径自证（自证内容留痕 §6.3）；`useForkNoticeStream.ts:81-92` / `useMessageStreamNotices.ts:109` vlistBottom 消费链
 - 既有约定：INVAR-M4-2 原文（useVirtuaFollow.ts 头部注释，本设计修订为 INVAR-M4-2′）；索引一致性硬约束（MessageStream.vue u5 注释）；「virtua 单一 scrollTop owner」（MessageStream.vue 头部注释）
 

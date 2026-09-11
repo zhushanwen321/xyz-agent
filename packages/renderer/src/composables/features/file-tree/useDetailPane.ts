@@ -28,12 +28,12 @@ import i18n from '@/i18n'
 const t = i18n.global.t
 
 /** 预览加载态 */
-export type PreviewStatus = 'idle' | 'loading' | 'content' | 'error'
+type PreviewStatus = 'idle' | 'loading' | 'content' | 'error'
 
 /** 预览视图模式（diff=显示 git patch，preview=显示文件原始内容） */
 export type DetailViewMode = 'diff' | 'preview'
 
-export interface DetailPaneState {
+interface DetailPaneState {
   status: PreviewStatus
   /** 文件内容（preview 模式）或 diff patch（diff 模式） */
   content: string

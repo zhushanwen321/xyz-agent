@@ -50,7 +50,7 @@ import type { SkillDirConfig } from '@xyz-agent/shared'
 import { LoadPaths, SETTINGS_CONFIG_API_KEY, SETTINGS_CHOOSE_DIRECTORY_KEY } from '@xyz-agent/ui/features/settings'
 import { Button } from '@/components/ui/button'
 import { config } from '@/api'
-import { chooseDirectory } from '@/lib/ipc'
+import { chooseDirectory } from '@/api/domains/settings'
 
 provide(SETTINGS_CONFIG_API_KEY, config) // LoadPaths(SourceImportSection) 迁 ui，config 经 inject
 // v2 §3 目录选择 dialog：LoadPaths 经 inject 调 chooseDirectory（lib/ipc 封装，preload 复用 pick-directory handler）

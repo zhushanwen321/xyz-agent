@@ -267,30 +267,31 @@ function ensureBadgeTasks(): UseBackgroundTasksReturn {
   return badgeTasks
 }
 
-/** 释放 badge 常驻实例（测试隔离钩子；生产代码禁止调用）。 */
-export function _resetBadgeSourceForTest(): void {
-  badgeScope?.stop()
-  badgeScope = null
-  badgeTasks = null
-  __resetBackgroundTasksForTest()
+/**
+ * 测试后门命名空间（生产代码禁止消费，与生产 import 面物理分离，audit 清理点#9 归整）。
+ * - lastInitHandles：最近一次 initExtensionHostBridge 装配的测试所需句柄快照——init 返回
+ *   void 后（生产调用方 main.ts 恒丢弃返回值），测试 afterEach dispose（bridge）与注册
+ *   注入用例（contributions）取内部实例的唯一通道。仅存测试实际消费的两字段。
+ * - resetBadgeSource：释放 badge 常驻实例 + 重置 useBackgroundTasks 订阅表（测试隔离）。
+ */
+export const __testing = {
+  lastInitHandles: null as null | { bridge: MessageBusBridge; contributions: ContributionRegistry },
+  resetBadgeSource(): void {
+    badgeScope?.stop()
+    badgeScope = null
+    badgeTasks = null
+    __resetBackgroundTasksForTest()
+  },
 }
 
 /**
  * 装配 ExtensionHost bridge（main.ts 挂载前调用一次，app.provide 全局注入）。
  *
- * 返回 stores/registries 供调试与后续接线（§12.3 dialog 闭环复用同一 bus）。
+ * 生产语义返回 void：唯一调用方 main.ts 恒单语句调用、丢弃返回值（audit 清理点#9，
+ * 原 9 字段返回对象系「供调试与后续接线」的未兑现赌注）。测试需要的内部句柄经
+ * `__testing.lastInitHandles` 取（仅 bridge / contributions 两字段有测试消费）。
  */
-export function initExtensionHostBridge(app: App): {
-  bridge: MessageBusBridge
-  viewHostStore: ViewHostStore
-  statusBarController: StatusBarController
-  overlayLifecycle: OverlayLifecycle
-  notificationController: NotificationHostController
-  mountPoints: MountPointRegistry
-  contributions: ContributionRegistry
-  commandRegistry: CommandRegistry
-  activationManager: ActivationManager
-} {
+export function initExtensionHostBridge(app: App): void {
   const bus = getExtensionBus() // IF1：复用模块级惰性单例（不再局部 new）
   const source = createWsPluginMessageSource()
   // bridge 构造即订阅 source（source.subscribe → handleMessage → bus.emit）
@@ -454,5 +455,5 @@ export function initExtensionHostBridge(app: App): {
   })
   notificationController.subscribe()
 
-  return { bridge, viewHostStore, statusBarController, overlayLifecycle, notificationController, mountPoints, contributions, commandRegistry, activationManager }
+  __testing.lastInitHandles = { bridge, contributions }
 }

@@ -108,13 +108,13 @@ vi.mock('@xyz-agent/ui/features/composer', async (importOriginal) => {
 
 import Composer from '@/components/panel/Composer.vue'
 import SessionItem from '@/components/sidebar/SessionItem.vue'
-import { useComposerInjectionStore } from '@/composables/panel/composer-injection-store'
+import { composerInjectionStore } from '@/composables/panel/composer-injection-store'
 
 beforeEach(() => {
   setActivePinia(createPinia())
   localStorage.removeItem('xyz-agent:session-markers')
   inputSpies = []
-  useComposerInjectionStore().clearInjection()
+  composerInjectionStore.clearInjection()
 })
 
 // 模块级单例 store 的 watch 随组件存活——跨用例必须卸载，防前一用例 Composer 误消费
@@ -158,7 +158,7 @@ describe('Composer session 引用注入（S1-S3 · spy 层链路）', () => {
   it('S1 sidebar 点击 → store → panel Composer watch 消费 insertSessionChip(refSessionId, label)', async () => {
     sessionState.active = { id: 's-cur', cwd: '/p' }
     const { spy } = mountComposer({ sessionId: 's-cur', variant: 'panel' })
-    const store = useComposerInjectionStore()
+    const store = composerInjectionStore
 
     const item = mountSessionItem('s-ref', '被引用会话')
     await item.find('[data-testid="quote-to-composer-btn"]').trigger('click')
@@ -179,13 +179,13 @@ describe('Composer session 引用注入（S1-S3 · spy 层链路）', () => {
     await flushPromises()
 
     expect(spy.insertSessionChip).toHaveBeenCalledWith('s-ref', 'landing 引用')
-    expect(useComposerInjectionStore().pendingInjection.value).toBeNull()
+    expect(composerInjectionStore.pendingInjection.value).toBeNull()
   })
 
   it('S3 session 注入消费后紧接 path 注入互不干扰（path 走 insertFileChip）', async () => {
     sessionState.active = { id: 's-cur', cwd: '/p' }
     const { spy } = mountComposer({ sessionId: 's-cur', variant: 'panel' })
-    const store = useComposerInjectionStore()
+    const store = composerInjectionStore
 
     const item = mountSessionItem('s-ref', '会话 A')
     await item.find('[data-testid="quote-to-composer-btn"]').trigger('click')

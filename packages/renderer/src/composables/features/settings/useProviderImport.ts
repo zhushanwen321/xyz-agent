@@ -29,7 +29,7 @@ import type { ProviderSource, ProviderImportPreview } from '@xyz-agent/shared'
 const t = i18n.global.t
 
 /** 导入流程状态 */
-export type ImportState = 'idle' | 'loading-preview' | 'previewing' | 'applying'
+type ImportState = 'idle' | 'loading-preview' | 'previewing' | 'applying'
 
 export function useProviderImport() {
   const { info: toastInfo, error: toastError } = useToast()

@@ -71,7 +71,7 @@ export function statusDotClass(status: DerivedStatus): string {
  * 行为与旧态一致（running/waiting/working 显示 spinner）。
  * 新组件建议直接消费 STATUS_ICON。
  */
-export const SPINNER_STATUSES: ReadonlySet<DerivedStatus> = new Set(['streaming', 'waiting', 'working'])
+const SPINNER_STATUSES: ReadonlySet<DerivedStatus> = new Set(['streaming', 'waiting', 'working'])
 
 export function shouldShowSpinner(status: DerivedStatus): boolean {
   return SPINNER_STATUSES.has(status)

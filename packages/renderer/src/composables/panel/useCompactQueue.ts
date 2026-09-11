@@ -10,6 +10,12 @@
  * [u6b] 独立 badge 组件已移除（D7 展示统一）：队列可见性由 PendingBubble（对话流内）
  * 独立承接。
  *
+ * **双契约 seam 说明**：本文件的 CompactQueue / QueuedMessage 与 core 侧最小结构类型
+ * CompactQueueLike（契约对端：packages/core/src/domain/chat/use-chat-types.ts）构成
+ * 结构类型 seam——两端类型各自声明，经 deps.getCompactQueue 结构匹配对接，有意不合并
+ * （core 不反向依赖 renderer 实现，仅以最小结构面约束实现方；任一侧扩展字段时需
+ * 同步核对另一侧结构面）。
+ *
  * 入队即显：条目由对话流尾部的 PendingBubble 组件渲染（半透明 + Clock + hover 标注），
  * 条目 id 作气泡 id（data-testid 锚点）。撤销（remove）仅对未提交条目（mode === undefined）
  * 开放——已提交条目已进 pi 队列无法撤回（UI 禁用 ×，tooltip「已提交，等待投递」）。

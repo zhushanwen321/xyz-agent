@@ -411,7 +411,8 @@ function handleSubagentDirective(
 
 /** #6 + M4：compact 生命周期开始（interpreter 从 compaction_start 事件唯一驱动，走 session 通道）。
  * [u5b / D1] membership 已切 occupancy 派生（session.occupancy 帧，见 handleSessionOccupancy）
- * ——本 handler 只保留 reason 文案源维护（手动/自动浮层文案，useMessageStreamNotices 消费）。
+ * ——本 handler 只保留 reason 文案源维护（手动/自动浮层文案，ActivityStrip.vue 消费；行高常量族
+ * 见 message-stream-layout.ts，原 useMessageStreamNotices.ts 于 2026-09-11 改名）。
  * 帧序：interpreter 同一挂点先发 session.compacting 再发 occupancy（event-interpreter
  * handleCompactionStart），reason 就位先于浮层显隐条件成立。 */
 function handleSessionCompacting(

@@ -235,8 +235,7 @@ import {
 } from '@/composables/features/sidebar/useImportSession'
 import { useSubagentStore } from '@/stores/subagent'
 import { useWorkflowStore } from '@/stores/workflow'
-import { useSubagentListSync } from '@/composables/features/chat/useSubagentListSync'
-import { useWorkflowListSync } from '@/composables/features/chat/useWorkflowListSync'
+import { useListSync } from '@/composables/features/chat/useListSync'
 import { useSidebarSubagentActions } from '@/composables/features/sidebar/useSidebarSubagentActions'
 import { useGlobalShortcuts } from '@/composables/shell/useGlobalShortcuts'
 import { useNavigationStore } from '@/stores/navigation'
@@ -278,8 +277,8 @@ useGlobalShortcuts({ onNewSession, onOpenImportSession: () => { importOpen.value
 onMounted(() => {
   void loadSessions()
   events.onGlobalType('app.info', (msg) => { piVersion.value = msg.payload.piVersion })
-  useSubagentListSync()
-  useWorkflowListSync()
+  useListSync({ tab: 'subagents', load: subagentStore.loadSubagents })
+  useListSync({ tab: 'workflows', load: workflowStore.loadWorkflows })
 })
 useAppUpdate().initAutoCheck() // setup 顶层同步调用（非 onMounted）：initAutoCheck 的 onScopeDispose 须在活跃 effect scope 内绑定
 </script>

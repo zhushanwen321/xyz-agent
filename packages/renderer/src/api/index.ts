@@ -57,8 +57,9 @@ export const project = isMock ? mockApi.project : realProject
 // preset：pi 启动预设域（pi-launch-presets wave1）。mock 轨走 mockApi.preset 占位（空列表 + 默认 id），
 // real 轨走真实 RPC（preset.list/getDefault/setDefault）。
 export const preset = isMock ? mockApi.preset : realPreset
-// search（⌘K 全局搜索）编排归 useSearch composable（D-026，#5）：mock 轨走 mockApi.search fixture，
-// real 轨走真实 3 源聚合（命令/file/session domain）。本门面不再导出 search（useSearch 内部判 VITE_MOCK）。
+// search（⌘K 全局搜索）编排归 useSearchModalDeps（packages/renderer/src/composables/features/search/useSearchModalDeps.ts，D-026，#5）：
+// 该处判 VITE_MOCK 决定 mock 轨走 mockApi.search fixture / real 轨走真实 3 源聚合（命令/file/session domain）。
+// 本门面不再导出 search（renderer 版 useSearch.ts 已随域迁移删除，2026-09-11）。
 
 // 类型 re-export（供组件 import 类型用）
 export type { ModelInfo } from '@xyz-agent/core/transport/api/domains/model'

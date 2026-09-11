@@ -128,7 +128,7 @@ describe('指标累计', () => {
   })
 
   it('getProviderColor 未分配 provider 回退第 5 档色', () => {
-    expect(getProviderColor('never-seen-provider')).toBe('var(--chart-p5)')
+    expect(getProviderColor({}, 'never-seen-provider')).toBe('var(--chart-p5)')
   })
 })
 
@@ -224,6 +224,32 @@ describe('aggregate 聚合边界', () => {
     const r = aggregate(rows, { ...noFilter(), metric: 'cost' })
     expect(r.peak.d).toBe('2026-08-02')
     expect(r.peak.v).toBe(5)
+  })
+
+  it('providerColors 随结果返回：按全量用量降序分配阶梯，过滤变化不重排（候选 9）', () => {
+    const rows = [
+      makeRow({ date: '2026-08-01', provider: 'big', input: 300 }),
+      makeRow({ date: '2026-08-01', provider: 'mid', input: 200 }),
+      makeRow({ date: '2026-08-01', provider: 'small', input: 100 }),
+      makeRow({ date: '2026-08-02', provider: 'p4', input: 50 }),
+      makeRow({ date: '2026-08-02', provider: 'p5', input: 25 }),
+      makeRow({ date: '2026-08-02', provider: 'p6', input: 10 }),
+    ]
+    const r = aggregate(rows, noFilter())
+    // 用量降序 → 阶梯 p1..p5，第 6 个封顶在 p5
+    expect(r.providerColors['big']).toBe('var(--chart-p1)')
+    expect(r.providerColors['mid']).toBe('var(--chart-p2)')
+    expect(r.providerColors['small']).toBe('var(--chart-p3)')
+    expect(r.providerColors['p4']).toBe('var(--chart-p4)')
+    expect(r.providerColors['p5']).toBe('var(--chart-p5)')
+    expect(r.providerColors['p6']).toBe('var(--chart-p5)')
+    // 取色经结果对象携带的映射（无全局态）；未分配回退 p5
+    expect(getProviderColor(r.providerColors, 'mid')).toBe('var(--chart-p2)')
+    expect(getProviderColor(r.providerColors, 'never-seen')).toBe('var(--chart-p5)')
+    // offProv 过滤 big 后色序不变（色序派生自全量 rows）
+    const filtered = aggregate(rows, { ...noFilter(), offProv: new Set(['big']) })
+    expect(filtered.providerColors['mid']).toBe('var(--chart-p2)')
+    expect(filtered.providerColors['big']).toBe('var(--chart-p1)')
   })
 })
 

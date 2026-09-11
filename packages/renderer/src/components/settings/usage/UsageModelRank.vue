@@ -27,7 +27,7 @@
       <span class="bar-track relative mx-2 h-1.5 min-w-[60px] flex-1 overflow-hidden rounded-[3px] bg-[var(--hairline)]">
         <span
           class="absolute inset-y-0 left-0 rounded-[3px]"
-          :style="{ width: maxVal > 0 ? (row.value / maxVal * 100).toFixed(1) + '%' : '0%', background: getProviderColor(row.provider) }"
+          :style="{ width: maxVal > 0 ? (row.value / maxVal * 100).toFixed(1) + '%' : '0%', background: getProviderColor(providerColors, row.provider) }"
         />
       </span>
 
@@ -61,6 +61,8 @@ const props = defineProps<{
   perModel: Record<string, PerModelEntry>
   metric: 'tokens' | 'cost'
   isolate: string | null
+  /** pid -> CSS 变量色映射（aggregate() 结果的 providerColors） */
+  providerColors: Record<string, string>
 }>()
 
 const emit = defineEmits<{

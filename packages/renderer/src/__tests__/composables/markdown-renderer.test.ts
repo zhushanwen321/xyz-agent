@@ -13,7 +13,7 @@
  *  - MermaidRenderer/AmbiguousFilePopover 按组件名 stub（ui 包内部相对 import，vi.mock 旧路径无法命中）
  *  - 行为差异（迁移遗留，已报告）：① 外链 http(s) 点击不再走 drawer browser tab（ui onClick 简化版
  *    默认冒泡，不拦截）；② 含 / 路径点击不再做 fileApi.read 预检查 + searchModal fallback
- *    （该逻辑留在 renderer useMarkdownInteractions，无消费者）。U13/U14 断言按新行为改写。
+ *    （该逻辑原在 renderer useMarkdownInteractions，已于 2026-09-11 随死代码删除）。U13/U14 断言按新行为改写。
  *
  * 运行：pnpm --filter @xyz-agent/frontend run test -- src/__tests__/composables/markdown-renderer.test.ts
  */

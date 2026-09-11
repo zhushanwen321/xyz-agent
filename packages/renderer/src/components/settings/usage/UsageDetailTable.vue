@@ -21,7 +21,7 @@
       <!-- 分组头 -->
       <div class="grid grid-cols-[minmax(180px,1fr)_84px_84px_84px_84px_104px_76px_108px] items-center gap-1 px-2 py-1 cursor-pointer border-t border-hairline bg-[color-mix(in_oklch,var(--bg-sunken)_50%,transparent)] transition-colors hover:bg-[var(--row-hover)]" @click="toggle(group.pid)">
         <span class="flex min-w-0 items-center gap-1.5">
-          <span class="inline-block size-2 shrink-0 rounded-[2px]" :style="{ background: getProviderColor(group.pid) }" />
+          <span class="inline-block size-2 shrink-0 rounded-[2px]" :style="{ background: getProviderColor(providerColors, group.pid) }" />
           <span class="truncate text-[12px] font-medium text-[var(--neutral-fg)]">{{ group.pid }}</span>
           <span class="shrink-0 text-[10px] text-[var(--neutral-dim)]">{{ group.models.length }} {{ t('settings.usage.modelsLabel') }}</span>
           <!-- 展开/收起箭头 -->
@@ -50,7 +50,7 @@
           <span class="inline-block h-[6px] w-[50px] overflow-hidden rounded-[3px] bg-[var(--hairline)]">
             <span
               class="inline-block h-full rounded-[2px]"
-              :style="{ width: (totTokens > 0 ? totalTokens(group.u) / totTokens * 100 : 0) + '%', background: getProviderColor(group.pid) }"
+              :style="{ width: (totTokens > 0 ? totalTokens(group.u) / totTokens * 100 : 0) + '%', background: getProviderColor(providerColors, group.pid) }"
             />
           </span>
           <span class="font-mono text-[11px] tabular-nums text-[var(--neutral-dim)]">{{ fmtPct(totTokens > 0 ? totalTokens(group.u) / totTokens : 0) }}</span>
@@ -77,7 +77,7 @@
             <span class="inline-block h-[6px] w-[50px] overflow-hidden rounded-[3px] bg-[var(--hairline)]">
               <span
                 class="inline-block h-full rounded-[2px]"
-                :style="{ width: (totTokens > 0 ? totalTokens(m.u) / totTokens * 100 : 0) + '%', background: getProviderColor(group.pid) }"
+                :style="{ width: (totTokens > 0 ? totalTokens(m.u) / totTokens * 100 : 0) + '%', background: getProviderColor(providerColors, group.pid) }"
               />
             </span>
             <span class="font-mono text-[11px] tabular-nums text-[var(--neutral-dim)]">{{ fmtPct(totTokens > 0 ? totalTokens(m.u) / totTokens : 0) }}</span>
@@ -118,6 +118,8 @@ const { t } = useI18n()
 const props = defineProps<{
   groups: { pid: string; u: AggMetrics; models: { model: string; u: AggMetrics }[] }[]
   tot: AggMetrics
+  /** pid -> CSS 变量色映射（aggregate() 结果的 providerColors） */
+  providerColors: Record<string, string>
 }>()
 
 const DEFAULT_EXPANDED_COUNT = 2

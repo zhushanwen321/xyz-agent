@@ -23,7 +23,7 @@ export type { SoundPlatform, SoundKind } from '@xyz-agent/shared'
  * renderer 侧平台标识：比 SoundPlatform 多一个 'other'（navigator 探测失败时）。
  * main 侧 process.platform 永远是已知值，不需要 'other'。
  */
-export type DetectedPlatform = SoundPlatform | 'other'
+type DetectedPlatform = SoundPlatform | 'other'
 
 /**
  * 浏览器侧平台检测（main 进程 process.platform 的 renderer 同义）。

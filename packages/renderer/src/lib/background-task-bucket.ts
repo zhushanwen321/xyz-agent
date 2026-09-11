@@ -31,7 +31,7 @@ export type BackgroundTaskEntry = ServerMessageMap['backgroundTask:updated']['ta
 export type BackgroundTaskFilterValue = 'active' | 'ended' | 'all'
 
 /** 分桶结果（二桶；「全部」是筛选值不是桶——由 filterBackgroundTasks 的 'all' 分支承载）。 */
-export type BackgroundTaskBucketValue = Exclude<BackgroundTaskFilterValue, 'all'>
+type BackgroundTaskBucketValue = Exclude<BackgroundTaskFilterValue, 'all'>
 
 /** icon 文字后备的语义键（aria-label / icon title 的 i18n key 尾段，文案由 u-i18n-docs 落地；
  *  色档判定的同源产物，消费层禁止按 state/reason 二次判定）。 */

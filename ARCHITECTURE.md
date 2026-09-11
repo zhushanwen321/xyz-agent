@@ -53,7 +53,7 @@ pi 子进程事件 → infra/pi/event-adapter(翻译) → ServerMessage(WS)
   → Vue 响应式组件
 ```
 
-**跨 store 编排在 composable 层（实例）**：⌘K 全局搜索（useSearch）聚合 4 源——commandStore（内存）+ fileSearchStore（缓存，未命中调 composer domain WS + 超时 race）+ session domain（WS）+ useRecents（localStorage）。编排归 composable 非 domain（domain 严格只调 transport+pending，编排跨 store 违反铁律），见 [ADR-0028](docs/adr/0028-search-orchestration-in-composable.md)。`[from: 2026-06-30-search-modal §system-arch]`
+**跨 store 编排在 composable 层（实例）**：⌘K 全局搜索（`useSearch`）聚合 4 源——命令内存（core `command-registry`/`command-store`）+ 文件 WS（core `file-search` 缓存，未命中调 composer domain WS + 超时 race）+ session domain（WS）+ recents（localStorage）。实现位于 core `packages/core/src/domain/new-task-search/`（`search.ts`/`search-jump.ts`/`recents.ts`），2026-09-11 由 renderer 迁入。编排归 composable 非 domain（domain 严格只调 transport+pending，编排跨 store 违反铁律），见 [ADR-0028](docs/adr/0028-search-orchestration-in-composable.md)。`[from: 2026-06-30-search-modal §system-arch]`
 
 ## 关键状态机
 

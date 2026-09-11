@@ -183,6 +183,8 @@ const props = defineProps<{
   perDay: DayView[]
   perProv: Record<string, AggMetrics>
   metric: 'tokens' | 'cost'
+  /** pid -> CSS 变量映射（aggregate() 结果的 providerColors，取色随数据返回，无全局态） */
+  providerColors: Record<string, string>
 }>()
 
 /* ── 布局常量 ── */
@@ -288,7 +290,7 @@ function stackedSegments(di: number): StackedSeg[] {
     const h = (val / maxVal.value) * plotH
     result.push({
       pid,
-      color: getProviderColor(pid),
+      color: getProviderColor(props.providerColors, pid),
       y: plotBottom - cumH - h,
       h: Math.max(h, MIN_BAR_HEIGHT),
     })
@@ -372,7 +374,7 @@ const tipData = computed<TipData | null>(() => {
     output: fmtCompact(day.dTot.output),
     rows: sorted.map(({ pid, val }) => ({
       pid,
-      color: getProviderColor(pid),
+      color: getProviderColor(props.providerColors, pid),
       value: fmt(val),
       pct: totVal > 0 ? fmtPct(val / totVal) : '0%',
     })),

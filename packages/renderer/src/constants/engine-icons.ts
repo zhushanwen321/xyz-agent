@@ -38,7 +38,7 @@ const ENGINE_ICON_REGISTRY: Record<string, Component> = {
 export const DEFAULT_ENGINE_ID = 'pi'
 
 /** 未知引擎 id 的中性兜底 icon（防御分支） */
-export const NEUTRAL_ENGINE_ICON: Component = Circle
+const NEUTRAL_ENGINE_ICON: Component = Circle
 
 export interface EngineIconResolution {
   /** 渲染用的 icon 组件（单色 currentColor，尺寸由调用方 class 控制） */

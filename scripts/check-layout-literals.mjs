@@ -92,6 +92,10 @@ export const LAYOUT_LITERAL_EXEMPT = [
     file: 'packages/runtime/src/infra/pi/find-pi-executable.ts',
     reason: 'bundled pi 二进制资源布局（resources/pi/pi-<plat>-<arch>）；当前无命中，登记防未来资源形态引用被误拦（find-pi-executable.ts:47 漏列教训）',
   },
+  {
+    file: 'apps/electron/resources/extensions/@zhushanwen/pi-session-reader/index.js',
+    reason: 'bundled 扩展产物（源 extensions/universal/session-reader，不入扫描域）——内含旧布局探测判据（AGENT_DIR_SHAPE_OLD）与迁移提示文案，职责即新旧布局兼容识别（C-pi-14 恢复动作 3）',
+  },
 ]
 
 const EXEMPT_SET = new Set(LAYOUT_LITERAL_EXEMPT.map((e) => e.file))

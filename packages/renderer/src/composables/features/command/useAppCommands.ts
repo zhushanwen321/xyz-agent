@@ -2,7 +2,9 @@
  * useAppCommands —— 应用内置命令注册（#2 D-004 命令注册表的应用命令区填充）。
  *
  * 职责：构建应用级命令列表（新建/收起侧栏/概览），注册到 commandStore.appCommands，
- * 供 useCommandRegistry 聚合进搜索命令源 + useSearchJump.confirmCommand 按 name 查找执行 action。
+ * 供 core useCommandRegistry（packages/core/src/domain/new-task-search/command-registry.ts）聚合进搜索命令源
+ * + core useSearchJump.confirmCommand（packages/core/src/domain/new-task-search/search-jump.ts）按 name 查找执行 action
+ * （renderer 版同名 useCommandRegistry.ts / useSearchJump.ts 已随域迁移删除，2026-09-11）。
  *
  * 接线层级：core 单例经壳适配 useCommandStore（registerApp）+ stores/sidebar（toggleCollapsed）。
  * actions 由调用方（useSidebar.initApp）注入，避免与 useSidebar 循环 import

@@ -266,7 +266,7 @@ pnpm dev
 
 ### 10.3 完整 E2E 示例代码（补 testid 前的文本锚点版）
 
-> 注意：以下代码用**文本锚点**（mock 固定文案），无需补 testid 但较脆弱。落地为 `e2e/chat-flow.spec.ts` 前建议先补 testid。
+> 注意：以下代码用**文本锚点**（mock 固定文案），无需补 testid 但较脆弱。落地为 e2e/chat-flow.spec.ts 前建议先补 testid。
 
 ```typescript
 import { test, expect } from './fixtures/launch-app'

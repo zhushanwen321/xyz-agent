@@ -28,12 +28,17 @@ function entry(provider: string, model: string, input: number, cost = 0): PerMod
   return { provider, model, u: metrics(input, cost) }
 }
 
-function mountRank(perModel: Record<string, PerModelEntry>, isolate: string | null = null) {
+function mountRank(
+  perModel: Record<string, PerModelEntry>,
+  isolate: string | null = null,
+  providerColors: Record<string, string> = {},
+) {
   return mount(UsageModelRank, {
     props: {
       perModel,
       metric: 'tokens' as const,
       isolate,
+      providerColors,
     },
   })
 }
@@ -61,6 +66,22 @@ describe('UsageModelRank 排名渲染', () => {
     })
     expect(wrapper.find('[data-testid="usage-model-p1/m"]').exists()).toBe(true)
     expect(wrapper.find('[data-testid="usage-model-p2/m"]').exists()).toBe(true)
+  })
+
+  it('条形取色来自 providerColors 映射（V4：同 provider 同色）', () => {
+    const wrapper = mountRank(
+      {
+        'p1/big': entry('p1', 'big', 900),
+        'p2/small': entry('p2', 'small', 100),
+      },
+      null,
+      { p1: 'var(--chart-p1)', p2: 'var(--chart-p2)' },
+    )
+    const fills = wrapper.findAll('span.absolute')
+    expect(fills).toHaveLength(2)
+    // 排名降序：p1/big(900) 在前 → 第一条 p1 色，第二条 p2 色
+    expect(fills[0].attributes('style')).toContain('background: var(--chart-p1)')
+    expect(fills[1].attributes('style')).toContain('background: var(--chart-p2)')
   })
 })
 

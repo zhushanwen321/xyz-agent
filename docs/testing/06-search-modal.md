@@ -3,6 +3,8 @@
 > 覆盖：⌘K 全局搜索浮层（SearchModal）—— 唤起 / 空查询 recents / 四类分组查询 / 键盘导航 / Tab 切类 / 选中跳转 / loading·error 态 / WS 超时容错
 >
 > 先读 [00-test-strategy-overview.md](./00-test-strategy-overview.md) 理解双轨制和公共前置。
+>
+> **迁移说明（2026-09-11）**：本功能实现已迁至 `packages/core/src/domain/new-task-search/`，浮层组件为 `packages/ui/src/overlays/SearchModal.vue`。renderer 侧同名 composable（`useSearch` / `useSearchJump` / `useRecents` / `useCommandRegistry`）是迁移后的历史死代码，已于 2026-09-11 随 renderer 过度设计清理删除。本文档中的实现路径与测试路径均按迁移后的 core/ui 位置书写；行为场景（唤起 / 空查询 recents / 四类分组 / 键盘导航 / Tab 切类 / 选中跳转 / loading·error / WS 超时）与设计约束不变。
 
 ## 1. 功能概述
 
@@ -17,13 +19,13 @@ SearchModal 是 ⌘K 唤起的跨项目全局搜索浮层，四类分组（命�
 Esc / 再按⌘K / 点遮罩关闭
 ```
 
-**架构分层**（D-026：编排归 composable，非 domain）：
-- `lib/match-engine.ts`（纯函数：matchFilter 过滤 + segments 高亮）
-- `composables/features/useSearch.ts`（编排 4 源 + loadSeq 守卫 + WS 超时 race #17）
-- `composables/features/useSearchJump.ts`（跳转 type switch 分发）
-- `composables/features/useRecents.ts`（localStorage + FIFO）
-- `composables/features/useCommandRegistry.ts`（应用命令 + slash 聚合）
-- `components/overlays/SearchModal.vue`（UI 交互 + 键盘导航 + 渲染）
+**架构分层**（D-026：编排归 composable，非 domain；2026-09-11 起实现在 core `new-task-search` 域）：
+- `packages/core/src/domain/new-task-search/match-engine.ts`（纯函数：matchFilter 过滤 + segments 高亮）
+- `packages/core/src/domain/new-task-search/search.ts`（`useSearch`：编排 4 源 + loadSeq 守卫 + WS 超时 race #17）
+- `packages/core/src/domain/new-task-search/search-jump.ts`（`useSearchJump`：跳转 type switch 分发）
+- `packages/core/src/domain/new-task-search/recents.ts`（`useRecents`：localStorage + FIFO）
+- `packages/core/src/domain/new-task-search/command-registry.ts` + `command-store.ts`（`useCommandRegistry` 应用命令 + slash 聚合 / pendingSlash 通道）
+- `packages/ui/src/overlays/SearchModal.vue`（UI 交互 + 键盘导航 + 渲染；SearchDeps 端口注入，壳组装在 `packages/renderer/src/composables/features/search/useSearchModalDeps.ts`）
 
 ## 2. 组件树
 
@@ -108,12 +110,11 @@ close 触发 query='' → watch(query) debounce → loadResults，但 open flag 
 
 ## 5. MOCK 模式测试（vitest 集成）
 
-**运行命令**（cwd 敏感，`@` alias 只在 renderer 配）：
+**运行命令**（分包运行，cwd 敏感）：
 ```bash
-cd packages/renderer && npx vitest run src/__tests__/components/search-modal.test.ts
-cd packages/renderer && npx vitest run src/__tests__/composables/   # useSearch/useSearchJump/useRecents/useCommandRegistry
-cd packages/renderer && npx vitest run src/__tests__/lib/match-engine.test.ts
-cd packages/renderer && npx vitest run src/__tests__/stores/command-app.test.ts
+cd packages/ui && npx vitest run src/overlays/__tests__/search-modal.test.ts   # 浮层集成（mount SearchModal，mock SearchDeps）
+cd packages/core && npx vitest run src/domain/new-task-search/__tests__        # 搜索域单测（search/search-jump/recents/command-registry/command-store/file-match/match-engine）
+cd packages/renderer && npx vitest run src/__tests__/lib/match-engine.test.ts  # renderer 侧仍保留：core 纯函数导出契约（import from @xyz-agent/core）
 ```
 
 ### 测试矩阵（47 条，对应 execution-plan 验收清单）
@@ -122,23 +123,25 @@ cd packages/renderer && npx vitest run src/__tests__/stores/command-app.test.ts
 
 | 用例 | 文件 | 测试执行层 | 覆盖点 |
 |------|------|----------|--------|
-| T1.8/T1.9/T1.16/T1.17/T1.18 | useRecents.test.ts（7 测）| unit | recents 空库/持久化/脏数据降级/配额满/FIFO |
-| T2.4/T2.5 | command-app + useCommandRegistry（19 测）| unit | 命令注册表聚合/物理隔离/同名不撞/无 session |
-| AC-1.1~1.4 | match-engine.test.ts（15 测）| unit | matchFilter/segments 纯函数 + 边界 |
-| T1.10/T1.12/T2.1/T3.1~3.5/T3.9/T4.1/T4.2/T4.4~4.9/T5.1/T5.2 | useSearch.test.ts（17 测）| unit | 编排/loadSeq/缓存/WS 超时 race/DTO 映射 |
-| T2.2/T2.3/T2.6/T2.7/T3.4/T3.6/T4.3/T4.6/T4.7/T5.3 | useSearchJump.test.ts（11 测）| unit | 跳转分发/异常恢复/AC-6.9 直调 |
+| T1.8/T1.9/T1.16/T1.17/T1.18 | `packages/core/src/domain/new-task-search/__tests__/recents.test.ts`（8 测）| unit | recents 空库/持久化/脏数据降级/配额满/FIFO |
+| T2.4/T2.5 | `packages/core/src/domain/new-task-search/__tests__/command-registry.test.ts`（4 测）+ `command-store.test.ts`（8 测）| unit | 命令注册表聚合/物理隔离/同名不撞/无 session |
+| AC-1.1~1.4 | `packages/core/src/domain/new-task-search/__tests__/match-engine.test.ts`（10 测）| unit | matchFilter/segments 纯函数 + 边界 |
+| T1.10/T1.12/T2.1/T3.1~3.5/T3.9/T4.1/T4.2/T4.4~4.9/T5.1/T5.2 | `packages/core/src/domain/new-task-search/__tests__/search.test.ts`（16 测）| unit | 编排/loadSeq/缓存/WS 超时 race/DTO 映射 |
+| T2.2/T2.3/T2.6/T2.7/T3.4/T3.6/T4.3/T4.6/T4.7/T5.3 | `packages/core/src/domain/new-task-search/__tests__/search-jump.test.ts`（13 测）| unit | 跳转分发/异常恢复/AC-6.9 直调 |
 
 **集成测试（mount SearchModal，mock composable，查 document.body）**：
 
 | 用例 | 文件 | 覆盖点 |
 |------|------|--------|
-| T1.15 | search-modal.test.ts（17 测）| 首屏冒烟（渲染 gate DoD）|
+| T1.15 | `packages/ui/src/overlays/__tests__/search-modal.test.ts`（25 测）| 首屏冒烟（渲染 gate DoD）|
 | T1.1/T1.2/T1.3/T1.4 | | 唤起/空查询/↑↓导航/选中态 |
 | T1.6/T1.7/T1.11 | | 关闭/mark 高亮/未找到 |
 | T1.13/T1.14/T3.7/T3.8/T5.4 | | open/close 竞态/孤儿守卫/loading 防闪烁/容错 |
 | T1.5 | | Tab 切类（AC-9.1~9.4，P2）|
 
-**合计 86 测全绿**（15+11+8+7+17+11+17）。
+**live 等价覆盖合计 84 测**（8 + 12 + 10 + 16 + 13 + 25）；原 execution-plan 基线 86 测为迁移前 renderer 口径，已随实现迁移失效。**口径注**：84 仅合计上表矩阵映射的文件；搜索域另有 `file-match.test.ts`（12 测，TC-9 系列，见 TEST-STRATEGY 基线行）与 renderer 侧 `__tests__/lib/match-engine.test.ts`（15 测，core 纯函数导出契约测试，见上方运行命令）不在本合计内。
+
+> 测数为 2026-09-11 各 live 文件实测 `it()` 计数（`packages/core/test-results/vitest-junit.xml` / `packages/ui` vitest 输出）。用例 ID（T#/AC-#）沿用 2026-06-30 execution-plan 编号作为验收追溯锚点；迁移后 core 侧按 `TC-#` 组织，ID 与 TC 编号的逐条映射未重建。
 
 ### 关键测试桩（高风险用例）
 

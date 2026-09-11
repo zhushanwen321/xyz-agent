@@ -143,19 +143,19 @@
 </template>
 
 <script setup lang="ts">
-import { computed, inject, toRef } from 'vue'
+import { computed, inject, onMounted, ref, toRef, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { AlertCircle, FolderOpen, LoaderCircle, SearchX } from '@lucide/vue'
 import { Popover, PopoverAnchor, PopoverContent } from '@/components/ui/popover'
 import { SLASH_ICON_COMPONENTS } from '@/composables/slashIcons'
 import { useCommandStore } from '@/composables/features/command/useCommandStore'
-import { iconKeyForCommand, filterAndSortFileCandidates } from '@xyz-agent/core'
+import { iconKeyForCommand, filterAndSortFileCandidates, toFileCandidates } from '@xyz-agent/core'
 import { SLASH_COMMAND_SOURCE_KEY } from './command-popover-source'
 import { buildSessionCandidates, buildSubagentCandidates, buildSlashCandidates, buildPanelSlashCandidates, buildLandingSlashCandidates } from './command-popover-symbols'
 import { buildSkillCandidates } from './command-popover-skill-candidates'
-import { useCommandPopoverCwdFileView } from './command-popover-open-fetch'
-import { useCommandPopoverDelivery } from './command-popover-delivery'
-import { useCommandPopoverFileCandidates } from './command-popover-file-candidates'
+import { useCommandPopoverOpenFetch } from './command-popover-open-fetch'
+import { useCommandSync } from '@/composables/panel/useCommandSync'
+import { useFileSearch } from '@/composables/features/search/useFileSearch'
 import { useCommandPopoverKeyboard } from '@/composables/panel/command-popover-keyboard'
 import type { SkillInfo } from '@xyz-agent/shared'
 import { useSessionStore } from '@/stores/session'
@@ -215,12 +215,24 @@ const controlledOpen = computed({
 
 const { t } = useI18n()
 const commandStore = useCommandStore()
-/** file 候选加载（挂载 / 切 session 拉取，store 缓存幂等——ADR-0049；见 command-popover-file-candidates.ts） */
-const { fileCandidates } = useCommandPopoverFileCandidates(toRef(props, 'sessionId'))
+const sessionIdRef = toRef(props, 'sessionId')
+
+/** panel 路 file 候选加载：挂载 / 切 session 拉取（store 缓存幂等，命中不重拉——ADR-0049）。
+ *  触发时机是挂载 + sid 变化，与 open-fetch 的 open 边沿 landing cwd 路是 D2 双路数据源
+ *  （panel 有 sid 走本路；原 command-popover-file-candidates.ts，u20 内联回本组件）。 */
+const { load: loadFileCandidates } = useFileSearch()
+const fileCandidates = ref<ReturnType<typeof toFileCandidates>>([])
+async function loadCandidates(): Promise<void> {
+  if (!sessionIdRef.value) return
+  const nodes = await loadFileCandidates(sessionIdRef.value)
+  fileCandidates.value = toFileCandidates(nodes)
+}
+onMounted(() => { void loadCandidates() })
+watch(sessionIdRef, () => { void loadCandidates() })
 /**
  * landing cwd 路 $ 候选 + D7 三态（无 sid 时 open-fetch 边沿拉取，D2；panel 有 sid 走上方
  * fileCandidates）。错误态/空态两因区分 + 5000 截断提示 + B5/#10 cwd 快照守卫与 open 边沿清 ref，
- * 视图态封装在 command-popover-open-fetch.ts 的 useCommandPopoverCwdFileView（行数约束下沉）。
+ * 拉取与视图态同在 command-popover-open-fetch.ts 的 useCommandPopoverOpenFetch。
  */
 const {
   cwdFileCandidates,
@@ -228,7 +240,7 @@ const {
   fileNoResultsVisible,
   fileTruncatedVisible,
   retryCwdFileFetch,
-} = useCommandPopoverCwdFileView({
+} = useCommandPopoverOpenFetch({
   open: () => props.open,
   type: () => props.type,
   sessionId: () => props.sessionId,
@@ -283,8 +295,8 @@ const slashCommands = computed(() => {
 })
 
 /** slash 命令投递闭环（挂载/切 session 补拉 + session.commands 订阅；open 边沿拉取归
- *  useCommandPopoverOpenFetch，双路并存会重复 RPC——详见 command-popover-delivery.ts） */
-useCommandPopoverDelivery(toRef(props, 'sessionId'))
+ *  useCommandPopoverOpenFetch，双路并存会重复 RPC——详见 useCommandSync） */
+useCommandSync(sessionIdRef)
 
 /** 统一候选项视图（四路归一；file/slash 在此派生，session/subagent 委托 command-popover-symbols） */
 interface CmdItem {
@@ -395,7 +407,7 @@ const { activeIndex, handleKeydown } = useCommandPopoverKeyboard<CmdItem>({
   resetKeys: () => [props.open, props.type, props.query],
 })
 
-// ── D7 三态派生与 landing cwd 候选 ref 见 useCommandPopoverCwdFileView（command-popover-open-fetch.ts）──
+// ── D7 三态派生与 landing cwd 候选 ref 见 useCommandPopoverOpenFetch（command-popover-open-fetch.ts）──
 
 defineExpose({ handleKeydown })
 </script>

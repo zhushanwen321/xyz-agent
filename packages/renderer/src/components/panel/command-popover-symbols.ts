@@ -14,10 +14,10 @@ import { isInternalSkillName, isInternalSlashName } from '@/lib/internal-command
 import { bareSkillCommandName } from './command-popover-skill-candidates'
 
 /** 「＋ 新建 subagent」固定项 id（CommandPopover 选中上抛 subagentId/slug 空串） */
-export const NEW_SUBAGENT_ITEM_ID = '__new_subagent__'
+const NEW_SUBAGENT_ITEM_ID = '__new_subagent__'
 
 /** 浮层统一候选项视图（file/slash 路在 CommandPopover 内联派生，session/subagent 路在此派生） */
-export interface SymbolCandidate {
+interface SymbolCandidate {
   id: string
   /** 主行文本（session=label / subagent=slug / 新建项=文案） */
   name: string
@@ -137,7 +137,7 @@ export function skillDisplayName(name: string): string {
   return bareSkillCommandName(name)
 }
 
-export interface SlashCandidateInput {
+interface SlashCandidateInput {
   id: string
   name: string
   kind: string

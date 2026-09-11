@@ -49,11 +49,11 @@ import { createEmptyResultStrikeGuard, createPartitionedRecords } from '../lib/p
  * finalizeSubagentStream），本 store 经回调委托，不再自己 applyStreamDelta。
  * fetchAndInject 仍用 setMessages（含 IO 的历史拉取留在本 store，chat store 保持纯状态机）。
  */
-export type SetMessagesFn = (virtualId: string, messages: Message[]) => void
+type SetMessagesFn = (virtualId: string, messages: Message[]) => void
 /** chat.applySubagentStreamDelta 注入回调（W4：streaming delta 收口进 chat store） */
-export type ApplyDeltaFn = (virtualId: string, lines: string[]) => void
+type ApplyDeltaFn = (virtualId: string, lines: string[]) => void
 /** chat.finalizeSubagentStream 注入回调（W4：streaming → complete 收口进 chat store） */
-export type FinalizeStreamFn = (virtualId: string) => void
+type FinalizeStreamFn = (virtualId: string) => void
 
 export const useSubagentStore = defineStore('subagent', () => {
   // ── state ──
