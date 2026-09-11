@@ -170,6 +170,9 @@ export type ClientMessageType =
   // 侧边栏的拉取/操作 RPC——list 拉全量并隐式把 session 加入 runtime watched 集合（D8③）；
   // output 按字节窗口 tail 输出尾部；kill 走 D6 分支矩阵。回执/广播登记见 ServerMessageType。
   | 'backgroundTask.list' | 'backgroundTask.output' | 'backgroundTask.kill'
+  // rollingRestart.status（crash-forensics-and-watchdog §3.3 D5，u7b）：滚动重启状态只读查询
+  // （无参数；reply 与 request 同名——session.subscribe 模式）。状态机实现在 u7c。
+  | 'rollingRestart.status'
 
 // ── Payload 类型定义 ────────────────────────────────────────────
 
@@ -674,6 +677,9 @@ export interface ClientMessageMap {
   'backgroundTask.output': { sessionId: string; taskId: string; maxBytes?: number }
   // kill：终止任务（D6 分支矩阵；reason 回执语义见 BackgroundTaskKillReason）。
   'backgroundTask.kill': { sessionId: string; taskId: string }
+  // rollingRestart.status（crash-forensics-and-watchdog §3.3 D5，u7b）：只读查询，无参数
+  //（全局状态，非 session 级）。reply 见 ServerMessageMap['rollingRestart.status']。
+  'rollingRestart.status': Record<string, never>
 }
 
 // ClientMessage 由 ClientMessageMap 直接派生：每个 type 字面量映射到
@@ -875,6 +881,10 @@ export type ServerMessageType =
   // 经 IMessageBus.publish(sessionId, msg) session 级定向推。
   | 'backgroundTask.tasks' | 'backgroundTask.outputResult' | 'backgroundTask.killResult'
   | 'backgroundTask:updated'
+  // rollingRestart 域（crash-forensics-and-watchdog §3.3 D5，u7b 协议面）：status = 只读查询
+  // reply（与 request 同名）；deferred / forced = 两个全局推送事件（Server→Client 冒号
+  // camelCase，对齐 backgroundTask:updated 规则；与台账 event 值同源）。
+  | 'rollingRestart.status' | 'rollingRestart:deferred' | 'rollingRestart:forced'
 
 /** skill 缓存失效广播的作用域：global=全局 skill 变动，project=某项目 cwd 的 skill 变动。 */
 export type SkillCacheScope = 'global' | 'project'
@@ -1005,6 +1015,63 @@ export type SkillNoticeReason =
   | 'skill_read_failed'
   | 'marker_malformed'
   | 'mapping_unavailable'
+
+// ── 滚动重启协议面（crash-forensics-and-watchdog §3.3 D5，u7b 契约）────────────
+//
+// 三块：① rollingRestart.status 只读查询 RPC（状态机实现在 u7c，本处只钉类型契约；
+// renderer 重连/刷新后主动拉取恢复横幅——「broadcast 时序竞争」教训：需立即消费的持续
+// 状态必须可拉取，T-30s 广播只作加速显示）；② rollingRestart:deferred / rollingRestart:forced
+// 两个 WS 推送事件（Server→Client 冒号 camelCase，对齐 backgroundTask:updated 命名规则；
+// 与台账 event=rolling-restart-deferred / rolling-restart-forced 同源）。
+
+/** 滚动重启状态机相位（D5 ③ 执行链）。 */
+export type RollingRestartState =
+  | 'idle'       // 无滚动重启（常态；重启完成后清除，故重连拉取到 idle 即「横幅不重现」）
+  | 'deferred'   // 检测到在途（或计数未知）→ 推迟等待中
+  | 'countdown'  // 推迟结束，执行前 30s 二次预告中
+  | 'rolling'    // 正在执行滚动重启（完整 shutdown 序）
+
+/**
+ * 滚动重启成因 / 事件 reason 值域（D5 ②/④）：
+ * - 'inflight'：有在途任务 → 推迟（正常形态）
+ * - 'absent-report'：已注入但从未收到上报（旧版 extension 组合）→ errs 推迟；
+ *   在途计数字段取 null 独立标记（0 = 在场且无在途的已证事实，null = 计数未知）
+ * - 'hard-threshold'：双维硬升级（runtime heap ≥92% 或 memPressure 越限）→ 立即执行
+ * - 'defer-limit'：30min 推迟上限到点 → 强制执行（不含 absent-report 形态——errs 推迟必然
+ *   走到上限，其 defer-limit 在评估器 #8 占比子句分子中被排除）
+ */
+export type RollingRestartReason = 'inflight' | 'absent-report' | 'hard-threshold' | 'defer-limit'
+
+/**
+ * 滚动重启的在途摘要（D5 ④ 字段语义钉死）：镜像在途计数合计。
+ * null = 计数未知（errs 形态，配 reason='absent-report'）；0 = 在场且无在途的已证事实。
+ */
+export interface RollingRestartInflightSummary {
+  inFlight: number | null
+}
+
+/** rollingRestart:deferred —— 推迟开始推送（D5 ②；台账 event=rolling-restart-deferred 同源）。 */
+export interface RollingRestartDeferredPayload {
+  reason: 'inflight' | 'absent-report'
+  inflight: RollingRestartInflightSummary
+  /** 30min 推迟上限到点时刻（ms epoch）——横幅「等待有界」的数据源。 */
+  deferDeadlineAt: number
+}
+
+/** rollingRestart:forced —— 强制升级执行推送（D5 ②；台账 event=rolling-restart-forced 同源）。 */
+export interface RollingRestartForcedPayload {
+  reason: 'hard-threshold' | 'defer-limit'
+  inflight: RollingRestartInflightSummary
+}
+
+/** rollingRestart.status 的 reply：状态机相位 + 成因 + 在途摘要（state='idle' 时 reason 缺省）。 */
+export interface RollingRestartStatusPayload {
+  state: RollingRestartState
+  reason?: RollingRestartReason
+  inflight: RollingRestartInflightSummary
+  /** deferred/countdown 态的推迟上限到点时刻（ms epoch）；其余态缺省。 */
+  deferDeadlineAt?: number
+}
 
 /**
  * # ServerMessageMap —— Runtime → Client payload 类型映射
@@ -1764,6 +1831,15 @@ export interface ServerMessageMapBase {
   //（架构约定「runtime broadcast 时序竞争」C6：拉取兜底是唯一真相入口）。
   // corrupted 语义与 backgroundTask.tasks 同源（损坏空表标记，S7）；缺省/false = 正常拍。
   'backgroundTask:updated': { sessionId: string; tasks: BackgroundTaskRegistryEntry[]; corrupted?: boolean }
+
+  // ── rollingRestart 域（crash-forensics-and-watchdog §3.3 D5，u7b 协议面）──
+  // status：只读查询 reply（u7c 状态机生产；renderer 重连/刷新后主动拉取恢复横幅——持续态
+  // 不可依赖广播时序，T-30s 广播只作加速显示）。
+  'rollingRestart.status': RollingRestartStatusPayload
+  // deferred / forced：推迟开始 / 强制升级执行的全局推送（u7c 生产；与台账
+  // rolling-restart-deferred / rolling-restart-forced 同源，在途摘要字段语义见 payload 类型）。
+  'rollingRestart:deferred': RollingRestartDeferredPayload
+  'rollingRestart:forced': RollingRestartForcedPayload
 }
 
 /**
@@ -2060,6 +2136,9 @@ export interface ReplyPayloadMap {
   'backgroundTask.list': ServerMessageMap['backgroundTask.tasks']
   'backgroundTask.output': ServerMessageMap['backgroundTask.outputResult']
   'backgroundTask.kill': ServerMessageMap['backgroundTask.killResult']
+  // rollingRestart.status（crash-forensics-and-watchdog §3.3 D5，u7b）：只读查询 reply
+  //（payload 消费型；与 request 同名——session.subscribe / backgroundTask.list 同款模式）。
+  'rollingRestart.status': ServerMessageMap['rollingRestart.status']
 
   // terminal.* 都是 ack 型，统一 reply 'terminal.ack'（空 payload，前端 command() 按 id 匹配 resolve）
   'terminal.attach': ServerMessageMap['terminal.ack']

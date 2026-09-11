@@ -174,6 +174,10 @@ graph TD
 | 20 | u7b 的 spawn 形态预置 0 生命周期接线分发：u4（session-service 钩子：新 session/respawn，fork 归属核实）/ u5（reattach/lazy restore）；u7b 只交付 mirror API + 事件适配 + 协议 | 领地互斥约束下的必要拆分；设计契约（五形态预置 0 + 对账 + errs 判别）不变，u4/u5 任务书承接（u4 本期 scope 已剔除该项，待 u7b 落地后另派） | 实施期登记 |
 | 21 | **P0 集成缺陷（u1e 交付核验发现）**：runtime 组合根 `packages/runtime/src/index.ts` 从未调用 `initCrashJournal()`——未初始化时 getCrashJournal() 返回 NOOP，真实 app 中 runtime.jsonl 永不创建，u1b/u1d1/u1d2/u1e 全部 runtime 侧事件静默丢弃（单测因显式 init(tmpdir) 掩盖），A1/A2 真实场景无法成立。同类项：HEAD 存量 lint 红（u1b crash-journal.ts 未用 import + 3 no-magic-numbers；u1d1 pi-respawn.ts 2 no-magic-numbers）挡 `pnpm lint`/Gate A | 派 u-init 接线收口任务（index.ts 启动期 init + 两文件 lint 清理 + u1e 遗留死代码 resetWatermarkDailyForTest 清理）；logger.ts max-lines 已由 u2 commit 的 eslint.config.mjs override 登记解决 | 修复中（u-init） |
 | 22 | **P0 集成缺口（u10a 交付核验发现，同类第 2 处）**：renderer 侧 `installInboundFrameGuard()` 全仓零调用（需 App.vue 装配层）+ `InboundFrameDroppedNotice.vue` 零挂载（需会话视图宿主，最小挂点 Panel.vue 的 respawnPending 区或 MessageStream.vue）——A6「第 3 次后静态提示出现」「切走切回触发一次重试订阅」在运行态不可达（仅单元级可验证） | 并入 u-init（授权改 App.vue + 会话视图宿主最小挂点）；两处集成缺口（#21/#22）同源：单元级显式构造掩盖了组合根接线缺失——**阶段 3 一致性审查以此为专项扫描面**（逐单元问「生产链路谁调用它」） | 修复中（u-init） |
+| 23 | u7b `presetZero` 与 `resetFor` 条目效果相同（共用 startNewEpoch：inFlight=0 + hasEverReported=false，保留 injected），仅调用方语义不同 | 任务书要求两 API，但 D5 ②③ 对条目要求语义重合、造不出真差异；已留两命名入口供 u4/u5 分点调用，代码注释登记。若审查裁决合一→删 resetFor 即可 | 实施期登记 |
+| 24 | u7b 预设/对账重置**同时清 hasEverReported**（任务书只写重置为 0）；injected 只归 setInjected（防「先预设后注入」顺序 footgun） | 继承旧 epoch 的「曾上报」会让旧版 extension 组合在每次 respawn 后永久绕过 errs 判别（D5 ⑤ 偏低方向漏推迟）；清空方向 errs-safe（最坏进 errs 推迟，30min 有界） | 实施期登记 |
+| 25 | u7b 坏帧/缺 sessionId **不 ack**（仅静默丢弃） | 不 ack 使 reporter 按既有折叠重试（问题可感知可自愈）；ack 会掩盖协议漂移。属 marker 契约内裁决 | 实施期登记 |
+| 26 | marker 消费落 EventAdapter 旁路监听器（非 translate 内）+ translate 保留 `isInflightReportFrame → []` 守卫分支（共用判定函数） | translate 有「纯翻译器、零副作用」不变量，且 ack 需 attach 才持有的 client 句柄；旁路吞帧 + 守卫双保险防「marker 帧广播前端」（[HISTORICAL] pending 泄漏教训），两路径均有测试 | 实施期登记 |
 
 ## 6 状态表
 
@@ -186,7 +190,7 @@ graph TD
 | u1d2 | pending | — | — |
 | u1e | committed | 2（前任额度中断 + 接替核验收口） | 三信号事件接线 + 守卫行为不变（26 既有用例佐证）+ 日翻转/coverage 重置/数值聚合全绿；13 tests + runtime 全量 5393/5393 + tsc 0（编排者重跑核验）；**发现 P0 集成缺陷→转 u-init 修复（见偏差 #21）** |
 | u1f | committed | 2（轮次 2 补 renderer unresponsive 接线） | 判别式 8 组合真值表 + liveness 双写 + renderer oom/crashed/熔断/unresponsive（卡死期单行+responsive 复位）；18 tests + tsc 0（编排者重跑核验） |
-| u7b | in-progress（额度中断，无产物） | 1 | 703s 时死于额度耗尽，未落任何文件——恢复后全新开工即可（任务书同前，偏差 #20 已登记 spawn 预置接线分发 u4/u5） |
+| u7b | committed | 2（前任额度中断零产物 + 接替全新交付） | mirror API（epoch 重置清 hasEverReported，errs-safe）+ marker 旁路消费 + ack resolve + 协议 4 类型；32 用例 + shared 351 + runtime 5425（含 real-pi 池）全绿 + 双 typecheck 0（编排者重跑核验） |
 | u2 | committed | 2（前任额度中断 + 接替核验收口） | 20 条全状态表 + #8 absent-report 关联窗排除 + #16 计划内排除（源码实锚）+ coverage 50% 边界；30 tests + main 池 1052/1052 + tsc 0（编排者重跑核验）；max-lines 走 eslint.config.mjs override 登记 |
 | u3a | pending | — | — |
 | u3b | pending | — | — |
