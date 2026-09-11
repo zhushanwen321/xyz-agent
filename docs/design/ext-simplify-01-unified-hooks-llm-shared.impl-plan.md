@@ -131,14 +131,18 @@ graph TD
 
 | Unit | 偏差内容 | 原因 | 影响 | 裁决 |
 |---|---|---|---|---|
-| — | — | — | — | — |
+| u1 | E4 命令追加 `--no-frozen-lockfile` 一次 | 设计指定命令首跑 919ms 秒退未清 lock 中 unified-hooks importer（pnpm v10.27 对 importer 目录消失不敏感），A7 首跑失败 | 仅命令形态；仍由 pnpm 重算非手改，最终 lock 状态与设计终态一致 | 合理偏差，接受 |
+| u1 | E2① 实删行界 :72-82（计划记 :72-81） | 对象含尾行 `},`，按计划「收尾行界以 JSON 合法为准」条款 | 无 | 合理偏差，接受 |
+| u1 | guard 文档 v8 行日期列填 2026-09-11 | 设计注记文案均为「2026-09」粒度，未指定表内具体日 | 无 | 合理偏差，接受 |
+| u2 | B3 渲染验证口径：以 session-reader 源码驱动 renderExpand 端到端替代「pi 打开旧 session」 | npm 安装版 pi-session-reader 0.2.4 为未 bundle TS 源码与仓库实现同源，口径等价；另核实 pi 本体 --export 不渲染 custom entry（与断言无关） | 无 | 合理偏差，接受 |
+| u2 | B2 探针未带 `--extension <bte 本地路径>` | P-single 本义验证本机安装态单通道；带本地 bte 会与 settings.json 已装 bte 双装污染断言 | 无（两断言按安装态直验均达成） | 合理偏差，接受 |
 
 ## 6 状态表
 
 | Unit | 状态 | 轮次 | 证据指针 |
 |---|---|---|---|
-| u1 | pending | — | — |
-| u2 | pending | — | — |
+| u1 | committed | 1 | 编排方核验（git status 领地比对 22+1 文件吻合 + A1/A2/A3 重跑 + typecheck/changeset status 重跑绿）→ u1 单 commit（A1-A12 全过；deviations 3 条：E4 追加 --no-frozen-lockfile（pnpm v10.27 对 importer 目录消失不敏感）/ E2① 行界 :72-82 以 JSON 合法为准 / guard v8 行日期 2026-09-11） |
+| u2 | committed | 1 | 仓库外操作无 commit。B1-B4 全过：pi uninstall exit 0（removed 409 packages，R1 顶层子命令实存无降级）；settings.json 零 unified 且 bte 行在（编排方复核 grep=0 / node_modules 无该包）；P-single 单通道探针（bash 正常执行 + bte force-background 指纹 + 新 session JSONL 零 unified-hooks entry）；P-npm deprecated 标记在（0.2.9）；历史不断链（672 个 session 命中，最旧 2026-06-21，session-reader 渲染链 14 个 brief 精确渲染 `[custom:unified-hooks:tool-error]`）。deviations 2 条见 §5 |
 
 ## 7 残留风险与变更历史
 
