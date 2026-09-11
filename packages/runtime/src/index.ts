@@ -4,6 +4,8 @@ import { GenStatsService } from './services/session/gen-stats-service.js'
 import { createSessionDeliveryRegistry } from './services/session/session-delivery-registry.js'
 import { createCompletionBackflow } from './services/session/completion-backflow.js'
 import { fanOutSettled } from './services/session/agent-settled-fanout.js'
+// D4（rename-session-three-modes）：session-renamed 扇出处理体（label 回写 + 整表广播）。
+import { createSessionRenamedHandler } from './services/session/session-rename-fanout.js'
 import { ConfigService } from './services/config-service.js'
 import { AuthService } from './services/auth/auth-service.js'
 import { AuthStorage } from './services/auth/auth-storage.js'
@@ -377,13 +379,18 @@ async function main(): Promise<void> {
       onTurnFinalize: (sid, stopReason) => {
         sessionService.handleTurnEndSideEffects(sid, stopReason)
       },
-      onSessionRenamed: (sid, name) => {
-        // pi extension auto-rename (session_info_changed) 事件到达时。
-        // 同步更新内存态 session.label（session_info_changed 事件路径唯一写方：
-        // toSummary/config.sessions 读它）。label 的 ReplicatedState 实例已撤销
-        //（PR #185 MF1：.get() 零消费，防抖重拉 get_state 属无效 RPC）。
-        sessionService.setLabelCache(sid, name ?? '')
-      },
+      // D4（rename-session-three-modes 显示侧扇出修复）：session_info_changed 事件到达时
+      // ① label 回写（session_info_changed 事件路径唯一写方，toSummary/config.sessions 读
+      // 它；label 的 ReplicatedState 实例已撤销，PR #185 MF1）——清名事件（name undefined）
+      // 回落 basename(cwd) 派生，对齐 scanner 兜底；② 追加整表广播，行为契约对齐手动
+      // rename 先例（session-message-handler 的 handleSessionRename），修复「落库成功但
+      // 侧边栏不动」。处理体提取在 session-rename-fanout（本文件 import 即执行 main()
+      // 不可直测，agent-settled-fanout 同款先例）。
+      onSessionRenamed: createSessionRenamedHandler({
+        setLabelCache: (sid, label) => sessionService.setLabelCache(sid, label),
+        getSessionCwd: (sid) => sessionService.getSessionCwd(sid),
+        broadcastSessionList: () => server.broadcastSessionList(),
+      }),
       // W7：标量实例失效接线（延迟解析——interpreter 构造时实例尚未注册，见 opts 类型注释）。
       thinkingLevelState: () => sessionService.getScalarReplicatedStates(sessionId)?.thinkingLevel,
       executeHooks: (hookType, context) => pluginService.executeHooks(hookType, {
