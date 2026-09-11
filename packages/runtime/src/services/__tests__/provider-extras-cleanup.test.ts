@@ -24,6 +24,7 @@ import { deleteProvider } from '../provider-config-helper.js'
 import { setModelsPath } from '../../infra/pi/pi-provider-store.js'
 import { setSettingsPath, invalidateSettingsCache } from '../../infra/pi/pi-settings-store.js'
 import { PiConfigStore } from '../../infra/pi/pi-config-store.js'
+import type { IProviderCredentialResolver } from '../ports/provider-credential-resolver.js'
 
 let dir: string
 let agentDir: string
@@ -45,8 +46,16 @@ function readExtrasRaw(): Record<string, unknown> {
   return JSON.parse(readFileSync(extrasPath, 'utf-8')).providers
 }
 
+/** 恒注入形态的 resolver 替身（D3/M2fg：removeProviderByKind 经 resolver() 守卫强制要求；
+ * 本文件用例不关心凭据解析，空集语义 = 无凭据，与生产「无凭据 provider」一致）。 */
+const stubResolver: IProviderCredentialResolver = {
+  hasProviderCredential: () => false,
+  listCredentialBackedProviderIds: () => new Set<string>(),
+  resolveProviderCredential: async () => undefined,
+}
+
 function makeSvc(): ConfigService {
-  return new ConfigService('/tmp/project', configStore, undefined, extrasStore)
+  return new ConfigService('/tmp/project', configStore, undefined, extrasStore, undefined, stubResolver)
 }
 
 beforeEach(() => {
