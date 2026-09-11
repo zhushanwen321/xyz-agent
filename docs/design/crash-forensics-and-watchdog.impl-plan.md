@@ -160,6 +160,9 @@ graph TD
 | 6 | 本环境 Agent 工具不暴露 model 参数，无法按全局路由表指定 glm-5.3-flash；编码统一派 `u-dev`（dev-flow 编码执行 agent，模型挂已配置 provider） | 环境无该旋钮；u-dev 即本 skill 指定编码执行体 | 初始登记 |
 | 7 | u7d i18n 走独立命名空间文件 rollingRestart.ts（非 panel/sidebar 追加） | 与 u3b 的 settings.ts 键文件领地互斥，消除并行写冲突面 | 初始登记 |
 | 8 | 新增 u1f（main 侧事件接线单元） | 计划自检发现 D1 矩阵 main 侧挂点（runtime crash 判别式 / planned 86 / liveness 第四挂点 / renderer reload/oom / before-quit shutdown）无领地属主；从 u7c 与 u4 中析出，取证链批内完成不被武装链阻塞 | 初始登记 |
+| 9 | u2 调度序排在 u1c 之后（计划 DAG 未画此边） | u2 巡检出口需写 trigger-review 进 main.jsonl，依赖 u1c writer 先就位；编排期调度偏差，设计契约不变 | 初始登记 |
+| 10 | u9 领地事实修正：relay-tee.ts 未改（计划假设其含 tee 落盘） | 实测 relay-tee.ts 是 WS 帧翻译层（无 fs import）；relay 形态 tee 文件落点 = logger.ts createPiRelayLog（relay-registry.ts:389 消费），与 createPiSessionLog 共享 createPiStreamWriter——轮转做在共享工厂自动覆盖两形态，符合设计 D7「复刻点」原意 | 实施期登记 |
+| 11 | u9 旋段形态选单代 `.1`（保留末 2 段）而非台账的多段级联 | 设计 D7 原文即 `.jsonl` → `.jsonl.1` 保留末 2 段（A5 通过标准「`.1` 段存在」同证）；与本仓主日志既有单代形态对齐。台账（D1）仍是 10MB×3 段级联，两者不混同 | 实施期登记 |
 
 ## 6 状态表
 
@@ -183,7 +186,7 @@ graph TD
 | u7c | pending | — | — |
 | u7d | pending | — | — |
 | u8 (Gate W) | blocked-on-data（非代码门，不阻塞交付） | — | — |
-| u9 | pending | — | — |
+| u9 | committed | 1 | createPiStreamWriter 轮转（默认 50MB 可注入）+ `.1` 单代 + pi- 前缀 + closeLogger 等待在途轮转 + 旧裁决 [HISTORICAL] 推翻登记；vitest 4 passed（含 A5 PASS）+ typecheck 绿（编排者重跑核验） |
 | u10a | pending | — | — |
 | u10b | pending | — | — |
 

@@ -19,6 +19,9 @@
  * - 保留期：启动时清理 KEEP_DAYS 天前的日志
  * - 级别：dev 默认 debug，prod 默认 info，XYZ_LOG_LEVEL 可覆盖（XYZ_ 前缀自动过白名单）
  * - pi stdout JSONL 独立落盘：pi-<sessionId>.jsonl（卡死诊断的决定性证据）
+ * - pi tee size 轮转（crash-forensics §3.3 D7，推翻「tee 不轮转」旧裁决）：per-writer
+ *   50MB 上限、单代 `.1` 旋段保留末 2 段；`pi-` 前缀不变量（cleanExpiredLogs 白名单只认
+ *   顶层 pi-* 前缀，旋段逃出白名单 = 新的无清理写入面——架构 D6③ 原文约束）
  * - 退出 flush（D10-1 分档承诺的配套）：shutdown 链必须 `await closeLogger()`（主日志 +
  *   全部 pi session 写流 end 并等 flush 完成）后再 process.exit(0)；硬崩溃（SIGKILL/断电）
  *   丢缓冲窗口内尾部几行已声明为取证能力削弱
@@ -55,6 +58,12 @@ function parseLevel(env: string | undefined, fallback: LogLevel): LogLevel {
 const BYTES_PER_KB = 1024
 const DEFAULT_MAX_FILE_MB = 50
 const MAX_FILE_BYTES = Number(process.env.XYZ_LOG_MAX_BYTES) || DEFAULT_MAX_FILE_MB * BYTES_PER_KB * BYTES_PER_KB
+/**
+ * pi tee 单文件 size 轮转默认阈值（crash-forensics §3.3 D7：50MB 上限，收口 198MB 实证）。
+ * 不挂 env 旋钮（XYZ_LOG_MAX_BYTES 是主日志的旋钮，tee 无独立旋钮需求）；测试经
+ * createPiSessionLog / createPiRelayLog 的 opts.maxBytes 注入小阈值验证旋段行为。
+ */
+const PI_TEE_MAX_FILE_BYTES = DEFAULT_MAX_FILE_MB * BYTES_PER_KB * BYTES_PER_KB
 const SECONDS_PER_MINUTE = 60
 const HOURS_PER_DAY = 24
 const MS_PER_SECOND = 1000
@@ -93,12 +102,23 @@ const END_AWAIT_TIMEOUT_MS = 5_000
 
 // ── pi session 写流注册表（D10-1 退出 flush：closeLogger 统一 end + 等待）──
 interface PiStreamState {
-  /** 惰性打开：首次 write 才建流。 */
+  /** 惰性打开：首次 write 才建流。轮转窗口内为 undefined（新流由轮转续体重开）。 */
   stream: WriteStream | undefined
   /** end() 已调（write 后续为 no-op）。保留注册直到 closeLogger，确保退出 flush 覆盖。 */
   ended: boolean
-  /** 目标文件路径（closeLogger 端 endAndAwait 超时报告的 label 用）。 */
+  /** 目标文件路径（closeLogger 端 endAndAwait 超时报告的 label 用；轮转 rename 的源）。 */
   file: string
+  // ── per-writer size 轮转（crash-forensics §3.3 D7，形态对齐 rotateMain）──
+  /** 轮转阈值（字节）。默认 PI_TEE_MAX_FILE_BYTES；测试经 opts.maxBytes 注入小值。 */
+  maxBytes: number
+  /** 自本次打开以来写入字节数（size 轮转判定，对齐 mainBytesWritten）。 */
+  bytesWritten: number
+  /** 轮转窗口内到达的写入（新流就绪后按序回放；pendingLines 同款，D7 复刻点①）。 */
+  pending: Array<{ data: string | Uint8Array; bytes: number }>
+  /** 本 writer 轮转窗口内超限/无目标丢弃计数（轮转结束后合并记一次 warn）。 */
+  pendingDropped: number
+  /** 异步轮转进行中（end 旧流等待 flush → rename → 开新流 → 回放）。 */
+  rotation: Promise<void> | null
 }
 const openPiStreams = new Set<PiStreamState>()
 
@@ -439,21 +459,36 @@ export interface PiSessionLog {
 }
 
 /**
+ * pi tee 写入器构造选项（crash-forensics §3.3 D7）。生产代码不传（走默认 50MB）；
+ * 测试注入小阈值验证旋段行为。
+ */
+export interface PiTeeRotationOptions {
+  /** 单文件 size 轮转阈值（字节）。默认 PI_TEE_MAX_FILE_BYTES（50MB）。 */
+  maxBytes?: number
+}
+
+/**
  * 为一个 pi session 创建独立日志写入器。
  *
  * pi stdout 的 JSONL 事件流是诊断 pi 卡死的**决定性证据**（pi 发了什么 / 什么都没发）。
  * 每个独立文件，文件名含 sessionId 便于关联坏 session（与 ~/.xyz-agent-dev/pi/sessions/
  * 下的 session JSONL 对应）。
  *
- * 不轮转：单 session 事件量可控（正常 turn <1000 事件），session 结束即 end()。
- * 若极端长 session 导致文件过大，事后可手动清理（保留期 cleanExpiredLogs 会清 7 天前）。
+ * [HISTORICAL] 轮转裁决修订（crash-forensics-and-watchdog §3.3 D7 显式推翻旧裁决）：
+ * 旧裁决「不轮转：单 session 事件量可控（正常 turn <1000 事件），session 结束即 end()」
+ * 的前提已被实证证伪——idle 回收只在摘除时分段长闲置 session，**持续活跃** session 在
+ * 30 天长跑下单文件无界累积（本机实测单文件 198MB）。现按 D7 增加 per-writer size 轮转：
+ * 默认 50MB 上限（opts.maxBytes 可注入小阈值供测试），单代 `.1` 旋段、保留末 2 段（tee
+ * 核心价值是「pi 卡死时尾部现场」，末段保全即达成）。旋段命名 = 原文件名 + `.1` 后缀，
+ * `pi-` 前缀不变量自动保持——cleanExpiredLogs 白名单只认顶层 pi-* 前缀，旋段逃出白名单
+ * = 新的无清理写入面（架构 D6③ 原文约束）。
  *
  * D10-2：接口形状不变（end 后 write 为 no-op），内部从 appendFileSync 换成 WriteStream
  * 缓冲写（惰性打开）。end() 只关闭本 session 写流；注册表保留条目，closeLogger 退出
- * flush 时统一等待全部写流（含已 end 未 flush 完的）落盘——pi 静默卡死场景丢尾部
- * 几行 = 丢「pi 挂在最后哪一步」的冒烟证据（D10-1 分档承诺）。
+ * flush 时统一等待全部写流（含已 end 未 flush 完的、含轮转后新流的）落盘——pi 静默
+ * 卡死场景丢尾部几行 = 丢「pi 挂在最后哪一步」的冒烟证据（D10-1 分档承诺）。
  */
-export function createPiSessionLog(sessionId: string): PiSessionLog {
+export function createPiSessionLog(sessionId: string, opts?: PiTeeRotationOptions): PiSessionLog {
   if (!logsDir || !currentLevel) {
     // logger 未初始化（如单元测试）：返回 no-op 写入器
     return { write: () => {}, end: () => {} }
@@ -461,7 +496,7 @@ export function createPiSessionLog(sessionId: string): PiSessionLog {
   const date = new Date().toISOString().slice(0, ISO_DATE_LENGTH)
   // 文件名：pi-<date>-<sessionId>.jsonl（date 防跨天 session 冲突）
   const safeSid = sessionId.replace(/[^a-zA-Z0-9-]/g, '').slice(0, SESSION_ID_MAX_LENGTH)
-  return createPiStreamWriter(join(logsDir, `pi-${date}-${safeSid}.jsonl`))
+  return createPiStreamWriter(join(logsDir, `pi-${date}-${safeSid}.jsonl`), opts)
 }
 
 /**
@@ -470,17 +505,19 @@ export function createPiSessionLog(sessionId: string): PiSessionLog {
  * 对 relay 子进程的同款覆盖）。
  *
  * 文件名 `pi-relay-<date>-<recordId>.jsonl`（pi- 前缀对齐既有命名，cleanExpiredLogs
- * 的保留期清理同样覆盖；date 前缀防跨天冲突）。recordId 来自握手帧（extension 注入），
- * 按文件名安全字符集清洗。logger 未初始化时返回 no-op 写入器（与 createPiSessionLog
- * 同契约，单元测试无副作用）。
+ * 的保留期清理同样覆盖；date 前缀防跨天冲突）。size 轮转与 createPiSessionLog 同款
+ * （D7 复刻点③ `pi-relay-*` 同款：共享 createPiStreamWriter 的 per-writer 轮转，旋段
+ * `pi-relay-*.jsonl.1` 仍以 pi- 开头，白名单不变量保持）。recordId 来自握手帧（extension
+ * 注入），按文件名安全字符集清洗。logger 未初始化时返回 no-op 写入器（与
+ * createPiSessionLog 同契约，单元测试无副作用）。
  */
-export function createPiRelayLog(recordId: string): PiSessionLog {
+export function createPiRelayLog(recordId: string, opts?: PiTeeRotationOptions): PiSessionLog {
   if (!logsDir || !currentLevel) {
     return { write: () => {}, end: () => {} }
   }
   const date = new Date().toISOString().slice(0, ISO_DATE_LENGTH)
   const safeRecordId = recordId.replace(/[^a-zA-Z0-9_-]/g, '').slice(0, SESSION_ID_MAX_LENGTH)
-  return createPiStreamWriter(join(logsDir, `pi-relay-${date}-${safeRecordId}.jsonl`))
+  return createPiStreamWriter(join(logsDir, `pi-relay-${date}-${safeRecordId}.jsonl`), opts)
 }
 
 // ── 崩溃取证上下文（crash-resilience §3.3 D6-④⑤ / A8）────────────────
@@ -619,22 +656,50 @@ export function writePluginCrashLog(workerId: string, content: string): void {
 
 /**
  * pi 原始流写入器的共享实现（createPiSessionLog / createPiRelayLog / writePiCrashLog 共用）：
- * WriteStream 缓冲写 + 惰性打开 + destroyed 自愈重建，条目注册进 openPiStreams 由
- * closeLogger 统一等待退出 flush。失败语义 best-effort：同步异常静默吞、异步流错误由
- * attachStreamErrorHandler 记一次 warn——绝不向上抛（调用方是数据转发热路径）。
+ * WriteStream 缓冲写 + 惰性打开 + destroyed 自愈重建 + per-writer size 轮转（D7），条目
+ * 注册进 openPiStreams 由 closeLogger 统一等待退出 flush。失败语义 best-effort：同步异常
+ * 静默吞、异步流错误由 attachStreamErrorHandler 记一次 warn——绝不向上抛（调用方是数据
+ * 转发热路径）。
  */
-function createPiStreamWriter(file: string): PiSessionLog {
-  const state: PiStreamState = { stream: undefined, ended: false, file }
+function createPiStreamWriter(file: string, opts?: PiTeeRotationOptions): PiSessionLog {
+  const state: PiStreamState = {
+    stream: undefined,
+    ended: false,
+    file,
+    maxBytes: opts?.maxBytes ?? PI_TEE_MAX_FILE_BYTES,
+    bytesWritten: 0,
+    pending: [],
+    pendingDropped: 0,
+    rotation: null,
+  }
   openPiStreams.add(state)
   return {
     write: (line) => {
       if (state.ended) return // end 后 no-op
       if (!currentLevel || !logsDir) return // closeLogger 后 no-op（与 writeLogEntry 一致，审查 W30 Fix-8）
       const data = typeof line === 'string' ? (line.endsWith('\n') ? line : line + '\n') : line
+      const bytes = typeof data === 'string' ? Buffer.byteLength(data, 'utf8') : data.byteLength
       try {
         // 写入前守卫（审查 W30 Fix-9）：writableEnded = end() 已调、flush 未完（正常被
         // state.ended 拦截，此处防御外部直接调 stream.end() 的场景）——等同 end 语义，no-op。
         if (state.stream?.writableEnded) return
+        // 轮转窗口（D7 复刻点①）：行入队，轮转续体在新流就绪后按序回放。fs 挂起时窗口
+        // 无限拉长，容量上限防内存膨胀（pendingLines 同款，审查 W30 Fix-1）。
+        if (state.rotation) {
+          if (state.pending.length >= MAX_PENDING_LINES) {
+            state.pendingDropped++
+            return
+          }
+          state.pending.push({ data, bytes })
+          return
+        }
+        // size 轮转（写入字节计数，D7）：超阈值 → 异步「end 旧流 → rename → 开新流」，
+        // 本行入队随回放写进新段（触发行落新段，与 rotateMain 同语义）。
+        if (state.stream && !state.stream.destroyed && state.bytesWritten + bytes > state.maxBytes) {
+          void rotatePiStream(state)
+          state.pending.push({ data, bytes })
+          return
+        }
         // 自愈（审查 W30 Fix-2）：流 error 后 autoDestroy，write 静默丢弃；pi session log
         // 是 pi 卡死诊断的决定性证据，静默丢失后续行 = 失去冒烟证据（主日志有轮转自愈、
         // pi 流没有）——destroyed 时重建（flags:'a' 续写同文件 + 重新挂 error 监听器）。
@@ -643,12 +708,14 @@ function createPiStreamWriter(file: string): PiSessionLog {
           // 但显式移除避免悬挂监听器持有旧流引用（防监听器泄漏/重复注册）。
           // 可选链：首次惰性打开时 stream 为 undefined（此分支为 true 的主路径）。
           state.stream?.removeAllListeners('error')
-          state.stream = createWriteStream(file, { flags: 'a' })
-          attachStreamErrorHandler(state.stream, `pi:${file}`)
+          openPiStreamFile(state)
         }
+        const stream = state.stream
+        if (!stream) return // 打开失败（异常路径）→ 本行丢弃，不抛
         // write 返回 false = 背压（缓冲堆积）。日志行量级 KB、磁盘正常不触发；慢盘时
         // 内存增长与轮转窗口 pendingLines 同源，已由容量上限兜底（审查 W30 Fix-6）。
-        state.stream.write(data)
+        stream.write(data)
+        state.bytesWritten += bytes
       // eslint-disable-next-line taste/no-silent-catch -- pi stdout 落盘失败（磁盘满/权限）不影响 runtime 主流程；best-effort 容错
       } catch {
         // no-op
@@ -657,9 +724,88 @@ function createPiStreamWriter(file: string): PiSessionLog {
     end: () => {
       if (state.ended) return
       state.ended = true
+      // 轮转窗口内 end：旧流正被轮转续体 end，新流由续体在回放后按 state.ended 补 end
+      // （closeLogger 对注册表残留条目的 end 是第二道兜底）。
       state.stream?.end() // 缓冲数据异步 flush 后关闭 fd；closeLogger 会等待其完成
     },
   }
+}
+
+/**
+ * 打开（或重建）pi tee 写流（createPiStreamWriter 的打开路径，轮转续体与自愈路径共用）。
+ *
+ * 打开前若磁盘既有文件已超阈值（上次运行崩溃未轮转 / 流自愈重建时文件已大），先滚动
+ * 一次——进程内字节计数不覆盖历史字节，此 stat 桥接跨重启/自愈的 size 上限（对齐
+ * openMainStream 同款，仅打开时一次，非热路径）。打开经 createStreamSafe 归一失败
+ * （轮转续体是异步上下文，同步抛错会成为 unhandled rejection）。
+ */
+function openPiStreamFile(state: PiStreamState): WriteStream | undefined {
+  const file = state.file
+  try {
+    if (existsSyncSafe(file) && statSync(file).size > state.maxBytes) {
+      renameSync(file, `${file}.1`)
+    }
+  // eslint-disable-next-line taste/no-silent-catch -- 预滚失败不阻塞打开；best-effort，新流仍续写原文件
+  } catch {
+    // no-op
+  }
+  const stream = createStreamSafe(file)
+  if (stream) {
+    attachStreamErrorHandler(stream, `pi:${file}`)
+    state.bytesWritten = 0
+  }
+  state.stream = stream
+  return stream
+}
+
+/**
+ * 异步轮转一个 pi tee 写流（crash-forensics §3.3 D7）：end 旧流并**等待 flush 完成** →
+ * rename 单代 `.1` → 开新流 → 回放窗口行。顺序硬约束与幂等并发语义与 rotateMain 同款
+ * （审查 m-6：rename 前必须等旧流 'close'——全部在途 fs.write 落盘；否则在途写落进已
+ * 改名 inode，单代 .1 下次轮转被覆盖时数据丢失）。
+ *
+ * 旋段命名 = 原文件名 + `.1` 后缀（单代，保留末 2 段——tee 核心价值是「pi 卡死时尾部
+ * 现场」，末段保全即达成，设计 D7 原文）；`pi-` 前缀随原文件名自动保持（cleanExpiredLogs
+ * 白名单只认顶层 pi-* 前缀——架构 D6③ 不变量：旋段逃出白名单 = 新的无清理写入面）。
+ * renameSync 对已存在的 `.1` 直接覆盖（POSIX）= 末 2 段滚动的保留语义，与主日志同款。
+ */
+function rotatePiStream(state: PiStreamState): Promise<void> {
+  if (state.rotation) return state.rotation
+  const oldStream = state.stream
+  const oldFile = state.file
+  // 状态先行清空：轮转窗口内到达的行统一入队（write 的 state.rotation 分支）
+  state.stream = undefined
+  state.bytesWritten = 0
+  state.rotation = (async () => {
+    if (oldStream) await endAndAwait(oldStream, `pi-rotation:${oldFile}`)
+    try {
+      renameSync(oldFile, `${oldFile}.1`)
+    // eslint-disable-next-line taste/no-silent-catch -- 旋段滚动失败不阻塞写入；logger best-effort，新流仍写原文件，仅丢失分段
+    } catch {
+      // no-op
+    }
+    const stream = openPiStreamFile(state)
+    // 回放轮转窗口内到达的行（续体在微任务队列原子执行，无并发写入插队）
+    const pending = state.pending.splice(0)
+    if (stream) {
+      for (const p of pending) {
+        stream.write(p.data)
+        state.bytesWritten += p.bytes
+      }
+    } else if (pending.length > 0) {
+      // 新流打开失败：回放行无目标流可写，丢弃但必须计数（对齐 rotateMain，不静默）
+      state.pendingDropped += pending.length
+    }
+    if (state.ended) stream?.end() // 窗口内 end()：新流由本续体收尾
+    state.rotation = null
+    // 轮转窗口超长（fs 挂起）导致的超限丢弃：合并记一次 warn（写主日志，不递归本 writer）
+    if (state.pendingDropped > 0) {
+      const dropped = state.pendingDropped
+      state.pendingDropped = 0
+      writeLogEntry('warn', `[logger] pi tee dropped ${dropped} lines during rotation (${oldFile})`)
+    }
+  })()
+  return state.rotation
 }
 
 // ── 工具 ────────────────────────────────────────────────────────────
@@ -746,6 +892,16 @@ function reportEndAwaitTimeout(label: string): void {
  */
 export async function closeLogger(): Promise<void> {
   if (rotationInFlight) await rotationInFlight
+  // pi tee 写流（D7 复刻点②）：先等全部在途轮转完成——轮转续体会 end 旧流、开新流并
+  // 回放窗口行——再捕获流引用，保证捕获到的是轮转后的**新流**，尾部 flush 走新流不丢
+  // 尾部行（A5 通过标准）。循环兜住 await 窗口内尾部写入再触发的一轮轮转。
+  for (;;) {
+    const rotations = Array.from(openPiStreams)
+      .map((s) => s.rotation)
+      .filter((r): r is Promise<void> => r !== null)
+    if (rotations.length === 0) break
+    await Promise.allSettled(rotations)
+  }
   // 先捕获所有写流引用再清状态——await 窗口内新写入应直接 no-op，
   // 捕获的旧流照常 end + 等待（退出前最后几行不丢）。
   const streams: Array<{ stream: WriteStream | undefined; label: string }> = [
