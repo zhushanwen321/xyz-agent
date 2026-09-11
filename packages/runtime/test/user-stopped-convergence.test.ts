@@ -80,6 +80,30 @@ describe('UserStoppedGate 收敛环状态机', () => {
     expect(abortSession).not.toHaveBeenCalled() // idle 场景无补发 turn，收敛环零 abort
   })
 
+  // ── 未 configure 防御分支（R3 S-3 补测）：生产 SessionService 构造恒 configure，
+  //    本组两用例锁定降级/抛错语义，防回归成静默成功或裸 TypeError ──
+
+  it('环防御：未 configure 时 markUserStopped 降级 no-op（warn 出声不抛，标记不落盘）', () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const gate = new UserStoppedGate() // 未 configure（deps = null）
+    expect(() => gate.markUserStopped('s1', 'user_force_quit')).not.toThrow()
+    expect(warnSpy).toHaveBeenCalledTimes(1)
+    expect(warnSpy.mock.calls.map(String).join(' ')).toContain('userStoppedGate not configured')
+    warnSpy.mockRestore()
+  })
+
+  it('防御：deps=null 但环活跃（begin 不依赖 deps）→ consumeForExplicitDelivery 经 marks() 显式抛错（非静默成功 / 非 TypeError）', () => {
+    const gate = new UserStoppedGate() // 未 configure
+    gate.beginRestoreConvergence('s1') // 环活跃（converging 有条目）→ 早退守卫不拦
+    // consumeForExplicitDelivery：hasUserStoppedMark=false 但 converging.has=true → 走到 marks() → throw
+    expect(() => gate.consumeForExplicitDelivery('s1')).toThrow(
+      '[event-interpreter] UserStoppedGate not configured (SessionService constructor wires it)',
+    )
+    // throw 前环已停（stopTimer + converging.delete 先于 marks()）：第二次调用环已清 → 早退静默，
+    // 且无残留 timer 拖住 worker
+    expect(() => gate.consumeForExplicitDelivery('s1')).not.toThrow()
+  })
+
   it('完整序列：abort→settled→补发 agent_start→再 abort→settled→静默窗满→清标记', async () => {
     const { gate, store, abortSession } = makeGate()
     gate.markUserStopped('s1', 'user_force_quit')

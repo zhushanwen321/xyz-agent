@@ -263,6 +263,22 @@ describe('sanitizeInvalidProviders — D2 空串剥键 + catalog provider 级键
     expect(readProvidersFromDisk()['my-custom-llm'].models).toEqual([{ id: 'ok', name: 'OK' }])
   })
 
+  it('D2①: 非对象模型条目（null/原始值/数组）原样保留，不归本清洗段管（pi schema 层拒绝）；合法模型照常剥键（R3 S-3 补测）', () => {
+    writeModels({
+      'my-custom-llm': {
+        headers: { 'X-Test': '1' },
+        models: [null, 'poison-string', 42, [], { id: 'm1', name: '' }],
+      },
+    })
+
+    const outcome = sanitizeInvalidProviders()
+
+    // 非对象条目 kept.push 原样透传（不删除、不包裹、不剥键），清洗不报错不丢 provider
+    expect(outcome.removed).toEqual([])
+    const cfg = readProvidersFromDisk()['my-custom-llm']
+    expect(cfg.models).toEqual([null, 'poison-string', 42, [], { id: 'm1' }])
+  })
+
   it('D2②: catalog 条目 api 一律剥除，baseUrl 无标记剥除 / 有标记保留（三对照）', () => {
     writeModels({
       // 无标记：provider 级 api + baseUrl 都是冻结 artifact → 全剥

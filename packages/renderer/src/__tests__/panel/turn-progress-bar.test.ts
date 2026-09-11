@@ -146,6 +146,19 @@ describe('TurnProgressBar 使用者视角（V5①）', () => {
     await wrapper.find('[data-testid="turn-progress-abort"]').trigger('click')
     expect(wrapper.emitted('abort')).toHaveLength(1)
   })
+
+  it('≥1h 时长桶：formatDuration 进位到「小时+分」档（durationHourMin，R3 S-3 补测）', async () => {
+    const store = useChatStore()
+    const wrapper = mountBar()
+    startRealTurn(store)
+    await nextTick()
+    // 65 分钟：跨过 60min 边界 → 小时+分档（不落分钟档）
+    vi.advanceTimersByTime(65 * 60 * 1000)
+    await nextTick()
+    const text = wrapper.find('[data-testid="turn-progress-elapsed"]').text()
+    expect(text).toContain('1 小时 5 分')
+    expect(text).not.toContain('分钟')
+  })
 })
 
 describe('i18n 文案纪律断言（u4 验收③，D7）', () => {

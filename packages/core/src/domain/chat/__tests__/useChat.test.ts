@@ -120,6 +120,21 @@ describe('createUseChat factory 行为', () => {
     resetChatModuleStateForTest()
   })
 
+  it('clearQueueState 转发 core store（session-dead G1：forceQuit 后清 pi 快照，R3 S-3 补测）', () => {
+    const f = makeFixture()
+    f.chatStore.applyMessageEvent('sq-1', msg('sq-1', 'message.queue_update', { steering: ['pending-steer'] }))
+    expect(f.chatStore.getQueueState('sq-1')).toBeDefined()
+
+    f.useChat.clearQueueState('sq-1')
+
+    expect(f.chatStore.getQueueState('sq-1')).toBeUndefined()
+    // 其他 session 不受影响（转发是定向清除，非全量重置）
+    f.chatStore.applyMessageEvent('sq-2', msg('sq-2', 'message.queue_update', { followUp: ['x'] }))
+    f.useChat.clearQueueState('sq-1')
+    expect(f.chatStore.getQueueState('sq-2')).toBeDefined()
+    f.dispose()
+  })
+
   it('send 流程：appendUser + chatApi.send 调用', async () => {
     const f = makeFixture()
     await f.useChat.send('s1', textToSegments('hello'))

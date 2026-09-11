@@ -488,6 +488,27 @@ describe('agent-settled V7 dev-only 延迟注入（session-dead-structural-fixes
     expect(onOccupancyTransition).toHaveBeenCalledWith('idle')
   })
 
+  it('设开关：延迟窗口内重复 agent-settled → 先同步 flush 前一个再排新 timer（顺序保持、事件不丢，R3 S-3 补测）', async () => {
+    vi.useFakeTimers()
+    vi.stubEnv(ENV_KEY, '2000')
+    const sideEffects: string[] = []
+    const onAgentSettled = vi.fn(() => sideEffects.push('settled'))
+    const onOccupancyTransition = vi.fn((transition: SessionOccupancyTransition) => sideEffects.push(`occupancy:${transition}`))
+    const { interp } = makeInterpreter({ onAgentSettled, onOccupancyTransition })
+
+    interp.interpret([{ kind: 'agent-settled' }])
+    expect(vi.getTimerCount()).toBe(1)
+    // 物理上极窄（pi 单 run 结束只发一次）的防御路径：重复 settled → 旧 timer clearTimeout，
+    // 前一个副作用同步 flush，再排新 timer——timer 数不变（旧清新增）
+    interp.interpret([{ kind: 'agent-settled' }])
+    expect(onAgentSettled).toHaveBeenCalledTimes(1) // 前一个已同步 flush
+    expect(vi.getTimerCount()).toBe(1) // 旧 timer 已清，只剩新 timer
+    await vi.advanceTimersByTimeAsync(2000)
+    expect(onAgentSettled).toHaveBeenCalledTimes(2)
+    // 顺序保持：flush 的在前，新 timer 到点的在后；每个 settled 的三件副作用按原序（flush + idle 转移）
+    expect(sideEffects).toEqual(['settled', 'occupancy:idle', 'settled', 'occupancy:idle'])
+  })
+
   it('非法开关值（非数字 / ≤0 / 空串）→ 视为未设，零行为差异', () => {
     vi.useFakeTimers()
     const onAgentSettled = vi.fn()

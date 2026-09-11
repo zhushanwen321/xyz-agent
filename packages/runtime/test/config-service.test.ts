@@ -509,6 +509,26 @@ describe('ConfigService.loadAgents · sourceType 随来源推断（W1，修复 t
 
 // ── LLM retry 域委托（llm-retry-settings 设计 §3.4：单行委托注入 port）──────────
 
+describe('ConfigService · resolver 显式守卫访问器（R2 S-1 修复契约机器锁定，R3 S-4 补测）', () => {
+  it('两参构造 + 调 provider 三方法 → 带恢复指引的 Error（非静默成功 / 非深处 TypeError）', async () => {
+    // 与上方 llmRetrySettings 未注入抛错用例同模式：少参构造 = 测试构造错误，报错指向恢复动作
+    const svc = new ConfigService(tmpDir, configStore)
+    const expected = '[config-service] providerCredentialResolver 未注入'
+    expect(() => svc.listProviders()).toThrow(expected)
+    expect(() => svc.toggleProviderEnabled('p1', true)).toThrow(expected)
+    // removeProviderByKind 是 async 方法：同步段抛错 → 拒绝的 Promise，用 rejects 断言
+    await expect(svc.removeProviderByKind('p1', 'custom')).rejects.toThrow(expected)
+    // 恢复指引文案可操作：指向注入 resolver / 改用 provider 无关实例（错误 → 权威源 → 重试闭环）
+    try {
+      svc.listProviders()
+      expect.unreachable('listProviders should have thrown')
+    } catch (e) {
+      expect((e as Error).message).toContain('注入 resolver')
+      expect((e as Error).message).toContain('listProviders / toggleProviderEnabled / removeProviderByKind')
+    }
+  })
+})
+
 describe('ConfigService · LLM retry 域（llmRetrySettings port）', () => {
   it('未注入 port：getRetryConfig / setRetryConfig 抛错（可选注入防御，生产恒注入）', () => {
     // beforeEach 构造的 configService 只传 2 个参数（未注入 llmRetrySettings）
