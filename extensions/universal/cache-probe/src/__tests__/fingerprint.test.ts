@@ -1,62 +1,57 @@
 // 测试框架：vitest
 // 运行命令：npx vitest run src/__tests__/fingerprint.test.ts
 //
-// 指纹纯函数层测试：stableStringify 稳定性 / hash 长度 / extractSystem 四口径 /
-// sentToolsOf / diffFingerprints / buildProbeEntry 的 baseline-全量、normal-增量、无变化-null。
+// 指纹纯函数层测试（经公有面 hashOf / buildProbeEntry / extractSystem / sentToolsOf）：
+// hash 稳定性（key 序 / undefined→null / 数组有序）、hash 为 16 hex、
+// buildProbeEntry 的 baseline-全量、normal-增量、无变化-null。
 
 import { describe, expect, it } from "vitest";
 
 import {
 	buildProbeEntry,
-	diffFingerprints,
 	extractSystem,
-	HASH_LEN,
 	hashOf,
 	sentToolsOf,
-	stableStringify,
 	type Fingerprints,
 } from "../fingerprint";
 
+// hash 为 16 hex 是 entry schema v2 的契约（fingerprint.ts 头注释），硬编码断言
+const HASH_HEX_LEN = 16;
+
 const fp = (over: Partial<Fingerprints> = {}): Fingerprints => ({
-	spFull: "a".repeat(HASH_LEN),
-	toolsSent: "b".repeat(HASH_LEN),
-	contextFiles: "c".repeat(HASH_LEN),
-	skills: "d".repeat(HASH_LEN),
-	toolsList: "e".repeat(HASH_LEN),
-	toolsReg: "f".repeat(HASH_LEN),
-	append: "0".repeat(HASH_LEN),
-	guidelines: "1".repeat(HASH_LEN),
-	customPrompt: "2".repeat(HASH_LEN),
+	spFull: "a".repeat(HASH_HEX_LEN),
+	toolsSent: "b".repeat(HASH_HEX_LEN),
+	contextFiles: "c".repeat(HASH_HEX_LEN),
+	skills: "d".repeat(HASH_HEX_LEN),
+	toolsList: "e".repeat(HASH_HEX_LEN),
+	toolsReg: "f".repeat(HASH_HEX_LEN),
+	append: "0".repeat(HASH_HEX_LEN),
+	guidelines: "1".repeat(HASH_HEX_LEN),
+	customPrompt: "2".repeat(HASH_HEX_LEN),
 	...over,
 });
 
-describe("stableStringify", () => {
-	it("key 顺序不同输出相同（防假变化的核心保证）", () => {
-		expect(stableStringify({ a: 1, b: { d: 4, c: 3 } })).toBe(stableStringify({ b: { c: 3, d: 4 }, a: 1 }));
-	});
-
-	it("undefined 归一为 null", () => {
-		expect(stableStringify(undefined)).toBe("null");
-		expect(stableStringify({ x: undefined })).toBe(stableStringify({ x: null }));
-	});
-
-	it("数组保序、原始值直译", () => {
-		expect(stableStringify([2, 1])).not.toBe(stableStringify([1, 2]));
-		expect(stableStringify("s")).toBe('"s"');
-		expect(stableStringify(3)).toBe("3");
-	});
-});
-
-describe("hashOf", () => {
-	it(`hash 为 ${HASH_LEN} hex 字符且同输入同输出`, () => {
+describe("hashOf（stable stringify 语义经公有面断言）", () => {
+	it("hash 为 16 hex 字符且同输入同输出", () => {
 		const h = hashOf({ a: 1 });
-		expect(h).toMatch(/^[0-9a-f]{16}$/);
+		expect(h).toMatch(new RegExp(`^[0-9a-f]{${HASH_HEX_LEN}}$`));
 		expect(hashOf({ a: 1 })).toBe(h);
 		expect(hashOf({ b: 1 })).not.toBe(h);
 	});
 
-	it("key 顺序不影响 hash", () => {
+	it("key 顺序不影响 hash（防假变化的核心保证，嵌套对象同）", () => {
 		expect(hashOf({ a: 1, b: 2 })).toBe(hashOf({ b: 2, a: 1 }));
+		expect(hashOf({ a: 1, b: { d: 4, c: 3 } })).toBe(hashOf({ b: { c: 3, d: 4 }, a: 1 }));
+	});
+
+	it("undefined 归一为 null（与显式 null 同 hash）", () => {
+		expect(hashOf(undefined)).toBe(hashOf(null));
+		expect(hashOf({ x: undefined })).toBe(hashOf({ x: null }));
+	});
+
+	it("数组保序、原始值类型不混淆", () => {
+		expect(hashOf([2, 1])).not.toBe(hashOf([1, 2]));
+		expect(hashOf("3")).not.toBe(hashOf(3));
 	});
 });
 
@@ -101,10 +96,18 @@ describe("sentToolsOf", () => {
 	});
 });
 
-describe("diffFingerprints / buildProbeEntry", () => {
-	it("diff 只报变化项", () => {
-		expect(diffFingerprints(fp({ contextFiles: "x".repeat(HASH_LEN) }), fp())).toEqual(["contextFiles"]);
-		expect(diffFingerprints(fp(), null)).toEqual([]);
+describe("buildProbeEntry（diff 语义经 changed 数组断言）", () => {
+	it("diff 只报变化项（changed 数组 + 增量 h）", () => {
+		const e = buildProbeEntry(
+			fp({ contextFiles: "x".repeat(HASH_HEX_LEN), skills: "y".repeat(HASH_HEX_LEN) }),
+			fp(),
+			{ seq: 3, needsBaseline: false, startReason: null, cwd: "/w" },
+		);
+		expect(e?.changed).toEqual(["contextFiles", "skills"]);
+		expect(e?.h).toEqual({
+			contextFiles: "x".repeat(HASH_HEX_LEN),
+			skills: "y".repeat(HASH_HEX_LEN),
+		});
 	});
 
 	it("baseline：全量 hash + changed ['*'] + cwd + startReason", () => {
@@ -123,13 +126,13 @@ describe("diffFingerprints / buildProbeEntry", () => {
 
 	it("normal：只存变化项（增量），不带 cwd", () => {
 		const last = fp();
-		const cur = fp({ contextFiles: "x".repeat(HASH_LEN) });
+		const cur = fp({ contextFiles: "x".repeat(HASH_HEX_LEN) });
 		const e = buildProbeEntry(cur, last, { seq: 3, needsBaseline: false, startReason: null, cwd: "/w" });
 		expect(e).toEqual({
 			v: 2,
 			seq: 3,
 			changed: ["contextFiles"],
-			h: { contextFiles: "x".repeat(HASH_LEN) },
+			h: { contextFiles: "x".repeat(HASH_HEX_LEN) },
 		});
 	});
 
