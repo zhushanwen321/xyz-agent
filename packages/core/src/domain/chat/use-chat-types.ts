@@ -14,6 +14,10 @@ import type { ChatStoreInstance } from './store'
  * CompactQueueLike —— useChat 消费 compactQueue 的最小结构类型（renderer useCompactQueue
  * 单例自动满足，经 deps.getCompactQueue 注入——session.compacted → flush 先例的既有模式）。
  *
+ * 契约对端：packages/renderer/src/composables/panel/useCompactQueue.ts（CompactQueue /
+ * QueuedMessage）——结构类型 seam，有意不合并：core 不反向依赖 renderer 实现，仅以本
+ * 最小结构面约束实现方；任一侧扩展字段时需同步核对另一侧结构面。
+ *
  * session-occupancy-send-closure D2 P1：send.rejected{reason:'compacting'} 兜底入队复用
  * compactQueue（enqueue）+ flush 重放来源消歧（peek 命中条目 id 即跳过重入队）。
  * [u4a / D5.3 ①] 扩展投递确认回调（confirmDelivery）与条目提交通道标记（mode）——
