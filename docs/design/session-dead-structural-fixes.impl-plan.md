@@ -95,7 +95,7 @@ u6（冻结）不入图。
 
 | Unit | 状态 | 轮次 | 证据指针 |
 |------|------|------|----------|
-| u1a | committed | 2 | commit 5d4644cb4 + 修复轮 f0?（forcequit 测试 mock 补齐——u3c 全量门抓出的漏网回归） |
+| u1a | committed | 2 | commit 5d4644cb4 + 修复轮 bdd2dc754（forcequit 测试 mock 补齐——u3c 全量门抓出的漏网回归） |
 | u1b | committed | 1 | commit d879fe120（9 单测绿，Bundle 验证 + Plugin E2E 绿） |
 | u2 | committed | 1 | commit bc960acb1（32 文件 473 测试绿，Bundle 验证 + Plugin E2E 绿） |
 | u3b | committed | 1 | commit 2048f03ab（runtime 全量 5156 绿，等价性 core 33 + runtime 65 绿，Bundle+E2E 绿） |
@@ -103,6 +103,10 @@ u6（冻结）不入图。
 | u4 | committed | 1 | commit 6dbb8a35b（core 1788 + panel 634 全绿，双 typecheck 绿） |
 | u6 | blocked（P-3 实测阻塞，设计显式判定） | — | 设计 §3.5 P-3 / §5 PR-5 行 |
 
+### 偏差登记表（续——执行期/阶段 3 补登，逻辑归属 §5）
+
+| Unit/来源 | 偏差 | 判定 | 联动 |
+|---|---|---|---|
 | u3b | index.ts（组合根）不在领地列举但必须改：interpreter onOccupancyTransition 回调签名改封闭转移枚举 + 接线内三布尔直写改调原语——否则 grep 复核无法清零 | 合理：纯机械接线，D2 挂点迁移本体 | 领地清单补记 |
 | u3b | onCompactingStateChange 回调通道保留（双通道对同一原语行幂等），单通道收敛建议随 u3c readonly 收口一并处理 | 移交：u3c 裁决执行（已写入 u3c task B 块） | u3c 验收 |
 | u4 | 新增子组件 TurnProgressBar.vue（Composer.vue script 余量 ~40 行，内联必超 300 上限）+ 4 个既有测试 mock 补 2 行 + index.ts 域出口 +1 行 | 合理：最小侵入与既有 mock 先例同构 | 领地清单补记 |
@@ -121,6 +125,10 @@ u6（冻结）不入图。
 1. P-1 探针双场景实测（单通知 abort 时序 + ≥2 条通知收敛环 + 收敛窗 3s 初值校准）需真实 pi 环境，随阶段 5 Gate B 的 V1/V4 执行；若实测触发 §3.5 降级档，按设计降级路径回改 u2 并重跑受影响验收。u2 补充：replay turn 收尾超窗（pi 收尾卡顿 >3s）的极端时序残余缝 runtime 无先验信号，按本条随 P-1 标定。
 2. u2 单元为关键路径最大单元（5 文件、原语+收敛环+短路三块新逻辑），dev 轮次预算按 2 轮预置，超 2 轮未绿按 SKILL 阈值冻结升级用户。（实际 1 轮绿）
 3. V8 场景（≥3 轮 forceQuit/restore 循环 + 重启）依赖 pnpm dev 稳定长跑，阶段 5 执行时注意多实例端口坑（AGENTS.md：3210/9222/3310 归属确认）。
+4. 【Gate B 发现·待用户裁决】steer 通道文本回收：turn 忙时按 Enter 走 steer 直投 pi 内存队列（不经 defer），forceQuit 后 steer 队列随进程消亡、文本丢失（不在 session 文件/草稿）——气泡残留已修（dde26d7fe 清 queueStates 快照），steer 文本是否纳入草稿回收涉产品语义（steer = 用户「加入当前任务」意图，非排队），留用户裁决。
+5. 【Gate B 发现·低频边界】forceQuit 与在途 send RPC 竞态（<500ms 窗）：settling 窗口内发出的消息若在 drain 后到达 runtime delivery，显式投递清标记放行 → session 复活执行该消息，且与草稿回收可能双份。D4「显式投递放行」裁定的边界效应；建议后续评估 forceQuit 后短窗内到达的 send 是否应提示用户而非静默执行。
+6. 【Gate B 发现·集成注意项】session.occupancy 等 session 实时帧对 ws 客户端的投递依赖 session 实例存活——pi idle 销毁后重建的实例需重新 subscribe 才有帧流；第三方集成者依赖该帧做外部监控时需注意重订阅（产品侧可评估全局 occupancy 广播通道）。
+7. runtime 全量 2 例负载型 flaky（logger size 轮转 / send-queue-e2e S1 real-pi，Gate A 三次全量两次各中一例、单跑均绿）——建议后续做隔离/重试加固。
 
 **变更历史**：
 - 2026-09-11：初版计划。单元切分对设计 §5 的 PR 表做了两处映射说明：① 设计 PR-3 拆为 u2 基座（原语+转移表+宣告帧收编，因 event-interpreter/session-lifecycle 与 PR-2 同文件共改，合并以压关键路径至 4 层）+ u3b（挂点迁移）+ u3c（readonly+文档收口）；② 设计 PR-5 → u6 冻结（P-3 阻塞为设计文档显式判定，非本计划新增裁决）。
@@ -128,7 +136,7 @@ u6（冻结）不入图。
 - 2026-09-11：执行期记录——u3b/u4 一轮绿 committed（2048f03ab / 6dbb8a35b）。C-pi-14 layout 守卫经共享 hook 扩散拦截后续 commit，用户裁决「豁免存量+继续」：守卫脚本提取 + 101 文件临时豁免 + 一次授权 SKIP 提交（3164782b6）。u3b 验收超预期：runtime 全量 5156 测试绿（收口单元 u3c 前）。u3c（readonly 收口 + 约束登记 + 文档回写）已派发。
 - 2026-09-11：u3c committed（70ca30acc，含 B 块裁决：onCompactingStateChange 保留双通道幂等，删除牵连 2 个生产接口变更判不划算；C-data-17 替代建议 id 因 render 脚本主题白名单）。u1a 修复轮（轮次 2）：u3c 全量门抓出 forcequit handler 测试 mock 漏网回归，已修复 committed。状态表全 committed（u6 冻结），转阶段 3。
 - 2026-09-11：阶段 3 一致性审查（两分区独立 reviewer）返回 5 unreasonable（runtime U1 中：V7 注入开关未实现；U2/U3 低；前端 F-U1 low-medium：turn-progress 切 session 分区脱钩；F-U2 low：注入槽位覆盖丢文本）+ 3 doc_errors + 7 reasonable。处置：3 修复组并行派发（runtime 组 / turn-progress 组 / 注入组）；doc_errors 主 agent 修正（设计 §3.2 字节→字符、impl-plan u4 验收②措辞、C-data-17 summary grep 声称降级为人工复核）；reasonable 7 条登记本表并同步设计文档 D2/D3/D4/D6 表述（4 处）。
-- 2026-09-11：阶段 3 修复循环收口。5 条 unreasonable 修复 committed（d3ca1b1e7 / 166fa16fd / cab38510a）+ 定向复审：前端批 pass=true（2 条 low/info 观察登记不阻塞）；runtime 批打回一轮（U1 timer 两缺陷：延迟无上界重开 v4-③ 边界缝、timer 无 dispose 幽灵置闲新 session），修复 = 复审建议忠实执行（reject-over-clamp 有合理理由：clamp 会使 V7 标定失真），committed f688d657d，42+200 测试绿。unreasonable 清零，转阶段 5。前端批 2 条 low/info 观察（startTurn 注释漂移、头部残余声明未点名在场场景）登记待下次触碰 turn-progress.ts 时顺带修复。runtime re-review INFO（ping 看门狗/session-manager abort 仍默认 'user' source）为既有行为，AbortSource 全量分型留待后续收口。
+- 2026-09-11：阶段 3 修复循环收口。5 条 unreasonable 修复 committed（d3ca1b1e7 / 166fa16fd / cab38510a）+ 定向复审：前端批 pass=true（2 条 low/info 观察登记不阻塞）；runtime 批打回一轮（U1 timer 两缺陷：延迟无上界重开 v4-③ 边界缝、timer 无 dispose 幽灵置闲新 session），修复 = 复审建议忠实执行（reject-over-clamp 有合理理由：clamp 会使 V7 标定失真），committed f688d657d，42+200 测试绿。unreasonable 清零，转阶段 5。前端批 2 条 low/info 观察（startTurn 注释漂移、头部残余声明未点名在场场景）——经终态同步审查核实：两处漂移点已随 cab38510a 的头注释重写闭环（turn-progress.ts:28-30 残余声明、:220 startTurn docstring），观察销账。runtime re-review INFO（ping 看门狗/session-manager abort 仍默认 'user' source）为既有行为，AbortSource 全量分型留待后续收口。
 - 2026-09-11：Gate A 首跑 FAIL（根 lint 4 项本区间引入）→ 微修复 committed（4775c0a9e）→ 复验 lint exit 0 转绿。重验范围 = lint + 新测试（未触共享接线）。测试侧四包全量绿（runtime 5169 / core 1790 / renderer 4097 / shared 323），绕过扫描零命中。Gate A risks 留档：runtime 2 例负载型 flaky（logger size 轮转 / send-queue-e2e real-pi，单跑均绿建议隔离加固）、renderer 3 个既有 skip、event-interpreter/session-service 膨胀（已豁免登记+拆分指引）。
 - 2026-09-11：Gate B 完成——8 场景 7 pass + V4(c) 形态性 blocked（父 forceQuit 时子代理随父 cancel，D4 担心的 backflow 复活形态物理不存在；父存活回流正向已在 V3 验证）。P-1 标定落地：单通知 abort 精准中断（agent_start 后 20ms 到达，occupancy 3ms 收敛）；≥2 条 pending 合并为单条注入（notify-ledger 合并实锤）→ 收敛环单轮即收敛；静默窗实测 3.007s×2 与设计初值吻合；120s 看门狗未触发，D4 登记的残余链盲区维持未观测。Gate B 新发现处置：① steer 通道消息丢失 + queueStates 气泡残留（G1 状态撒谎）→ 微修复中（快照清理；steer 文本是否纳入草稿回收涉产品语义留用户裁决）；② ask_user 豁免文案实装未接通 → 微修复中（V5②）；③ forceQuit 竞态双份（<500ms 在途 send 复活 + 草稿/投递双份）→ 登记残留风险（低频边界，D4 显式投递放行的边界效应）；④ occupancy 帧重订阅注意项 → 集成面登记。V6 的 K2/K5/K7 日志点源码确认存在但真实构造受阻（pi 冻结无注入手段/CDP 确认交互未触发/孤儿未形成），与 K1/K8/K6 实测互补。
 - 2026-09-11：Gate B 微修复 committed（dde26d7fe）：① forceQuit 编排清 queueStates 快照（G1 气泡残留；steer 文本草稿回收留用户裁决）② V5② 真断点 = Panel.vue AskUserOverlay/Composer 互斥挂载致观测条整体卸载（非接线断点），TurnProgressBar 提升至互斥对之外 + dead 态排除，CDP 实测等待期分型文案 + 回答后恢复计时（截图 /tmp/gateb-fix/）。受影响场景重验：V1 残留由 store 单测 + FQ 编排断言覆盖，V5② 由 CDP 实测 + U6 单测覆盖。**双绿达成：Gate A PASS + Gate B 8 场景（7 pass + V4c 形态性 blocked）**，转入阶段 6 终态同步。

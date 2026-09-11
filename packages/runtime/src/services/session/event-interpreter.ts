@@ -190,7 +190,7 @@ export function applySessionOccupancyTransition(
 export const ABORT_STALL_CONVERGENCE_WINDOW_MS = 3_000
 
 /**
- * [V7 验收用，验收后默认移除（设计 §4.2 开关保留策略）] dev-only 事件流延迟注入开关。
+ * [V7 验收基建，实施期裁决保留（设计 §4.2 开关保留策略已登记偏离默认理由）] dev-only 事件流延迟注入开关。
  *
  * 环境变量 XYZ_AGENT_DEV_SETTLING_DELAY_MS 设置为正数（毫秒）时生效：agent_settled 事件
  * 延迟 N ms 再处理，用于在 dev 环境拉长 settling 窗口，构造 D2 行为变更（settling 预检
@@ -609,7 +609,7 @@ export class EventInterpreter {
   /** 本 turn 是否已广播过 message.stream_warn（避免重复） */
   private pingWarned = false
   /**
-   * [V7 验收用] agent_settled 延迟注入的 pending timer（null = 无延迟在途）。仅 dev-only
+   * [V7 验收基建] agent_settled 延迟注入的 pending timer（null = 无延迟在途）。仅 dev-only
    * 开关生效时非 null；未设开关时恒 null 零开销。
    */
   private settlingDelayTimer: ReturnType<typeof setTimeout> | null = null
@@ -847,7 +847,7 @@ export class EventInterpreter {
    * agent_settled 处理路径编排（W1 bash flush + occupancy #4 idle + D4 收敛环 settled 挂点
    * 三件副作用的统一入口）。
    *
-   * [V7 验收用，验收后默认移除（设计 §4.2 开关保留策略）] 环境开关
+   * [V7 验收基建，实施期裁决保留（设计 §4.2 已登记）] 环境开关
    * XYZ_AGENT_DEV_SETTLING_DELAY_MS 设置时整体延迟 N ms 执行。注入点时点约束（设计 v4）：
    * 延迟必须作用于 settling→idle 转移处理**之前**——若落在转移后仅延迟广播，settling 窗口
    * 构造会静默失败且难与「注入无效」区分，故本方法包住全部三件副作用（含转移）。

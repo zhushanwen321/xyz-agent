@@ -7,7 +7,7 @@
   纯本地派生无持久化，reload 后天然无残留。
 
   超阈值（10min，P-3 实测后定值）渲染警示色 + 中性操作项（D7：不预置推荐，两个动作
-  同权重）——「中止此 turn」emit abort 由父组件接既有 abort 链路（Composer.onStopClick），
+  同权重）——「中止此 turn」emit abort 由父组件接既有 abort 链路（Panel.vue onProgressAbort → useChat.abort），
   本组件不直接触 RPC；「继续等待」= snoozeWarn（本 turn 内抑制警示，事实条照常）。
 
   ask_user 豁免态（D6）：等待用户输入期间只显示分型文案「在等待你的输入」，停滞警示
