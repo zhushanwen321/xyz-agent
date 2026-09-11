@@ -108,7 +108,7 @@ graph TD
 
 **残留风险**：
 - 探针 P1-P3 已全部闭环（P1/P2 = u1 实测通过零降级，dcc189dc4；P3 = u4 单测级通过同步调用安全，帧序归 Gate B V4/V5）
-- e2e/README.md（不在任何单元领地）仍写 A1-A5 计数，与新场景集 A1-A7 不一致——Gate B 真实跑后随 RESULTS.md 一起回写，或阶段 3 一致性审查裁决归属
+- ~~e2e/README.md（不在任何单元领地）仍写 A1-A5 计数~~ **已清账（7693f1a05 修复 A-U2 时更新为 A1-A7 + 函数清单）**；同类注释级残留 3 处（scenarios.test.mjs:2 / vitest.e2e.config.ts:3 / harness.mjs:42 仍写 A1-A5）+ 包 README:77 工具守卫排序描述滞后（B-U1 后 subagent 守卫为第一步）——登记 Gate B 后清账批（定向复审 2026-09-12 low 级新发现，不阻塞）
 - run-a3.mjs 内部 countLlmRequests/countSessionInfos 与 harness 新导出（countLlmRequestLogs/countSessionInfoEntries）同构并存——后续触及 a3 的单元顺手收敛，不阻塞
 - CHANGELOG.md 条目归 merge/release 流程（项目惯例）
 - GUI「跟随会话模型」文案与既有 RenameModelNotSet i18n 键的关系——**已闭环（2026-09-12 u6）：新键 renameModelFollow，旧键删除 0 残留**
