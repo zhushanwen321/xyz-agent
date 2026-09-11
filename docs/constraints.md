@@ -4,7 +4,7 @@
 > 「约束（摘要）」列仅导航，非权威表述；约束内容的唯一权威源 = 「权威源」列指向的文档。
 > scope 为 `global` 的条目每次 CR 必载；其余按改动路径前缀命中（`node scripts/select-constraints.mjs --base main`）。
 
-共 97 条（生成于 2026-09-09）。
+共 98 条（生成于 2026-09-11）。
 
 ## pi 关系（外部依赖边界）
 
@@ -106,6 +106,7 @@
 | C-ext-18 | 引擎 icon 资产纪律：品牌 icon 复制入仓 packages/renderer/src/assets/icons/engine/（禁外部路径引用/symlink）、统一 currentColor 单色（禁硬编码品牌色）、引擎→icon 映射只经 ENGINE_ICON_REGISTRY 单点扩展（新引擎加一行，未知 id 防御回中性圆点） | packages/renderer/src/assets/icons/engine/**、packages/renderer/src/constants/engine-icons.ts、packages/renderer/src/components/sidebar/SubagentList.vue、packages/renderer/src/components/panel/SubagentTab.vue | [subagent-engine-gui-visibility](architecture/subagent-engine-gui-visibility.md#d1-终态架构--职责分层--协议闭合) | review: review-electron-build |
 | C-ext-19 | 结果语义通知必须走确认式送达（持久账本 + 幂等键，session-delivery/notify-ledger 通道），禁止新建依赖 pi 内存队列（steer/nextTurn/followUp）的 at-most-once 通道；交互式注入仅限非结果语义。生效口径：新代码即禁、存量列迁移切片（subagent-workflow 内存量经 g4-allow 行级豁免定性和迁移去向，scheduler 迁移登记 pi-boundary-reliability 附录 B 待办，G4 扫描面随迁移合入扩面） | extensions/**、packages/session-delivery/** | [pi-boundary-reliability](design/pi-boundary-reliability.md#d5确认式送达通用化at-most-once-内存通道禁止用于结果语义选定) · [extension-conventions](extensions/extension-conventions.md) | hook: `check_subagent_channels.py` |
 | C-ext-20 | zcode 引擎单一 app-server 形态（2026-09 用户拍板）：禁 CLI spawn 链回归（zcode --json 单轮与 probe 冒烟/protocol-drift 降级已删，漂移直接报错）；共享宿主 HOME 不动（禁 HOME 池化回归，spawn env 不覆写 HOME，db/plugins/MCP 继承宿主 HOME）；会话库隔离（spawn env 覆写 ZCODE_SESSION_DB_PATH 并清空别名键 ZCODE_SESSION_DB，会话落独立库 <engineDataDir>/engines/zcode/session-db/db.sqlite，不进 ZCode GUI 侧边栏、不落 engines/zcode/shared/ 池目录；poolKey 恒 'shared'）；handle.dbPath 与两条读取链（session-view-service ①级 + EnginePort.read）一律按 zcodeDbPathAllowlist(dataDir) 白名单集合成员判定放行（隔离库 + 宿主库存量兼容锚点），禁止还原为宿主路径单值比较 | packages/zcode-subagent-cli/**、packages/runtime/src/services/session/** | [zcode-session-db-isolation](design/zcode-session-db-isolation.md) · [zcode-engine-appserver-resident](design/zcode-engine-appserver-resident.md) · [AGENTS.md](../AGENTS.md) | — |
+| C-ext-21 | rename-session 的 isSubagentSession 靠嗅探 sessionDir 含 <sep>subagents<sep> 段识别 subagent 会话并跳过重命名，与 subagent-core path-encoding.ts getSubagentSessionDir 的 <agentDir>/subagents/<enc(cwd)>/sessions 布局互为跨包隐式契约——改任一端路径形态另一端必同步（改 path-encoding 布局须同步 llm.ts 嗅探；改嗅探须核对实际布局）；三模式入口（round_end / message_end / rename_session 工具）均复用该守卫 | packages/subagent-core/src/execution/path-encoding.ts、extensions/universal/rename-session/** | [rename-session-three-modes](design/rename-session-three-modes.md#d7issubagentsession-跨包耦合登记-c-ext-21吸收-ext-simplify-15-d3选定登记--双端注释) | review: review-arch-boundary |
 
 ## 打包与分发
 
