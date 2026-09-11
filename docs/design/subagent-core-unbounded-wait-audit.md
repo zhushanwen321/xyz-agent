@@ -1,5 +1,7 @@
 # subagent-core 无界等待家族缺陷普查与修复方向
 
+> **[HISTORICAL] 证据快照注记（2026-09-11，H1 符号清扫批）**：本文 §7 证据链中引用的 `closeChatIdle` / `closeAfterRoundSettled` / `armChatIdleTimer` 等 chat 域符号与对应行号，系审计取证时点（H1 落地前）的源码快照——该批符号已随 [subagent-chat-run-unification.md](subagent-chat-run-unification.md)（H1）chat 域退役而删除；审计结论（「正常路径逐点根修 + 回收层统一有界兜底」两层裁决）不受影响，证据行号不再对应当前代码。
+
 > **一句话结论**：weekly/monthly workflow 并发挂死（RC-1/2/3）不是孤立 bug，而是「默认无界」设计裁决的家族性发作——全仓普查共登记 **32 条同家族独立缺陷**（原始普查 34 条发现经并条归并；13 条可致永久挂起/进程泄漏/宿主崩溃），修复按「正常路径逐点根修 + 回收层统一有界兜底」两层推进，兜底只许出现在回收层。
 
 ## 修订记录（2026-09-10 架构分叉后的重放移植）

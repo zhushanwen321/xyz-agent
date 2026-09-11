@@ -143,7 +143,7 @@ SubagentService（装配壳，类体 ≤ 500 行）
 
 | 单元 | 内容 | justification | 可独立验收 |
 |------|------|--------------|-----------|
-| R0 | 壳内分区整理：按 §2.1 域重排成员 + 分区注释（纯移动零抽取）；**产出三清单：①~30 实例字段逐个归属表 ②record 字段写点通道边界表（D1 第二级，含 store 入口投影写通道——落标/E1 重建）③深绑测试全集（D6）**；**R0 ①清单同时登记两条已知跨聚合边（v4 主审对抗线索）：disposeAllRecords → Continuation 协作面的 `unregisterChatRoundRoute`（:2996，private 互调，按 D4 显式接口规则改）+ 壳 dispose 直改 SyncCollect 内部态 `settledRescanState`（:1117，收敛为显式接口）；验收补两条机械对账（v3）：①清单行数 vs 类字段声明 grep 计数一致 ②写点通道表 vs record 字段赋值 grep 计数一致——给 PR reviewer 完备性量尺，防「自证完备」** | 给后续抽取建立物理锚点，diff 可机械核对；三清单是 R1-R4 的实施依据 | 全量测试绿（基线已先核对，G4 前置）+ 两条机械对账通过 |
+| R0 | 壳内分区整理：按 §2.1 域重排成员 + 分区注释（纯移动零抽取）；**产出三清单：①~30 实例字段逐个归属表 ②record 字段写点通道边界表（D1 第二级，含 store 入口投影写通道——落标/E1 重建）③深绑测试全集（D6）**；**R0 ①清单同时登记已知跨聚合边（v4 主审对抗线索）：壳 dispose 直改 SyncCollect 内部态 `settledRescanState`（:1117，收敛为显式接口）——原第二条 `unregisterChatRoundRoute` 跨聚合边已随 H1（chat 域退役，注销发射点改 Continuation 轮终簿记）消亡，不再登记；验收补两条机械对账（v3）：①清单行数 vs 类字段声明 grep 计数一致 ②写点通道表 vs record 字段赋值 grep 计数一致——给 PR reviewer 完备性量尺，防「自证完备」** | 给后续抽取建立物理锚点，diff 可机械核对；三清单是 R1-R4 的实施依据 | 全量测试绿（基线已先核对，G4 前置）+ 两条机械对账通过 |
 | R1 | 抽取 SessionBaselines | 依赖最少先行，模式打样 | S2/S5 |
 | R2 | 抽取 SyncCollectDomain | 自闭合批语义，注入面窄 | S2/S5 + sync 批恢复用例 |
 | R3 | 抽取 RecordLifecycle（**含域 #4 回收面**） | record 终态迁移宿主最大聚合；与既有 record-store/finalize-record 协作面理顺 | S2/S5 + S1 的 close/重启链路 |

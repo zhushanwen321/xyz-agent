@@ -1,5 +1,7 @@
 # chat 域协议 v1.x 与轮次活性治理 实施计划
 
+> **[HISTORICAL] superseded（2026-09-11）**：本计划的 W1/W2（chat 轮次协议承载）与 W3 中 chat 域相关面已随 [subagent-chat-run-unification.md](subagent-chat-run-unification.md)（H1）退役——`host/roundLifecycle` 通道族与 `interact` 方法删除、续聊改「新 run + resume 锚点」（`RunParams.resume`）+ Continuation 轮终簿记；W4-W8 的 pending 注册表 / goal 熔断 / abort 阶梯机制仍现行。正文中的 chat 通道族描述不再对应当前代码，读现行链路以 [subagent-chat-run-unification.md](subagent-chat-run-unification.md) 与 C-proc-13（已改挂该设计）为准。
+
 基线: c753c7774 | 来源设计: [chat-domain-v1x-liveness-governance.md](chat-domain-v1x-liveness-governance.md) | 日期: 2026-09-09
 
 ## 0 章节映射

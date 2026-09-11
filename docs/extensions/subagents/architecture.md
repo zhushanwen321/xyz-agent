@@ -91,11 +91,11 @@ subagent 能力现由 5 类包协作，跨进程边界只有一处（宿主 ↔ 
 
 ## 3. 协议面（engine-protocol v1）
 
-正向方法恰好 10 个（`packages/subagent-engine-sdk/src/protocol/methods.ts`）：
+正向方法恰好 9 个（`packages/subagent-engine-sdk/src/protocol/methods.ts`）：
 
-`initialize` · `probe` · `run` · `cancel` · `interact` · `read` · `listModels` · `validateModel` · `dispose` · `ping`
+`initialize` · `probe` · `run` · `cancel` · `read` · `listModels` · `validateModel` · `dispose` · `ping`
 
-反向通道（引擎 → 宿主）覆盖进度与交互：`host/streamDelta`（增量文本）、`host/roundLifecycle`（轮次相位：chat 轮活性的协议承载，约束 C-proc-13）、`host/askUser`（UI 请求）、`host/childSpawned`（子进程注册）等。
+反向通道（引擎 → 宿主）覆盖进度与交互：`host/streamDelta`（增量文本）、`host/askUser`（UI 请求）、`host/childSpawned`（子进程注册）、`host/childStateChanged`（任务子进程生命周期上报，C-pi-15）等。chat 域独立协议面（原第 9 通道 `host/roundLifecycle` 与 `interact` 方法）已随 H1（[subagent-chat-run-unification.md](../design/subagent-chat-run-unification.md)）退役：续聊轮 = 新 run + resume 锚点（`RunParams.resume`），轮活性经 run 事件通道既有事件（含 `activity` 变体）与 run 终态应答承载（约束 C-proc-13，authority 已改挂该设计）。
 
 `run` 的上下文（`RunContextParams`）承载每次运行的定位信息：`taskId` / `poolKey` / `recordId` / `sessionRootId`（relay 身份键权威源，见 F6 修复）等——引擎据它重写子进程的 relay 身份 env，不靠 env 继承。
 
@@ -104,10 +104,10 @@ subagent 能力现由 5 类包协作，跨进程边界只有一处（宿主 ↔ 
 | 机制 | 落点 | 说明 |
 |---|---|---|
 | 状态单一真源 | `execution-record.ts` + `record-store.ts` | 内存 record 与 `session.jsonl` 磁盘重建两条通路共用同一 reducer；对外状态两态（`active` / `ended`） |
-| 终态标记 | `state-marker.ts` | 单一 `<session>.state` sidecar（`{status, reason?, endedAt?}`）标记 finalized / cancelled；旧名 `.finalized` / `.cancelled` 只读兼容 |
-| 进程探活 | `alive-store.ts` | 子进程自写 `.alive`（pid + 启动时刻），宿主据此判活；`.state` 与 `.alive` 分工 = 宿主侧终态 vs 跨进程探活 |
-| 空闲回收 | `lifecycle-manager.ts` | settled 到达后的 per-record idle timer（arm / disarm / 超时回收），阈值可经 `XYZ_SUBAGENT_IDLE_TIMEOUT_MS` 覆盖 |
-| 楔死回收 | `settled-watchdog.ts` | settled 永不到达的两段式守护：中段无进展检测 + 收尾段固定上界；chat 域与 workflow 域共用同一原语 |
+| 终态标记 | `state-marker.ts` | 单一 `<session>.state` sidecar（`{status, reason?, endedAt?}`）标记 finalized / cancelled；旧名 `.finalized` / `.cancelled` 只读兼容；record 绑定 sidecar `<session>.record-binding`（UF-1：id→file + rootSessionId，跨重启续聊数据源）同挂本载体族 |
+| 进程探活 | `alive-store.ts` | `.alive`（pid + 启动时刻）探活面——唯一写者 cold-resurrect 已随 H1 删除，现为存量零写者（读面退役与清理处置归 [subagent-record-persistence-consolidation.md](../design/subagent-record-persistence-consolidation.md) D3） |
+| 空闲回收 | `lifecycle-manager.ts` | per-record idle timer——chat 域长驻消亡后 arm 面（armChatIdleTimer）随 H1 退役，仅存 disarm 防误杀与超时回落常量（`XYZ_SUBAGENT_IDLE_TIMEOUT_MS`） |
+| 楔死回收 | `settled-watchdog.ts` | settled 永不到达的两段式守护：中段无进展检测（刷新源 = run 事件通道既有事件）+ 收尾段固定上界（交棒 = run 应答驱动）；run 域（含 chatMode 续聊轮）与 workflow 域共用同一原语 |
 | 引擎装载 | `engine/engine-discovery*.ts` → `registry.ts` → `routing.ts` | 三级发现装载 cli descriptor；core 壳侧零内建引擎（`pi` 亦经发现装载） |
 | 协议客户端 | `engine/client/remote-engine.ts` + `engine-client.ts` | 宿主侧唯一协议适配点：帧编解码、能力门、反向路由、句柄镜像 |
 | journal | `engine/common/event-journal.ts` + `journal-wiring.ts` | 事件落盘（②级数据源）；池 key 占位 + `onPoolResolved` retarget，路径与 handle 声明同源 |

@@ -245,15 +245,17 @@ CI=true ELECTRON_SKIP_BINARY_DOWNLOAD=1 pnpm install   # 约 6-7s 重建本地�
 
 **防护与根治**：护栏 `.githooks/check_pnpm_store_layout.sh` 挂在 pre-commit 第 0 段（install-hooks.sh 生成）与 validate-runtime-bundle.sh Gate 0，翻转即红并输出 [FIX] 指引——同时也兼作引擎侧「不覆写 HOME」修复的验收探针（修复落地后护栏应恒绿，红 = 回退信号）。根治在引擎侧不覆写 HOME（2026-09-03 开发中）；备选方案 `.npmrc` pin `store-dir` 评估结论：`~` 展开仍 HOME 相对（无效）、相对路径解析基准未验证（有 per-package store 撕裂风险）、写死绝对路径不可移植——均不采用。
 
-### 12. subagent 完成后不回收 / 回收慢：sessionFile 获取链与 workflow 域守护特征串判读（2026-09-10 重放移植重写）
+### 12. subagent 完成后不回收 / 回收慢：sessionFile 获取链与 workflow 域守护特征串判读（2026-09-10 重放移植重写；2026-09-11 H1 续聊链修订）
 
 > **本节 2026-09-10 按 replay port 重写**（权威 SSOT：[design/subagent-agent-end-recovery-replay.md](design/subagent-agent-end-recovery-replay.md)）。线 B 原实现宿主（`packages/subagent-core/src/execution/engine/engines/pi/` 整目录）已随 M0 整树重置到 dev-0.9.16 删除，旧特征串（`backfilled via late get_state response` / `located via sessionDir scan` / `unobtainable after 15s recovery window` / `no-descendant fast path` / `process killed before handshake settled` 等）**在现树已全部不存在**——按旧串 grep 恒零命中是预期，不是日志丢失。
+>
+> **2026-09-11 H1 修订**（[design/subagent-chat-run-unification.md](design/subagent-chat-run-unification.md)）：chat 域独立状态机整族退役——**续聊轮 = 新 run + resume 锚点**（`RunParams.resume`，pi `--session` 续写原 session 文件），无长驻 chat 进程、无热路径相位机（`roundLifecycle` 通道 / `interact` 方法 / ChatSessionRegistry 已删，grep 零命中是预期）。sessionFile 四路获取链与下方三条特征串**全部仍现行**（每轮 run 都是新 pi 子进程，握手/回补/反查照走）；新增宿主侧锚点回填路：**run 终态应答 `outcome.sessionFile`**（chatMode 续聊轮唯一锚点落点，宿主回填 record.sessionFile 并落 `.record-binding` 绑定 sidecar，见下「H1 后续聊排障要点」）。
 
 新架构结果回收链 = 两层进程嵌套（core → `pi-subagent-cli` 引擎 CLI 进程 → `pi --mode rpc` 任务子进程）。**sessionFile 四路获取**（全部在 `pi-subagent-cli`；交付后修订 2026-09-10：原第 5 路 M4 prompt 头扫描已移除）：
 
 1. spawn 期 get_state 握手 3×2s + 500ms 间隔（M1 契约修复：应答缺 sessionFile 不再悬挂，照常排 retry 至 3 轮耗尽 resolve 已收集字段）；
 2. 握手窗口后的迟到 response（identity tracker 监听表驻留至 close，回填走 `applyGetStateFields` 同步路径 + handleReady）；
-3. agent_end 惰性 get_state 单查（**M2**，1s 超时；one-shot 域；chat 域不走此分支）；
+3. agent_end 惰性 get_state 单查（**M2**，1s 超时；one-shot 域专用——chat 域已随 H1 退役，chatMode 续聊轮同为 run 链、宿主侧锚点落 run 应答 `outcome.sessionFile`）；
 4. close 收尾 LC-4 后缀反查（`findSessionFileByHeaderId`，需 sessionId 已知；静默回填、无独立特征串）。
 
 **agent_end 处置**在新架构是「无条件 kill」（agent_end 即终态，无保守等待分支）；**workflow 域静默楔死**由 **M3** 在 core `SAR.run` 挂 30min 无进展守护（复用 `settled-watchdog` 原语）。
@@ -294,7 +296,15 @@ grep -E "\[sessionfile\]|agent_end get_state backfill|workflow no-progress watch
 
 - **已随旧实现消失（现树 grep 恒零命中）**：`backfilled via late get_state response`、`backfilled via lazy get_state (spawn handshake had failed)`、`located via sessionDir scan`、`backfilled via sessionDir scan (close finalization)`、`unobtainable after 15s recovery window`、`entering 15s recovery window`、`retry window round N`、`no-descendant fast path`、`process killed before handshake settled`。原「区分提示」里 late vs lazy 的两路对比也随之失效（现树只有 M2 一条主动回补链，且命中不落串）。
 - **已随 M4 移除消失（2026-09-10 `dbe0a60d4`，现树 grep 恒零命中）**：`recovered for ... by M4 prompt-head scan (single match)`、`M4 prompt-head scan gave up`、`M4 prompt-head scan not wired`、`M4 prompt-head scan threw`。全 miss 形态由 ① 的 `all acquisition paths missed` warn 承接。
+- **已随 H1 chat 域退役消失（2026-09-11，现树 grep 恒零命中）**：chat 域热路径/相位机家族的日志面（roundLifecycle 相位帧、`interact` 投递拒收、ChatSessionRegistry superseded 抑制等）与 `chat-round-first-round-watchdog` 首轮看门狗——续聊排障不再有这些串；旧排障动作「查 chat 相位帧时序」改查 run 事件流与 run 终态应答。
 - **仍存在的现行面**：本节 ①-③ 全部；`findSessionFileByHeaderId`（LC-4 后缀反查，第 4 路）仍存在但其回填静默无独立特征串；M1 握手契约修复自身无日志面。
+
+**H1 后续聊排障要点（2026-09-11，chat 域统一进 run 域）**：
+
+- **每轮续聊 = 一个独立 run**：message 到达 → Continuation（`conversation-continuation.ts`，每 chatMode record 一个实例）派新 run（`RunParams.resume`）→ 新 pi 子进程 `--session` 续写原文件 → run 终态应答（resolve = agent_settled）→ 轮终簿记。排障「续聊轮卡住/无通知」按 run 链查（引擎 CLI 池 → 任务子进程 → run 应答），不存在「长驻 chat 进程忙碌/拒绝」形态——原 busy 拒绝 / superseded 串扰 / EPIPE 兜底等 chat 域失败模式已随域退役。
+- **跨重启续聊数据源 = `.record-binding` 绑定 sidecar**（UF-1）：宿主在 record.sessionFile 回填点落 `<sessionFile>.record-binding`（id→file + rootSessionId，`state-marker.ts` 载体族）。重启后 message 报「subagent not found or not owned」时按序查：① record 是否存在（列表可见 = 展示层重建正常，动作链走绑定解析）② 对应 session 文件旁有无 `.record-binding`（无 = 绑定写点未触达，查 handshake sessionFile 回填是否发生）③ `cold-lookup.ts`（原 cold-resurrect 语义收敛为 cold-lookup：`findLightById` + `collectRecords` 经 sidecar 恢复 id→file 映射）。close 终态翻转写 `.state`，不破坏绑定文件。
+- **崩溃/失败轮语义**：轮在途引擎崩溃 → 失败通知单发（Continuation 独立构造载荷，正文 = 失败摘要 + 恢复指引，dedup key `record:round`）+ record 保持 running-resumable（不被终态化短路）——「失败后无通知」或「失败即 closed」都属异常，查 Continuation onRunSettled 失败分支与 `notifyGateAllowsDelivery` 门（cancelled / parent-new / parent-fork 竞态窗拦发是设计行为）。
+- **孤儿收割**：引擎 CLI 意外死亡时宿主在镜像置死前收割任务子进程（POSIX 组杀 / Windows 快照逐 pid taskkill，非主动死亡路径触发）。session 文件出现交错行 = 收割链失效证据，按设计登记升级文件锁/写者探测（红线③残余窗口：宿主重启窗）。
 
 ## 环境变量速查
 

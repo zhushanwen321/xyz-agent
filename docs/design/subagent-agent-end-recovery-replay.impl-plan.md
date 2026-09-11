@@ -1,5 +1,7 @@
 # subagent-agent-end-recovery-replay 实施计划
 
+> **[HISTORICAL] 部分退役注记（2026-09-11，H1 符号清扫批）**：本计划 F3 清账段记录的 `host/roundLifecycle` active 相位交付面（RoundActivePhase / emitActivePhase / handleChatRoundPhase case active / chat-session 续聊轮事件外发）已随 [subagent-chat-run-unification.md](subagent-chat-run-unification.md)（H1）整族退役——chat 续聊轮活性现经 run 事件通道 `activity` 变体 + run 应答驱动承载。相关段落保留作交付史实，不逐处改写。
+
 基线: (待基线 commit 后回填) | 来源设计: `docs/design/subagent-agent-end-recovery-replay.md`（设计就绪版，commit 41d475737） | 日期: 2026-09-10
 
 对抗审查证据: `.review/design-review-replay-r1~r5.md`（主审五轮：5+3+2+1+0 MF 收敛）+ `design-review-replay-r1~r4-impact.md`（影响面审：R4 起 0 MF 收敛）。终局 = R5 主审 0/0 + R4 影响面 0 MF。

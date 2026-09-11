@@ -357,9 +357,14 @@ interface EnginePort {
   probe(opts?: { force?: boolean }): Promise<ProbeReport>;  // D7（factory 初始化 + 版本变化检测触发）
 
   run(task: AgentTaskSpec, ctx: RunContext): Promise<EngineRunResult>;           // D1 主语义
-  interact(handle: EngineHandle, action: InteractAction): Promise<InteractResult>; // D1 可选面
   read(handle: EngineHandle): Promise<SessionView>;         // D6 三级降级链
 }
+
+// [H1 退役注记 2026-09-11] 上表原含 `interact(handle, action: InteractAction): Promise<InteractResult>`
+// 可选面（chat 续聊/插话/关断控制面）——已随 chat 域统一进 run 域
+// （docs/design/subagent-chat-run-unification.md）整族删除：续聊 = run 携 resume 锚点
+// （`RunParams.resume {recordId, resume: ResumeAnchor}`，pi `--session` 续写原 session 文件），
+// 轮活性经 run 事件通道与 run 终态应答承载（约束 C-proc-13）。
 
 interface RunContext {
   taskId: string;                        // = record.id（bg-N-xxx / run-N）——journal 文件名与池引用计数 key
@@ -374,14 +379,9 @@ interface EngineRunResult {
   outcome: AgentOutcome;                 // 终态（abort/超时/失败时为宿主合成终态）
 }
 
-type InteractAction =
-  | { kind: 'message'; payload: string }    // 续聊（chatMode idle 子代理，D1）
-  | { kind: 'close'; payload?: { force: boolean } }
-  | { kind: 'cancel' };
-
-type InteractResult =
-  | { ok: true; delivered: true }
-  | { ok: false; code: string; message: string }; // engine_session_not_resumable / engine_capability_unsupported ...
+// [H1 退役 2026-09-11] 原 `InteractAction`（message/close/cancel 三 action）与 `InteractResult`
+// 类型块已随 interact 控制面删除；close/cancel 语义经 run 域 cancel 方法与 record close 编排承载，
+// 续聊经 `RunParams.resume`（约束 C-proc-13）。
 
 interface ProbeReport {
   ok: boolean;
