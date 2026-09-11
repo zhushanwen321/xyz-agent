@@ -44,6 +44,9 @@ import { createProjectionBusView } from './projection-bus-view.js'
 import { persistModelBinding, readModelBinding } from '../../infra/pi/session-file-utils.js'
 // D1 台账（crash-forensics §3.3 D1）：crash / deleted 事件的 runtime 侧双写源。
 import { getCrashJournal } from '../../infra/crash-journal.js'
+// D3 checkpoint（crash-forensics §3.3 D3，u4）：活跃 session 清单持续交接——attach /
+// respawn（经 registerSession 汇聚）/ detach / reclaim 四类生命周期事件处增量维护。
+import { getRuntimeCheckpointStore } from './runtime-checkpoint.js'
 // main（file-lock-unification reaper 下沉，D2 触发面 A）：removeSessionEntry 汇聚点收殓
 // 孤儿后台任务——重构仅迁域，触发面挂点语义不变，import 随调用点留 Facade。
 import { reapSessionBackgroundTasks } from './background-task-reaper.js'
@@ -337,6 +340,33 @@ export class SessionService implements ISessionService, ILifecycleSessionOps, ID
       // 纯旁路诊断，失败绝不阻断附着（内部已降级，catch 双保险）。
       if (this.modelCapabilityReconciler) {
         this.modelCapabilityReconciler(sessionId).catch(() => { /* 降级吞错：附着主链路优先 */ })
+      }
+    })
+    // D3 checkpoint（crash-forensics §3.3 D3，u4）attach / respawn 成功挂点：onSessionRegistered
+    // 是 create / restore（含自动 respawn 与惰性恢复）/ fork 三入口的注册汇聚点（session-lifecycle
+    // registerSession 在 sessions.set 之后同步直发），**一个挂点覆盖四类事件中的全部「附着」
+    // 形态**——respawn 成功即 pi 重新附着，无需在 restore 链路另设挂点（单一收敛点 = 无双写）。
+    // 元数据取既有读面：filePath/occupancy 来自 lifecycle 条目，lastActivityAt 取 pi client
+    // 空闲信号（u1a，attach 瞬间读不到则用本模块时钟兜底），lastViewedAt 取 per-sid 查看表。
+    // 台账/checkpoint 都是旁路设施，本订阅体自带异常隔离（异常不外抛——否则会打断
+    // registerSession 主链，把旁路故障放大成创建/恢复失败）。
+    this.lifecycle.onSessionRegistered((sessionId) => {
+      try {
+        const session = this.lifecycle.get(sessionId)
+        const occupancy = session?.occupancy
+        getRuntimeCheckpointStore().upsertSession({
+          sessionId,
+          filePath: session?.sessionFilePath ?? null,
+          activityAt: this.pm.getClient(sessionId)?.lastActivityAt,
+          viewedAt: this.getSessionLastViewedAt(sessionId),
+          occupancy: occupancy && (occupancy.turn !== 'idle' || occupancy.compacting || occupancy.bash)
+            ? 'occupied'
+            : 'idle',
+        })
+      } catch (e: unknown) {
+        // best-effort 降级：checkpoint 是崩溃恢复的旁路设施，写入异常绝不外抛——
+        // 外抛会打断 registerSession 主链，把旁路故障放大成创建/恢复失败。
+        console.error(`[session-service] checkpoint attach update failed (sessionId=${sessionId}):`, e)
       }
     })
     this.dispatcher = new MessageDispatcher(this, this.pm, this.workspaceService, messageBus)
@@ -703,9 +733,23 @@ export class SessionService implements ISessionService, ILifecycleSessionOps, ID
    * 空闲回收执行入口（u3 装配：reaper options.reclaim 绑定本方法）。委托 lifecycle 的
    * 七步最小摘除编排——进程处置语义收口在 Map 所有者（D3），Facade 只做一行委托。
    * 返回 false = 未回收（占座被占 / 最终豁免拦截 / 代际校验取消）。
+   *
+   * D3 checkpoint（u4）reclaim 成功挂点：回收**不是销毁**（removeSessionEntry 刻意不经
+   * 此路径），但该 session 已摘出活跃 Map → 不再属「活跃 session 清单」，从 checkpoint
+   * 摘除条目（文件本身不删——删除属主在 main 退出链与 u5 reattach 编排）。挂 ok 分支：
+   * 未回收路径零改动，防误摘（与 reclaimed 台账行同抑制语义）。
    */
-  reclaimSession(sessionId: string, deps: ReclaimSessionDeps): Promise<boolean> {
-    return this.lifecycle.reclaimManagedSession(sessionId, deps)
+  async reclaimSession(sessionId: string, deps: ReclaimSessionDeps): Promise<boolean> {
+    const reclaimed = await this.lifecycle.reclaimManagedSession(sessionId, deps)
+    if (reclaimed) {
+      try {
+        getRuntimeCheckpointStore().removeSession(sessionId)
+      } catch (e: unknown) {
+        // best-effort 降级：摘除条目失败不影响回收主流程（回收已完成的事实不变）。
+        console.error(`[session-service] checkpoint reclaim removal failed (sessionId=${sessionId}):`, e)
+      }
+    }
+    return reclaimed
   }
 
   // ── W18：record entry 派生缓存（S6 迁出至 session-records.ts；interpreter 经组合根
@@ -1053,6 +1097,20 @@ export class SessionService implements ISessionService, ILifecycleSessionOps, ID
     // 语义）。不能挂 onSessionExit 链：用户主动删走 destroySession 先删进程表 → exit handler
     // 反查无条目静默返回，不经该链，挂错点事件永不产生（抑制语义，设计 D1 deleted 行）。
     getCrashJournal().append({ layer: 'pi', event: 'deleted', sessionId })
+    // D3 checkpoint（u4）detach 挂点（紧接上条台账行）：本汇聚点是「该 session 已不存在」
+    // 的精确时点（主动删 / 进程退出 / forceQuit / restore 清场全覆盖），从活跃清单摘除
+    // 条目。pi 意外崩死也走本点（先摘后 respawn 成功再经 onSessionRegistered 重新加入，
+    // 5s 窗口内 runtime 自身再崩则该 session 不在 checkpoint——设计 D3「respawn pending
+    // 状态不进 checkpoint」的落地形态，errs 方向 = 漏恢复退化 lazy，已登记）。
+    // 注意：destroyAll（shutdown）刻意不经本点（lifecycle.clear 直调）——进程将亡时
+    // checkpoint 必须保留原样：它正是下次 unclean 启动的恢复依据（契约 1 runtime 任何
+    // 退出路径不删文件）。
+    try {
+      getRuntimeCheckpointStore().removeSession(sessionId)
+    } catch (e: unknown) {
+      // best-effort 降级：旁路设施故障不得打断销毁收敛链（销毁已完成的事实不变）。
+      console.error(`[session-service] checkpoint detach removal failed (sessionId=${sessionId}):`, e)
+    }
     // S3-W2：删除前缓存 summary（插件 didDestroy 通知需要 SessionInfo；删除后 Map 查不到）。
     // Map 无条目（防御路径）时构造最小形状——id 之外的字段无从得知，宁发少知不发错。
     const session = this.lifecycle.get(sessionId)

@@ -187,17 +187,17 @@ graph TD
 | u1b | committed | 1 | 10MB×3 段级联轮转 + pendingLines 回放零丢行 + best-effort 降级；vitest 7 passed + typecheck 绿（编排者重跑核验） |
 | u1c | committed | 2（前任限流中断 + 接替核验补 1 用例） | main.jsonl writer 同步 append 无在途写窗口；vitest 8 passed + apps/electron tsc 0（编排者重跑核验） |
 | u1d1 | committed | 1 | 抑制语义下 deleted/shutdown 仍产生 + planned 不误记 crash；新增 6 用例 + 全量 5380 零回归 + typecheck 绿（编排者重跑核验） |
-| u1d2 | pending | — | — |
+| u1d2 | committed | 1 | reaped（孤儿 kill 链 pid/ppid）/ reclaimed（成功收敛 idleMs/lastViewedAt）/ worker-crash（handleProcessCrash 统一收敛 + 幂等守卫）三挂点双写；16 新用例 + runtime 全量 5380 零回归 + typecheck 绿（编排者重跑核验；commit 92711090f） |
 | u1e | committed | 2（前任额度中断 + 接替核验收口） | 三信号事件接线 + 守卫行为不变（26 既有用例佐证）+ 日翻转/coverage 重置/数值聚合全绿；13 tests + runtime 全量 5393/5393 + tsc 0（编排者重跑核验）；**发现 P0 集成缺陷→转 u-init 修复（见偏差 #21）** |
 | u1f | committed | 2（轮次 2 补 renderer unresponsive 接线） | 判别式 8 组合真值表 + liveness 双写 + renderer oom/crashed/熔断/unresponsive（卡死期单行+responsive 复位）；18 tests + tsc 0（编排者重跑核验） |
 | u7b | committed | 2（前任额度中断零产物 + 接替全新交付） | mirror API（epoch 重置清 hasEverReported，errs-safe）+ marker 旁路消费 + ack resolve + 协议 4 类型；32 用例 + shared 351 + runtime 5425（含 real-pi 池）全绿 + 双 typecheck 0（编排者重跑核验） |
 | u2 | committed | 2（前任额度中断 + 接替核验收口） | 20 条全状态表 + #8 absent-report 关联窗排除 + #16 计划内排除（源码实锚）+ coverage 50% 边界；30 tests + main 池 1052/1052 + tsc 0（编排者重跑核验）；max-lines 走 eslint.config.mjs override 登记 |
 | u3a | pending | — | — |
 | u3b | pending | — | — |
-| u4 | pending | — | — |
+| u4 | committed | 2（前任限流中断产物已在盘 + 定时调度续跑编排者硬验证收口） | runtime-checkpoint 五契约（原子写 tmp+rename / corrupt→事件一次记+隔离退 lazy / 失败现场保留 3 新覆盖旧 / 隔离 rename 幂等 ENOENT=已隔离 / 不 seed 旧文件防误配对）+ main marker 三步启动序（消费残留→判可信度→写本实例）+ before-quit 成功段删除属主（killed 短路排除）+ will-quit 清 marker 与 stop 解耦 + reaper tick 搭车快照（判定路径逐字不变）；44 新用例（runtime 31 + main 13）+ 存量回归 47 绿 + 触碰文件 lint 0（编排者重跑核验） |
 | u5 | pending | — | — |
 | u6 | pending | — | — |
-| u7a | pending | — | — |
+| u7a | committed | 1 | 协议侧 SUBAGENT_INFLIGHT_MARKER + report schema（initial|delta 绝对计数）+ ack 常量；subagent-core core→shell 出口 + EnginePort.inFlightSnapshot? + zcode impl（idle-resident ≠ in-flight）；workflow shell 首报 count=0 + select 失败折叠 2s 重试；workflow 928 + extension-protocol 103 + core 13 新用例全绿（commit 663c96f48） |
 | u7b | pending | — | — |
 | u7c | pending | — | — |
 | u7d | pending | — | — |
@@ -217,4 +217,5 @@ graph TD
 **变更历史**：
 - v1（2026-09-11）：初版基线。20 单元（17 代码 + 1 门 + 拆分产生子单元映射设计 u1-u10）；W1 四根并行；关键路径深度 8 已声明本质串行原因；模型路由环境限制登记（偏差 #6）。
 - v2（2026-09-11）：执行期登记。偏差 #9-#20（调度序/领地事实修正/旋段形态/私有复刻/注记落点/ack 契约/粒度超出/外债销账/isRunning guard/reason 元组/存量风险/spawn 预置分发）。**中断事件 1**：三个在飞单元（u2/u1e/u10a）与 u7b 因 coding-plan 5h 额度耗尽（1308）同时死亡，产物状态已落状态表；u7b 零产物。恢复策略 = 定时调度到期自动续跑（见下）。
+- v3（2026-09-11）：u4 收口 + 状态表补账。u4 前任被 rate 1302 限流打死但产物完整在盘，经定时调度续跑由编排者硬验证收口（44 新用例 + 存量回归 47 绿 + lint 0），零返工。状态表补记 u1d2/u7a 两行陈旧 pending（commit 92711090f / 663c96f48 实际已落地，配额中断窗口漏更新）。main.ts 620 物理行经 skipComments 口径 lint 干净，无需新 override。
 - **环境噪音记录**：pre-commit 出现 3 次一次性幻影故障（2×「line 910 注释行 command not found」、1×「找不到 scripts/check-provider-credential-reads.mjs」——该脚本全仓零引用），同输入立即重试全部通过，未使用任何跳过手段；判定为高并发环境瞬时故障，非仓库缺陷。另 main 池 updater-script-integration.test.ts 为负载敏感型存量 flake（单跑 23/23 绿）——Gate A 全量跑时若红按此口径复核。

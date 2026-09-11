@@ -20,6 +20,12 @@
  */
 import type { CrashJournalEvent } from '@xyz-agent/shared'
 import { getCrashJournal } from '../../infra/crash-journal.js'
+// D3 checkpoint 搭车刷新（crash-forensics §3.3 D3，u4）：本模块每拍本来就要遍历活跃
+// session 算 idleMs / 判七类豁免，顺带把这些量刷进 checkpoint——零新增定时器、零新增探测。
+import {
+  getRuntimeCheckpointStore,
+  type RuntimeCheckpointRefresh,
+} from './runtime-checkpoint.js'
 
 /**
  * reclaimed 台账行的结构化扩展字段（idle 设计预登记「阶段二台账落地后追加」的兑现，
@@ -274,6 +280,44 @@ async function reapTick(options: IdlePiReaperOptions): Promise<void> {
   const dist = emptyDistribution()
   const reclaimed: string[] = []
 
+  // D3 checkpoint（u4）搭车快照：豁免谓词经 memo 包装——判定路径与短路顺序逐字不变，
+  // 同时把「本拍算过的值」收集起来供拍尾一次落盘（不新增定时器、不新增探测；豁免查询本来
+  // 就要算这些量）。undefined 字段 = 本拍未判定 → 刷新时保留 checkpoint 现值，不伪造成
+  // false/idle（「不知道 ≠ 没打点」同款语义）。
+  const tickSnapshots = new Map<string, RuntimeCheckpointRefresh>()
+  const snapshotOf = (sid: string): RuntimeCheckpointRefresh => {
+    let s = tickSnapshots.get(sid)
+    if (!s) {
+      s = { sessionId: sid }
+      tickSnapshots.set(sid, s)
+    }
+    return s
+  }
+  const viewedAtCache = new Map<string, number | undefined>()
+  /** 查看时刻读取（memo：一次拍到多消费点取同值；快照与豁免 #6 同源）。 */
+  const readViewedAt = (sid: string): number | undefined => {
+    if (viewedAtCache.has(sid)) return viewedAtCache.get(sid)
+    const viewedAt = exemptions.getLastViewedAt(sid)
+    viewedAtCache.set(sid, viewedAt)
+    snapshotOf(sid).viewedAt = viewedAt
+    return viewedAt
+  }
+  const isOccupied = (sid: string): boolean => {
+    const occupied = exemptions.isOccupied(sid)
+    snapshotOf(sid).occupancy = occupied ? 'occupied' : 'idle'
+    return occupied
+  }
+  const hasRunningBackgroundTasks = (sid: string): boolean => {
+    const running = exemptions.hasRunningBackgroundTasks(sid)
+    snapshotOf(sid).backgroundTasks = running
+    return running
+  }
+  const hasInflightRelayChildren = (sid: string): boolean => {
+    const inflight = exemptions.hasInflightRelayChildren(sid)
+    snapshotOf(sid).relayChildren = inflight
+    return inflight
+  }
+
   for (const sid of candidates) {
     // 豁免 #7 后半（回收自身占座）：占座中的 session 跳过——reclaim 在途，重复进入会被
     // tryAcquire 拒绝，提前跳过省一次函数调用且让分布计数完整。
@@ -288,6 +332,10 @@ async function reapTick(options: IdlePiReaperOptions): Promise<void> {
       dist.noActivity++
       continue
     }
+    // 搭车快照（时效字段）：有信号即记录本拍活动时刻 + 查看时刻——checkpoint 的
+    // lastActivityAt/lastViewedAt 由此保持新鲜（D3：只在 tick 刷盘，不在每次 touch 刷盘）。
+    snapshotOf(sid).activityAt = activity
+    readViewedAt(sid)
     // 阈值判定（比较语义注释）：idleMs 严格大于阈值才回收——恰好等于阈值不回收（边界值
     // 一律往「不回收」方向偏，与查看窗口 ≤ 的保守方向一致，避免时钟毛刺触发边界回收）。
     const idleMs = now() - activity
@@ -296,15 +344,15 @@ async function reapTick(options: IdlePiReaperOptions): Promise<void> {
       continue
     }
     // 七类豁免（D2 表序，任一命中即跳过；短路求值——顺序即日志分布的可归因顺序）
-    if (exemptions.isOccupied(sid)) {
+    if (isOccupied(sid)) {
       dist.occupied++
       continue
     }
-    if (exemptions.hasRunningBackgroundTasks(sid)) {
+    if (hasRunningBackgroundTasks(sid)) {
       dist.backgroundTasks++
       continue
     }
-    if (exemptions.hasInflightRelayChildren(sid)) {
+    if (hasInflightRelayChildren(sid)) {
       dist.relayChildren++
       continue
     }
@@ -317,7 +365,7 @@ async function reapTick(options: IdlePiReaperOptions): Promise<void> {
       continue
     }
     // 豁免 #6（D2 #6 字面「≤ 30 分钟」）：elapsed === viewedWindowMs 恰在窗口边界 → 豁免。
-    const viewedAt = exemptions.getLastViewedAt(sid)
+    const viewedAt = readViewedAt(sid)
     if (viewedAt !== undefined && now() - viewedAt <= viewedWindowMs) {
       dist.recentlyViewed++
       continue
@@ -357,6 +405,19 @@ async function reapTick(options: IdlePiReaperOptions): Promise<void> {
       dist.reclaimFailed++
       console.error(`[pi-reaper] reclaim failed sid=${sid}:`, e instanceof Error ? e.message : e)
     }
+  }
+
+  // D3 checkpoint 搭车刷新（u4）：一拍一次落盘（不在循环内刷盘——写风暴防护，契约 5）。
+  // 只更新 checkpoint 内存清单中**已存在**的条目：未附着的候选不入清单；本拍被回收成功的
+  // session 已被 session-service 的 reclaim 挂点摘除条目 → 此处自然不复活它。
+  // 快照/刷新是旁路设施，异常不外抛（否则会打断一拍判定主流程）。
+  try {
+    if (tickSnapshots.size > 0) {
+      getRuntimeCheckpointStore().refreshSessions(Array.from(tickSnapshots.values()))
+    }
+  } catch (e: unknown) {
+    // best-effort 降级：checkpoint 刷新是搭车旁路，失败不得打断一拍回收判定主流程。
+    console.error('[pi-reaper] checkpoint tick refresh failed:', e instanceof Error ? e.message : e)
   }
 
   // 按拍合并广播（D3 第 7 步）：一拍 N 个回收只广播一次，且在全部回收完成（seat 已由
