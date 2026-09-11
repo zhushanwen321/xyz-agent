@@ -49,6 +49,7 @@
 | **u11** | U11 元数据走 `SessionManager.listAll`：`metadataProvider` 注入（index.ts 构造，发现层零 pi 依赖）+ 三条调用策略（惰性：uuid 精确+归一化双零且非纯 hex 才调 / 窄化：仅平铺目录〔无子目录根 + 未剥层 liveDir〕，含子目录根回退首条 user 不退出 keyword 匹配 / TTL 缓存）+ 两条 guard（仅存在根 + 永传非空串；单目录 try/catch 记空继续）+ 纯 TS 降级（首条 user 命中即停，标题留空） | `extensions/universal/session-reader/src/discovery/find.ts`（metadataProvider 注入点 + 策略）；`extensions/universal/session-reader/src/index.ts`（provider 构造）；`extensions/universal/session-reader/src/tool-handler.ts`（注入透传）；`extensions/universal/session-reader/src/__tests__/`（find/tool-handler 对应用例） | u10 | plain | ① 三策略用例：uuid 路径不调 listAll / keyword 才调 / 含子目录根跳过但候选不退出匹配（回退首条 user）② guard 用例：provider 抛错降级记空继续 + 标题留空不报错 ③ 零 pi 依赖边界不变 |
 | **u12** | U12 跨会话内容检索：窄化前置（宽搜明确拒绝 + 提示先窄化）+ 字节上限 + 结果渲染（session 列表 + turn 索引 + 可执行调用串） | `extensions/universal/session-reader/src/discovery/find.ts`（内容检索段）；`extensions/universal/session-reader/src/tool-handler.ts`（search 增强渲染）；`extensions/universal/session-reader/src/__tests__/`（对应用例） | u11 | plain | ① 宽搜拒绝用例（候选集超阈值 → 拒绝 + 指引，非静默超时）② 字节上限截断用例 ③ 渲染含 turn 索引与调用串 |
 | **u13** | U13 双仓同步（M5）——**deferred，不在本流水线** | （仓外：npm 发版 / `pi update` / `~/Code/pi-session-reader` 重平移 / SKILL.md） | M2 落地 + merge 发版 | — | V11（merge 发版后执行，时机 = merge skill 阶段） |
+| **u19** | 计划外收口单元（Gate A 首轮 lint 发现，非设计 §10 原有单元）：system-prompt 上溯修复（u18 守卫实跑扫出的存量真实破损）+ runtime 遗留红测试收口 + 守卫豁免移除（13→12，修复后豁免不再需要）。证据 commit `5717f642e` | system-prompt 上溯修复面（实施时定位）+ runtime 遗留红测试文件 + `scripts/check-layout-literals.mjs` 豁免表（`LAYOUT_LITERAL_EXEMPT`） | u18 | plain | 守卫豁免移除后对全仓实跑 exit 0；遗留红测试转绿 |
 
 # u-foundation 说明：extension 侧共享契约根 = u1（`SessionRoot` / `SessionRootSignals` 类型），runtime 侧无新增共享类型模块（SSOT 为原地改值），故不设独立 u-foundation 单元。
 
@@ -119,7 +120,7 @@ graph TD
 | D-18 | 阶段 3 一致性审查 reasonable 项登记（A 区 5 + B 区 5，共 10 条）：spawn 清单读写 D6c 分层、WARN 探测 isDirectory 形态判据（附同名文件占位反例）、u18 守卫超额扫出 3 处存量/生产破损（u19）、writeAtomic 统一用于 sessionDir 清除写回、usage-stats 容错+纯函数抽取、execute 可选链上加 try/catch（抛错降级三态测试）、uuid 两级匹配层间互斥回退式、doctor legacy 告警文案更可操作、u12 跨会话检索尽力补标题、F1 recent 死代码清除核实 | 各对应设计节 | 全部「实现优于设计/合理演化」，其中 4 条的设计同步句已由编排者写入设计文档（§7A 判据已修、§7B 要点 2、§6.7 子决策 1、§6.1 引文——见设计变更历史 v9.4/v9.5） | 合理 |
 | D-17 | u12 三条裁决：①核心编排放 tool-handler.ts 的 searchAcrossSessions（复用同文件扫描管线），find.ts 只承载候选索引——函数级落点最小耦合；②跨会话 limit 粒度取 per-session（设计未定义，输出规模有界 ≤10×limit）；③触发形态 = session 逗号分隔 id 列表 ≤10（result 批量先例同构），description 三处同步（§6.4 一次性代价面）；④tool-handler.ts max-lines 1765/1200（存量 warning 级加重）——拆分归独立重构，不在本流水线 | §10 U12 / V8 | 均为计划未细化处的最小裁决；④登记为已知技术债 | 合理 |
 | D-16 | u11 四条契约补全：①collectCandidates 由薄包装切 `resolveSessionRoots` 根列表（窄化策略②需根级事实；= D-3 预告的工具路径切新签名在本单元落地，find 开始消费 [live] 根）②`MatchedSession.name` 可选字段 + 标题优先渲染（§5.1 形态要求标题可见，否则标题检索命中不可辨识）③标题命中候选的 preview 取元数据 firstMessage 免二次深读 ④TTL=5000ms 与 doctor 同档（§11.3a 实测校准登记为验收期项） | §6.6/§5.1 | 均为实现目标的必要组成；①同时消除 F1 已消除的二次扫盘反模式 | 合理 |
-| D-15 | u10 三条裁决：①溢出/配额满的计数为确定下界（>N 形态）而非精确总数——精确总数需 O(命中) 次深读首条 user，truncated 布尔经 +1 探测保持精确等价；②显式 source 过滤查询不参与分组/折叠（显式 source 即折叠提示的展开动作，全 id 与 ↳ 串仍适用）；③一次窗口性 flaky 观测（u9⑥ 去重注记用例 02:40-02:48 高负载窗口 4 连红，双 stash 对照排除本单元，窗口外 14+ 连绿）——登记为 Gate A 全量关注项 | §6.7 子决策 2/3 | ①设计要求 truncated 精确而计数行形态未细化，下界计数符合「折叠为计数行」意图 ②语义自洽 ③非确定性、对照排除，如实登记 | 合理 |
+| D-15 | u10 三条裁决 + 一条已知成本：①溢出/配额满的计数为确定下界（>N 形态）而非精确总数——精确总数需 O(命中) 次深读首条 user，truncated 布尔经 +1 探测保持精确等价；②显式 source 过滤查询不参与分组/折叠（显式 source 即折叠提示的展开动作，全 id 与 ↳ 串仍适用）；③一次窗口性 flaky 观测（u9⑥ 去重注记用例 02:40-02:48 高负载窗口 4 连红，双 stash 对照排除本单元，窗口外 14+ 连绿）——登记为 Gate A 全量关注项；④**已知成本**：分组两路 findSessions 各自全根实扫——展示层分组引入的双倍目录遍历，匹配语义不变（§11.4 门与 Gate B 活体为安全网）；候选优化 = 预解析根列表复用（未做，实测证明必要后再议） | §6.7 子决策 2/3 | ①设计要求 truncated 精确而计数行形态未细化，下界计数符合「折叠为计数行」意图 ②语义自洽 ③非确定性、对照排除，如实登记 ④双倍遍历是展示层分组的结构性代价，匹配层语义不变；活体门实测通过为安全网，候选优化不预做 | 合理 |
 | D-13 | F1 编辑距离候选源 = resolveSessionRoots 实扫 files 提取的 sessionId（设计未细化候选源；与自检计数同批实扫、零额外扫盘）；resolveByFragment/doFind 零匹配路径删去 findSessions('recent') 重复扫盘调用（新文案无 recent 候选） | §6.7/§5.2 | 最小裁决 + 死代码清除；u9 微修复另将 doFind 内部签名改 signals（对外 D-8 联合不变） | 合理 |
 | D-14 | u17 接口改名 `ReapOrphanOptions.sessionsDir→dataDir`（v1 的 --session-dir 等值目标语义已死，新语义 = 清单读取根）牵出 3 处计划盲区必改：生产调用方 startup-background-init.ts:82、计划未登记的第二个测试文件 test/reap-orphan-pi.test.ts、u18 守卫测试以 reap 豁免为 fixture 的断言行；另 flagValue 扩展为 collectFlagValues（argv 可重复传 --extension，「任一命中」必须遍历） | §6.12/U17 | 保留死字段双轨会使生产调用静默失效，改名是正确裁决；3 处均为改名的机械组成，orchestrator 授权扩容收口 | 合理（计划盲区） |
 | D-12 | u8 两条契约补全：①SessionRoot 增可选 `cached?` 标记（options.cache 命中以缓存值构造、files 恒空）+ `SessionRootScanOptions`（subagents: 'scan'\|'stat'、cache 注入式句柄，TTL/mtime 判定留在 tool-handler 侧）②description 'Ten actions'→'Eleven actions'（保留错误动作数比 6 字节缓存代价更有害，且与 V11 计数 11 一致） | §6.3 同一数据源两处渲染 / §6.4 | ① doctor 不带 options 的消费契约补全（D-2 同方向）②正确性必需；doctor 双实现镜像已被打回消除（§6.3 合规） | 合理 |
@@ -130,16 +131,15 @@ graph TD
 
 | Unit | 状态 | 轮次 | 证据指针 |
 |---|---|---|---|
-| u14a | committed | 2+1 | 脚本 759 行 + 测试 862 行；32/32 重跑绿；P-11 = 100%（11/11 全有 cwd，只读实测，登记于测试文件头）；CLI 实机负向探针（pgrep 命中 14+84 进程 → 拦截列 PID）；D-7 登记落地（R1 exit 0）；偏差 D-9/D-10 |
+| u14a | committed | 2+1 | 脚本 759 行 + 测试 862 行（单元 commit 时点快照，终态见 Gate A/B 记录）；32/32 重跑绿；P-11 = 100%（11/11 全有 cwd，只读实测，登记于测试文件头）；CLI 实机负向探针（pgrep 命中 14+84 进程 → 拦截列 PID）；D-7 登记落地（R1 exit 0）；偏差 D-9/D-10 |
 | u14b | committed | 3 | 五处改动落地（退役/syncBundledResources 直挂/WARN 探测/getPiGlobalAgentDir 改 getDataDir 推导/getPiRoot 零引用）；F3 打回修复（maxRetries×3）后 9 用例绿重跑；tsc 0；偏差 D-6 |
 | u15 | committed | 2 | wave1 24fb71b0f + wave2（probe/verify 脚本、workflow-extractor 注释、troubleshooting 迁移节；AGENTS.md 实测无可清项）；残留 ~18 处生产注释 + ~40 处测试 mock 字面量与 logger.ts:431 移交 u18 守卫批；verify-plugin-contract E2E 实跑 PASS |
 | u16 | committed | 3 | 删 --session-dir + spawn-markers（D-11 双 dev 形态）+ §11.11 恒传升格；F3 打回一轮补 maxRetries×9；24 文件 commit 携带 session-dir 断言同步 |
 | u17 | committed | 3 | 4a27e1f08：四条合取 + 清单读侧下沉 infra + 组合根注入（D6c）；双测试文件 47+ 用例；豁免 12→11；D-14 扩容收口 |
-| u18 | committed | 1 | 守卫（19 用例 + 拦截冒烟）+ constraints C-pi-14 + 清扫 105 文件；豁免 13→12（system-prompt 修复后移除）；发现 system-prompt 真实破损已由 u19 收口 |
+| u18 | committed | 1 | 守卫（19 用例 + 拦截冒烟）+ constraints C-pi-14 + 清扫 105 文件（单元 commit 时点快照，终态见 Gate A/B 记录）；豁免 13→12（system-prompt 修复后移除）；发现 system-prompt 真实破损已由 u19 收口 |
 | u1 | committed | 1 | roots.test 17/17 + 全包 338 绿重跑确认；tsc/eslint 干净；偏差 D-2~D-5 |
-| u2 | in-progress | 1 | agent_2102d150 |
 | u6 | committed | 1 | PS-28~PS-33 六条 anchor 逐条实装核对（⑤补双锚、⑥修 distPath 缺 core/ 前缀）；守卫 exit 0（33 条）重跑确认；D6 软门禁恢复动作完成（探针族 11 文件/56 用例全绿）；偏差 D-1 |
-| u2 | committed | 1 | env.ts + env.test.ts（16 用例）重跑绿；tsc --noEmit exit 0；无偏差 |
+| u2 | committed | 1 | 首派中断（agent_2102d150）后重派 committed：env.ts + env.test.ts（16 用例）重跑绿；tsc --noEmit exit 0；无偏差 |
 | u3 | committed | 1 | index.test 13/13 + 全包 341 绿重跑确认；tsc 0；偏差 D-8 |
 | u8 | committed | 2 | doctor action（enum/description+Eleven actions/guidelines 三处 + renderDoctor + 独立 glob 残留探测 + TTL/mtime 缓存句柄 + subagent 默认不扫）；微修复统一数据源（roots.ts +SessionRootScanOptions，镜像 −120 行）；116/116 + 全包 358 绿 + tsc 0；偏差 D-12 |
 | u9 | committed | 1 | 2575192b0：归一化两级匹配 + F1 四要素重写 + 编辑距离 top-3；364 全包绿 + tsc 0；偏差 D-13 |
@@ -158,11 +158,13 @@ graph TD
 - ⛔ §11.14（M-1 门）：B 后空 `agent/` 自举——tmp 空数据目录启动新版实测；不能自举则「先升后迁」降格、V9 子场景改负向判定。
 - ⛔ §11.11（u16）：`options.extensionPaths` 恒传核验。
 - ⛔ P-6（M0-M3 验收）：RPC 模式 `getSessionDir()` 实跑值（B 后预期 `<dataDir>/agent/sessions/<encodeCwd>` 子目录形态，`[live]` 剥层判据依赖）。
-- ⛔ §11.2（u1 验收）：`[live]` encodeCwd 判据用真实路径集合回归。
-- ⛔ §11.3（u11）：listAll 实测耗时校准 TTL；不达预期回退纯 TS 首条 user。
+- ✅ §11.2（u1 验收）已消解：`[live]` encodeCwd 判据以 roots.test 真实形态用例回归覆盖 + Gate B P-6 活体确认（encodeCwd 子目录形态剥层正确）。
+- §11.3a（u11）显式降格：listAll 实测耗时校准 TTL 随受限标题索引候选迭代一并校准（与上方「候选后续迭代」条并档，不在本流水线收口）；TTL 暂取 5000ms 与 doctor 同档（D-16④），不达预期回退纯 TS 首条 user。
+- ✅ §11.9（doctor 成本）已消解：墙钟上界受 subagent 根默认不扫（§6.3）+ 进程内缓存约束；Gate B 活体 doctor 秒级返回为证（输出 4-5 根在预算内）。
 - 已接受残留：窗口期双面失明（§6.11）、`pi/agent/{extensions,npm,tmp}` 迁出残留（§6.11 影面登记）、`~/.xyz-agent/sessions` 旧旧布局不在候选根（§11.7 裁决：不补第四根，迁移脚本步骤 4 兼并）。
 
 **变更历史**：
+- 2026-09-11（design-code-sync 第 1 轮文档面修复，8 条）：①单元表补 u19（计划外收口单元：system-prompt 上溯修复 + runtime 遗留红测试 + 守卫豁免移除，证据 5717f642e）；②状态表清 u2 双行（删 in-progress 残行，committed 行注「首派中断后重派」）；③u14a/u18 数字补「单元 commit 时点快照，终态见 Gate A/B 记录」注记；④D-15 补分组双倍实扫已知成本（匹配语义不变，§11.4 门与 Gate B 活体为安全网；候选优化 = 预解析根列表复用）；⑤残留风险节回填 §11.2（已消解：roots.test 真实形态用例 + Gate B P-6 活体）/§11.3a（显式降格随受限标题索引候选迭代一并校准）/§11.9（已消解：subagent 根默认不扫 + 缓存约束，Gate B 活体秒级返回为证）。设计侧同步见设计变更历史 v9.7（SR-B1 收缩标注四处 / SR-B2 悬空引用 / SR-B8 §11.5 唯一非等价差异 / SR-B9 拆分落点 + §6.4 代价面 + §6.12 双 dev 形态与 node pi 极限备案）。
 - 2026-09-11（执行期 2）：M-1 门消解登记（审查 A unreasonable#3）——①V9 端到端：真实布局 tmp 副本（251M）迁移成功（11 主 session 分发 5 encodeCwd 目录 + 28 sidecar；备份空壳属正确形态；报告 14 字段齐）；重跑 resume 全零动作（V9⑥）；迁移后 find("01a08a") = main 3 + subagent 34（V9⑤ 实证，原 bug 恒 0）；V9⑦⑧ 单测+活体 pgrep 探针覆盖；②§11.14 自举门：pi 空 agentDir 活体启动自举（auth/models-store/sessions/<encodeCwd> 生成）——「先升后迁」保住合法兜底资格，应用级全链路自举归 merge 后真机验证；③P-6 部分消解：pi 默认派生 encodeCwd 子目录形态活体确认（[live] 剥层前提成立），扩展进程内 getSessionDir() 实跑值归 Gate B RPC 实测；④V10①②③ 实机制造孤儿：显式 deferred 至 Gate B（单测面已全覆盖）；⑤scoped-model.e2e smoke+E1 实跑 PASS（u18 fixture 修复验证）。
 - 2026-09-11（阶段 5 Gate B 组2 + 总签收）：组 2 三场景全 pass——V2（env 隔离纯 pi：find 7 命中证据链归因 [default] 4235 文件、doctor standalone-pi + evidence、双根不去重、legacy 空无告警）、V3(b)（无 --session-dir：[live] 剥层与 [default] 去重活体确认）、V3 legacy 正相（tmp 构造非空 → 精确告警；附合取防误判验证：tmp 形态 PI_CODING_AGENT_DIR 不触发托管误判）。**Gate B 总签收：全场景 pass**（组1 7+V5b 已按 v9.6 修正闭环、组2 3、组3 4）。如实登记：组 2 场景 V3(b) 的活体前提要求真实默认落盘，测试 session 写入真实 ~/.pi 后按完整清理程序删除（4622 计数恢复核对）——红线冲突的处置如实记录。实装 pi = 0.85.1（设计核 0.84.4，extension 面 API 兼容实测）。
 - 2026-09-11（阶段 5 Gate B 组1）：8 判定 7 pass / 1 fail（V5b）。pass：V1（main 3 条全命中置顶 + 完整 id + ↳串，原事故消除）、V3(a)（doctor 全表 + 残留 glob 正向标注备份）、V4（四要素 + 负向双断言）、V5a（大写/去连字符/福耀玻璃 main 置顶）、V6（family/export 正常 + subagent 8 节点 + find-family 一致）、V8（2/3 hit + turn 索引 + 字节预算可见 + 11 候选拒绝）、P-6（[live] 剥层活体确认 encodeCwd 形态）。V5b fail 归因设计内部漂移（§6.6 平铺前提被 §6.10 取代）→ doc_errors 亲改：V5b 行与目标 4 注记改 B 后语义（v9.6），标题可见性由 search 通路承载（活体正例在案）；**能力后果显式声明：标题维度检索对 encodeCwd 布局（含 xyz-agent 主根）不覆盖，find 命中归因首条 user；受限成本的目录级标题索引列为候选后续迭代（残留风险节）**。驱动方式：单一 pi RPC 活体 12 轮 prompt 串行，主证据 = tool_execution_end 原文；进程零残留、探针清理、fixture 恢复原状（2 个驱动 session 保留已记录）。
