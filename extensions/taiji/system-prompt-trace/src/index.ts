@@ -6,9 +6,6 @@
  * mapReasonForFirstWrite 的 switch 在编译期报 non-exhaustive（负防腐），不再有运行时静默归一。
  */
 
-import { join } from "node:path";
-
-import { getAgentDir } from "@earendil-works/pi-coding-agent";
 import type {
 	ExtensionAPI,
 	ExtensionContext,
@@ -19,12 +16,7 @@ import type {
 
 import { setPiHandle } from "@zhushanwen/pi-extension-logger";
 
-import {
-	BASELINE_FILENAME,
-	readLastPromptFromSessionFile,
-	readPersistedBaseline,
-	writePersistedBaseline,
-} from "./baseline.js";
+import { readLastPromptFromSessionFile } from "./baseline.js";
 import { createSystemPromptTrace } from "./trace.js";
 import type { TraceContext, TraceEnv } from "./trace.js";
 import type { SwitchStash } from "./types.js";
@@ -40,23 +32,19 @@ function toTraceContext(pi: ExtensionAPI, ctx: ExtensionContext): TraceContext {
 		getSystemPrompt: () => ctx.getSystemPrompt(),
 		appendEntry: (customType, data) => pi.appendEntry(customType, data),
 		getSessionId: () => ctx.sessionManager.getSessionId(),
+		getSessionFile: () => ctx.sessionManager.getSessionFile(),
 	};
 }
 
 export default function systemPromptTraceExtension(pi: ExtensionAPI): void {
 	// 日志通道注入（extension-logger 两阶段初始化：工厂拿 pi → setPiHandle）。缺此注入时
-	// trace/baseline 中 logger.error 的 appendEntry 通道是 no-op，生产默认完全静默——
+	// trace 中 logger.error 的 appendEntry 通道是 no-op，生产默认完全静默——
 	// 此前全包从未注入（文本-实现漂移审查 D3 补接线，恢复注释声称的持久化语义）。
 	// 测试环境无真实 globalPi 消费方时调用本身安全（存引用，不触发 appendEntry）。
 	setPiHandle(pi);
 
-	const baselineFilePath = join(getAgentDir(), BASELINE_FILENAME);
-
 	const env: TraceEnv = {
-		readLastPromptFromFile: (filePath) => readLastPromptFromSessionFile(filePath, "target-file"),
-		readPersistedBaseline: (sessionId) => readPersistedBaseline(baselineFilePath, sessionId),
-		writePersistedBaseline: (sessionId, hash, version) =>
-			writePersistedBaseline(baselineFilePath, sessionId, hash, version),
+		readLastPromptFromFile: (filePath) => readLastPromptFromSessionFile(filePath),
 	};
 
 	const logic = createSystemPromptTrace(env, switchStash);

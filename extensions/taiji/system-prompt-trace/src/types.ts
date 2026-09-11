@@ -24,18 +24,16 @@ export interface SystemPromptTraceEntryData {
 	fullText: string;
 	/** fullText.length（UTF-16 码元数）。 */
 	charCount: number;
-	/** 与上一版的行级 diff 摘要；无 parent 全文（自持久化基线只有 hash/首条）时缺省。 */
+	/** 与上一版的行级 diff 摘要；首条留痕（无 parent）时缺省。 */
 	parentVersionDiffSummary?: string;
 }
 
-/** 跨重启恢复的 hash 基线。 */
+/** 跨重启恢复的 hash 基线（三档解析统一产自 session JSONL 留痕 entry 直读）。 */
 export interface PromptBaseline {
 	hash: string;
 	version: number;
-	/** 从 session 文件留痕 entry 直读时有值（可生成 diff 摘要）；自持久化小文件只有 hash+version。 */
+	/** 留痕 entry 直读恒有值（可生成 diff 摘要）。 */
 	fullText?: string;
-	/** 基线来源（四路径口径，见 trace.ts onSessionStart 的解析优先级）。 */
-	source: "target-file" | "previous-session-file" | "persisted";
 }
 
 /**
@@ -76,10 +74,9 @@ export function isSystemPromptTraceEntryData(value: unknown): value is SystemPro
  *
  * - startup / new → initial（新 session 首建快照）
  * - resume → resume（重开快照）
- * - fork / reload → resume【暂定，待 P2 实测定（A13 探针），测试显式标注】：
- *   fork 的新文件携带源 session 的历史 entry（版本链延续，且 xyz-agent 的 fork 实际经
- *   switchSession 走 resume 链路），reload 是同 session 的 extension 运行时重建——
- *   两者语义上都更接近「重开」而非「首建」。
+ * - fork / reload → resume（设计 D2 v5 定案）：fork 基线取源文件最后留痕（previousSessionFile，
+ *   缺失/未落盘/读取失败 → null 走本映射兜底）；reload 是同 session 的 extension 运行时重建——
+ *   两者语义上都是「重开」而非「首建」。
  *
  * 注意：只要恢复了任一 hash 基线，首个 turn 一律写 resume（见 trace.ts），不走本映射。
  */
