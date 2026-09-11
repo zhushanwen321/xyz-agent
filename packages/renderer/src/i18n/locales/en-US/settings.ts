@@ -643,6 +643,18 @@ export default {
     shortcutRecording: 'Press a new shortcut…',
     shortcutReset: 'Reset',
     shortcutRecordingHint: 'Click "Re-record" then press a new key combination',
+    // ── Diagnostics bundle export (crash-forensics-and-watchdog §3.3 D6 / u3b, shared by
+    //    SystemDiagnosticsSection and dead-state DiagnosticsExportAction; the privacy notice
+    //    itself is shared DIAGNOSTIC_EXPORT_PRIVACY_NOTICE, intentionally not i18n'd) ──
+    diagnosticsTitle: 'Diagnostics',
+    diagnosticsExportLabel: 'Export diagnostics bundle',
+    diagnosticsExportDesc: 'Pack crash journal and log tails into a zip (contains local paths and session identifiers); you choose where to save it, for troubleshooting only',
+    diagnosticsExportBtn: 'Export Diagnostics',
+    diagnosticsConfirmTitle: 'Export diagnostics bundle',
+    diagnosticsConfirmExport: 'Export',
+    diagnosticsCancel: 'Cancel',
+    diagnosticsExportSuccess: 'Diagnostics bundle exported: {path}',
+    diagnosticsExportFailed: 'Export failed ({code}): {message}. Check disk space and directory permissions, then retry',
   },
   // ── Resource page (SettingsResourcePage) ──
   resource: {

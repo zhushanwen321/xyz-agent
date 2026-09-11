@@ -194,7 +194,7 @@ graph TD
 | u7b | committed | 2（前任额度中断零产物 + 接替全新交付） | mirror API（epoch 重置清 hasEverReported，errs-safe）+ marker 旁路消费 + ack resolve + 协议 4 类型；32 用例 + shared 351 + runtime 5425（含 real-pi 池）全绿 + 双 typecheck 0（编排者重跑核验） |
 | u2 | committed | 2（前任额度中断 + 接替核验收口） | 20 条全状态表 + #8 absent-report 关联窗排除 + #16 计划内排除（源码实锚）+ coverage 50% 边界；30 tests + main 池 1052/1052 + tsc 0（编排者重跑核验）；max-lines 走 eslint.config.mjs override 登记 |
 | u3a | committed | 1 | 收集清单纯函数（双台账+日志尾部 256KB+detailPath 深查≤10+水位摘录+评估器 20 行状态表+summary.md 共 9 条目，缺文件降级不抛错）+ minimal-zip 手写容器（零新依赖；deflate+store 回退；实现反向解析 + 系统 unzip -t 双盲验证）+ IPC handler（log-retention-ipc 先例：零 rejection 三态 exported/canceled/error + 注册幂等）+ 知情文案常量三方共用（main/preload/u3b）；15 新用例 + main 池全量 1080/1080 + 三 tsconfig typecheck 0 + eslint 0（编排者重跑核验）；领地事实修正：注册行落 ipc-handlers.ts 聚集处而非 main.ts（log-retention-ipc 同例） |
-| u3b | pending | — | — |
+| u3b | committed | 1 | 双入口共享 DiagnosticsExportAction（知情确认 ConfirmDialog 展示 shared 知情常量防文案分叉 + exported 成功含路径 / canceled 静默 / error 含 errno 重试指引对话框保持）+ 设置页 SystemDiagnosticsSection 挂载 + 死态块入口（领地事实修正：实际在 Panel.vue 非 MessageStream.vue——dead 态 v-if 互斥链致后者功能性不可达，授权依据 = 残留风险行「u3b 实施时定位」）+ IPC 封装调用时求值 electronAPI（避测试陷阱）；i18n zh/en 各 +10 键结构一致；7 新用例 + 相邻回归 823/823 + vue-tsc 0 + eslint 0（编排者重跑双文件 7/7） |
 | u4 | committed | 2（前任限流中断产物已在盘 + 定时调度续跑编排者硬验证收口） | runtime-checkpoint 五契约（原子写 tmp+rename / corrupt→事件一次记+隔离退 lazy / 失败现场保留 3 新覆盖旧 / 隔离 rename 幂等 ENOENT=已隔离 / 不 seed 旧文件防误配对）+ main marker 三步启动序（消费残留→判可信度→写本实例）+ before-quit 成功段删除属主（killed 短路排除）+ will-quit 清 marker 与 stop 解耦 + reaper tick 搭车快照（判定路径逐字不变）；44 新用例（runtime 31 + main 13）+ 存量回归 47 绿 + 触碰文件 lint 0（编排者重跑核验） |
 | u5 | committed | 2（1 轮插播修复：mem-pressure execFile 补 C-proc-09 出站 env 契约） | startup-reattach（shouldReattachEntry 真补集过滤含双向边界值 / Promise.race 有界等收割 60s 上界超时全候选 reap-wait-timeout / 高水位即时查询轮询缓解即恢复 / 分批并发 2 allSettled 容错 / 全部尝试完无条件删 checkpoint 含全跳过零候选）+ mem-pressure（os freemem + 平台 swap 探针零采样环，isMemPressureHigh 初值 Gate W 校准）+ 收割 promise 交付回调（调度即交付可选 dep）+ index.ts listen 后独立并行挂点；reattach 经 restore→registerSession 汇聚点（mirror 预置零额外接线）；47 新用例（reattach 31 + mem-pressure 16）+ runtime 全量 5515/5515 + tsc 0 + spawn-env 守卫 0 违规（编排者重跑核心四件套 73/73）；遗留：高压横幅腿→偏差 #27 并入 u7d |
 | u6 | pending | — | — |
@@ -212,7 +212,7 @@ graph TD
 **残留风险**：
 - 设计 §5「待验证检查点」五项（退出码 86 跨平台语义 / zcode appserver·sandbox fork·忽略 SIGHUP 终端三类意外孤儿 reap 判据 / reattach 并发 2 的 spawn 峰值 / memPressure 跨平台 API / 收割等待上界实测）——u5/u7c 实施期内验证，无法机械判定的落入 Gate B 场景执行。
 - 约束登记义务五项（设计 §5 末）随对应单元交付在阶段 6 终态同步前集中登记 constraints.json；文档同步义务（AGENTS.md / feature-map / TEST-STRATEGY / EnginePort 权威源）同批。
-- renderer 死态 UI 的最小挂点在 crash-resilience 交付物内，u3b 实施时定位（领地已限定 MessageStream.vue 死态块）。
+- ~~renderer 死态 UI 的最小挂点在 crash-resilience 交付物内，u3b 实施时定位（领地已限定 MessageStream.vue 死态块）~~ **已定位并落地（u3b）**：死态块实际在 Panel.vue（dead 态整页占位与 MessageStream 为 v-if 互斥链，MessageStream 内加入口功能性不可达）——入口落 Panel.vue 死态块（重开按钮旁 ghost 次级动作），领地事实修正已登记。
 - A3c 判死时窗最坏 10-15 分钟（undici 300s×3）：AbortSignal.timeout 补齐前该验收用例等待上界按此口径（设计 §4 A3c 原文）。
 
 **变更历史**：

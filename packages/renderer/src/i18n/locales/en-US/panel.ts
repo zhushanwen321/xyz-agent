@@ -463,6 +463,8 @@ export default {
     reopenFailed: 'Reopen failed: {error}',
     sessionFileLost: 'Session file is missing — history cannot be recovered',
     deleteThisSession: 'Delete this session',
+    // [crash-forensics-and-watchdog §3.3 D6 / u3b] Dead-state diagnostics bundle export entry
+    exportDiagnostics: 'Export Diagnostics',
     startConversation: 'Type a message to start',
     selectSession: 'Select a session from the left',
     taskFailed: 'Task creation failed: {error}',

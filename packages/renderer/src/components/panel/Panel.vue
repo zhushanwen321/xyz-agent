@@ -38,6 +38,10 @@
         <RotateCcw class="mr-1.5 size-3.5" />
         {{ t('panel.panel.reopen') }}
       </Button>
+      <!-- [crash-forensics-and-watchdog §3.3 D6 / u3b] 死态第二入口：进程退出后导出诊断包
+           （崩溃归因一键可达）。ghost 次级动作对齐「删除此项」行；知情确认与三态反馈
+           收敛在 DiagnosticsExportAction（与设置页共享，行为不分叉）。 -->
+      <DiagnosticsExportAction variant="ghost" :label="t('panel.panel.exportDiagnostics')" />
     </div>
 
     <!-- session-trace（D5a/D5c）：Trace 视图替换对话流位置（composer 保留，§3.1「不打断对话能力」）。
@@ -137,6 +141,7 @@ import { Button } from '@/components/ui/button'
 import Landing from '@/components/new-task/Landing.vue'
 import AskUserOverlay from '@/components/extension/ask-user/AskUserOverlay.vue'
 import InboundFrameDroppedNotice from '@/components/ui/InboundFrameDroppedNotice.vue'
+import DiagnosticsExportAction from './DiagnosticsExportAction.vue'
 import { usePanelView } from '@/composables/features/panel/usePanelView'
 import { useChatStore } from '@/stores/chat'
 import { useSidebar } from '@/composables/features/sidebar/useSidebar'

@@ -7,7 +7,7 @@
  *
  * 依赖方向：无下游（读全局 window.electronAPI，类型经 declare global 自动可用）
  */
-import type { LatestReleaseInfo, UpdateStage, UpdateSettings, UpdateErrorPayload, ProxyTestResult, LaunchResult, UpdateCheckResult, UpdateInstallResult, RendererLogPayload } from '@xyz-agent/shared'
+import type { LatestReleaseInfo, UpdateStage, UpdateSettings, UpdateErrorPayload, ProxyTestResult, LaunchResult, UpdateCheckResult, UpdateInstallResult, RendererLogPayload, DiagnosticExportBundlePayload, DiagnosticExportBundleResult } from '@xyz-agent/shared'
 
 /** preload 注入的 electronAPI（web/mock 环境为 undefined） */
 const api = window.electronAPI
@@ -397,4 +397,20 @@ export function reportRendererLog(payload: RendererLogPayload): void {
   } catch {
     // no-op
   }
+}
+
+// ── 诊断包导出（crash-forensics §3.3 D6 / u3b）────────────────────────
+
+/**
+ * 导出诊断包（main 先弹保存对话框，用户自选保存位置，打包双台账 + 日志尾部 +
+ * 触发状态表 + summary.md 为 zip）。三态永不 reject（main 侧零 rejection 契约，
+ * 见 shared DiagnosticExportBundleResult）：exported（含产物路径与摘要）/
+ * canceled（用户取消保存对话框）/ error（含具体 errno，磁盘满/权限可判定可重试）。
+ * 无 IPC（web/mock 无 preload，含旧 preload 未暴露该方法的降级面）返回 canceled——
+ * 没有保存对话框可弹 = 导出未发生，调用方（DiagnosticsExportAction）对 canceled 静默。
+ */
+export function exportDiagnosticBundle(
+  payload?: DiagnosticExportBundlePayload,
+): Promise<DiagnosticExportBundleResult> {
+  return api?.exportDiagnosticBundle?.(payload) ?? Promise.resolve({ status: 'canceled' })
 }
