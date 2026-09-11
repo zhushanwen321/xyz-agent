@@ -20,13 +20,13 @@
 //   豁免面不感知），协议版本维持 1、不 bump。
 //
 // [H1 双键过渡（chat-run 统一，docs/design/subagent-chat-run-unification.md §3.3
-// D3 + §5 U1 行）]：新增 run.params.resume 与既有 run.params.chat 载荷同形并存
-// （additive 可选，协议版本维持 1）。配对策略：U1 只加键——U2-U5 过渡期 core 恒
-// 构造旧 `chat` 键、pi 引擎恒读 `ctx.chat`（读端现状不变）；U6 单批同时切换写端
-// （core 构造 resume）与读端（pi 改读）并删 `chat` 键——全程不存在「写新读旧」
-// 窗口（错配 = resume 静默失效、每轮新文件、sessionFile 被覆盖）。同批退役已落地：
-// 轮次相位反向通道与 interact 方法已随 U5 删除（D5——续聊轮统一为新 run +
-// resume 锚点，轮次终态由 run 应答承载）。
+// D3 + §5 U1 行）][H1 U6 已切换]：run.params.resume 曾与原 run.params.chat 载荷
+// 同形并存（additive 可选，协议版本维持 1）；U1 只加键——U2-U5 过渡期 core 恒
+// 构造旧 `chat` 键、pi 引擎恒读 `ctx.chat`。U6 已单批同时切换写端（core 构造
+// resume）与读端（pi 改读）并删 `chat` 键，resume 现为唯一会话形态键——全程不存在
+// 「写新读旧」窗口（错配 = resume 静默失效、每轮新文件、sessionFile 被覆盖）。
+// 同批退役已落地：轮次相位反向通道与 interact 方法已随 U5 删除（D5——续聊轮统一
+// 为新 run + resume 锚点，轮次终态由 run 应答承载）。
 
 /** 协议版本（引擎包 manifest `xyz-agent.subagentEngine.protocol` 与 initialize 应答同值）。 */
 export const ENGINE_PROTOCOL_VERSION = 1;

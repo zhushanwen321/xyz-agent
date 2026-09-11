@@ -1,7 +1,7 @@
 // src/protocol/methods.ts
 //
 // 9 正向方法（core → 引擎）params/result 逐方法写死（v1）。设计权威源：
-// 设计 §3.3 方法集表 + impl-plan §2.1「10 正向方法」。
+// 设计 §3.3 方法集表 + impl-plan §2.1「10 正向方法」（[H1] 收敛为 9）。
 //
 // [v1.x 增量（chat-domain 设计 §3.2 D1-A）]：增量以可选参数形态落在 run.params.chat
 // （会话形态参数 + 冷续 resume 锚点），major 不 bump。[H1] chat-run 统一后续聊 =

@@ -40,7 +40,7 @@ import {
 import { resetAllEpipeFailures } from "../stdin-writer.ts";
 import { PI_ADAPTER_VERSION, PI_ENGINE_ID, PI_POOL_KEY } from "../constants.ts";
 
-/** fake 子进程：stdin 写捕获 + EPIPE 注入 + kill 观测（同 chat-session.test 形态）。 */
+/** fake 子进程：stdin 写捕获 + EPIPE 注入 + kill 观测（原 chat-session.test 形态，该文件已随 U5 删除）。 */
 class FakeChild extends EventEmitter {
   readonly pid = 7331;
   killed = false;

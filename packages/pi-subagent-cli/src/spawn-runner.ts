@@ -164,7 +164,7 @@ export interface SpawnRunParams {
    * **并收割子进程**——每轮一进程，续聊 = 新 run + resume 锚点（--session 续写），
    * 进程不再保活（[H1 U5] ChatSessionRegistry 长驻语义已随 registry 删除）。
    * run 的 resolve 与 kill 均以 agent_settled 为准。缺省 = 一次性 run（agent_end 即
-   * 终态）。字段名沿用 chat 会话形态参数的构造面（run.params.chat 传入）。
+   * 终态）。字段名沿用会话形态参数的构造面（run.params.resume 传入）。
    */
   chatMode?: boolean;
 }
@@ -359,8 +359,9 @@ function buildTranslatorOpts(
       ? {
         onAgentSettled: () => {
           // [H1 U3] agent_settled（真空闲）= chat 轮 run 的 resolve 与收割边界（D7）：
-          // 相位回调先于 run resolve（协议事件流时序——idle 帧先于 run 应答帧），
-          // resolveChatRun settle exitPromise（run 应答不等收割），随后 fire-and-forget
+          // onChatAgentSettled 回调先于 run resolve（run-spawn-once.integration 的
+          // 轮次时序断言面），resolveChatRun settle exitPromise（run 应答不等收割），
+          // 随后 fire-and-forget
           // 杀链收割子进程——续聊 = 新 run + resume 锚点，进程不再保活。
           runEnd.endedCleanly = true;
           callbacks.onChatAgentSettled?.();
