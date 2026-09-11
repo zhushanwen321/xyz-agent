@@ -10,7 +10,8 @@
  *   setSessionName / getState / prompt helper
  * - 断言纯函数（场景脚本与 harness.test.mjs 单测共用）：
  *   rebuildPreview / parseLogMessages / extractRenameLogEntries / extractLastStopAssistant /
- *   assertTitleGuards / classifyFailure
+ *   firstAssistantStartT / lastStopAssistantEndT / countToolCalls / countLlmRequestLogs /
+ *   countSessionInfoEntries / assertTitleGuards / classifyFailure
  * - 清理：按 PID kill + tmp 目录删除（E2E_KEEP_TMP=1 保留现场）
  *
  * 探针结论依据见 e2e/README.md（P0）：xiaomi-token-plan-cn 为 pi-ai 内置 provider，
@@ -279,9 +280,105 @@ export function extractLastStopAssistant(jsonlLines) {
 	return last;
 }
 
+/**
+ * 从交错时间轴取首条 assistant message_start 事件的时刻（A6 first-prompt 触发时点断言，设计 V2）。
+ * timeline 条目 = createTimeline 的 {t, stream, line}：只认 stdout 流（stream === "out"）的
+ * JSON 事件行（RPC 无过滤转发全部 session 事件），坏 JSON 行跳过。无匹配返回 null（调用方 assert）。
+ * @param {Array<{t: number, stream: string, line: string}>} timeline
+ * @returns {number | null}
+ */
+export function firstAssistantStartT(timeline) {
+	if (!Array.isArray(timeline)) throw new TypeError("firstAssistantStartT: expects timeline entry array");
+	for (const e of timeline) {
+		if (e?.stream !== "out") continue;
+		let ev;
+		try {
+			ev = JSON.parse(e.line);
+		} catch {
+			continue; // 坏行跳过（时间轴含非 JSON 行，仅入档排查）
+		}
+		if (ev?.type === "message_start" && ev?.message?.role === "assistant") return e.t;
+	}
+	return null;
+}
+
+/**
+ * 从交错时间轴取最后一条 stopReason==="stop" 的 assistant message_end 事件时刻
+ * （A6 完成序观察 / A7 立即落库断言；A1 流序判别内嵌同名逻辑的通用化版本）。
+ * 无匹配返回 null。
+ * @param {Array<{t: number, stream: string, line: string}>} timeline
+ * @returns {number | null}
+ */
+export function lastStopAssistantEndT(timeline) {
+	if (!Array.isArray(timeline)) throw new TypeError("lastStopAssistantEndT: expects timeline entry array");
+	let last = null;
+	for (const e of timeline) {
+		if (e?.stream !== "out") continue;
+		let ev;
+		try {
+			ev = JSON.parse(e.line);
+		} catch {
+			continue; // 坏行跳过
+		}
+		if (ev?.type === "message_end" && ev?.message?.role === "assistant" && ev?.message?.stopReason === "stop") {
+			last = e.t;
+		}
+	}
+	return last;
+}
+
+/**
+ * 数 session JSONL 行数组中指定工具的 toolCall 次数（A7 agent-tool 场景，设计 V3/V10 的
+ * 确定性判据支撑：pi RPC 无工具清单查询命令，但「无工具 ⇒ 必无 toolCall」与 agent 行为无关）。
+ * toolCall block 形态：assistant message content 数组成员 {type:"toolCall", name, arguments}；
+ * toolResult message 与非数组 content 不计入。坏行跳过；lines 为 null/undefined（session
+ * 文件尚未创建契约）按 0 计。
+ * @param {string[] | null | undefined} lines session JSONL 行数组
+ * @returns {number}
+ */
+export function countToolCalls(lines, toolName) {
+	if (typeof toolName !== "string") throw new TypeError("countToolCalls: toolName must be string");
+	if (lines === null || lines === undefined) return 0;
+	if (!Array.isArray(lines)) throw new TypeError("countToolCalls: expects string[]");
+	let count = 0;
+	for (const line of lines) {
+		let entry;
+		try {
+			entry = JSON.parse(line);
+		} catch {
+			continue; // 坏行跳过
+		}
+		if (entry?.type !== "message" || entry.message?.role !== "assistant") continue;
+		if (!Array.isArray(entry.message.content)) continue;
+		for (const block of entry.message.content) {
+			if (block?.type === "toolCall" && block.name === toolName) count++;
+		}
+	}
+	return count;
+}
+
+/**
+ * session JSONL 行数组中 rename LLM request 内省日志条数（A6 ④「后续 round 不再改名」的
+ * 无新调用断言；A3 3c 场景内同名本地实现的 harness 通用版）。lines 为 null 时按 0 计。
+ * @param {string[] | null} lines
+ * @returns {number}
+ */
+export function countLlmRequestLogs(lines) {
+	return extractRenameLogEntries(lines ?? []).filter((e) => e.message.includes(LLM_REQUEST_MARKER)).length;
+}
+
+/**
+ * session JSONL 行数组中 session_info entry 条数（A6 ④「无新 session_info」断言；A3 3c
+ * 场景内同名本地实现的 harness 通用版）。lines 为 null 时按 0 计。
+ * @param {string[] | null} lines
+ * @returns {number}
+ */
+export function countSessionInfoEntries(lines) {
+	return parseJsonlEntries(lines ?? []).filter((e) => e?.type === "session_info").length;
+}
+
 /** 英文 kebab-case：小写字母/数字 + 连字符分段。 */
-const KEBAB_RE = /^[a-z0-9]+(-[a-z0-9]+)*$/;
-/** 英文代词开头（We/I/This 作为独立词开头，\b 保证不误伤 widget/ios 等前缀拼接词）。 */
+const KEBAB_RE = /^[a-z0-9]+(-[a-z0-9]+)*$/;/** 英文代词开头（We/I/This 作为独立词开头，\b 保证不误伤 widget/ios 等前缀拼接词）。 */
 const EN_PRONOUN_START_RE = /^(?:we|i|this)\b/i;
 /** 中文代词/指示词开头。 */
 const ZH_PRONOUN_START = ["我", "你", "它"];

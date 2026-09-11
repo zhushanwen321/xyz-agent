@@ -2,7 +2,7 @@
  * E2E 场景 A1-A5 的 vitest 包装（cw test gate 兼容）。
  *
  * 背景：cw test gate 用 vitest 输出解析器统计 `N passed` / `N failed`，
- * `node e2e/run-all.mjs` 的自定义表格输出解析不到（passed=0）。本文件把 5 个
+ * `node e2e/run-all.mjs` 的自定义表格输出解析不到（passed=0）。本文件把 7 个
  * 场景包装成 vitest test（从 run-aN.mjs import 场景函数），gate 即可统计。
  *
  * gate 语义转换：runScenario 内部 catch 不抛（单场景失败不阻断后续），返回
@@ -21,6 +21,8 @@ import { runA2 } from "./run-a2.mjs";
 import { runA3 } from "./run-a3.mjs";
 import { runA4 } from "./run-a4.mjs";
 import { runA5 } from "./run-a5.mjs";
+import { runA6 } from "./run-a6.mjs";
+import { runA7 } from "./run-a7.mjs";
 
 /**
  * 场景结果 → gate 语义：ok=false 或 A2 kebab 非合规时 throw（vitest test 失败）。
@@ -52,10 +54,14 @@ function toGate(result) {
 //   A4：阶段1（errEnd/settled 并行 120s + skip 45s）= 120s + 阶段2（180+120+45+10）= 355s
 //       → 合计 520s → ×1.2 = 624s
 //   A5：stopEnd/settled 并行 120s + LLM request 30s + 超时失败 45s = 195s → ×1.2 = 234s
+//   A6：首轮 settled/llmReq/start 并行 180s + renamed 45s + 落盘 10s = 235s + 次轮
+//       (settled 180s + skip 45s) = 225s → 合计 460s → ×1.2 = 552s → 取 600s
+//   A7：主进程 settled/toolLog 并行 180s + 落盘 10s = 190s + 对照 settled 180s = 370s
+//       → ×1.2 = 444s → 取 480s
 // 清理兜底说明：各 run-aN 场景函数内部 try/finally 已负责 pi/fixture 清理；wrapper 超时
 // ≥ 内部最坏和后 vitest 不会在场景自身清理前掐断，无需额外 afterEach（场景句柄不外泄，
 // 全局注册表需改 harness 内部，成本与收益不成比例）。
-describe("E2E 场景 A1-A5（真实 pi + 真实模型）", () => {
+describe("E2E 场景 A1-A7（真实 pi + 真实模型）", () => {
 	it("A1 工具型首轮：round 末触发 + 两段输入证据链", async () => {
 		toGate(await runA1());
 	}, 300_000);
@@ -75,4 +81,12 @@ describe("E2E 场景 A1-A5（真实 pi + 真实模型）", () => {
 	it("A5 超时兜底：hang provider 30s 超时不落库 + pi 存活", async () => {
 		toGate(await runA5());
 	}, 240_000);
+
+	it("A6 first-prompt 模式：首条 assistant 前 LLM request 已发出 + 标题仅基于 prompt + 后续不改名", async () => {
+		toGate(await runA6());
+	}, 600_000);
+
+	it("A7 agent-tool 模式：工具改名即时落库覆盖既有名 + first-stop 对照零 toolCall", async () => {
+		toGate(await runA7());
+	}, 480_000);
 });
