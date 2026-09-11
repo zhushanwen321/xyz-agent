@@ -203,7 +203,8 @@ import ActivityStrip from './message-stream/ActivityStrip.vue'
 import { useSessionPendingEntries } from '@/composables/panel/useCompactQueue'
 import SkillNoticeInline from './SkillNoticeInline.vue'
 import { useSkillNoticeStreamItems } from '@/composables/panel/useSkillNoticeStream'
-import { useForkNoticeStream } from '@/composables/panel/useForkNoticeStream'
+import { useForkNoticeFeed } from '@/composables/effects/useForkNoticeEffect'
+import { useSidebar } from '@/composables/features/sidebar/useSidebar'
 import { useLoadMoreHistory } from '@/composables/panel/useLoadMoreHistory'
 import { useSessionActive } from '@/composables/panel/useSessionActive'
 import { useMessageStreamFollowTriggers } from '@/composables/panel/useMessageStreamFollowTriggers'
@@ -306,11 +307,23 @@ const [loadMoreEl] = useConstantHeightAssert([
   { name: 'LOAD_MORE_RESERVED_HEIGHT', expected: LOAD_MORE_RESERVED_HEIGHT },
 ]).els
 
-/** ForkNotice 反馈行（transient，RV1）：feed 消费 + 交互封装在 useForkNoticeStream。
- *  [D6 死路径清理] absolute 定位链（forkNoticeBaseTop 注入 + 占位 deps）已整体删除——
- *  ForkNotice 为文档流 block（tailEl 容器内），定位由文档序自然堆叠。 */
-const { forkNotices, onView: onForkNoticeView, onDismiss: onForkNoticeDismiss } =
-  useForkNoticeStream(() => props.sessionId)
+/** ForkNotice 反馈行（transient，RV1）：feed 消费 + 交互（原 useForkNoticeStream，u20 并回
+ *  本组件——一行派生 + 两个一行转发，独立文件无承载）。[D6 死路径清理] absolute 定位链
+ *  （forkNoticeBaseTop 注入 + 占位 deps）已整体删除——ForkNotice 为文档流 block（tailEl
+ *  容器内），定位由文档序自然堆叠。 */
+const { notices: forkNoticeFeed, dismissNotice: dismissForkNotice } = useForkNoticeFeed()
+// [W6] 顶层实例化 useSidebar：避免在 onView 回调内每次新建实例（composable 工厂模式反模式）。
+const { selectSession } = useSidebar()
+/** 当前 session 的 ForkNotice 列表（响应式，feed 推送自动更新） */
+const forkNotices = computed(() => forkNoticeFeed(props.sessionId))
+/** 点击查看 → 跳转到分支 session（selectSession 载入 panel） */
+function onForkNoticeView(newSessionId: string): void {
+  void selectSession(newSessionId)
+}
+/** 点击关闭 × → 移除该条通知（路由键 = 当前 session） */
+function onForkNoticeDismiss(noticeId: number): void {
+  dismissForkNotice(props.sessionId, noticeId)
+}
 
 /** 最后一个含 user 的 turn 的数组下标（只有它的 user 可编辑，避免编辑中间 user 丢失其后对话）。
  *  [u5] 基准 = streamItems（与 Virtualizer slot 的 index 同源——:data 换 streamItems 后
