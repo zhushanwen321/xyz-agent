@@ -823,7 +823,7 @@ src/discovery/env.ts（新增）
 要点：
 
 1. **发现层保持零 pi 依赖**：`roots.ts` / `env.ts` / `find.ts` 只接受注入的 `signals` 与 `metadataProvider`，不 import pi（沿用 `roots.ts:8-11` 的既有分层声明）。pi 侧类型以 `import type` 进入，不产生运行时依赖。
-2. **`ctx` 采集必须可降级**：`execute` 用可选链读取 `ctx?.sessionManager?.getSessionDir?.()`。**为什么**：现有测试 `index.test.ts:97` 以 `execute('tc-1', {action:'find'}, undefined, undefined, undefined)` 调用（第 5 参 `ctx` 为 `undefined`），无条件解引用会把这条断言 `👉` 错误文案的测试打成 `TypeError`。运行时同理——pi 升级若移除该字段，工具应降级而非抛内部错误；实施期加固：可选链之上再加 try/catch，「方法存在但调用抛错」同样降级（index.ts，测试覆盖三态）。`liveSessionDir === undefined` 时走 §6.1 的三根降级（`[env]` + `[default]` + `[legacy]`），三个已知宿主的布局在这三根下均已完备。
+2. **`ctx` 采集必须可降级**：`execute` 用可选链读取 `ctx?.sessionManager?.getSessionDir?.()`。**为什么**：现有测试 `index.test.ts:97` 以 `execute('tc-1', {action:'find'}, undefined, undefined, undefined)` 调用（第 5 参 `ctx` 为 `undefined`），无条件解引用会把这条断言 `👉` 错误文案的测试打成 `TypeError`。运行时同理——pi 升级若移除该字段，工具应降级而非抛内部错误；实施期加固：可选链之上再加 try/catch，「方法存在但调用抛错」同样降级（index.ts，测试覆盖三态）。`liveSessionDir === undefined` 时走 §6.1 的候选根降级（B 先行路径 = `[default]` + `[legacy]`，`[subagent]` 恒在；退路形态含 `[env]`，§6.13）。
 3. **`[live]` 规范化**：`basename(liveSessionDir)` 匹配 encodeCwd 形态时取 `dirname`，否则取自身。该判据对应 pi 两条路径的差异（§6.1 证据）。
 4. **去重按 realpath**，保留最高优先级标签；`doctor` 中把被去重的根以「与 N 同路径，已去重」注记显示。
 5. **`doctor` 的诊断结论只陈述事实**：输出各根文件数与「最高优先级 main 根是否非空」，**不输出**「真的没有这个 session」这类归因断言（§5.2 / §3.3 教训）。subagent 根默认不扫（§6.3）。
@@ -947,14 +947,14 @@ M-1 独立交付且先行；M0–M3 是一个不可分割的正确性交付（M3
 设计阶段无法确定、留给实施期验证的点（**不编造结论**）：
 
 1. **`ctx.sessionManager.getSessionDir()` 在 RPC 模式的实际返回值**。类型上 `sessionManager` 是 `ExtensionContext` 的基础字段（`types.d.ts:209-219`，非 mode-gated），但需在 xyz-agent 的 RPC 子进程里实跑确认其返回 `<dataDir>/pi/sessions`（而非 cwd 编码子目录）。**失败降级**：`[live]` 信号不可用时，`[env]` + `[default]` + `[legacy]` 三根仍能覆盖三宿主（U1 的候选根设计已保证降级路径可用）。
-2. **`[live]` 的 encodeCwd 判据**是否会误判（例如用户 cwd 路径恰以 `--` 结尾）。实施时用真实路径集合回归；若误判，改用「该目录的父目录名为 `sessions`」作判据。
+2. **`[live]` 的 encodeCwd 判据**是否会误判（例如用户 cwd 路径恰以 `--` 结尾）。实施时用真实路径集合回归；若误判，改用「该目录的父目录名为 `sessions`」作判据。（✅ 已消解：roots.test 真实形态用例 + Gate B P-6 活体确认，台账见 impl-plan 残留风险节）
 3. **`SessionManager.listAll` 的实测成本与合并语义**。**已由源码核定**（第 3 轮修订）：只扫一层平铺目录、不递归（`session-manager.js:550-556`）；每文件全量解析、读到 EOF（`:443-511`）——§6.6 据此已定为惰性 + 窄化 + 缓存。**仍需实测**：(a) 真实目录上的单次耗时（对照先例 530 文件 667ms，`docs/2026-08-10-cwd-popup-redesign.md:190`）以校准 TTL 量级；(b) 多目录结果的重复 id 合并规则；(c) `name` 在旧 session 上的缺失率。**降级**：任一项不达预期即回退到纯 TS 首条 user 读取（U11 的降级路径），标题检索降级为不可用而非错误。
 4. **`find` 扫多根的耗时**。纯 pi 下单根 4619 文件，`find` 已有全量首行扫描。新增 `[legacy]`（通常不存在）应 <1ms（§12.1 P-8 实测登记）；若 `find` P50 劣化超 20%，考虑首行扫描改并发（当前为串行 `for`）。
 5. **uuid 归一化的误命中面**。`norm` 匹配（小写 + 去连字符）会把「8 位 hex 但语义是别的东西」的 query 也纳入 uuid 匹配。**对比基线写死**：与现状（精确子串 + `looksLikeUuidFragment` 无回退）对**同一组 query** 比命中数与召回类型，二者做差；增量仅限「大小写/连字符变体」（`looksLikeUuidFragment` 改用 `norm(query)` 是等价变换——`/i` 已忽略大小写，去连字符不扩字符类），预期无召回回归，实测确认。**唯一非等价差异（实施期实装核对，照抄 `find.ts` `looksLikeUuidFragment` 注释措辞）**：纯连字符 query 归一化为空串后不再判 uuid 特征——现状 `/^[0-9a-f-]+$/i` 会判其具备 uuid 特征而跳过关键词回退，新版归一化后为空串则走关键词回退（精确子串层已先处理它，此处语义更准确），行为更合理；对差基线时该形态的召回差异属预期，不计为回归。
 6. **`PI_CODING_AGENT_SESSION_DIR` 注入后的实际效果与继承面**。活体 `ps eww` 确认可见（§12.1 P-3）；pi 未因 `--session-dir` 与 env 同时存在而行为异常（按 `main.js:530-533` 的 `??` 链 argv 优先，行为应不变——实跑确认）；V7 的 bash 派生类落盘位置与 §6.5 声明一致。
 7. **legacy 根非空的机器**。§4.2 注二指出两条迁移链都可能产生「legacy 非空」：① 纯 pi 的 `~/.pi/sessions`（pi `migrations.js` 残留）——**在候选根内**；② xyz-agent 的 `~/.xyz-agent/sessions`（`pi-maintenance.ts` 残留）——**不在候选根内**（候选根是 `dirname(agentDir)/sessions` = `~/.xyz-agent/pi/sessions`）。需分别构造回归「非空即纳入候选 + doctor 告警」路径，并确认不会与 `[default]` 形成大量陈旧重复条目；对 ② 裁决「是否补第四候选根」或「显式声明不覆盖及原因」。
 8. **relay / 其他 runtime 派生链是否带 `--session-dir`**——**已核**（第 2 轮复审补充实测）：relay 链带（`session-runner.ts:1149` → `relay.mjs:163` → `relay-registry.ts:374`），与 §6.5 表第一行同判定；本仓全部 `pi --mode rpc` spawn 点已穷举（`rpc-client.ts:289` / `session-runner.ts:1149` / relay 经帧 argv 透传），无遗漏。
-9. **`doctor` 的 token 与墙钟成本**。输出含 4–5 个根；「扫描耗时」若使输出超预算则折叠为可选参数；墙钟上界受 §6.3 的 subagent 根默认不扫 + 进程内缓存约束，需实测确认。
+9. **`doctor` 的 token 与墙钟成本**。输出含 4–5 个根；「扫描耗时」若使输出超预算则折叠为可选参数；墙钟上界受 §6.3 的 subagent 根默认不扫 + 进程内缓存约束，需实测确认。（✅ 已消解：subagent 根默认不扫 + 进程内缓存约束，Gate B 活体 doctor 秒级返回，台账见 impl-plan）
 10. **手工迁移脚本的 header 覆盖率**（方案 B）。`~/.xyz-agent/pi/sessions/` 首测 14 文件中 3 个无 `session_info`（2026-09-10 复测存量 9 个，期间有清理）；迁移依赖的是首行 `session` header 的 `cwd` 字段——需实测全部存量文件的首行 cwd 覆盖率（决定 `_migrated-no-cwd/` 的占比），并确认 pi 对 `_migrated-no-cwd/` 这类非 encodeCwd 形态子目录的 `listAll`/resume 行为（源码看是「任意子目录均枚举」，`session-manager.js:1306-1318`，需实跑确认）。
 11. **`--extension` 恒传断言**（方案 B / §6.12 前提）。需实测 xyz-agent 所有 spawn 路径上 `options.extensionPaths` 非空（mandatory 18 包理论恒传）；若存在零 extension 形态，reap 该次漏收（fail-safe 可接受）但清单文件仍须写入。
 12. **app 侧扫描对「全子目录」形态的兼容**（方案 B，v7 全收敛）。源码已判定：会话列表 `scanPiSessionsFromDisk`（`session-file-utils.ts:1015-1058`）根层 + 一层子目录都扫 → **兼容**；`import-service.ts:252` 已写 encodeCwd 子目录 → **兼容**；`usage-stats-service.ts` 单层扫描 → **确定破坏**（已列 U15① 改造为两层——两层即够，pi 只写一层 encodeCwd，`_migrated-no-cwd/` 与改造后的 fork 也都是一层）；`session-fork.ts` 写平铺 → **确定不一致**（已列 U15③ 改造）；`background-task-reaper` 扫 `<agentDir>/base-tool-enhance/`（agentDir 派生，与 sessions 形态无关）与 `workflow-extractor`（按传入文件路径解析、不枚举目录）→ **兼容**（第 5 轮影响面复审源码核实）。

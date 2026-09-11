@@ -542,8 +542,9 @@ export function parseSessionHeader(file, fsMod) {
  * 仓内功能 sidecar 白名单必漏）；sidecar 判定排除 .jsonl 后缀（.jsonl 一律按主文件独立走
  * header 分发，杜绝同一文件被双规则处理）。目标已存在同名 → 跳过并计数。
  * 主文件跳过不吞 sidecar 随行（2026-09 design-code-sync F3）：skip 仍执行随行循环——
- * 中断续传/双源同名场景下主文件已在位而 sidecar 未搬时，随行循环是 sidecar 补搬的
+ * 源与目标同 id 并存（窗口写入/双源同名兼并）时补搬漏搬 sidecar，随行循环是补搬的
  * 唯一通路；sidecar 自身的目标已存在检查保证幂等（已搬侧 sidecarSkipped，零重复动作）。
+ * 中断续传态不经此通路（纯 rename 后 kill），由备份残留 + doctor 兜底。
  */
 export function distributeSessions(srcRoot, destRoot, report, fsMod) {
   if (!fsMod.existsSync(srcRoot)) return
