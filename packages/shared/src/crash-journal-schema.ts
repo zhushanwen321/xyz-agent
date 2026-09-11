@@ -54,14 +54,51 @@ export type CrashJournalEventName =
  */
 export type CrashJournalReason = string
 
-/** reason 已知值集合（schema reason 行列出的 6 值；开放枚举的登记面，非校验闸）。 */
+/**
+ * reason 已知值集合（开放枚举的登记面，非校验闸）。
+ *
+ * 前段 6 值 = 设计 D1 schema reason 行逐字转录；其余 = 实装 append 调用点静态可枚举
+ * 的已知值全集（impl-plan 偏差 #18 残留风险回写，按写入域分组，来源文件见行注释）。
+ * 两类动态形态刻意不登记（非闭合字面量，落 open 集语义覆盖）：Electron
+ * render-process-gone reason 透传（window-factory reload 行，值域由 Electron 决定）
+ * 与 trigger-review 的 `condition-<id>` 参数化模板（trigger-patrol.ts）。
+ */
 export const CRASH_JOURNAL_KNOWN_REASONS = [
+  // 设计 D1 schema reason 行（6 值，逐字）
   'extension-stale-ctx',
   'sigterm',
   'planned',
   'unclean-exit',
   'warn-tier',
   'trunc-tier',
+  // pi-respawn auto-respawn 四态 + 失败走向二值（pi-respawn.ts）
+  'scheduled',
+  'attempt',
+  'succeeded',
+  'retry-scheduled',
+  'breaker-tripped',
+  // runtime supervisor / window factory（main 侧监督与 renderer 守护）
+  'process_exit',
+  'liveness-unhealthy',
+  'renderer-unresponsive',
+  'circuit-breaker',
+  // renderer 入站超界帧丢弃（renderer-log-handler.ts）
+  'over-size-limit',
+  // reattach-skipped 全集（startup-reattach.ts REATTACH_SKIP_REASONS + main.ts 隔离）
+  'file-missing',
+  'restore-failed',
+  'reap-wait-timeout',
+  'stale-checkpoint-after-clean-exit',
+  // checkpoint-corrupt（runtime-checkpoint.ts）
+  'parse-failed',
+  // registry-miss（message-bus 出站守卫 dropReason 闭合二值）
+  'registry_miss',
+  'still_oversize_after_truncate',
+  // rolling-restart-forced / deferred（rolling-restart.ts）
+  'hard-threshold',
+  'defer-limit',
+  'inflight',
+  'absent-report',
 ] as const satisfies readonly CrashJournalReason[]
 
 /** 系统级内存压力子对象（schema memPressure 行，值单位 MB）。 */

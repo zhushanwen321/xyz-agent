@@ -178,7 +178,7 @@ session attach（create/restore/fork）
 
 **D7：可观测（选定）**
 
-- **采用**：每次回收一行结构化日志（sid / idleMs / runtime 进程 RSS 水位——pi 进程 RSS 不经 RPC 暴露，记 runtime 水位并归因到回收时刻）；每次恢复一行 elapsed；**每拍 info 级汇总**（scanned=候选数 / 回收清单 / 因阈值未满与各豁免项的跳过分布（含 noActivity / seatHeld / reclaimFailed 增量维度）/ runtime `process.memoryUsage()` 水位——「回收饿死」类问题（如维护通道污染若回归）在分布里可见；info 而非 debug：5 分钟一拍频率极低，prod 落盘保证可查，水位是代价声明 1 重审触发的观测手段）。阶段二台账落地后追加 `event=pi-reclaimed` 进 `runtime.jsonl`——本设计保证日志行格式可解析。
+- **采用**：每次回收一行结构化日志（sid / idleMs / runtime 进程 RSS 水位——pi 进程 RSS 不经 RPC 暴露，记 runtime 水位并归因到回收时刻）；每次恢复一行 elapsed；**每拍 info 级汇总**（scanned=候选数 / 回收清单 / 因阈值未满与各豁免项的跳过分布（含 noActivity / seatHeld / reclaimFailed 增量维度）/ runtime `process.memoryUsage()` 水位——「回收饿死」类问题（如维护通道污染若回归）在分布里可见；info 而非 debug：5 分钟一拍频率极低，prod 落盘保证可查，水位是代价声明 1 重审触发的观测手段）。阶段二台账落地后追加 `event=reclaimed` 进 `runtime.jsonl`（[2026-09-11 阶段3前置回写] 预登记名 `pi-reclaimed` 在实装时对齐 crash-forensics-and-watchdog.md §3.3 D1 event 21 值闭合枚举改为 `reclaimed`，权威源 `packages/runtime/src/services/session/idle-pi-reaper.ts` 台账双写点）——本设计保证日志行格式可解析。
 - **被否**：用户 toast 通知——回收是正常资源管理不是事件（与「自愈必须可见」不同：自愈对应故障、回收对应闲置）。
 - **效果**：G4 成立。
 

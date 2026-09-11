@@ -3,8 +3,9 @@
  *
  * 守护三条验收线：
  * 1. 枚举与设计 §3.3 D1 schema JSON 块逐字一致——event 21 值 / layer 5 值 /
- *    reason 已知 6 值（下方 DESIGN_* 常量为设计文档行的逐字转录，设计改 schema
- *    时同步改这里；event 枚举不得混入 reason 值 unclean-exit）；
+ *    reason 已知值分层登记（下方 DESIGN_REASON_LINE = 设计 reason 行 6 值逐字转录，
+ *    IMPLEMENTED_KNOWN_REASONS = 设计行 ∪ 实装 append 调用点静态可枚举值全集；
+ *    设计改 schema 时同步改 DESIGN_*；event 枚举不得混入 reason 值 unclean-exit）；
  * 2. 字段全可空——仅 {ts,layer,event} 的最小事件与全 null 事件均合法
  *    （设计「不知道 ≠ 没打点」；类型收窄导致构造不过 = 本文件编译红）；
  * 3. JSON.stringify→parse 往返不丢字段——JSONL 落盘/回读的最低保真契约
@@ -53,6 +54,43 @@ const DESIGN_REASON_LINE = [
   'unclean-exit',
   'warn-tier',
   'trunc-tier',
+]
+/**
+ * 实装 append 调用点静态可枚举已知值全集（impl-plan 偏差 #18 残留风险回写，逐值
+ * 来源 = 全仓 crash 台账 append 点枚举；开放形态——Electron reason 透传、
+ * `condition-<id>` 模板、无 reason 事件——不在此列，落 open 集语义）。
+ */
+const IMPLEMENTED_KNOWN_REASONS = [
+  // 设计 D1 schema reason 行（6 值）
+  ...DESIGN_REASON_LINE,
+  // pi-respawn auto-respawn 四态 + 失败走向二值（pi-respawn.ts）
+  'scheduled',
+  'attempt',
+  'succeeded',
+  'retry-scheduled',
+  'breaker-tripped',
+  // runtime supervisor / window factory（main 侧监督与 renderer 守护）
+  'process_exit',
+  'liveness-unhealthy',
+  'renderer-unresponsive',
+  'circuit-breaker',
+  // renderer 入站超界帧丢弃（renderer-log-handler.ts）
+  'over-size-limit',
+  // reattach-skipped 全集（startup-reattach.ts REATTACH_SKIP_REASONS + main.ts 隔离）
+  'file-missing',
+  'restore-failed',
+  'reap-wait-timeout',
+  'stale-checkpoint-after-clean-exit',
+  // checkpoint-corrupt（runtime-checkpoint.ts）
+  'parse-failed',
+  // registry-miss（message-bus 出站守卫 dropReason 闭合二值）
+  'registry_miss',
+  'still_oversize_after_truncate',
+  // rolling-restart-forced / deferred（rolling-restart.ts）
+  'hard-threshold',
+  'defer-limit',
+  'inflight',
+  'absent-report',
 ]
 // schema JSON 块顶层字段集（14 个，与 CrashJournalEvent 字段一一对应）
 const DESIGN_TOP_LEVEL_FIELDS = [
@@ -104,10 +142,29 @@ describe('CRASH_JOURNAL_LAYERS（D1 schema layer 行）', () => {
   })
 })
 
-describe('CRASH_JOURNAL_KNOWN_REASONS（D1 schema reason 行，开放枚举已知值）', () => {
-  it('恰 6 值且与设计 reason 行完全一致（行末「…」= 开放枚举，不在常量内）', () => {
-    expect(CRASH_JOURNAL_KNOWN_REASONS).toHaveLength(6)
-    expect([...CRASH_JOURNAL_KNOWN_REASONS].sort()).toEqual([...DESIGN_REASON_LINE].sort())
+describe('CRASH_JOURNAL_KNOWN_REASONS（开放枚举已知值登记面：设计行 + 实装调用点）', () => {
+  it(`恰 ${IMPLEMENTED_KNOWN_REASONS.length} 值（设计行 + 实装已知值全集）`, () => {
+    expect(CRASH_JOURNAL_KNOWN_REASONS).toHaveLength(IMPLEMENTED_KNOWN_REASONS.length)
+  })
+
+  it('设计 reason 行 6 值全部登记（行末「…」= 开放枚举，登记面是超集不是逐字转录）', () => {
+    for (const reason of DESIGN_REASON_LINE) {
+      expect(CRASH_JOURNAL_KNOWN_REASONS).toContain(reason)
+    }
+  })
+
+  it('与实装 append 调用点已知值全集完全一致（无多无漏，偏差 #18 差集锁空）', () => {
+    expect([...CRASH_JOURNAL_KNOWN_REASONS].sort()).toEqual([...IMPLEMENTED_KNOWN_REASONS].sort())
+  })
+
+  it('逐值断言（每值独立断言，任一漂移定位到具体值）', () => {
+    for (const reason of IMPLEMENTED_KNOWN_REASONS) {
+      expect(CRASH_JOURNAL_KNOWN_REASONS).toContain(reason)
+    }
+  })
+
+  it('无重复值（登记面供消费方测试作全集矩阵，重复会污染矩阵）', () => {
+    expect(new Set(CRASH_JOURNAL_KNOWN_REASONS).size).toBe(CRASH_JOURNAL_KNOWN_REASONS.length)
   })
 
   it('开放枚举：schema 未列的未知 reason 可携带且往返不丢（类型保持 string 不收窄）', () => {
