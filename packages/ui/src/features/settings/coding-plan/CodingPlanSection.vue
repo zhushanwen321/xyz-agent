@@ -88,7 +88,7 @@
 
       <!-- api-key 类：凭证来源分段控件（D3）+ 专属 Key 输入（仅选「用专属 Key」时出现） -->
       <template v-else>
-        <div class="mt-1.5" data-testid="quota-credential-source">
+        <div v-if="exclusiveApplicable" class="mt-1.5" data-testid="quota-credential-source">
           <Label class="mb-1 block text-[10px] text-neutral-mid">
             {{ t('settings.providerEdit.quotaCredentialSourceLabel') }}
           </Label>
@@ -114,7 +114,7 @@
           <p class="mt-1 text-[10px] text-neutral-dim" data-testid="quota-source-hint">{{ sourceHint }}</p>
         </div>
 
-        <div v-if="credentialSource === 'exclusive'" class="mt-1.5" data-testid="quota-exclusive-key-block">
+        <div v-if="exclusiveApplicable && credentialSource === 'exclusive'" class="mt-1.5" data-testid="quota-exclusive-key-block">
           <Label class="mb-1 block text-[10px] text-neutral-mid">
             {{ t('settings.providerEdit.quotaApiKey') }}
             <span class="normal-case text-neutral-dim">· {{ fieldBadgeLabel('apiKey') }}</span>
@@ -258,7 +258,7 @@ import { Loader2, CheckCircle2, AlertCircle, ExternalLink } from '@lucide/vue'
 import { useI18n } from 'vue-i18n'
 
 import type { NormalizedQuotaRow, QuotaAuthKind, QuotaCredentialSource, QuotaFetchFailureReason } from '@xyz-agent/shared'
-import { QUOTA_PRESETS } from '@xyz-agent/shared'
+import { QUOTA_PRESETS, supportsExclusiveCredential } from '@xyz-agent/shared'
 import type { QuotaTestStatus, ReadinessMissing } from '../injection-keys'
 import QuotaWindowList from './QuotaWindowList.vue'
 
@@ -286,23 +286,10 @@ const props = withDefaults(defineProps<{
   credentialSource: QuotaCredentialSource
   /** Provider 侧是否有可用凭据（决定「用 Provider 凭据」分段项是否可点） */
   providerCredentialAvailable: boolean
-  /**
-   * 专属 Key 是否已保存（D3：单独表达，不再与 provider 侧合并）。
-   * [保留] 调用方（ProviderEditBody）仍传该值；徽标与输入框占位均已改由 readiness.missing
-   * 同源派生（§7.4：类型切换后旧专属 Key 归属失效），本 prop 不再参与渲染 —— 移除需同步改
-   * ProviderEditBody，非本批领地（与 cookieSet / workspaceConfigured 同一处理）。
-   */
-  quotaApiKeyConfigured?: boolean
   /** Provider 侧凭据「已填但未保存」（§7.4 两套文案的区分依据，由 ProviderEditBody 计算写入） */
   providerCredentialPendingSave?: boolean
   /** Workspace 地址输入草稿（明文回显，D13 判定只看草稿） */
   workspaceInput?: string
-  /**
-   * 是否已配置 workspace（provider.quota.workspace 非空）。
-   * [保留] 调用方（ProviderEditBody）仍传该值；徽标已改由 readiness.missing 同源派生
-   * （§7.4），本 prop 不再参与渲染 —— 移除需同步改 ProviderEditBody，非本批领地。
-   */
-  workspaceConfigured?: boolean
   /** 当前 fetcher 是否需要 workspace 配置（QuotaPreset.requiresWorkspace） */
   needsWorkspace?: boolean
   /** 齐备性派生量（D1）——「保存并测试」按钮禁用状态的唯一依据 + 字段级提示来源 */
@@ -320,22 +307,13 @@ const props = withDefaults(defineProps<{
   oauthReady?: boolean
   configuring: boolean
   configureErrorMsg: string
-  /**
-   * provider.quota.cookieSet（磁盘已保存标记，D7）。
-   * [保留] 调用方（ProviderEditBody）仍传该值；徽标已改由 readiness.missing 同源派生
-   * （§7.4：类型切换后旧 cookie 归属失效），本 prop 不再参与渲染 —— 移除需同步改
-   * ProviderEditBody，非本批领地。
-   */
-  cookieSet: boolean
   helpUrl?: string
   helpText?: string
 }>(), {
   fetcherId: undefined,
   apiKeyInput: '',
-  quotaApiKeyConfigured: false,
   providerCredentialPendingSave: false,
   workspaceInput: '',
-  workspaceConfigured: false,
   needsWorkspace: false,
   testFailReason: null,
   authKinds: () => [],
@@ -417,6 +395,14 @@ function isMissing(key: MissingField): boolean {
   return props.readiness.missing.includes(key)
 }
 
+/**
+ * 专属 Key 对该凭证形态是否适用 —— 与 runtime resolveCredential 的 exclusive 收窄、
+ * renderer readiness 的专属 Key 分支调用同一个 shared 谓词（§7 残留 11）。不适用时整组
+ * 凭证来源控件（分段控件 + 专属 Key 输入）不渲染：显示一个 runtime 不会采用的选项，
+ * 就是「UI 说用 A、runtime 实际用 B」。
+ */
+const exclusiveApplicable = computed<boolean>(() => supportsExclusiveCredential(props.authKinds))
+
 /** 字段级提示文案（显式白名单查 i18n，不写 missing 兜底循环——让「'type' 不配文案」成为结构保证） */
 function missingHint(key: MissingField): string {
   return t(MISSING_HINT_KEYS[key])
@@ -424,7 +410,7 @@ function missingHint(key: MissingField): string {
 
 /**
  * 专属 Key 输入框占位（D7）：与徽标同源读 readiness.missing —— 有缺口时给「粘贴 Key」指引，
- * 无缺口时说明「已配置，输入新值可覆盖」。历史实现读磁盘标记 quotaApiKeyConfigured，在 D5
+ * 无缺口时说明「已配置，输入新值可覆盖」。历史实现读磁盘标记（provider.quota.apiKeySet），在 D5
  * 类型切换（旧 Key 归属失效）态下会与「必填」徽标同屏矛盾（徽标说必填、占位说已配置）。
  * 无缺口 ∧ 草稿为空 ⟺ 磁盘已配置（readiness 专属 Key 分支的判定语义），无需第二份复算。
  */
@@ -438,8 +424,8 @@ const exclusiveKeyPlaceholder = computed<string>(() => (isMissing('apiKey')
  * 与字段级提示**同源**：两者都读同一份 readiness.missing。missing 是唯一编码了凭证归属
  * 规则（D5：类型切换后旧 cookie / 旧专属 Key 归属失效）的派生量，因此「不在 missing 里」
  * ⟺「该字段此刻有效」，正是徽标要表达的语义（不是「磁盘上曾存过一份」）。
- * 用磁盘原始标记（cookieSet / quotaApiKeyConfigured / workspaceConfigured）各自复算会得到
- * 第二份真相：类型切换后徽标说「已配置」而下方提示说「必填」（同屏矛盾，S7 反例）。
+ * 用磁盘原始标记（provider.quota.cookieSet / provider.quota.apiKeySet / provider.quota.workspace）
+ * 各自复算会得到第二份真相：类型切换后徽标说「已配置」而下方提示说「必填」（同屏矛盾，S7 反例）。
  * 同源之后「徽标已配置 + 提示必填」结构性不可达，无需再靠调用方自觉。
  *
  * 「类型未定」（missing 含 'type'）不会走到这里：params 区是 typeUndetermined 的 v-else，
@@ -472,7 +458,7 @@ const providerCredentialWarning = computed(() => props.providerCredentialPending
 /**
  * 失败态文案：reason 可区分时用带恢复指引的专属文案（A2-4 全 reason），否则回退 testErrorMsg/通用文案。
  * cookie 类按 authKinds 分支（§5.2 路径 3/4）：cookie 平台不存在「发起一次对话刷新」这个动作，
- * 且 no-credential 的幽灵态（cookieSet=true 但 secrets 缺失）只能靠重新粘贴 Cookie 恢复。
+ * 且 no-credential 的幽灵态（provider.quota.cookieSet=true 但 secrets 缺失）只能靠重新粘贴 Cookie 恢复。
  */
 const failMessage = computed(() => {
   const isCookie = props.authKinds.includes('cookie')

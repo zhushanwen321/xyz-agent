@@ -26,15 +26,19 @@ import type { IProviderCredentialResolver } from '../../src/services/ports/provi
 // [A2-1] fetcher 接口数组化：authType 单值 → auth 数组；fetchQuota(credential, kind)
 // kimi-coding 用独立 mock 实例：「手动 fetcher 优先于 preset 匹配」用例需要区分
 // 「命中 kimi-coding 而非 zhipu」的可证伪信号（共享同一 mock 时优先级退化无法检出）
-const { mockFetchQuota, kimiMockFetchQuota, mockFetchers } = vi.hoisted(() => {
+const { mockFetchQuota, kimiMockFetchQuota, oauthOnlyMockFetchQuota, mockFetchers } = vi.hoisted(() => {
   const mockFetchQuota = vi.fn()
   const kimiMockFetchQuota = vi.fn()
+  // 纯 oauth fetcher（auth 不含 api-key）：支撑「exclusive 对不适用形态不生效」用例
+  // （§7 残留 11，UI/runtime 共用 supportsExclusiveCredential 判据）
+  const oauthOnlyMockFetchQuota = vi.fn()
   const mockFetchers = new Map([
     ['zhipu', { id: 'zhipu', auth: ['api-key'] as const, fetchQuota: mockFetchQuota }],
     ['kimi-coding', { id: 'kimi-coding', auth: ['api-key', 'oauth'] as const, fetchQuota: kimiMockFetchQuota }],
     ['mimo', { id: 'mimo', auth: ['cookie'] as const, fetchQuota: mockFetchQuota }],
+    ['oauth-only', { id: 'oauth-only', auth: ['oauth'] as const, fetchQuota: oauthOnlyMockFetchQuota }],
   ])
-  return { mockFetchQuota, kimiMockFetchQuota, mockFetchers }
+  return { mockFetchQuota, kimiMockFetchQuota, oauthOnlyMockFetchQuota, mockFetchers }
 })
 
 // ── mock QUOTA_FETCHERS：注入可控 fetcher，不依赖真实 HTTP ──
@@ -79,6 +83,7 @@ beforeEach(() => {
   vi.mocked(upsertProvider).mockImplementation(() => ({}))
   mockFetchQuota.mockReset()
   kimiMockFetchQuota.mockReset()
+  oauthOnlyMockFetchQuota.mockReset()
 })
 
 /** 读 providers.json 单 provider 断言用（文件不存在返回 undefined = 无扩展数据）。 */
@@ -1106,6 +1111,40 @@ describe('QuotaService — U2③: 按 credentialSource 解析凭证（§7.5 清�
     expect(oauthReader).not.toHaveBeenCalled()
     expect(result.data).toBeNull()
     expect(result.reason).toBe('no-credential')
+  })
+
+  it("source=exclusive 但 fetcher.auth 不含 api-key（['oauth']）→ 不走专属 Key 路径，按 auth 数组序解析", async () => {
+    // 防的回归（§7 残留 11）：UI 与 runtime 必须共用 supportsExclusiveCredential 判据。
+    // 若 runtime 把 exclusive 无条件当成「只用 api-key 形态」，纯 oauth fetcher 会
+    // getCredential('api-key') → 读不存在的专属 Key 文件 → no-credential；而 UI 对同一
+    // fetcher 根本不渲染「用专属 Key」控件、readiness 按 provider 凭据放行——两端判据背离。
+    // 可证伪信号：fetchQuota 以 kind='oauth' 收到 OAuth 现值（而非 not called / no-credential）。
+    const oauthReader = vi.fn(async () => ({
+      type: 'oauth' as const,
+      access: 'oauth-access-token',
+      refresh: 'r',
+      expires: Date.now() + 3_600_000,
+    }))
+    const svc = new QuotaService({
+      providerCredentialResolver: makeResolver(() => undefined), // api-key 形态无 provider 凭据：不影响本路径
+      dataDir: tmpDir,
+      providerExtrasStore: extrasStore,
+      providerExists: () => true,
+      getProviderInfo: () => ({
+        baseUrl: 'https://oauth-only.example',
+        quota: { fetcher: 'oauth-only', credentialSource: 'exclusive' },
+      }),
+      getAuthCredential: oauthReader,
+    })
+    oauthOnlyMockFetchQuota.mockResolvedValue({ ok: true, data: { label: 'oauth-only', wins: [] as never } })
+
+    const result = await svc.fetch('oauth-p')
+
+    expect(oauthReader).toHaveBeenCalledWith('oauth-p')
+    expect(oauthOnlyMockFetchQuota).toHaveBeenCalledWith('oauth-access-token', 'oauth', {
+      workspaceUrl: undefined,
+    })
+    expect(result.data).not.toBeNull()
   })
 
   it('source=provider：完全跳过专属 Key 文件（文件仍在但不被读），经 resolver 解析', async () => {

@@ -118,6 +118,16 @@ export function resolveQuotaCredentialSource(
 }
 
 /**
+ * 额度专属 Key 对该凭证形态是否适用 —— UI（分段控件与齐备性判定）与 runtime
+ * （resolveCredential 的 exclusive 收窄）必须调用同一个函数，否则两端判据可以背离
+ * （coding-plan-quota-config-ux §7 残留 11）：UI 显示「用专属 Key」而 runtime 忽略该选择。
+ * 判据 = auth 声明里含 'api-key'；auth 为 undefined / 不含 api-key（如纯 oauth、纯 cookie）→ false。
+ */
+export function supportsExclusiveCredential(auth: readonly QuotaAuthKind[] | undefined): boolean {
+  return auth?.includes('api-key') ?? false
+}
+
+/**
  * quota.configure 的完整 payload —— protocol、core domain、mock、QuotaService 四处共用
  * 同一类型（§7.1 契约收敛：6 位置参数中 4 个同构 string | undefined 互相错位编译器不报错，
  * 单对象透传让后续加字段零改动、漏切调用方必编译错）。

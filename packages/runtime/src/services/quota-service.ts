@@ -17,7 +17,7 @@
 import { existsSync, readFileSync, mkdirSync, writeFileSync, unlinkSync, chmodSync } from 'node:fs'
 import { join } from 'node:path'
 import type { NormalizedQuotaRow, ProviderQuotaFetcher, QuotaAuthKind, QuotaCredentialSource, QuotaConfigurePayload, QuotaFetchFailureReason, QuotaFetcherConfig } from '@xyz-agent/shared'
-import { matchQuotaPreset, normalizeQuotaWorkspaceUrl, resolveQuotaCredentialSource } from '@xyz-agent/shared'
+import { matchQuotaPreset, normalizeQuotaWorkspaceUrl, resolveQuotaCredentialSource, supportsExclusiveCredential } from '@xyz-agent/shared'
 import { QUOTA_FETCHERS } from './quota-providers/index.js'
 import { QuotaCache } from './quota-cache.js'
 import { getProviderConfig } from '../infra/pi/pi-provider-store.js'
@@ -691,15 +691,17 @@ export class QuotaService {
    * 消灭的「显示用 A、实际用 B」（§3.2 失败模式 D）。文件缺失即 null → 上层落
    * no-credential（§7.3 改动 3「缺失即 no-credential，不回退」）。
    *
-   * 收窄条件含 `auth.includes('api-key')`：cookie 类 fetcher（auth 不含 api-key）不命中，
-   * 仍按数组序正常解析；source === 'provider' 时也完全走原路径。
+   * 收窄条件由 shared 的 supportsExclusiveCredential 提供（两端共用，coding-plan-quota-config-ux
+   * §7 残留 11：UI 与 runtime 必须同一判据，否则 UI 显示「用专属 Key」而 runtime 忽略该选择）：
+   * cookie 类 fetcher（auth 不含 api-key）不命中，仍按数组序正常解析；source === 'provider'
+   * 时也完全走原路径。
    */
   private async resolveCredential(
     providerId: string,
     auth: readonly QuotaAuthKind[],
   ): Promise<{ credential: string; kind: QuotaAuthKind } | null> {
     const source = resolveQuotaCredentialSource(this.getProviderInfo(providerId)?.quota)
-    if (source === 'exclusive' && auth.includes('api-key')) {
+    if (source === 'exclusive' && supportsExclusiveCredential(auth)) {
       const credential = await this.getCredential(providerId, 'api-key')
       return credential ? { credential, kind: 'api-key' } : null
     }

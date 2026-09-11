@@ -179,6 +179,31 @@ describe('readiness 齐备性矩阵（D1 / D13）', () => {
     expect(readiness.value).toEqual({ ready: true, missing: [] })
   })
 
+  it('cookie 类 fetcher（auth 不含 api-key）+ credentialSource=exclusive → 不走专属 Key 判定，仍按 cookie 齐备性', async () => {
+    // §7 残留 11：exclusive 只对声明了 api-key 形态的 fetcher 适用。cookie 类即使磁盘上残留
+    // credentialSource='exclusive'，判定也必须落回 cookie 分支（与 runtime 忽略 exclusive、
+    // 按 auth 数组序解析一致），不得因「专属 Key 缺失」置灰（apiKeySet=false 也不会误报 apiKey）。
+    const providerRef = ref<ProviderInfo | null>(
+      provider({
+        id: 'mimo-p',
+        quota: { enabled: false, fetcher: 'mimo', credentialSource: 'exclusive', cookieSet: true },
+      }),
+    )
+    const { readiness, authKinds } = useQuotaConfigure(ref(MIMO_PRESET), providerRef)
+    await Promise.resolve()
+
+    expect(authKinds.value).toEqual(['cookie'])
+    expect(readiness.value).toEqual({ ready: true, missing: [] })
+
+    // 无 cookie 且未保存 → 只报 cookie（不报 apiKey，证明 exclusive 未参与判定）
+    const noCookieRef = ref<ProviderInfo | null>(
+      provider({ id: 'mimo-p', quota: { enabled: false, fetcher: 'mimo', credentialSource: 'exclusive' } }),
+    )
+    const noCookie = useQuotaConfigure(ref(MIMO_PRESET), noCookieRef)
+    await Promise.resolve()
+    expect(noCookie.readiness.value).toEqual({ ready: false, missing: ['cookie'] })
+  })
+
   it('requiresWorkspace 只看草稿：已保存 workspace 不计入，清空即置灰（D13）', async () => {
     const providerRef = ref<ProviderInfo | null>(
       provider({

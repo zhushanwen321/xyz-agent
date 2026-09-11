@@ -121,7 +121,7 @@ export type {
   QuotaCredentialSource,
   QuotaConfigurePayload,
 } from './quota-types'
-export { normalizeQuotaWorkspaceUrl, resolveQuotaCredentialSource } from './quota-types'
+export { normalizeQuotaWorkspaceUrl, resolveQuotaCredentialSource, supportsExclusiveCredential } from './quota-types'
 export type { QuotaPreset } from './quota-presets'
 export { QUOTA_PRESETS, matchQuotaPreset } from './quota-presets'
 // normalizeSubagentStatus 已下沉至 runtime（packages/runtime/src/services/session/subagent-status.ts，

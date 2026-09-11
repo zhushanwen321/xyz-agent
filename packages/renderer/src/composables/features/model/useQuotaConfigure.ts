@@ -20,7 +20,7 @@ import type {
   QuotaAuthKind,
   QuotaFetchFailureReason,
 } from '@xyz-agent/shared'
-import { QUOTA_PRESETS, normalizeQuotaWorkspaceUrl, resolveQuotaCredentialSource } from '@xyz-agent/shared'
+import { QUOTA_PRESETS, normalizeQuotaWorkspaceUrl, resolveQuotaCredentialSource, supportsExclusiveCredential } from '@xyz-agent/shared'
 import type { QuotaConfigureState, QuotaTestStatus, ReadinessMissing } from '@xyz-agent/core'
 import * as quotaApi from '@xyz-agent/core/transport/api/domains/quota'
 import i18n from '@/i18n'
@@ -202,9 +202,14 @@ export function useQuotaConfigure(
       if (!hasCookie) missing.push('cookie')
     } else if (credentialSource.value === 'provider') {
       if (!providerCredentialAvailable.value) missing.push('apiKey')
-    } else {
+    } else if (credentialSource.value === 'exclusive' && supportsExclusiveCredential(authKinds.value)) {
+      // 专属 Key 只对声明了 api-key 形态的 fetcher 适用：判据与 runtime resolveCredential 的
+      // 收窄、UI 分段控件的渲染同源（§7 残留 11）。不适用（如纯 oauth / 纯 cookie）时落到下一条
+      // provider 凭据判定 —— 与 runtime「忽略 exclusive、按 auth 数组序解析」完全一致。
       const hasExclusiveKey = apiKeyInput.value.trim() !== '' || (!typeChanged && !!quota?.apiKeySet)
       if (!hasExclusiveKey) missing.push('apiKey')
+    } else if (!providerCredentialAvailable.value) {
+      missing.push('apiKey')
     }
 
     // workspace 是明文且始终回显 → 判定只看草稿（D13：屏幕即真相）

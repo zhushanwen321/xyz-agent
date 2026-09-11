@@ -10,8 +10,9 @@
  * ③ D3（§6.4）凭证来源分段控件：provider 项按 providerCredentialAvailable 置 disabled，切换 emit
  * ④ §7.4 跨区块时序两套 provider 凭据文案（providerCredentialPendingSave 区分）
  * ⑤ D7（§6.8）去掩码：输入框只放草稿，不回填掩码；「已配置 / 必填」为独立标记
- * ⑤b §7.4 徽标取值规则：徽标与字段级提示同源（readiness.missing），磁盘原始标记（cookieSet /
- *    quotaApiKeyConfigured / workspaceConfigured）不能越权点亮「已配置」（三条反向用例）
+ * ⑤b §7.4 徽标取值规则：徽标与字段级提示同源（readiness.missing），磁盘原始标记（provider.quota
+ *    下的 cookieSet / apiKeySet / workspace）不再经 prop 传入，也不能越权点亮「已配置」（反向用例）
+ * ⑤d §7 残留 11 专属 Key 适用性：authKinds 不含 api-key（如 ['oauth']）→ 不渲染凭证来源控件
  * ⑤c 定向复审三条探针（真实 DOM 回归守卫）：① 类型切换后徽标与专属 Key 占位不得出现「已配置」
  *    语义；② preset 未命中不出现「已配置」徽标；③ preset 未命中渲染「重选类型」指引且参数区不渲染
  * ⑥ §5.2 路径 3/4 失败态文案 + cookie 变体（unauthorized / no-credential / no-subscription）
@@ -56,6 +57,8 @@ afterEach(() => {
 /**
  * 最小 props（纯展示组件，状态全由父注入）。
  * 默认 = 「已选 api-key 类类型且齐备」的常规态；各用例按需覆盖单项。
+ * authKinds 默认 ['api-key']：凭证来源分段控件由 supportsExclusiveCredential(authKinds) 门控
+ * （§7 残留 11），不传时默认 [] 会让 D3 用例整体失去控件。
  */
 function mountSection(props: Record<string, unknown>): ReturnType<typeof mount> {
   return mount(CodingPlanSection, {
@@ -74,7 +77,7 @@ function mountSection(props: Record<string, unknown>): ReturnType<typeof mount> 
       isCookieAuth: false,
       configuring: false,
       configureErrorMsg: '',
-      cookieSet: false,
+      authKinds: ['api-key'],
       ...props,
     },
     attachTo: document.body,
@@ -323,6 +326,34 @@ describe('③ D3 凭证来源分段控件（api-key 类专用）', () => {
     expect(wrapper.find('[data-testid="quota-credential-source"]').exists()).toBe(false)
     expect(wrapper.find('[data-testid="quota-cookie-block"]').exists()).toBe(true)
   })
+
+  it("⑤d authKinds 不含 api-key 且非 cookie（如 ['oauth']）→ 分段控件与专属 Key 块都不渲染（§7 残留 11）", async () => {
+    // UI 不得显示 runtime 不会采用的选项：auth=['oauth'] 时 runtime 的 resolveCredential
+    // 不收窄 exclusive（supportsExclusiveCredential=false），UI 必须同判据。
+    wrapper = mountSection({
+      fetcherId: 'oauth-only',
+      authKinds: ['oauth'],
+      credentialSource: 'exclusive',
+    })
+    await flushPromises()
+
+    expect(wrapper.find('[data-testid="quota-credential-source"]').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="quota-exclusive-key-block"]').exists()).toBe(false)
+    // 只隐藏不适用控件，参数区其余部分仍在（不是整块不渲染）
+    expect(wrapper.find('[data-testid="quota-enabled-switch"]').exists()).toBe(true)
+  })
+
+  it("⑤d authKinds=['api-key'] / ['api-key','oauth'] → 分段控件仍渲染（防回归：门控不得藏掉 api-key 类）", async () => {
+    wrapper = mountSection({ fetcherId: 'zhipu', authKinds: ['api-key'] })
+    await flushPromises()
+    expect(wrapper.find('[data-testid="quota-credential-source"]').exists()).toBe(true)
+
+    wrapper.unmount()
+    wrapper = mountSection({ fetcherId: 'kimi-coding', authKinds: ['api-key', 'oauth'], credentialSource: 'exclusive' })
+    await flushPromises()
+    expect(wrapper.find('[data-testid="quota-credential-source"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="quota-exclusive-key-block"]').exists()).toBe(true)
+  })
 })
 
 // ══ ④ §7.4：Provider 凭据不可用的两套文案 ═══════════════════════════════════
@@ -384,7 +415,6 @@ describe('⑤ D7 去掩码：输入框只放草稿，「已配置」是独立标
     wrapper = mountSection({
       isCookieAuth: true,
       fetcherId: 'mimo',
-      cookieSet: true,
       cookieInput: '',
       readiness: { ready: true, missing: [] },
     })
@@ -404,7 +434,6 @@ describe('⑤ D7 去掩码：输入框只放草稿，「已配置」是独立标
     wrapper = mountSection({
       isCookieAuth: true,
       fetcherId: 'mimo',
-      cookieSet: false,
       readiness: { ready: false, missing: ['cookie'] },
     })
     await flushPromises()
@@ -417,7 +446,6 @@ describe('⑤ D7 去掩码：输入框只放草稿，「已配置」是独立标
   it('专属 Key 已配置但草稿为空 → 输入框为空 + quotaApiKeySetPlaceholder（不回填密文）', async () => {
     wrapper = mountSection({
       credentialSource: 'exclusive',
-      quotaApiKeyConfigured: true,
       apiKeyInput: '',
       readiness: { ready: true, missing: [] },
     })
@@ -443,15 +471,15 @@ describe('⑤ D7 去掩码：输入框只放草稿，「已配置」是独立标
 
 // ══ ⑤b §7.4：徽标与 readiness 同源（反向用例） ══════════════════════════════
 
-describe('⑤b §7.4 徽标取值与 readiness 同源（磁盘标记不能越权点亮「已配置」）', () => {
-  it('反向：cookieSet=true 但 missing 含 cookie（类型切换后归属失效）→ 徽标「必填」，与字段提示同屏一致', async () => {
+describe('⑤b §7.4 徽标取值与 readiness 同源（磁盘标记不再经 prop 传入，徽标只认 readiness）', () => {
+  it('反向：missing 含 cookie（类型切换后归属失效）→ 徽标「必填」，与字段提示同屏一致', async () => {
     // 复现 D5 的核心场景：已保存 MiMo cookie，用户把类型改成 opencode-go（同为 cookie 类）后
-    // 旧 cookie 归属失效 → readiness 报 ['cookie']。若徽标读原始 cookieSet 就会与下方
+    // 旧 cookie 归属失效 → readiness 报 ['cookie']。磁盘标记（provider.quota.cookieSet）自 §7 残留 7
+    // 起不再作为 prop 传入，徽标唯一来源是 readiness.missing；若改回读磁盘标记就会与下方
     // 「这里必须填」提示同屏矛盾（S7 反例）。
     wrapper = mountSection({
       isCookieAuth: true,
       fetcherId: 'opencode-go',
-      cookieSet: true,
       needsWorkspace: true,
       readiness: { ready: false, missing: ['cookie', 'workspace'] },
     })
@@ -466,10 +494,9 @@ describe('⑤b §7.4 徽标取值与 readiness 同源（磁盘标记不能越权
     )
   })
 
-  it('反向：quotaApiKeyConfigured=true 但 missing 含 apiKey（类型切换后旧专属 Key 失效）→ 徽标「必填」', async () => {
+  it('反向：missing 含 apiKey（类型切换后旧专属 Key 失效）→ 徽标「必填」', async () => {
     wrapper = mountSection({
       credentialSource: 'exclusive',
-      quotaApiKeyConfigured: true,
       apiKeyInput: '',
       fetcherId: 'minimax',
       readiness: { ready: false, missing: ['apiKey'] },
@@ -484,12 +511,11 @@ describe('⑤b §7.4 徽标取值与 readiness 同源（磁盘标记不能越权
     )
   })
 
-  it('反向：workspaceConfigured=true 但 missing 含 workspace（草稿被清空）→ 徽标「必填」（D13 屏幕即真相）', async () => {
+  it('反向：missing 含 workspace（草稿被清空）→ 徽标「必填」（D13 屏幕即真相）', async () => {
     wrapper = mountSection({
       isCookieAuth: true,
       fetcherId: 'opencode-go',
       needsWorkspace: true,
-      workspaceConfigured: true,
       workspaceInput: '',
       readiness: { ready: false, missing: ['workspace'] },
     })
@@ -507,11 +533,10 @@ describe('⑤b §7.4 徽标取值与 readiness 同源（磁盘标记不能越权
 // ══ ⑤c 定向复审探针（三条复现路径转正为回归守卫） ═════════════════════════
 
 describe('⑤c 定向复审探针：三条复现路径的真实 DOM 锁定', () => {
-  it('探针①：类型已变（D5 旧专属 Key 归属失效）+ 磁盘已配置 + 草稿空 → 字段块内无任何「已配置」语义（徽标与占位）', async () => {
+  it('探针①：类型已变（D5 旧专属 Key 归属失效）+ 草稿空 → 字段块内无任何「已配置」语义（徽标与占位）', async () => {
     wrapper = mountSection({
       credentialSource: 'exclusive',
-      // 磁盘原始标记为 true（旧归属），readiness 因 typeChanged 判定该归属失效
-      quotaApiKeyConfigured: true,
+      // 磁盘仍有旧专属 Key（provider.quota.apiKeySet=true），readiness 因 typeChanged 判定该归属失效
       apiKeyInput: '',
       fetcherId: 'minimax',
       readiness: { ready: false, missing: ['apiKey'] },
@@ -538,7 +563,6 @@ describe('⑤c 定向复审探针：三条复现路径的真实 DOM 锁定', () 
     wrapper = mountSection({
       fetcherId: 'legacy-unknown',
       credentialSource: 'exclusive',
-      quotaApiKeyConfigured: false,
       apiKeyInput: '',
       readiness: { ready: false, missing: ['type'] },
     })
@@ -776,7 +800,6 @@ describe('workspace 地址块（needsWorkspace 条件渲染 + 输入上抛）', 
       isCookieAuth: true,
       fetcherId: 'opencode-go',
       needsWorkspace: true,
-      workspaceConfigured: false,
       readiness: { ready: false, missing: ['workspace'] },
     })
     await flushPromises()

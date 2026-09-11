@@ -214,10 +214,8 @@
         :api-key-input="quotaApiKeyInput"
         :credential-source="quotaCredentialSource"
         :provider-credential-available="quotaProviderCredentialAvailable"
-        :quota-api-key-configured="quotaQuotaApiKeyConfigured"
         :provider-credential-pending-save="quotaProviderCredentialPendingSave"
         :workspace-input="quotaWorkspaceInput"
-        :workspace-configured="quotaWorkspaceConfigured"
         :needs-workspace="quotaNeedsWorkspace"
         :readiness="quotaReadiness"
         :test-status="quotaTestStatus"
@@ -227,7 +225,6 @@
         :is-cookie-auth="quotaIsCookieAuth"
         :configuring="quotaConfiguring"
         :configure-error-msg="quotaConfigureError"
-        :cookie-set="!!provider?.quota?.cookieSet"
         :auth-kinds="quotaAuthKinds"
         :oauth-ready="oauthPresent"
         :test-fail-reason="quotaTestFailReason"
@@ -415,10 +412,8 @@ const {
   apiKeyInput: quotaApiKeyInput,
   credentialSource: quotaCredentialSource,
   providerCredentialAvailable: quotaProviderCredentialAvailable,
-  quotaApiKeyConfigured: quotaQuotaApiKeyConfigured,
   providerCredentialPendingSave: quotaProviderCredentialPendingSave,
   workspaceInput: quotaWorkspaceInput,
-  workspaceConfigured: quotaWorkspaceConfigured,
   needsWorkspace: quotaNeedsWorkspace,
   readiness: quotaReadiness,
   testStatus: quotaTestStatus,
