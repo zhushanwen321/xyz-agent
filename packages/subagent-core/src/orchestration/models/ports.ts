@@ -153,12 +153,26 @@ export interface LifecycleDeps {
     parentRun: WorkflowRun,
   ) => Promise<unknown>;
  /**
- * UI streaming sink（ctx.ui.setWidget），workflow agent call 创建 SubagentStream 用。
- *
- * 由 Interface 层 makeDeps 注入（从 SubagentService.getStreamSink() 取）。
- * dispatchAgentCall 用它创建 SubagentStream（widgetKey=subagent-stream-<runId>-<stepIndex>），
- * 使 workflow agent call 的 text_delta 走与 background subagent 相同的 streaming 链路。
- * 可选——无 UI 模式（TUI/RPC 无 setWidget）时为 undefined，dispatchAgentCall 不创建 stream。
- */
+  * UI streaming sink（ctx.ui.setWidget），workflow agent call 创建 SubagentStream 用。
+  *
+  * 由 Interface 层 makeDeps 注入（从 SubagentService.getStreamSink() 取）。
+  * dispatchAgentCall 用它创建 SubagentStream（widgetKey=subagent-stream-<runId>-<stepIndex>），
+  * 使 workflow agent call 的 text_delta 走与 background subagent 相同的 streaming 链路。
+  * 可选——无 UI 模式（TUI/RPC 无 setWidget）时为 undefined，dispatchAgentCall 不创建 stream。
+  */
   streamSink?: StreamSink;
+ /**
+  * [H2 W3] workflow 域 agent() 统一派发入口（SubagentService.executeWorkflowAgent 的
+  * deps 注入形态，设计 §3.5 终态数据流）。窄函数类型——不引 execution 层具体类，
+  * 保持本 ports 文件零 infra/execution 依赖。由组合根（extension index.ts makeDeps）
+  * 注入：闭包捕获 getSubagentService() 单例，parentRunId 由 pump 侧补 run.runId。
+  *
+  * 可选——未注入时（旧测试 deps）dispatchAgentCall 回退 deps.runner（SAR 旧编排，
+  * W4 归位时随 SAR.run 掏空统一）。生产装配两字段同时注入，dispatch 恒优先。
+  */
+  workflowAgentDispatch?: (
+    opts: AgentCallOpts,
+    parentRunId: string,
+    signal?: AbortSignal,
+  ) => Promise<AgentResult>;
 }

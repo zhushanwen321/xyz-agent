@@ -1904,7 +1904,9 @@ export class SubagentService {
    *   ⑥ mergeRunSignals（timeoutMs + 守护 abort + 外部 signal 合流）；
    *   ⑦ spawned-children 注册（dispose killAll 收割兜底，键 = record.id）。
    * 池 = DefaultConcurrencyPool 共享（acquirePoolOrFinalize 同链，D3）；成功收口 =
-   * settleOneShotOutcome 顶部 D7 origin 分支（closed/gc 立即终态化）。
+   * settleOneShotOutcome 顶部 D7 origin 分支（closed/gc 立即终态化）。stream 实参
+   * 缺省时自构 createBackgroundStream（设计 D2「streaming 由 service 派发路径既有
+   * 通道承载」——widget 通道收口点，kickOffChatRound 同款策略，见函数体注释）。
    */
   private async runWorkflowEngineTask(
     record: ExecutionRecord,
@@ -1915,6 +1917,16 @@ export class SubagentService {
     onEvent?: (event: AgentEvent) => void,
     stream?: SubagentStream,
   ): Promise<WorkflowAgentResult> {
+    // [H2 W3 must-fix] stream 实参缺省时自构 background stream——设计 D2「streaming
+    // 由 service 派发路径既有通道承载」的实体落点：W3 切换后 pump 不再构造
+    // SubagentStream（旁路 record 族退役），workflow agent 的 text_delta widget 通道
+    // 在 service 侧收口，与 kickOffChatRound 的 createBackgroundStream 完全同款
+    //（含 H1 widget 退役策略：GUI+relay 激活停发私货 / TUI·未激活原样创建 / sink
+    // 未注入降级 undefined——照单继承 chat 域现行策略，非行为变化）。显式传 stream
+    // 时用传入值（测试注入面保留）。创建先于池 acquire（kickOffChatRound 同序：
+    // acquire 失败早退时 stream 尚未 onDelta，无 widget/timer 副作用可泄漏）。
+    const effectiveStream =
+      stream ?? createBackgroundStream(record.id, this.streamSink, this.uiObservability.getMode(), process.env);
     const pooled = record.mode === "background";
     let acquired = false;
     if (pooled) {
@@ -1941,13 +1953,14 @@ export class SubagentService {
         noProgress.signal,
       );
       // ⑤ 双刷新源（两路缺一不可——只接 journal 会漏纯流式产出的活性信号）：
-      // journal.onEvent 包装（协议事件）∪ stream.onDelta 包装（流式增量反向帧）。
+      // journal.onEvent 包装（协议事件）∪ stream.onDelta 包装（流式增量反向帧；
+      // 内构 stream 同样经本包裹——refresh 与 widget flush 在同一 onDelta 调用点）。
       const journalOnEvent = journal.onEvent;
       const observedEvent = (event: AgentEvent): void => {
         refreshFromProtocolEvent(record.id);
         journalOnEvent(event);
       };
-      unbindStream = stream === undefined ? undefined : bindWorkflowStreamRefresh(stream, record.id);
+      unbindStream = effectiveStream === undefined ? undefined : bindWorkflowStreamRefresh(effectiveStream, record.id);
 
       const runCtx: RunContext = {
         taskId: record.id,
@@ -1956,7 +1969,7 @@ export class SubagentService {
         ctxModel: identity.resolved.model,
         onEvent: observedEvent,
         onPoolResolved: journal.onPoolResolved,
-        ...(stream !== undefined ? { stream } : {}),
+        ...(effectiveStream !== undefined ? { stream: effectiveStream } : {}),
         ...(record.engineFallback !== undefined ? { engineFallback: record.engineFallback } : {}),
         ...(this.sessionRootId !== null && this.sessionRootId !== ""
           ? { sessionRootId: this.sessionRootId }
@@ -1992,11 +2005,11 @@ export class SubagentService {
       return noteIfWorkflowNoProgressFired(mapToWorkflowAgentResult(failed), noProgress);
     } finally {
       // 先摘 stream 包裹与信号桥接（不残留 listener/覆写），再清守护，再归还池槽与
-      // journal 收口（SAR 同序）。
+      // journal 收口（SAR 同序）。内构 stream 的 widget 清除（dispose）同经本回收。
       runSignal?.dispose();
       unbindStream?.();
       disarmSettledWatchdog(record.id);
-      this.releaseRoundResources(record, pooled && acquired, stream);
+      this.releaseRoundResources(record, pooled && acquired, effectiveStream);
       await journal.close();
       this.roundSupervisor.noteRunEnded(record.id);
     }

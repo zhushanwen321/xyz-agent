@@ -19,6 +19,10 @@
 //   6. 引擎死亡（§3.4）：engine_crashed → catch 合成 failed result 回脚本（swallow）
 //      + record 由失败路径立即终态化（不 adopt）；service 分诊两处豁免（runEngineTask
 //      catch / finalizeEngineOutcome exitCode===null）对 workflow record 落空即终态化。
+//   7. [H2 W3 must-fix] stream 缺省自构：runWorkflowEngineTask 在 stream 实参缺省时
+//      经 createBackgroundStream 自构（kickOffChatRound 同款策略）——三形态（TUI
+//      widget 接通 / GUI+relay 停发私货 / sink 未注入降级 no-op）+ 内构对象的守护
+//      刷新源（bindWorkflowStreamRefresh 包裹 onDelta）仍生效。
 //
 // 替身形态：pi EnginePort = registerFakePiEngine（协议 seam 替身）；受限引擎
 // （strict-engine）本地构造（预检命中用）；pi = mock（appendEntry 捕获 subagent-record
@@ -87,7 +91,12 @@ interface DispatchHarness {
   tmpRoot: string;
 }
 
-function makeHarness(): DispatchHarness {
+function makeHarness(opts: {
+  /** [H2 W3 must-fix] streamSink 注入（TUI/未激活形态的 widget sink；缺省 null = 无 UI）。 */
+  streamSink?: { setWidget: (key: string, lines: string[] | undefined) => void };
+  /** [H2 W3 must-fix] 宿主形态（createBackgroundStream 的 GUI 判定输入；缺省 undefined）。 */
+  mode?: "tui" | "rpc";
+} = {}): DispatchHarness {
   const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "wf-dispatch-it-"));
   process.env.XYZ_AGENT_DATA_DIR = path.join(tmpRoot, "engine-data");
   const agentDir = path.join(tmpRoot, "agent");
@@ -103,7 +112,12 @@ function makeHarness(): DispatchHarness {
   pi.appendEntry.mockImplementation((customType: string, data: unknown) => {
     if (customType === SUBAGENT_RECORD_CUSTOM_TYPE) entries.push(data as SubagentRecordEntryData);
   });
-  service.initSession({ pi: pi as unknown as PiLike, sessionId: "wf-dispatch-it" });
+  service.initSession({
+    pi: pi as unknown as PiLike,
+    sessionId: "wf-dispatch-it",
+    ...(opts.streamSink !== undefined ? { streamSink: opts.streamSink } : {}),
+    ...(opts.mode !== undefined ? { mode: opts.mode } : {}),
+  });
   clearEngines();
   const fake = registerFakePiEngine();
   return { service, store: Reflect.get(service, "store") as RecordStore, pi, fake, entries, tmpRoot };
@@ -311,6 +325,92 @@ describe("executeWorkflowAgent no-progress 守护", () => {
     run.settle({ error: "engine: aborted" });
     const result = await pending;
     expect(result.error).toContain("workflow no-progress watchdog fired");
+  });
+
+  it("内构 stream（实参缺省）同样保活：emitDelta 经 bindWorkflowStreamRefresh 刷新守护", async () => {
+    // [H2 W3 must-fix] runWorkflowEngineTask 在 stream 实参缺省时自构
+    // createBackgroundStream——内构对象的 onDelta 同样被 bindWorkflowStreamRefresh
+    // 原地包裹（守护双刷新源之二），且 widget flush 与刷新在同一调用点生效。
+    const sink = { setWidget: vi.fn() };
+    const { service, fake } = makeHarness({ streamSink: sink });
+    const pending = service.executeWorkflowAgent(baseOpts(), "run-stream-self");
+    await vi.advanceTimersByTimeAsync(0);
+    const run = soleRun(fake);
+
+    await vi.advanceTimersByTimeAsync(3000);
+    run.emitDelta("chunk"); // 反向帧 → 内构 stream.onDelta（已包裹）→ 刷新
+    await vi.advanceTimersByTimeAsync(3000); // 越过原始窗口（已刷新 → 不 fire）
+    expect(run.ctx.signal?.aborted).toBe(false);
+
+    run.settle({ content: "done" });
+    const result = await pending;
+    expect(result.content).toBe("done");
+  });
+});
+
+// ============================================================
+// 3.5 [H2 W3 must-fix] stream 缺省自构（createBackgroundStream 三形态）
+// ============================================================
+
+describe("executeWorkflowAgent stream 自构（设计 D2「service 派发路径既有通道承载」）", () => {
+  afterEach(() => {
+    // relay 三键注入的清理（防泄漏到同文件其他用例）
+    delete process.env["XYZ_SUBAGENT_RELAY_SOCKET"];
+    delete process.env["XYZ_SUBAGENT_RELAY_NODE"];
+    delete process.env["XYZ_SUBAGENT_RELAY_SCRIPT"];
+  });
+
+  it("TUI 形态：内构 stream 接通 widget——emitDelta 流式可见 + settle 后 dispose 清除", async () => {
+    const sink = { setWidget: vi.fn() };
+    const { service, store, fake } = makeHarness({ streamSink: sink, mode: "tui" });
+    const pending = service.executeWorkflowAgent(baseOpts(), "run-stream-tui");
+    await flush();
+    const run = soleRun(fake);
+    const record = runningRecord(store);
+
+    run.emitDelta("hello "); // leading edge：首个 delta 立即 flush（无 timer 等待）
+    run.emitDelta("world");
+    const widgetKey = `subagent-stream-${record.id}`;
+    expect(sink.setWidget).toHaveBeenCalledWith(widgetKey, ["hello "]);
+    // 第二个 delta 走 trailing 合并窗（100ms timer）——推进后 flush 累积文本
+    await new Promise<void>((resolve) => setTimeout(resolve, 150));
+    expect(sink.setWidget).toHaveBeenCalledWith(widgetKey, ["hello world"]);
+
+    run.settle({ content: "done" });
+    await pending;
+    // dispose 清除 widget（releaseRoundResources → stream.dispose）
+    expect(sink.setWidget).toHaveBeenLastCalledWith(widgetKey, undefined);
+  });
+
+  it("GUI + relay 激活：停发私货（createBackgroundStream H1 策略）——sink 零调用", async () => {
+    process.env["XYZ_SUBAGENT_RELAY_SOCKET"] = "/tmp/relay.sock";
+    process.env["XYZ_SUBAGENT_RELAY_NODE"] = "node-1";
+    process.env["XYZ_SUBAGENT_RELAY_SCRIPT"] = "/tmp/relay.mjs";
+    const sink = { setWidget: vi.fn() };
+    const { service, fake } = makeHarness({ streamSink: sink, mode: "rpc" });
+    const pending = service.executeWorkflowAgent(baseOpts(), "run-stream-gui");
+    await flush();
+    const run = soleRun(fake);
+
+    run.emitDelta("should-not-ship");
+    await new Promise<void>((resolve) => setTimeout(resolve, 50));
+    expect(sink.setWidget).not.toHaveBeenCalled();
+
+    run.settle({ content: "done" });
+    const result = await pending;
+    expect(result.content).toBe("done"); // 停发不影响执行本体
+  });
+
+  it("sink 未注入（无 UI）：降级 undefined no-op——dispatch 正常完成不崩", async () => {
+    const { service, fake } = makeHarness(); // 无 streamSink
+    const pending = service.executeWorkflowAgent(baseOpts(), "run-stream-nosink");
+    await flush();
+    const run = soleRun(fake);
+
+    run.emitDelta("no-op"); // ctx.stream undefined → emitDelta 经 fake 的 ctx.stream?. 判空
+    run.settle({ content: "done" });
+    const result = await pending;
+    expect(result.content).toBe("done");
   });
 });
 

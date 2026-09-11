@@ -267,6 +267,18 @@ export default function subagentsWorkflowExtension(pi: ExtensionAPI): void {
       onWorkflowCall: (name: string, args: Record<string, unknown>, parentRun: WorkflowRun) =>
         executeNestedWorkflow(name, args, parentRun, deps),
       streamSink: getSubagentService()?.getStreamSink() ?? undefined,
+      // [H2 W3] workflow agent() 统一派发入口（设计 §3.5）：pump 侧 dispatchAgentCall
+      // 经此转调 SubagentService.executeWorkflowAgent——真实 record（origin:"workflow"
+      // + parentRunId）进 store、共享池/守护/journal 归 service 编排；parentRunId 由
+      // pump 补 run.runId。service 单例在 session_start 后必在（run 只能于 session 内
+      // 派发）；null 时抛错由 pump 的 dispatchCall catch 兜底回发 failed result。
+      workflowAgentDispatch: (opts, parentRunId, signal) => {
+        const service = getSubagentService();
+        if (!service) {
+          throw new Error("workflow agent dispatch unavailable: subagent service not initialized");
+        }
+        return service.executeWorkflowAgent(opts, parentRunId, signal);
+      },
       log,
     };
     return deps;

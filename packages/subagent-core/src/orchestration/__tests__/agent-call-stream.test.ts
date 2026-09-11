@@ -1,10 +1,14 @@
 // src/orchestration/__tests__/agent-call-stream.test.ts
 //
-// U4: dispatchAgentCall 创建 SubagentStream 并在 agent call 结束后 dispose
-// U5: dispatchAgentCall widgetKey 格式 = subagent-stream-<runId>-<stepIndex>
-// U6: streamSink 为 undefined 时 dispatchAgentCall 不创建 stream 不报错
+// [H2 W3] 原 U4/U5（dispatchAgentCall 创建 SubagentStream + widgetKey 格式）与
+// U6（streamSink undefined 降级）锁定的是 pump 旁路 streaming 通道——该族随设计
+// subagent-workflow-record-unification.md D2「stream 通道承接」退役：pump 不再
+// 构造 SubagentStream（streaming 由 service 派发路径既有通道承载），streamSink
+// 注入面保留给 W4 之前的旧 runner 回退路径。
 //
-// 通过 handleWorkerMessage 触发 dispatchAgentCall（内部函数不 export）。
+// 本文件改为锁定退役后的行为：
+// - U4'：streamSink 已注入时 dispatchAgentCall 也不再创建 stream（setWidget 零调用）
+// - U6：streamSink=undefined 时 runner.run 仍被调用，无异常（原行为保留）
 
 import { describe, expect, it, vi } from "vitest";
 
@@ -87,43 +91,22 @@ function makeAgentCallMsg(callId: number): unknown {
   };
 }
 
-// ── U4: dispatchAgentCall 创建 SubagentStream 并 dispose ──
+// ── U4': stream 通道退役（负面断言） ──
 
-describe("U4: dispatchAgentCall stream dispose", () => {
-  it("agent call 结束后 stream.dispose 被调用（setWidget 末次 lines=undefined）", async () => {
+describe("U4': [H2 W3] dispatchAgentCall 不再创建 SubagentStream", () => {
+  it("streamSink 已注入 → setWidget 零调用（streaming 由 service 派发路径承载，D2）", async () => {
     const setWidget = vi.fn();
     const deps = makeDeps({ streamSink: { setWidget } });
     const run = makeRunningRun("wf-test-123");
     const handlers = makeHandlers();
 
     await handleWorkerMessage(run, makeAgentCallMsg(0), deps, handlers);
-    // dispatchAgentCall 内部 void withSlot(...)（fire-and-forget），需等 microtask 完成
+    // dispatchAgentCall 内 void dispatchCall()（fire-and-forget），等 microtask 完成
     await vi.waitFor(() => {
-      expect(setWidget.mock.calls.length).toBeGreaterThanOrEqual(1);
+      expect(run.state.calls.get(0)?.status).toBe("done");
     });
 
-    const calls = setWidget.mock.calls;
-    const lastCall = calls[calls.length - 1];
-    expect(lastCall[1]).toBeUndefined();
-  });
-});
-
-// ── U5: widgetKey 格式 ──
-
-describe("U5: widgetKey 格式", () => {
-  it("widgetKey = subagent-stream-<runId>-<stepIndex>", async () => {
-    const setWidget = vi.fn();
-    const deps = makeDeps({ streamSink: { setWidget } });
-    const run = makeRunningRun("wf-test-123");
-    const handlers = makeHandlers();
-
-    await handleWorkerMessage(run, makeAgentCallMsg(2), deps, handlers);
-    await vi.waitFor(() => {
-      expect(setWidget.mock.calls.length).toBeGreaterThanOrEqual(1);
-    });
-
-    const widgetKey = setWidget.mock.calls[0]![0] as string;
-    expect(widgetKey).toBe("subagent-stream-wf-test-123-2");
+    expect(setWidget).not.toHaveBeenCalled();
   });
 });
 

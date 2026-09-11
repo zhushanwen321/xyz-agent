@@ -20,7 +20,7 @@ import type {
   ToolCallEntry,
 } from "@zhushanwen/subagent-engine-sdk";
 
-import type { ExecutionRecord, WorktreeHandle } from "../../execution/types.ts";
+import type { WorktreeHandle } from "../../execution/types.ts";
 
 // ── 状态机 ────────────────────────────────────────────────────
 
@@ -351,19 +351,16 @@ export interface ExecutionTraceNode {
  */
   sessionId?: string;
  /**
- * Session JSONL 绝对路径。finalizeCall 从 result.sessionFile 透传。
- * 持久化到快照（serializeRun），跨 session 重水合后保留。
- */
+  * Session JSONL 绝对路径。finalizeCall 从 result.sessionFile 透传。
+  * 持久化到快照（serializeRun），跨 session 重水合后保留。
+  */
   sessionFile?: string;
- /**
- * Live 执行进度对象（running 时存在，done 时由 dispatchAgentCall 清除）。
- *
- * 挂在 node 上（D-10 单源延伸：AgentCall.traceNode 与 Trace.nodes 共享同一引用）。
- * TUI 通过 trace.toArray() 读 node.live，派生 getEventLog/getCurrentActivity 实时展示。
- * 不持久化（序列化时 strip；重跑时由 dispatchAgentCall 重建）。
- */
-  live?: ExecutionRecord;
 }
+
+// [H2 W3] `live?: ExecutionRecord` 字段已删除（设计 subagent-workflow-record-
+// unification.md D2：trace node 的 live 字段删除，只保留 result 终态摘要）。运行期
+// 实时进度改由 views 经 store 查询 collectRecordsByParentRunId(parentRunId) 订阅
+// 真实 record（origin:"workflow"），不再经 pump 旁路 progress record 挂载。
 
 /**
  * Trace.update 用的 patch（字段全可选）。
