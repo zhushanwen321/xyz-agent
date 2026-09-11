@@ -314,7 +314,9 @@ export function createBeforeCompactHandler(
 			}
 
 			state.failStreak = 0;
-			debugLog(`takeover ok: mode=${mode} reason=${event.reason} summaryTokens=${summaryTokens}`);
+			debugLog(
+				`takeover ok: mode=${mode} reason=${event.reason} summaryTokens=${summaryTokens} shadowedTokens=${shadowedTokens}`,
+			);
 			return { compaction: result };
 		} catch (error) {
 			state.failStreak += 1;

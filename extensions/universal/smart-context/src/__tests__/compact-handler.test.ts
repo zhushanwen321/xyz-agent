@@ -1,7 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-// mock pi SDK：接管路径的单测不触网（same-mode 输入链 + cross-mode 原生组装都替换）
-vi.mock("@earendil-works/pi-coding-agent", () => ({
+// mock pi SDK：接管路径的单测不触网（same-mode 输入链 + cross-mode 原生组装都替换）。
+// importOriginal 保留真实模块（含 pure.js 依赖的 estimateTokens），其余覆盖项在后
+vi.mock("@earendil-works/pi-coding-agent", async (importOriginal) => ({
+	...(await importOriginal<typeof import("@earendil-works/pi-coding-agent")>()),
 	buildSessionContext: (entries: unknown[]) => ({ messages: [{ role: "user", content: "history" }] }),
 	convertToLlm: (messages: unknown[]) => messages,
 	compact: vi.fn(),
