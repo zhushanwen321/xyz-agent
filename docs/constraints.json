@@ -1777,6 +1777,26 @@
       ]
     },
     {
+      "id": "C-ext-21",
+      "summary": "rename-session 的 isSubagentSession 靠嗅探 sessionDir 含 <sep>subagents<sep> 段识别 subagent 会话并跳过重命名，与 subagent-core path-encoding.ts getSubagentSessionDir 的 <agentDir>/subagents/<enc(cwd)>/sessions 布局互为跨包隐式契约——改任一端路径形态另一端必同步（改 path-encoding 布局须同步 llm.ts 嗅探；改嗅探须核对实际布局）；三模式入口（turn_end / message_end / rename_session 工具）均复用该守卫",
+      "scope": [
+        "packages/subagent-core/src/execution/path-encoding.ts",
+        "extensions/universal/rename-session/**"
+      ],
+      "authority": [
+        "design/rename-session-three-modes.md#d7issubagentsession-跨包耦合登记-c-ext-21吸收-ext-simplify-15-d3选定登记--双端注释"
+      ],
+      "dimensions": [
+        "arch-boundary"
+      ],
+      "enforcement": [
+        {
+          "type": "review",
+          "agent": "review-arch-boundary"
+        }
+      ]
+    },
+    {
       "id": "C-proc-08",
       "summary": "pi 语义依赖机器登记 + 探针 + 版本门禁：docs/pi-semantics.json（PS-xx 条目，probe/observe 分型）是唯一机器登记源，scripts/check-pi-semantics.mjs（pre-commit + CI）守 schema/探针存在性/四包版本一致（pi-coding-agent ≡ pi-ai ≡ pi-agent-core ≡ runtime pin）；pi 升级 PR 必查两项——pi-ai exports 是否移除 ./compat、changelog 是否提及 ModelManager 迁移（PS-15 时间炸弹）；探针族红 = 语义漂移，先复核锚点再更新 verifiedWith",
       "scope": [

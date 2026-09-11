@@ -34,6 +34,7 @@ import type {
   SkillDirConfig,
   ProviderId,
   LlmRetryConfig,
+  RenameMode,
 } from '@xyz-agent/shared'
 import type { SubagentEngineConfigView } from '@xyz-agent/extension-protocol'
 import type { DirScopes } from './services/skill-dir-config.js'
@@ -523,6 +524,10 @@ export interface IConfigService {
   getRenameModel(): string
   /** 设置 rename 标题生成模型（读改写 extension 配置文件的 model 字段，保留其他字段）。 */
   setRenameModel(model: string): void
+  /** 读取 rename 触发模式（first-prompt/first-stop/agent-tool；读 extension 配置文件，缺失/非法回默认 first-stop）。 */
+  getRenameMode(): RenameMode
+  /** 设置 rename 触发模式（读改写 extension 配置文件的 mode 字段，非法值归一默认，保留其他字段）。 */
+  setRenameMode(mode: RenameMode): void
   /** 读取智能上下文压缩配置快照（extension 配置文件，字段非法回退默认值）。 */
   getSmartContextConfig(): import('./services/worktree-config-helper.js').SmartContextConfigSnapshot
   /** 设置智能上下文压缩开关（读改写 extension 配置文件的 enabled 字段，保留其他字段）。 */

@@ -630,7 +630,7 @@ describe('settings 域', () => {
     expect(mockCommand.mock.calls[7][0]).toBe('config.getTimeout')
   })
 
-  it('行为配置：streamingIdleTimeout / defaultBaseBranch / autoRename / renameModel', async () => {
+  it('行为配置：streamingIdleTimeout / defaultBaseBranch / autoRename / renameModel / renameMode', async () => {
     mockCommand.mockResolvedValue({ timeout: 1800 })
     await settings.setStreamingIdleTimeout(1800)
     expect(mockCommand.mock.calls[0].slice(0, 2)).toEqual(['config.setStreamingIdleTimeout', { timeout: 1800 }])
@@ -651,6 +651,11 @@ describe('settings 域', () => {
     expect(mockCommand.mock.calls[6].slice(0, 2)).toEqual(['config.setRenameModel', { model: 'p/m' }])
     await settings.getRenameModel()
     expect(mockCommand.mock.calls[7][0]).toBe('config.getRenameModel')
+
+    await settings.setRenameMode('first-prompt')
+    expect(mockCommand.mock.calls[8].slice(0, 2)).toEqual(['config.setRenameMode', { mode: 'first-prompt' }])
+    await settings.getRenameMode()
+    expect(mockCommand.mock.calls[9][0]).toBe('config.getRenameMode')
   })
 
   it('smart-context 配置组', async () => {

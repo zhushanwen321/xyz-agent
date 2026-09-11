@@ -13,11 +13,12 @@
  *    读写 ${PI_CODING_AGENT_DIR}/auto-rename-enabled 独立标志文件（与 pi extension 契约
  *    对齐：文件存在=开，不存在=关）。
  *
- * 3. rename-session 模型配置（getRenameModel / setRenameModel）：读改写
- *    ${PI_CODING_AGENT_DIR}/config/rename-session-ext-config.json 的 model 字段
+ * 3. rename-session 配置（getRenameModel / setRenameModel / getRenameMode / setRenameMode）：
+ *    读改写 ${PI_CODING_AGENT_DIR}/config/rename-session-ext-config.json 的 model / mode 字段
  *    （与 pi-rename-session extension 的 llm-shared getConfigPath 路径契约对齐）。
- *    extension 每次 turn_end 读时刷新（mtime+size 缓存），本侧写入后下一 turn 自动生效。
- *    只改 model 字段，保留文件内其他字段（enabled/maxTitleLength/thinkingLevel 及未来新增）。
+ *    extension 事件面（turn_end / message_end / 工具 execute 守卫）读时刷新（mtime+size 缓存），
+ *    本侧写入后下一事件自动生效（设计 rename-session-three-modes D1：事件面 live 求值）。
+ *    只改目标字段，保留文件内其他字段（enabled/maxTitleLength/thinkingLevel 及未来新增）。
  *
  * 4. smart-context 配置（getSmartContextConfig / setSmartContext*）：读改写
  *    ${PI_CODING_AGENT_DIR}/config/smart-context-ext-config.json（与 pi-smart-context
@@ -30,6 +31,7 @@
  */
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
+import type { RenameMode } from '@xyz-agent/shared'
 import { getPiAgentDir } from '../infra/pi/pi-paths.js'
 import { logger } from '../infra/logger.js'
 import { atomicWrite } from '../utils/fs-utils.js'
@@ -228,11 +230,14 @@ const RENAME_SESSION_CONFIG_REL = join('config', 'rename-session-ext-config.json
 
 /**
  * 文件缺失/损坏时的回退默认值（与 extension 的 DEFAULT_RENAME_CONFIG 一致：
- * extensions/universal/rename-session/src/pure.ts）。仅 setRenameModel 落盘时用作基底。
+ * extensions/universal/rename-session/src/pure.ts）。三处默认值真相同批收敛（设计
+ * rename-session-three-modes u5）：pure.ts DEFAULT / package.json startupConfig.content /
+ * 本镜像。仅 setRenameModel / setRenameMode 落盘时用作基底。
  */
 const RENAME_MODEL_DEFAULT_CONFIG: Record<string, unknown> = {
   enabled: false,
   model: { type: 'ref', ref: '' },
+  mode: 'first-stop',
   maxTitleLength: 50,
   thinkingLevel: 'off',
 }
@@ -337,6 +342,54 @@ export function setRenameModel(model: string): void {
     () => ({ ...RENAME_MODEL_DEFAULT_CONFIG }),
     (base) => {
       base['model'] = { type: 'ref', ref: normalized }
+    },
+  )
+}
+
+// ── rename-session 触发模式（config/rename-session-ext-config.json 的 mode 字段，设计 D1）──
+
+/** mode 缺失/非法时的回退默认（与 extension DEFAULT_RENAME_CONFIG.mode 一致，旧 config 零迁移）。 */
+const DEFAULT_RENAME_MODE: RenameMode = 'first-stop'
+
+/** 合法触发模式清单（与 extension pure.ts 的 RenameMode 值域一致；Set 免 as 断言）。 */
+const RENAME_MODES: ReadonlySet<RenameMode> = new Set<RenameMode>(['first-prompt', 'first-stop', 'agent-tool'])
+
+/** mode 值域 guard（与 extension isRenameMode 同构；读取回退与写入归一共用）。 */
+function isRenameMode(raw: unknown): raw is RenameMode {
+  return typeof raw === 'string' && RENAME_MODES.has(raw as RenameMode)
+}
+
+/**
+ * 读取 rename 触发模式。文件不存在/坏 JSON/mode 字段缺失或非法 → first-stop
+ * （与 extension normalizeRenameConfig 的回退语义一致）。不抛错（防御性设计，与 getRenameModel 一致）。
+ */
+export function getRenameMode(): RenameMode {
+  try {
+    const parsed: unknown = JSON.parse(readFileSync(getRenameConfigPath(), 'utf-8'))
+    if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) return DEFAULT_RENAME_MODE
+    const mode = (parsed as Record<string, unknown>)['mode']
+    return isRenameMode(mode) ? mode : DEFAULT_RENAME_MODE
+  } catch {
+    return DEFAULT_RENAME_MODE
+  }
+}
+
+/**
+ * 设置 rename 触发模式（读改写，只覆盖 mode 字段，保留其他字段）。
+ * 非法值归一为 first-stop（extension 读侧 normalize 对非法值同回默认，写进去也不生效，
+ * 不如归一——与 setRenameModel 对无 "/" ref 的归一纪律一致）。
+ * 锁协议与 setRenameModel 共用同一把锁（同一文件，D1e）。
+ * 生效时点：extension 事件面 live 读 config，写入后下一事件生效；rename_session 工具面
+ * 只在 pi 进程起动时求值一次（设计 D1 求值时点边界，GUI 切换须提示「工具面对新会话生效」）。
+ */
+export function setRenameMode(mode: RenameMode): void {
+  const normalized = isRenameMode(mode) ? mode : DEFAULT_RENAME_MODE
+  rmwExtConfigField(
+    getRenameConfigPath(),
+    renameConfigLockOptions,
+    () => ({ ...RENAME_MODEL_DEFAULT_CONFIG }),
+    (base) => {
+      base['mode'] = normalized
     },
   )
 }

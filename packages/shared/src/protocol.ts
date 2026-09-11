@@ -151,6 +151,7 @@ export type ClientMessageType =
   | 'config.setDefaultBaseBranch' | 'config.getDefaultBaseBranch'
   | 'config.setAutoRenameEnabled' | 'config.getAutoRenameEnabled'
   | 'config.setRenameModel' | 'config.getRenameModel'
+  | 'config.setRenameMode' | 'config.getRenameMode'
   | 'config.getSmartContextConfig'
   | 'config.setSmartContextEnabled'
   | 'config.setSmartContextCompactModel'
@@ -305,6 +306,15 @@ export type BatchDeleteResult = {
   deleted: string[]
   failed: Array<{ sessionId: string; error: string }>
 }
+
+/**
+ * rename-session 触发模式（设计 rename-session-three-modes §3.3 D1）。与 extension 侧
+ * extensions/universal/rename-session/src/pure.ts 的 RenameMode 值域同构——跨包不 import，
+ * 本处是协议层声明，供 runtime settings 通路（config.get/setRenameMode）与 renderer
+ * 模式 Select 共用；默认 first-stop（三处默认值真相：pure.ts DEFAULT_RENAME_CONFIG /
+ * package.json startupConfig.content / runtime worktree-config-helper 镜像）。
+ */
+export type RenameMode = 'first-prompt' | 'first-stop' | 'agent-tool'
 
 // ── ClientMessage discriminated union ───────────────────────────
 
@@ -650,6 +660,10 @@ export interface ClientMessageMap {
   'config.setRenameModel': { model: string }
   /** config.getRenameModel：读取自动重命名标题生成模型（前端读取）。 */
   'config.getRenameModel': Record<string, never>
+  /** config.setRenameMode：设置自动重命名触发模式（非法值由 runtime 侧归一为默认 first-stop）。 */
+  'config.setRenameMode': { mode: RenameMode }
+  /** config.getRenameMode：读取自动重命名触发模式（前端读取）。 */
+  'config.getRenameMode': Record<string, never>
   /** config.getSmartContextConfig：读取智能上下文压缩配置（前端读取）。 */
   'config.getSmartContextConfig': Record<string, never>
   /** config.setSmartContextEnabled：设置智能上下文压缩开关（前端写入）。 */
@@ -889,6 +903,7 @@ export type ServerMessageType =
   | 'config.defaultBaseBranch'
   | 'config.autoRenameEnabled'
   | 'config.renameModel'
+  | 'config.renameMode'
   | 'config.smartContextConfig'
   | 'config.smartContextEnabled'
   | 'config.smartContextCompactModel'
@@ -1667,6 +1682,8 @@ export interface ServerMessageMapBase {
   'config.autoRenameEnabled': { enabled: boolean }
   /** config.renameModel：config.getRenameModel / config.setRenameModel 的 reply（"provider/modelId"，空串 = 未设置）。 */
   'config.renameModel': { model: string }
+  /** config.renameMode：config.getRenameMode / config.setRenameMode 的 reply（归一后生效值，默认 first-stop）。 */
+  'config.renameMode': { mode: RenameMode }
   /** config.smartContextConfig：config.getSmartContextConfig 的 reply（compactModel 为 "provider/modelId" 复合串，空串 = 未设置；thresholds 为 token 绝对数）。 */
   'config.smartContextConfig': {
     enabled: boolean
@@ -2178,6 +2195,8 @@ export interface ReplyPayloadMap {
   'config.getAutoRenameEnabled': ServerMessageMap['config.autoRenameEnabled']
   'config.setRenameModel': ServerMessageMap['config.renameModel']
   'config.getRenameModel': ServerMessageMap['config.renameModel']
+  'config.setRenameMode': ServerMessageMap['config.renameMode']
+  'config.getRenameMode': ServerMessageMap['config.renameMode']
   'config.getSmartContextConfig': ServerMessageMap['config.smartContextConfig']
   'config.setSmartContextEnabled': ServerMessageMap['config.smartContextEnabled']
   'config.setSmartContextCompactModel': ServerMessageMap['config.smartContextCompactModel']

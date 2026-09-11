@@ -4,6 +4,7 @@ export type {
   ServerMessageType, ServerMessage, ServerMessageMap, ServerMessageMapBase, ServerMessageUnion,
   ReplyPayloadMap,
   BatchDeleteResult,
+  RenameMode,
   SystemPromptConfig,
   CommandSourceInfo,
   WorktreeErrorCode, WorktreeUnknownErrorCode, WorktreeEnvelopeCode,

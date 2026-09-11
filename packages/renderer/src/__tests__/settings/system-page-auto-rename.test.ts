@@ -5,6 +5,13 @@
  *  - 首屏冒烟：DOM 含 auto-rename Switch（data-testid=setting-auto-rename-session）。
  *  - 初始态：getAutoRenameEnabled 返回 true → Switch 开；返回 false → Switch 关。
  *  - 切换交互：切 Switch → setAutoRenameEnabled 被调用。
+ *  - 触发模式 Select：DOM 含 trigger（data-testid=setting-rename-mode）+ getRenameMode 回显 +
+ *    三模式选项点选 setRenameMode；开关关闭时仍可用（agent-tool 工具注册不受开关 flag 门控，
+ *    与 model Select 随开关 disabled 的差异行为）。
+ *  - hint 边界（D1 正交契约）：renameModeHint 文案说明开关依赖——自动生成模式需开关开启、
+ *    agent 自主命名不受限。
+ *  - 成功 toast 分流：开关关 + 切自动模式 → 提示需开启开关（不承诺已生效，自动路径被
+ *    enabled flag 拦截）；开关开 → 原「已生效」文案。
  *
  * 覆盖（SystemPage 容器）：
  *  - 首屏冒烟：4 个 Section 组件渲染 + auto-rename Switch 在 DOM（用户可见断言）。
@@ -27,12 +34,14 @@ import SystemAppearanceSection from '@/components/settings/system/SystemAppearan
 import SystemSoundSection from '@/components/settings/system/SystemSoundSection.vue'
 import SystemShortcutSection from '@/components/settings/system/SystemShortcutSection.vue'
 
-/** mock 捕获 auto-rename / rename-model / smart-context API 调用。vi.hoisted 保证在 vi.mock 工厂执行前就绪。 */
+/** mock 捕获 auto-rename / rename-model / rename-mode / smart-context API 调用。vi.hoisted 保证在 vi.mock 工厂执行前就绪。 */
 const settingsMock = vi.hoisted(() => ({
   getAutoRenameEnabled: vi.fn(() => Promise.resolve({ enabled: true })),
   setAutoRenameEnabled: vi.fn(() => Promise.resolve({ enabled: true })),
   getRenameModel: vi.fn(() => Promise.resolve({ model: '' })),
   setRenameModel: vi.fn(() => Promise.resolve({ model: '' })),
+  getRenameMode: vi.fn(() => Promise.resolve({ mode: 'first-stop' })),
+  setRenameMode: vi.fn((mode: string) => Promise.resolve({ mode })),
   // SystemPage 现挂 SystemSmartContextSection（onMounted 读全量配置）——缺导出会告警
   getSmartContextConfig: vi.fn(() =>
     Promise.resolve({ enabled: true, compactModel: '', reminderThresholds: [200_000, 400_000, 600_000], excludedModels: [] }),
@@ -43,11 +52,16 @@ const settingsMock = vi.hoisted(() => ({
   setSmartContextExcludedModels: vi.fn(() => Promise.resolve({ models: [] })),
 }))
 
+/** toast 捕获（成功 toast 分流断言用；error/warning 仅隔离副作用不需断言）。 */
+const toastMock = vi.hoisted(() => ({ info: vi.fn() }))
+
 vi.mock('@xyz-agent/core/transport/api/domains/settings', () => ({
   getAutoRenameEnabled: settingsMock.getAutoRenameEnabled,
   setAutoRenameEnabled: settingsMock.setAutoRenameEnabled,
   getRenameModel: settingsMock.getRenameModel,
   setRenameModel: settingsMock.setRenameModel,
+  getRenameMode: settingsMock.getRenameMode,
+  setRenameMode: settingsMock.setRenameMode,
   getSmartContextConfig: settingsMock.getSmartContextConfig,
   setSmartContextEnabled: settingsMock.setSmartContextEnabled,
   setSmartContextCompactModel: settingsMock.setSmartContextCompactModel,
@@ -60,7 +74,8 @@ vi.mock('@xyz-agent/core/transport/api/domains/settings', () => ({
 }))
 
 vi.mock('@/composables/useToast', () => ({
-  useToast: () => ({ info: vi.fn(), error: vi.fn(), warning: vi.fn() }),
+  // info 走共享 toastMock 捕获（分流断言用）；error/warning 仅隔离副作用
+  useToast: () => ({ info: toastMock.info, error: vi.fn(), warning: vi.fn() }),
 }))
 
 // storeToRefs 要求真正的 reactive 属性，故用 ref 暴露 appCommands / shortcutOverrides
@@ -103,11 +118,16 @@ beforeEach(() => {
   settingsMock.setAutoRenameEnabled.mockReset()
   settingsMock.getRenameModel.mockReset()
   settingsMock.setRenameModel.mockReset()
-  // 默认解析值：与组件默认 ref(true) / ref('') 一致
+  settingsMock.getRenameMode.mockReset()
+  settingsMock.setRenameMode.mockReset()
+  // 默认解析值：与组件默认 ref(true) / ref('') / ref('first-stop') 一致
   settingsMock.getAutoRenameEnabled.mockResolvedValue({ enabled: true })
   settingsMock.setAutoRenameEnabled.mockResolvedValue({ enabled: true })
   settingsMock.getRenameModel.mockResolvedValue({ model: '' })
   settingsMock.setRenameModel.mockResolvedValue({ model: '' })
+  settingsMock.getRenameMode.mockResolvedValue({ mode: 'first-stop' })
+  settingsMock.setRenameMode.mockImplementation((mode: string) => Promise.resolve({ mode }))
+  toastMock.info.mockClear()
 })
 
 afterEach(() => {
@@ -158,6 +178,86 @@ describe('SystemAutoRenameSection 会话自动重命名开关', () => {
     await flushPromises()
     expect(settingsMock.setAutoRenameEnabled).toHaveBeenCalledTimes(1)
     expect(settingsMock.setAutoRenameEnabled).toHaveBeenCalledWith(false)
+  })
+
+  it('mount 后 DOM 含 rename-mode Select 且 getRenameMode 被调用', async () => {
+    wrapper = mount(SystemAutoRenameSection, { props: { system: systemFixture() } })
+    await flushPromises()
+    expect(wrapper.find('[data-testid="setting-rename-mode"]').exists()).toBe(true)
+    expect(settingsMock.getRenameMode).toHaveBeenCalled()
+  })
+
+  it('getRenameMode 返回 first-prompt 时 trigger 显示「首次请求时」', async () => {
+    settingsMock.getRenameMode.mockResolvedValue({ mode: 'first-prompt' })
+    wrapper = mount(SystemAutoRenameSection, { props: { system: systemFixture() } })
+    await flushPromises()
+    const trigger = wrapper.find('[data-testid="setting-rename-mode"]')
+    expect(trigger.text()).toContain('首次请求时')
+  })
+
+  it('下拉含三模式选项；点选 agent 自主命名 → setRenameMode 收到 "agent-tool"', async () => {
+    wrapper = mount(SystemAutoRenameSection, { props: { system: systemFixture() } })
+    await flushPromises()
+
+    // reka-ui SelectContent 仅 open 时挂载（teleport 到 body），happy-dom 需显式 dispatch
+    const trigger = wrapper.find('[data-testid="setting-rename-mode"]').element as HTMLElement
+    trigger.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }))
+    trigger.click()
+    await flushPromises()
+
+    const options = document.body.querySelectorAll('[role="option"]')
+    const labels = Array.from(options).map((el) => el.textContent ?? '')
+    expect(labels).toContain('首次请求时')
+    expect(labels).toContain('首轮回复完成')
+    expect(labels).toContain('agent 自主命名')
+
+    const target = Array.from(options).find((el) => (el.textContent ?? '').includes('agent 自主命名'))
+    expect(target).toBeTruthy()
+    target!.dispatchEvent(new PointerEvent('pointerup', { bubbles: true }))
+    target!.click()
+    await flushPromises()
+    expect(settingsMock.setRenameMode).toHaveBeenCalledWith('agent-tool')
+    // 开关开（默认 true）→ 原「已生效」文案（toast 分流的正向对照）
+    expect(toastMock.info).toHaveBeenCalledWith(expect.stringContaining('已生效'))
+  })
+
+  it('renameModeHint 说明开关依赖：自动生成需开关开启，agent 自主命名不受限', async () => {
+    wrapper = mount(SystemAutoRenameSection, { props: { system: systemFixture() } })
+    await flushPromises()
+    // D1 正交契约的用户可见边界：flag 只门控自动路径，agent-tool 工具面不受门控
+    const text = wrapper.text()
+    expect(text).toContain('需开启上方自动重命名开关')
+    expect(text).toContain('不受该开关限制')
+  })
+
+  it('开关关 + 切自动模式 → 成功 toast 提示需开启开关（不承诺已生效）', async () => {
+    settingsMock.getAutoRenameEnabled.mockResolvedValue({ enabled: false })
+    wrapper = mount(SystemAutoRenameSection, { props: { system: systemFixture() } })
+    await flushPromises()
+
+    const trigger = wrapper.find('[data-testid="setting-rename-mode"]').element as HTMLElement
+    trigger.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }))
+    trigger.click()
+    await flushPromises()
+
+    const options = document.body.querySelectorAll('[role="option"]')
+    const target = Array.from(options).find((el) => (el.textContent ?? '').includes('首次请求时'))
+    expect(target).toBeTruthy()
+    target!.dispatchEvent(new PointerEvent('pointerup', { bubbles: true }))
+    target!.click()
+    await flushPromises()
+
+    expect(settingsMock.setRenameMode).toHaveBeenCalledWith('first-prompt')
+    // 自动路径被 enabled flag 拦截——toast 不承诺「已生效」，指向恢复动作
+    expect(toastMock.info).toHaveBeenCalledWith(expect.stringContaining('需开启上方自动重命名开关'))
+  })
+
+  it('auto-rename 开关关闭时 mode Select 仍可用（agent-tool 不受 flag 门控）', async () => {
+    settingsMock.getAutoRenameEnabled.mockResolvedValue({ enabled: false })
+    wrapper = mount(SystemAutoRenameSection, { props: { system: systemFixture() } })
+    await flushPromises()
+    const trigger = wrapper.find('[data-testid="setting-rename-mode"]')
+    expect(trigger.attributes('disabled')).toBeUndefined()
   })
 })
 

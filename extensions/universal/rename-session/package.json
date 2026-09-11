@@ -1,6 +1,6 @@
 {
   "name": "@zhushanwen/pi-rename-session",
-  "version": "0.7.0",
+  "version": "0.8.0",
   "type": "module",
   "main": "index.ts",
   "xyz-agent": {
@@ -14,6 +14,7 @@
             "type": "ref",
             "ref": ""
           },
+          "mode": "first-stop",
           "maxTitleLength": 50,
           "thinkingLevel": "off"
         }

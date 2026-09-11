@@ -12,8 +12,13 @@ import {
 	HarnessError,
 	assertTitleGuards,
 	classifyFailure,
+	countLlmRequestLogs,
+	countSessionInfoEntries,
+	countToolCalls,
 	extractLastStopAssistant,
 	extractRenameLogEntries,
+	firstAssistantStartT,
+	lastStopAssistantEndT,
 	parseLogMessages,
 	rebuildPreview,
 } from "./harness.mjs";
@@ -166,6 +171,131 @@ describe("extractLastStopAssistant", () => {
 
 	it("非数组入参抛 TypeError", () => {
 		expect(() => extractLastStopAssistant("not-array")).toThrow(TypeError);
+	});
+});
+
+// ──────────────────────── firstAssistantStartT / lastStopAssistantEndT（timeline 时刻提取） ────────────────────────
+
+/** 造一条 timeline 条目（{t, stream, line}；objOrLine 传对象则 JSON 序列化）。 */
+function tl(t, stream, objOrLine) {
+	return { t, stream, line: typeof objOrLine === "string" ? objOrLine : JSON.stringify(objOrLine) };
+}
+
+describe("firstAssistantStartT（A6 触发时点断言的取锚函数）", () => {
+	it("混合流取首个 assistant message_start 时刻（user message_start / err 流 / message_end 均不算）", () => {
+		const timeline = [
+			tl(1001, "out", { type: "message_start", message: { role: "user" } }),
+			tl(1002, "err", "[pi] some stderr"),
+			tl(1003, "out", { type: "message_start", message: { role: "assistant" } }),
+			tl(1004, "out", { type: "message_end", message: { role: "assistant", stopReason: "stop" } }),
+			tl(1005, "out", { type: "message_start", message: { role: "assistant" } }),
+		];
+		expect(firstAssistantStartT(timeline)).toBe(1003);
+	});
+
+	it("坏 JSON 行跳过；无匹配 / 空数组返回 null", () => {
+		expect(
+			firstAssistantStartT([tl(1, "out", "{broken"), tl(2, "out", { type: "message_start", message: { role: "assistant" } })]),
+		).toBe(2);
+		expect(firstAssistantStartT([tl(1, "out", "{broken")])).toBeNull();
+		expect(firstAssistantStartT([])).toBeNull();
+	});
+
+	it("非数组入参抛 TypeError", () => {
+		expect(() => firstAssistantStartT("not-array")).toThrow(TypeError);
+	});
+});
+
+describe("lastStopAssistantEndT", () => {
+	it("取最后一条 stop assistant message_end 时刻（toolUse 中间轮与 user 不算）", () => {
+		const timeline = [
+			tl(2001, "out", { type: "message_start", message: { role: "user" } }),
+			tl(2002, "out", { type: "message_end", message: { role: "assistant", stopReason: "toolUse" } }),
+			tl(2003, "out", { type: "message_end", message: { role: "assistant", stopReason: "stop" } }),
+			tl(2004, "out", { type: "message_end", message: { role: "assistant", stopReason: "stop" } }),
+		];
+		expect(lastStopAssistantEndT(timeline)).toBe(2004);
+	});
+
+	it("err 流不算；坏行跳过；无匹配返回 null；非数组抛 TypeError", () => {
+		expect(
+			lastStopAssistantEndT([
+				tl(1, "err", { type: "message_end", message: { role: "assistant", stopReason: "stop" } }),
+				tl(2, "out", "{broken"),
+				tl(3, "out", { type: "message_end", message: { role: "assistant", stopReason: "stop" } }),
+			]),
+		).toBe(3);
+		expect(lastStopAssistantEndT([])).toBeNull();
+		expect(() => lastStopAssistantEndT(null)).toThrow(TypeError);
+	});
+});
+
+// ──────────────────────── countToolCalls（V3/V10 确定性判据：无工具 ⇒ 必无 toolCall） ────────────────────────
+
+describe("countToolCalls", () => {
+	it("数 assistant content 内指定工具的 toolCall block", () => {
+		const lines = [
+			msgLine("user", undefined, [{ type: "text", text: "q" }]),
+			msgLine("assistant", "toolUse", [
+				{ type: "text", text: "ok" },
+				{ type: "toolCall", id: "c1", name: "rename_session", arguments: { title: "重构配置加载" } },
+			]),
+		];
+		expect(countToolCalls(lines, "rename_session")).toBe(1);
+	});
+
+	it("其他工具名不计；多条跨 entry 累计", () => {
+		const lines = [
+			msgLine("assistant", "toolUse", [{ type: "toolCall", id: "c1", name: "bash", arguments: {} }]),
+			msgLine("assistant", "toolUse", [
+				{ type: "toolCall", id: "c2", name: "rename_session", arguments: {} },
+				{ type: "toolCall", id: "c3", name: "rename_session", arguments: {} },
+			]),
+		];
+		expect(countToolCalls(lines, "rename_session")).toBe(2);
+		expect(countToolCalls(lines, "bash")).toBe(1);
+	});
+
+	it("toolResult message、user message 与 string content 不计入；坏行跳过", () => {
+		const lines = [
+			"{broken",
+			JSON.stringify({
+				type: "message",
+				message: { role: "toolResult", content: [{ type: "toolCall", name: "rename_session" }] },
+			}),
+			msgLine("user", undefined, [{ type: "toolCall", name: "rename_session" }]),
+			msgLine("assistant", "stop", "直接字符串"),
+		];
+		expect(countToolCalls(lines, "rename_session")).toBe(0);
+	});
+
+	it("null/undefined 入参按 0 计（session 文件未创建契约）；非数组非 null 抛 TypeError；toolName 非 string 抛 TypeError", () => {
+		expect(countToolCalls(null, "rename_session")).toBe(0);
+		expect(countToolCalls(undefined, "rename_session")).toBe(0);
+		expect(() => countToolCalls("not-array", "x")).toThrow(TypeError);
+		expect(() => countToolCalls([], 123)).toThrow(TypeError);
+	});
+});
+
+// ──────────────────────── countLlmRequestLogs / countSessionInfoEntries（一次性语义计数） ────────────────────────
+
+describe("countLlmRequestLogs / countSessionInfoEntries", () => {
+	it("数 LLM request 内省日志与 session_info entry；他类 entry 不计", () => {
+		const lines = [
+			JSON.stringify({ type: "session", version: 3, id: "x" }),
+			JSON.stringify({ type: "session_info", id: "s1", name: "旧名" }),
+			renameLogLine('[rename-session] t=... LLM request messages: [{"role":"user"}]'),
+			renameLogLine("[rename-session] t=... skip: count=2"),
+			JSON.stringify({ type: "session_info", id: "s2", name: "新名" }),
+		];
+		expect(countLlmRequestLogs(lines)).toBe(1);
+		expect(countSessionInfoEntries(lines)).toBe(2);
+	});
+
+	it("null lines 按 0 计；非 LLM request 的 rename 日志不计", () => {
+		expect(countLlmRequestLogs(null)).toBe(0);
+		expect(countSessionInfoEntries(null)).toBe(0);
+		expect(countLlmRequestLogs([renameLogLine('[rename-session] t=... renamed to "x"')])).toBe(0);
 	});
 });
 
