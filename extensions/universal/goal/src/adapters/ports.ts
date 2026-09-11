@@ -1,7 +1,7 @@
 /**
  * Ports 桥接 — Pi → ServicePorts 适配（adapters 层）
  *
- * 单一 ports 构造点（DRY）：command-adapter / event-adapter / index 共用。
+ * 单一 ports 构造点（DRY）：command-adapter / goal-control-adapter / event-handlers / index 共用。
  *
  * - persistence: pi.appendEntry 映射到 appendState / appendHistory（type 字符串区分）
  * - ui: ctx.ui 的 setWidget/setStatus/notify + hasUI + isGui + theme（fg/bold 适配 ThemeLike）
@@ -49,7 +49,7 @@ export function buildPorts(pi: ExtensionAPI, ctx: ExtensionContext): ServicePort
 		setGuiWidget(name: string, result: GuiRenderResult | undefined): void {
 			// GUI 协议 widget：guiSetWidget 在 RPC 模式用 marker 编码 GuiRenderResult JSON
 			// （component + meta 宿主元数据）进 string[]，复用 ctx.ui.setWidget 通道；
-			// host 侧 event-adapter 检测 marker 解码还原。guiSetWidget 无 isGui 守卫
+			// host 侧 EventAdapter（xyz-agent runtime 的 pi 事件适配层）检测 marker 解码还原。guiSetWidget 无 isGui 守卫
 			// （helpers.ts 仅查 ctx.ui?.setWidget 存在性），isGui 判定在 updateWidget
 			// 外层（projection/widget.ts）。
 			//

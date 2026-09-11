@@ -1,5 +1,5 @@
 /**
- * event-adapter.ts 测试 — agent_end / before_agent_start 核心逻辑
+ * event-handlers 行为测试 — agent_end / before_agent_start 核心逻辑
  *
  * 覆盖 agent_end 的 continuation + ESC 守卫（FR-6.7）+
  * before_agent_start 的 AUTO_CLEAR/context wrap-up。

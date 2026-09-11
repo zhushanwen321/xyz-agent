@@ -11,7 +11,7 @@
  * 另覆盖：停发通知含 /goal resume 恢复指引 + goal 保持 active；/goal resume
  * 恢复通道重置计数；未封顶 active goal 的 resume 语义不变。
  *
- * fake timers + fake pi/ctx（不 import Pi SDK 真实实现，harness 对齐 event-adapter.test.ts）。
+ * fake timers + fake pi/ctx（不 import Pi SDK 真实实现，harness 对齐 __tests__/event-adapter.test.ts）。
  */
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";

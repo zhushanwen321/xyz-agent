@@ -121,20 +121,20 @@ export function getBudgetColor(percent: number): "error" | "warning" | "muted" {
 export function checkBudgetOnTurnEnd(state: GoalRuntimeState): BudgetCheckResult {
 	const result: BudgetCheckResult = { terminal: null, warnings: [], shouldSendSteering: false };
 
-		if (state.budget.tokenBudget) {
-			const tokenPct = state.tokensUsed / state.budget.tokenBudget;
-			if (tokenPct >= 1 && state.budgetLimitSteeringSent) {
-				result.terminal = { type: "exceeded" };
-				return result;
-			}
-			if (tokenPct >= BUDGET_RATIO_HIGH && !state.budgetLimitSteeringSent) {
-				result.shouldSendSteering = true;
-			} else if (tokenPct >= BUDGET_RATIO_HIGH && !state.tokenWarning90Sent) {
-				result.warnings.push({ type: "warning90" });
-			} else if (tokenPct >= BUDGET_RATIO_LOW && !state.tokenWarning70Sent) {
-				result.warnings.push({ type: "warning70" });
-			}
+	if (state.budget.tokenBudget) {
+		const tokenPct = state.tokensUsed / state.budget.tokenBudget;
+		if (tokenPct >= 1 && state.budgetLimitSteeringSent) {
+			result.terminal = { type: "exceeded" };
+			return result;
 		}
+		if (tokenPct >= BUDGET_RATIO_HIGH && !state.budgetLimitSteeringSent) {
+			result.shouldSendSteering = true;
+		} else if (tokenPct >= BUDGET_RATIO_HIGH && !state.tokenWarning90Sent) {
+			result.warnings.push({ type: "warning90" });
+		} else if (tokenPct >= BUDGET_RATIO_LOW && !state.tokenWarning70Sent) {
+			result.warnings.push({ type: "warning70" });
+		}
+	}
 
 	return result;
 }

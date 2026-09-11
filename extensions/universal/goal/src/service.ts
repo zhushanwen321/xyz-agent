@@ -60,7 +60,7 @@ export function tickState(state: GoalRuntimeState): void {
  * 这类「active → 非活跃」的转换，调用方必须在改 status **之前**先调本函数
  * （或先调 {@link tickState} 捕获最后运行段）。
  *
- * 导出供 command-adapter / event-adapter 复用（DRY：所有路径共用同一持久化语义）。
+ * 导出供 command-adapter / goal-control-adapter 复用（DRY：所有路径共用同一持久化语义）。
  */
 export function persistState(session: GoalSession, ports: ServicePorts): void {
 	if (!session.state) return;
@@ -154,9 +154,9 @@ export function createGoal(
 /**
  * 唯一终态序列入口（FR-3.3 / AC-3）。
  *
- * 收口所有 active→terminal 转换的完整副作用序列，消除此前散在 service /
- * command-adapter / event-adapter 的重复 `transitionStatus + completedAtTurnIndex +
- * writeHistory + appendState` 序列。
+ * 收口所有 active→terminal 转换的完整副作用序列——service（budget 终态）与
+ * command-adapter（clear / resume 超预算）、goal-control-adapter（complete）共用
+ * 同一 `transitionStatus + completedAtTurnIndex + writeHistory + appendState` 序列。
  *
  * 序列（严格顺序）：
  * 1. tickState(state)（FR-6.5：转 terminal 前累加当前运行段——此时 status 仍为 active）
@@ -237,10 +237,10 @@ function toMessageEndData(eventData: unknown): MessageEndEventData | null {
 
 /**
  * 路径 B 入口。异步事件，无返回值（副作用直接 mutate session.state）。
- * 并发保护（isProcessing / stale-check）在 event-adapter，不在此层。
+ * 并发保护（isProcessing / stale-check）在 event-handlers（agent-end.ts），不在此层。
  *
  * 本函数作为简单事件的统一入口（message_end / turn_end）。
- * 复杂事件（before_agent_start / agent_end / session_start）由 event-adapter
+ * 复杂事件（before_agent_start / agent_end / session_start）由 event-handlers
  * 直接实现，调 engine 纯函数 + service 辅助函数。
  *
  * H3：不再返回 effect 数组。turn_end 的 updateWidget 副作用由调用方
