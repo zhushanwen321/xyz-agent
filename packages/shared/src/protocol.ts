@@ -885,6 +885,10 @@ export type ServerMessageType =
   // reply（与 request 同名）；deferred / forced = 两个全局推送事件（Server→Client 冒号
   // camelCase，对齐 backgroundTask:updated 规则；与台账 event 值同源）。
   | 'rollingRestart.status' | 'rollingRestart:deferred' | 'rollingRestart:forced'
+  // watchdog 域（crash-forensics-and-watchdog §3.3 D4，u6）：memoryPressure = 内存压力
+  // 全局推送（Server→Client 冒号 camelCase，对齐 rollingRestart:deferred 规则；越线期每
+  // 采样拍重发，payload 见 WatchdogMemoryPressurePayload）。
+  | 'watchdog:memoryPressure'
 
 /** skill 缓存失效广播的作用域：global=全局 skill 变动，project=某项目 cwd 的 skill 变动。 */
 export type SkillCacheScope = 'global' | 'project'
@@ -1071,6 +1075,37 @@ export interface RollingRestartStatusPayload {
   inflight: RollingRestartInflightSummary
   /** deferred/countdown 态的推迟上限到点时刻（ms epoch）；其余态缺省。 */
   deferDeadlineAt?: number
+}
+
+// ── 看门狗协议面（crash-forensics-and-watchdog §3.3 D4，u6）────────────────
+//
+// watchdog:memoryPressure = 内存压力全局推送（Server→Client 冒号 camelCase，对齐
+// rollingRestart:deferred 命名规则；无 sessionId——窗口级全局态，非 session 级消息，
+// 不受「session 级消息必带 sessionId」约束）。生产方 = runtime 看门狗采样环（u6），
+// 消费方 = renderer useMemoryPressure composable（memory-relief 降级的 renderer 半边：
+// 收到 warn 及以上 → 收紧 renderer 侧 LRU 缓存）。
+
+/**
+ * 看门狗内存压力级别（D4 两级阈值）。'normal' 不广播（renderer 缺省态即 normal，
+ * 压力解除的回落不产生帧——消费方回落感知走下一帧缺失 + 本地常态假设）。
+ */
+export type WatchdogMemoryLevel = 'warn' | 'critical'
+
+/** watchdog:memoryPressure 的 payload：当前用量 + 阈值 + 动作级别（越线期每采样拍重发——
+ *  广播重发作低配拉取，renderer 重连/刷新后最多丢一个采样周期即补上）。 */
+export interface WatchdogMemoryPressurePayload {
+  /** 动作级别：warn = memory-relief 档；critical = 滚动重启决策档（D5，u7c 消费）。 */
+  level: WatchdogMemoryLevel
+  /** 当前 heap used（bytes，process.memoryUsage().heapUsed）。 */
+  heapUsed: number
+  /** heap 上限（bytes，v8.getHeapStatistics().heap_size_limit）。 */
+  heapSizeLimit: number
+  /** 当前用量占上限百分比（0-100，两位精度由生产方预舍入）。 */
+  usedPercent: number
+  /** 告警档阈值（%，默认 70，env 可覆盖——阈值面随帧携带使 renderer 无需同步配置）。 */
+  warnPercent: number
+  /** 临界档阈值（%，默认 85，env 可覆盖）。 */
+  criticalPercent: number
 }
 
 /**
@@ -1840,6 +1875,11 @@ export interface ServerMessageMapBase {
   // rolling-restart-deferred / rolling-restart-forced 同源，在途摘要字段语义见 payload 类型）。
   'rollingRestart:deferred': RollingRestartDeferredPayload
   'rollingRestart:forced': RollingRestartForcedPayload
+
+  // ── watchdog 域（crash-forensics-and-watchdog §3.3 D4，u6）──
+  // memoryPressure：内存压力全局推送（u6 看门狗生产；renderer useMemoryPressure 消费——
+  // warn 及以上收紧 renderer 侧 LRU；字段语义见 payload 类型）。
+  'watchdog:memoryPressure': WatchdogMemoryPressurePayload
 }
 
 /**

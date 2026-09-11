@@ -76,6 +76,12 @@ import { WorkspaceDetector } from './services/worktree/workspace-detector.js'
 import { runStartupBackgroundInit, resolveReclaimConfig } from './services/startup-background-init.js'
 // u5（crash-forensics-and-watchdog D3）：reattach 编排 + 孤儿收殓完成 promise 交付回调。
 import { runStartupReattach } from './services/startup-reattach.js'
+// u6（crash-forensics-and-watchdog D4）：内存看门狗——60s heap 采样环 + 两级阈值 +
+// memory-relief 动作点。resolveWatchdogConfig：Gate W 武装门与三旋钮 env 解析。
+import { startWatchdog, resolveWatchdogConfig } from './infra/watchdog.js'
+import type { WatchdogHandle } from './infra/watchdog.js'
+export { startWatchdog, resolveWatchdogConfig } from './infra/watchdog.js'
+export type { WatchdogHandle, WatchdogOptions, WatchdogSample, WatchdogStatus } from './infra/watchdog.js'
 // A1-2（provider-config-quota 架构）：models.json 寄生字段 → config/providers.json 迁移。
 // 挂载薄包装在独立小模块 run-extras-migration.ts（失败语义 + 返回值契约可单测，
 // 组合根 import 即执行 main() 不可直测）；此处 readExtrasWithFallback 供 QuotaService 双读。
@@ -168,6 +174,17 @@ export function stopMemoryWatermarkTimer(): void {
     clearInterval(memoryWatermarkTimer)
     memoryWatermarkTimer = undefined
   }
+}
+
+// ── u6（crash-forensics-and-watchdog D4）：内存看门狗句柄 ─────────────────
+// 句柄做成模块级可取消形态（对齐上方水位定时器先例）：u7c 将改写本文件的 shutdown
+// 序列（D5 退出链「以 index.ts 为准逐行继承」），届时直接调 stopWatchdog() 接入清理链。
+let watchdogHandle: WatchdogHandle | undefined
+
+/** 停止内存看门狗（shutdown / u7c 改造 shutdown 序列时的取消入口）。幂等。 */
+export function stopWatchdog(): void {
+  watchdogHandle?.stop()
+  watchdogHandle = undefined
 }
 
 /**
@@ -865,6 +882,9 @@ async function main(): Promise<void> {
     // D6-②：先停水位定时器（shutdown 后不再有水位行；u8 改造 shutdown 序列时
     // 沿用本取消入口，注释见 stopMemoryWatermarkTimer 定义处）。
     stopMemoryWatermarkTimer()
+    // u6（crash-forensics D4）：停内存看门狗采样环（先取消先例同上；定时器已 unref，
+    // 此 stop 是显式收口双保险——shutdown 后不再有 relief/通知判定拍）。
+    stopWatchdog()
     // u8（crash-resilience D7-②）：取消全部 pending 自动恢复 timer——必须在下方
     // server.stop（内部 destroyAll 全部 pi 子进程）之前：若取消晚于 destroyAll，shutdown
     // 中途 timer 触发会 spawn 新孤儿 pi（收割器只在下次启动后 5s 跑一次，用户直接退出
@@ -973,6 +993,19 @@ async function main(): Promise<void> {
     () => sessionService.getActiveSessionIds().length,
     () => pm.size,
   )
+
+  // ── u6（crash-forensics-and-watchdog D4）：内存看门狗启动 ─────────────
+  // 挂点 = listen 后、与水位定时器同区（同为内存观测面；设计 D4 未指明 listen 前后，
+  // 取「listen 后与 background-init 并行」的端口先就绪序）。武装门 Gate W 默认 off
+  // （XYZ_RUNTIME_WATCHDOG_ARMED）——off 时纯观测：采样环照跑补全水位数据，relief 与
+  // renderer 通知不执行（设计 §3.2 方案 B）。onRelief 缺省（无动作）登记：D4 可回收物
+  // ① history-rebuild-cache 无 clear-all 出口（SessionHistoryReader 未暴露，领地外），
+  // ② renderer LRU 收紧走下方 broadcast → renderer useMemoryPressure 通道（D4 通道归属），
+  // runtime 侧动作接线待上述出口交付后补（u6 汇报项）。stop 挂 shutdown 序（下方）。
+  watchdogHandle = startWatchdog({
+    ...resolveWatchdogConfig(process.env),
+    broadcast: (payload) => server.broadcast({ type: 'watchdog:memoryPressure', payload }),
+  })
 
   // 启动耗时分解探针（06 §5 m-7）：listen-ready 各段耗时（baseline 对比见汇报——
   // 改造前 getPiVersion 占 listen 延迟 1.1-1.3s，重排后该段归零）。
