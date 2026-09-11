@@ -700,11 +700,6 @@ function flushWatermarkDaily(acc: WatermarkDailyAccumulator): void {
   })
 }
 
-/** 清空水位日聚合态（测试钩子；生产「重启清零」由模块随进程消亡自然达成）。 */
-export function resetWatermarkDailyForTest(): void {
-  watermarkDailyAcc = undefined
-}
-
 /**
  * pi 崩溃 stderr 全量落盘（设计 file-lock-unification-and-reaper-sink §3.2-D4 / U3-4，
  * rpc-client exit handler 的异常退出分支调用）。

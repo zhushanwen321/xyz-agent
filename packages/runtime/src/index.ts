@@ -13,6 +13,11 @@ import { ModelService } from './services/model-service.js'
 import { BASE_PORT, MAX_PORT } from '@xyz-agent/shared'
 import { getDataDir } from '@xyz-agent/shared/paths'
 import { initLogger, closeLogger, logger, captureMemorySnapshot, formatMemoryWatermarkLine, MEMORY_WATERMARK_INTERVAL_MS } from './infra/logger.js'
+// u1b（crash-forensics-and-watchdog D1）runtime 台账单例。初始化是组合根职责（与
+// initLogger 同形态：模块级单例 + 未初始化 no-op）——不初始化则 getCrashJournal()
+// 恒返回 no-op，pi-respawn / message-bus 守卫 / session 生命周期的全部 runtime 侧
+// 事件静默丢弃（crashes/runtime.jsonl 永不创建）。close 挂点属 shutdown 链（u7c）。
+import { initCrashJournal } from './infra/crash-journal.js'
 import { isContainedStreamError } from './infra/system/uncaught-policy.js'
 
 import { ProcessManager } from './infra/pi/process-manager.js'
@@ -211,6 +216,14 @@ async function main(): Promise<void> {
   // 无法事后诊断 pi 发了什么事件。initLogger 后所有 console.* 自动 tee 到
   // <dataDir>/logs/runtime-YYYY-MM-DD.log。
   initLogger(getDataDir())
+
+  // u1b（crash-forensics-and-watchdog D1）：runtime 台账单例初始化。位置与时序对齐上方
+  // initLogger（同处于组合根最早期、数据目录 getDataDir() 可用性已由 initLogger 验证）；
+  // 必须在任何 service 可能 append 之前——pi-respawn 的 auto-respawn 四态、message-bus
+  // 守卫的 frame-truncated/registry-miss、session 生命周期事件全部经 getCrashJournal()
+  // 单例落 `<dataDir>/logs/crashes/runtime.jsonl`。幂等；目录创建失败降级 no-op
+  // （旁路设施故障不放大为调用链故障，见 crash-journal.ts 契约）。
+  initCrashJournal(getDataDir())
 
   // S1-W1：token 解析在 initLogger 之后（fail-closed warning 落盘）、server 构造之前。
   const runtimeToken = resolveRuntimeToken()

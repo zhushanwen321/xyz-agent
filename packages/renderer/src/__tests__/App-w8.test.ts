@@ -48,6 +48,8 @@ const effectSpies = vi.hoisted(() => ({
   bindForkNoticeEffect: vi.fn(),
   bindHandoffEffect: vi.fn(),
   bindSessionStreamSync: vi.fn(),
+  installInboundFrameGuard: vi.fn(),
+  uninstallInboundFrameGuard: vi.fn(),
 }))
 // stub fork-notice 全局效果（App setup 调用，依赖 pinia/session store）；spy 捕获调用次数
 vi.mock('@/composables/effects/useForkNoticeEffect', () => ({
@@ -65,6 +67,18 @@ vi.mock('@/composables/effects/useHandoffEffect', () => ({
 vi.mock('@/composables/effects/useSessionStreamSync', () => ({
   bindSessionStreamSync: (...args: unknown[]) => {
     effectSpies.bindSessionStreamSync(...args)
+  },
+}))
+
+// stub 入站守卫装配（u-init P0 接线：App setup 顶层 install + onBeforeUnmount uninstall）。
+// 真实 composable 依赖 active pinia（usePanelStore），本文件不装 pinia——stub 保用例隔离，
+// 接线契约由 spy 断言（真实链路见 Panel.inbound-frame-notice.test.ts）。
+vi.mock('@/composables/useInboundFrameGuard', () => ({
+  installInboundFrameGuard: (...args: unknown[]) => {
+    effectSpies.installInboundFrameGuard(...args)
+  },
+  uninstallInboundFrameGuard: (...args: unknown[]) => {
+    effectSpies.uninstallInboundFrameGuard(...args)
   },
 }))
 
@@ -91,9 +105,20 @@ describe('W8: App.vue 连接建立调 onConnected', () => {
     expect(effectSpies.bindForkNoticeEffect).toHaveBeenCalledTimes(1)
     expect(effectSpies.bindHandoffEffect).toHaveBeenCalledTimes(1)
     expect(effectSpies.bindSessionStreamSync).toHaveBeenCalledTimes(1)
+    // u-init P0 接线：入站帧守卫在 App setup 顶层安装（同区装配），否则 core 丢帧回调
+    // 无人消费、终止阀提示永不出现（接线缺失 = 生产链路零调用）
+    expect(effectSpies.installInboundFrameGuard).toHaveBeenCalledTimes(1)
     connectionState.value = 'connected'
     await new Promise((r) => setTimeout(r, 0))
     expect(mocks.onConnected).toHaveBeenCalledTimes(1)
+  })
+
+  it('u-init: App 卸载解绑入站帧守卫（install/uninstall 配对，HMR 重挂不残留）', () => {
+    wrapper = mount(App)
+    expect(effectSpies.uninstallInboundFrameGuard).not.toHaveBeenCalled()
+    wrapper.unmount()
+    wrapper = null
+    expect(effectSpies.uninstallInboundFrameGuard).toHaveBeenCalledTimes(1)
   })
 
   it('断连→重连 connected → onConnected 再次被调用（刷新由 onConnected 内部判断）', async () => {

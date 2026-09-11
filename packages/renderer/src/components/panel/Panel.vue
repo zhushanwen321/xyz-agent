@@ -97,6 +97,12 @@
         <LoaderCircle class="size-3.5 shrink-0 animate-spin text-warn" />
         <span class="text-xs text-text">{{ t('panel.message.respawnPending') }}</span>
       </div>
+      <!-- [crash-forensics-and-watchdog §3.3 D8 / u10a 挂载点] 入站超界帧终止阀的会话级
+           静态提示（与上方 respawnPending 同区——都是「本会话数据流异常」的带内提示，不
+           打断对话流/composer）。状态源 = useInboundFrameGuard 的 trippedSessionIds
+           （App 装配层 installInboundFrameGuard 已安装）；组件内部按 sessionId 自判 tripped，
+           非本 session 不渲染（不连坐）。恢复动作 = 用户切走再切回本会话。 -->
+      <InboundFrameDroppedNotice v-if="sessionId" :session-id="sessionId" />
       <!-- ask-user 渲染 ⟺ (conversation || trace) && input==='ask-user'（D5）：dead 态被
            派生优先级吞掉（kind==='dead'），保留 W6「dead 不渲染 ask-user」语义；trace 同样
            承接 ask-user（session-trace 契约「不打断对话能力」，V4）；landing/empty 无 session，
@@ -130,6 +136,7 @@ import TraceView from './trace/TraceView.vue'
 import { Button } from '@/components/ui/button'
 import Landing from '@/components/new-task/Landing.vue'
 import AskUserOverlay from '@/components/extension/ask-user/AskUserOverlay.vue'
+import InboundFrameDroppedNotice from '@/components/ui/InboundFrameDroppedNotice.vue'
 import { usePanelView } from '@/composables/features/panel/usePanelView'
 import { useChatStore } from '@/stores/chat'
 import { useSidebar } from '@/composables/features/sidebar/useSidebar'

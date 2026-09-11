@@ -59,6 +59,7 @@ import { bindForkNoticeEffect } from '@/composables/effects/useForkNoticeEffect'
 import { bindHandoffEffect } from '@/composables/effects/useHandoffEffect'
 import { bindSessionStreamSync } from '@/composables/effects/useSessionStreamSync'
 import { useCompactQueue } from '@/composables/panel/useCompactQueue'
+import { installInboundFrameGuard, uninstallInboundFrameGuard } from '@/composables/useInboundFrameGuard'
 import { hydrateStreamingIdleTimeout } from '@/composables/features/chat/streaming-idle-hydration'
 
 // 应用挂载（onMounted bootstrap 第 2 步）即提交连接编排（mock 模式 200ms 直进 connected；真 runtime 走端口发现）。
@@ -100,6 +101,11 @@ bindSessionStreamSync()
 // 首次调用绑定 app 级 scope（onScopeDispose 随 App 卸载触发，registerSessionCleanup 常驻，
 // 防模块级 onScopeDispose 警告与过早反注册）。
 useCompactQueue()
+// 入站超界帧守卫消费编排（crash-forensics-and-watchdog §3.3 D8）：模块级单例（状态源在
+// core ws-client），幂等安装一次——丢帧上报 + 终止阀静态提示态投影 + 切走切回重试订阅。
+// App setup 顶层装配（与 bindForkNoticeEffect 同区），teardown 在 onBeforeUnmount 配对；
+// 提示条由 Panel.vue 会话视图承接（InboundFrameDroppedNotice）。
+installInboundFrameGuard()
 // permissionRequest 全局弹窗状态（bus plugin-permission-request 驱动，session 无关）。
 // App 根挂载 PermissionRequestDialog，复用 ExtensionHost bridge 的 bus 单例。
 const perm = usePermissionRequest()
@@ -143,6 +149,9 @@ function onRetry(): void {
 
 onBeforeUnmount(() => {
   teardown()
+  // 入站守卫消费编排解绑（与 setup 顶层 installInboundFrameGuard 配对：HMR/测试卸载后
+  // 重挂可再次安装；core 侧监听与 focus watch 不留残留）。
+  uninstallInboundFrameGuard()
   // settings 订阅随 App 卸载销毁（HMR/测试场景）。不断在 AppShell unmount（断连）时销毁——
   // 订阅跨断重连常驻（global handler 存于模块级 Map，重连后 dispatcher 复用，无需重注册）。
   disposeSettings()

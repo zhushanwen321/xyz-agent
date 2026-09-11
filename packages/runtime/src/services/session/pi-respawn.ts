@@ -40,6 +40,9 @@ import { getCrashJournal } from '../../infra/crash-journal.js'
 /** 台账 detailDigest 上限（设计 D1 防漏设计①：内嵌摘要 ≤2KB）。 */
 const RESPAWN_DIGEST_MAX_CHARS = 2048
 
+/** 截断时为同行其余字段（attempt/willRetry/前缀文案）预留的字符预算。 */
+const RESPAWN_DIGEST_RESERVED_CHARS = 128
+
 /** 崩溃 → 自动恢复的延迟（D7-②，设计定值 5s：避开崩溃现场的连坐终止窗口——relay kill /
  *  reapSessionBackgroundTasks 在崩溃时同步收割子任务，立即 respawn 会与之竞争）。 */
 export const RESPAWN_DELAY_MS = 5_000
@@ -154,8 +157,8 @@ export class RespawnOrchestrator {
       console.error(`[pi-respawn] session ${sessionId} auto restore failed (attempt ${attempt}/${RESPAWN_MAX_CONSECUTIVE_FAILURES}, willRetry=${willRetry}):`, message)
       // D1 台账「failed」终态：事件名 auto-respawn-failed 与成功态可区分；reason 二值区分
       // 后续走向（续排重试 / 熔断放弃）。错误消息截断内嵌（≤2KB 防线，取头部保留根因首现）。
-      const errorDigest = message.length > RESPAWN_DIGEST_MAX_CHARS - 128
-        ? `${message.slice(0, RESPAWN_DIGEST_MAX_CHARS - 128)}…`
+      const errorDigest = message.length > RESPAWN_DIGEST_MAX_CHARS - RESPAWN_DIGEST_RESERVED_CHARS
+        ? `${message.slice(0, RESPAWN_DIGEST_MAX_CHARS - RESPAWN_DIGEST_RESERVED_CHARS)}…`
         : message
       getCrashJournal().append({
         layer: 'pi',

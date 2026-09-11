@@ -32,15 +32,20 @@ import { createWriteStream, mkdirSync, renameSync, statSync, unlinkSync, type Wr
 import { dirname, join } from 'node:path'
 import {
   type CrashJournalEvent,
-  type CrashJournalFileRole,
   type CrashJournalWriter,
   type CrashJournalWriterOptions,
 } from '@xyz-agent/shared'
 import { getDataDir } from '@xyz-agent/shared/paths'
 import { logger } from './logger.js'
 
-/** 单档默认上限：10MB（设计 D1：单文件 10MB size 轮转）。 */
-const DEFAULT_MAX_FILE_BYTES = 10 * 1024 * 1024
+/** 字节换算基数（对齐 logger.ts 既有 BYTES_PER_KB 惯例，禁裸 1024）。 */
+const BYTES_PER_KB = 1024
+
+/** 单档默认上限 MB（设计 D1：单文件 10MB size 轮转）。 */
+const DEFAULT_MAX_FILE_MB = 10
+
+/** 单档默认上限（字节）。 */
+const DEFAULT_MAX_FILE_BYTES = DEFAULT_MAX_FILE_MB * BYTES_PER_KB * BYTES_PER_KB
 
 /** 级联段后缀（旧 → 新）。`.2` 最旧、先删；活跃档无后缀。 */
 const SEGMENT_SUFFIXES = ['.1', '.2'] as const
