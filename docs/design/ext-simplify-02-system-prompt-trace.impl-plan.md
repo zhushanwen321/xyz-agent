@@ -137,6 +137,8 @@ graph TD
 | D-4 | M0 探针门落位为独立根单元 u0-probe（任务授权「u-foundation 或首个单元前置检查条款」两形态取前者） | 任务授权两选项 | 探针失败降级是设计级返工（P2 回退方案 A / P3 重审 D1 / P1 窄保留重审），需独立承载门判定与产物留档交付；若作为 u1 前置条款，门失败时的「计划回炉」无处安放 |
 | D-5 | 包版本发布声明归入 u4 收口（设计 §9.1 提及 bump 未指定归属单元） | 设计 §9.1 | u4 为末单元，一次收口不随中间 commit 反复改；taiji 组无独立外部消费者，无中间版本消费面。编排方自检修正：初稿「手改 package.json version」违反本仓发布纪律（PR 阶段只加 changeset 文件、版本号由 merge 阶段统一 bump，与 12 号计划 D-6 同源），已改为新增 `.changeset/` 声明文件 |
 | D-6 | M0 探针门失败触发设计回炉（v5/v5.1）：D2 fork 档从「getSessionFile() 直读」回退「读事件 previousSessionFile 最后留痕」（两档→三档） | 探针 A0-3 证伪（createBranchedSession hasAssistant 条件 flush + /fork 常态 position=before 路径不含 assistant → session_start 时点 fork 文件未落盘） | 设计级决策翻转已经 r5 主审（论证链闭合 + V6/P2 reason 语义修复）与 r4 影响面（辐射面核查全过）聚焦复审；本计划 u2/u4 条款已按三档同步（A2-3/A2-5/A2-7/A2-9/A4-3）；u1 不受影响（SDK 类型自带字段） |
+| D-7 | u1 执行越界：baseline.ts 单行（parseTraceEntryData 去 export） | impl-plan u1 领地清单漏列该文件，但 A1-3 验收条款与设计 §7 文件地图均锚定此项（计划内部不一致） | 全仓引用仅同文件内部调用，单行零行为变更，与 u2 领地零冲突 | 合理偏差，接受（计划遗漏修正） |
+| D-8 | u1 执行越界：baseline.a12.test.ts import 适配 | computePromptHash 去 export 的必然编译波及（a12:26 import 该符号），不改则 A1-6 包测试绿无法达成 | import 行换本地等价 helper + 1 行注释，零断言语义触碰，与 u2 场景改写零冲突 | 合理偏差，接受（必然波及） |
 
 ## 6 状态表
 
