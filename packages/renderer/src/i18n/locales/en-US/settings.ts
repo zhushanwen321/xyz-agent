@@ -307,8 +307,6 @@ export default {
   // ── Provider edit dialog (ProviderEditModal) ──
   providerEdit: {
     addTitle: 'Add Provider',
-    editTitle: 'Edit Provider',
-    dialogDescription: 'Configure provider credentials and model list',
     fieldName: 'Name',
     fieldNamePlaceholder: 'My Provider',
     fieldType: 'Type',
@@ -415,10 +413,6 @@ export default {
     cancel: 'Cancel',
     save: 'Save',
     saving: 'Saving…',
-    unsavedTitle: 'Unsaved changes',
-    unsavedDesc: 'Close anyway? Unsaved changes will be lost.',
-    unsavedConfirm: 'Close anyway',
-    unsavedCancel: 'Keep editing',
     // Coding Plan 额度查询
     quotaSection: 'Coding Plan Quota',
     quotaType: 'Type',

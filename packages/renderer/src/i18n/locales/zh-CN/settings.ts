@@ -304,11 +304,9 @@ export default {
       errorUnknown: '授权失败，请重试',
     },
   },
-  // ── Provider 编辑弹窗（ProviderEditModal）──
+  // ── 手风琴就地编辑（R4 · 取代 ProviderEditModal）──
   providerEdit: {
     addTitle: '添加供应商',
-    editTitle: '编辑供应商',
-    dialogDescription: '配置供应商凭据与模型清单',
     fieldName: '名称',
     fieldNamePlaceholder: 'My Provider',
     fieldType: '类型',
@@ -415,10 +413,6 @@ export default {
     cancel: '取消',
     save: '保存',
     saving: '保存中…',
-    unsavedTitle: '有未保存的修改',
-    unsavedDesc: '确定关闭？未保存的改动将丢失。',
-    unsavedConfirm: '确认关闭',
-    unsavedCancel: '继续编辑',
     // Coding Plan 额度查询
     quotaSection: 'Coding Plan 额度查询',
     quotaType: '类型',
