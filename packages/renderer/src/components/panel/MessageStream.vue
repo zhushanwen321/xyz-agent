@@ -215,7 +215,7 @@ import { useStreamingPin } from '@/composables/panel/useStreamingPin'
 import {
   ESTIMATED_TURN_HEIGHT,
   LOAD_MORE_RESERVED_HEIGHT,
-} from '@/composables/panel/useMessageStreamNotices'
+} from '@/composables/panel/message-stream-layout'
 
 const props = defineProps<{
   sessionId: string

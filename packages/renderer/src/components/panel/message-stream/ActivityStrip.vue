@@ -64,7 +64,7 @@ import { Loader2 } from '@lucide/vue'
 import type { ExecutingBash } from '@xyz-agent/core'
 import { useChatStore } from '@/stores/chat'
 import { useConstantHeightAssert } from '@/composables/panel/useConstantHeightAssert'
-import { COMPACTING_NOTICE_HEIGHT, EXECUTING_BASH_NOTICE_HEIGHT } from '@/composables/panel/useMessageStreamNotices'
+import { COMPACTING_NOTICE_HEIGHT, EXECUTING_BASH_NOTICE_HEIGHT } from '@/composables/panel/message-stream-layout'
 
 const props = defineProps<{
   /** session id（occupancy 投影 / compacting reason 的查询键） */
