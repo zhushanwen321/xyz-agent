@@ -304,7 +304,7 @@ export default {
       errorUnknown: 'Authorization failed, please retry',
     },
   },
-  // ── Provider edit dialog (ProviderEditModal) ──
+  // ── Accordion inline edit (R4 · replaces ProviderEditModal) ──
   providerEdit: {
     addTitle: 'Add Provider',
     fieldName: 'Name',
