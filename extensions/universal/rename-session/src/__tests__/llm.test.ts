@@ -259,6 +259,105 @@ describe("RENAME_SYSTEM_PROMPT / RENAME_INSTRUCTION", () => {
 });
 
 // ────────────────────────────────────────────────────
+// D5 空 ref fallback（空 ref → ctx.model 跟随会话主模型；非空无效 ref → 静默跳过 + warn）
+// ────────────────────────────────────────────────────
+
+describe("callRenameLLM D5 空 ref fallback（跟随会话主模型）", () => {
+	beforeEach(() => {
+		vi.clearAllMocks();
+	});
+
+	it("TC-D5-1: 空 ref + ctx.model 可用 → 用 ctx.model 发起调用，resolveModel 不被调（探针 P2：首轮 ctx.model 非 undefined）", async () => {
+		const ctx = createCtx(undefined, STUB_MODEL);
+		vi.mocked(callLLM).mockResolvedValue({ ok: true, content: "标题" });
+
+		const result = await callRenameLLM(ctx, { ...BASE_CONFIG, model: { type: "ref", ref: "" } }, FINAL_MESSAGE);
+
+		expect(result).toBe("标题");
+		expect(resolveModel).not.toHaveBeenCalled(); // 空 ref 不走独立选模
+		expect(callLLM).toHaveBeenCalledTimes(1);
+		const callOpts = vi.mocked(callLLM).mock.calls[0][1] as { model: unknown };
+		expect(callOpts.model).toBe(STUB_MODEL); // 传给 callLLM 的就是 ctx.model
+	});
+
+	it("TC-D5-2: 空 ref + ctx.model undefined → 返回 null + warn（维持现状可诊断，不报错）", async () => {
+		loggerMock.warn.mockClear();
+		const ctx = createCtx(undefined, undefined);
+		vi.mocked(callLLM).mockResolvedValue({ ok: true, content: "标题" });
+
+		const result = await callRenameLLM(ctx, { ...BASE_CONFIG, model: { type: "ref", ref: "" } }, FINAL_MESSAGE);
+
+		expect(result).toBeNull();
+		expect(loggerMock.warn).toHaveBeenCalledWith("model not available, skipping");
+		expect(callLLM).not.toHaveBeenCalled();
+	});
+
+	it("TC-D5-3: 非空无效 ref（显式配错）→ 仍走 resolveModel 独立选模，null 时静默跳过 + warn（不掩盖配置错误）", async () => {
+		loggerMock.warn.mockClear();
+		vi.mocked(resolveModel).mockReturnValue(null);
+
+		const result = await callRenameLLM(createCtx(undefined, STUB_MODEL), BASE_CONFIG, FINAL_MESSAGE);
+
+		expect(resolveModel).toHaveBeenCalledTimes(1); // 非空 ref 才走独立选模
+		expect(result).toBeNull();
+		expect(loggerMock.warn).toHaveBeenCalledWith("model not available, skipping");
+		expect(callLLM).not.toHaveBeenCalled();
+	});
+
+	it("TC-D5-4: 非空有效 ref → resolveModel 结果优先于 ctx.model（显式配置不被会话模型遮蔽）", async () => {
+		const configured: Model<Api> = { ...STUB_MODEL, id: "configured-model" };
+		vi.mocked(resolveModel).mockReturnValue(configured);
+		vi.mocked(callLLM).mockResolvedValue({ ok: true, content: "标题" });
+
+		await callRenameLLM(createCtx(undefined, STUB_MODEL), BASE_CONFIG, FINAL_MESSAGE);
+
+		const callOpts = vi.mocked(callLLM).mock.calls[0][1] as { model: unknown };
+		expect(callOpts.model).toBe(configured);
+	});
+});
+
+// ────────────────────────────────────────────────────
+// promptText 选项（D2 first-prompt：文本从 message_end 载荷取，不走 entries）
+// ────────────────────────────────────────────────────
+
+describe("callRenameLLM promptText 选项（first-prompt 载荷取文本）", () => {
+	beforeEach(() => {
+		vi.clearAllMocks();
+	});
+
+	it("TC-D2-1: 传 promptText → user prompt 从选项取（entries 里的 user 不被读取）", async () => {
+		vi.mocked(resolveModel).mockReturnValue(STUB_MODEL);
+		vi.mocked(callLLM).mockResolvedValue({ ok: true, content: "标题" });
+		// entries 故意无 user message：first-prompt 时点 entries 尚未 append 本条（探针 P1），
+		// 若代码误走 entries 路径会得到 null → 不调 callLLM，本用例红
+		const ctx = createCtx([]);
+
+		await callRenameLLM(ctx, BASE_CONFIG, { content: [] }, { promptText: "载荷里的完整 prompt" });
+
+		expect(callLLM).toHaveBeenCalledTimes(1);
+		const callOpts = vi.mocked(callLLM).mock.calls[0][1] as {
+			messages: { role: string; content: { type: string; text: string }[] }[];
+		};
+		// finalText 空（first-prompt 不等回复）→ 两条降级：user(promptText) + user(instruction)
+		expect(callOpts.messages.map((m) => m.role)).toEqual(["user", "user"]);
+		expect(callOpts.messages[0].content[0].text).toBe("载荷里的完整 prompt");
+		expect(callOpts.messages[1].content[0].text).toBe(RENAME_INSTRUCTION);
+	});
+
+	it("TC-D2-2: 不传 promptText → 走 entries 提取（first-stop 现状路径回归锚）", async () => {
+		vi.mocked(resolveModel).mockReturnValue(STUB_MODEL);
+		vi.mocked(callLLM).mockResolvedValue({ ok: true, content: "标题" });
+
+		await callRenameLLM(createCtx(), BASE_CONFIG, FINAL_MESSAGE);
+
+		const callOpts = vi.mocked(callLLM).mock.calls[0][1] as {
+			messages: { role: string; content: { type: string; text: string }[] }[];
+		};
+		expect(callOpts.messages[0].content[0].text).toBe("hi"); // 来自 entries 的首条 user
+	});
+});
+
+// ────────────────────────────────────────────────────
 // callRenameLLM（mock resolveModel + callLLM @ llm-shared 边界）
 // ────────────────────────────────────────────────────
 
@@ -291,6 +390,7 @@ const STUB_MODEL: Model<Api> = {
 const BASE_CONFIG: RenameSessionConfig = {
 	enabled: true,
 	model: { type: "ref", ref: "stub/stub-model" },
+	mode: "first-stop",
 	maxTitleLength: 50,
 	thinkingLevel: "off",
 };
@@ -304,7 +404,7 @@ const FINAL_MESSAGE = {
 	],
 };
 
-function createCtx(entries?: unknown[]): ExtensionContext {
+function createCtx(entries?: unknown[], model?: Model<Api> | undefined): ExtensionContext {
 	return {
 		sessionManager: {
 			getEntries: () =>
@@ -313,6 +413,7 @@ function createCtx(entries?: unknown[]): ExtensionContext {
 				],
 			getSessionId: () => "test-session-id",
 		},
+		model,
 		signal: new AbortController().signal,
 	} as unknown as ExtensionContext;
 }

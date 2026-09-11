@@ -32,7 +32,16 @@ export const RENAME_INSTRUCTION =
 
 // ──────────────────────── 纯函数 ────────────────────────
 
-/** sessionDir 路径含 subagents 段 → 是 subagent 子进程 session，跳过 rename。 */
+/**
+ * sessionDir 路径含 subagents 段 → 是 subagent 子进程 session，跳过 rename。
+ *
+ * 跨包路径耦合（constraints.json C-ext-21）：`subagents` 目录布局由 xyz-agent 的
+ * `packages/subagent-core/src/execution/path-encoding.ts`（getSubagentSessionDir /
+ * encodeProjectPath）定义并写入。本包 role=universal，不 import subagent-core
+ * （import 会把 universal 包绑死在 xyz-agent 体系上），只按路径形态守卫——
+ * path-encoding.ts 侧有对向注释互指。改 subagent 目录布局必须双侧同步改。
+ * 三模式的新入口（message_end / rename_session 工具）同样复用本守卫。
+ */
 export function isSubagentSession(sessionDir: string): boolean {
 	return sessionDir.includes(path.sep + "subagents" + path.sep);
 }
@@ -89,6 +98,17 @@ export function extractUserPromptText(entries: ReadonlyArray<EntryLike>): string
  */
 export function extractFinalText(message: unknown): string {
 	return isRecord(message) ? joinTextBlocks(message.content) : "";
+}
+
+/**
+ * 取 message 载荷的文本（设计 D2 first-prompt：message_end(role=user) 的 event.message）。
+ * content 为 string 直接返回；blocks 数组拼接 text blocks——与 extractUserPromptText 的
+ * 单条 message 拼装逻辑同构（探针 P1 实测：rpc 模式 user message_end 载荷 content 为
+ * text blocks 数组）。非对象 / 异常形态返回 ''（调用方按无文本 skip）。
+ */
+export function extractMessageText(message: unknown): string {
+	if (!isRecord(message)) return "";
+	return typeof message.content === "string" ? message.content : joinTextBlocks(message.content);
 }
 
 /** 输入段截断上限（Unicode 码点数，设计 D3：中文场景约 4k token/段，任何现代模型窗口都远超此值）。 */
@@ -188,9 +208,9 @@ function previewText(text: string): string {
 	);
 }
 
-/** 取 message content 内 text blocks 的拼接文本（debug 内省用，与发给 LLM 的数据同源）。 */
+/** 取 message content 内文本（debug 内省用，与发给 LLM 的数据同源）——复用 extractMessageText 拼装。 */
 function messageText(message: Message): string {
-	return typeof message.content === "string" ? message.content : joinTextBlocks(message.content);
+	return extractMessageText(message);
 }
 
 // ──────────────────────── LLM 调用 ────────────────────────
@@ -210,6 +230,13 @@ export interface CallRenameLLMOptions {
 	 * 不向调用方抛错；本函数不包裹 try/catch（catch 归属钉死回调体内，防双重 catch 漂移）。
 	 */
 	appendUsageEntry?: (model: string, usage: Usage) => void;
+	/**
+	 * 显式 prompt 文本（设计 D2 first-prompt 模式）：文本从 message_end(role=user) 的
+	 * event 载荷取（handler 先于 entries append，getEntries() 此时不含本条，探针 P1 实测），
+	 * 调用方（index.ts）负责提取并保证非空（空文本在 handler 侧先 skip）。
+	 * 未提供时走 extractUserPromptText 从 session entries 取（first-stop 现状路径）。
+	 */
+	promptText?: string;
 }
 
 /**
@@ -219,7 +246,8 @@ export interface CallRenameLLMOptions {
  * assistant message，final text 零遍历可得）。
  *
  * 收口要点（对比旧版搭便车逻辑）：
- * - model：`resolveModel(ctx, config.model)` 独立选模（旧版 `ctx.model` 搭便车主 session 模型）
+ * - model：空 ref → `ctx.model` 跟随会话主模型（D5，消灭「默认配置静默不工作」）；
+ *   非空 ref → `resolveModel(ctx, config.model)` 独立选模（解析失败静默跳过 + warn）
  * - systemPrompt：`RENAME_SYSTEM_PROMPT` 精简版（旧版 `ctx.getSystemPrompt()` 整个 agent prompt）
  * - messages：两段信号 [user(prompt), assistant(finalText), user(instruction)]（D1/D2/D3，
  *   替换旧版全量前缀方案——过程数据稀释标题信号且 token 成本随工具数增长）
@@ -240,17 +268,20 @@ export async function callRenameLLM(
 	options?: CallRenameLLMOptions,
 ): Promise<string | null> {
 	// 内部顺序不可调换（E2E 竞态断言依赖「内省日志在请求发起前打出」）：
-	// resolveModel → extract prompt → extract finalText → truncate ×2 → build → debug 内省 → callLLM
-	const model = resolveModel(ctx, config.model);
+	// resolveModel（含 D5 fallback）→ extract prompt → extract finalText → truncate ×2 → build → debug 内省 → callLLM
+	// 模型解析（D5）：空 ref = 未配置语义 → 跟随会话主模型（ctx.model，探针 P2 实测首轮可用；
+	// undefined 时无 fallback 走下方静默跳过）；非空 ref 解析失败 = 显式配错 → 同一守卫静默跳过 + warn。
+	const model =
+		config.model.ref === "" ? ctx.model : resolveModel(ctx, config.model);
 	if (!model) {
 		// A1 日志：不可用不静默（可排查）
 		logger.warn("model not available, skipping");
 		return null;
 	}
 
-	const userPrompt = extractUserPromptText(
-		ctx.sessionManager.getEntries() as ReadonlyArray<EntryLike>,
-	);
+	const userPrompt =
+		options?.promptText ??
+		extractUserPromptText(ctx.sessionManager.getEntries() as ReadonlyArray<EntryLike>);
 	if (userPrompt === null) {
 		// 理论不发生（round 由 user message 触发），null = 连 user message 都没有
 		debugLog("skip: no user prompt");
