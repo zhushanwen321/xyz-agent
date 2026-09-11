@@ -882,9 +882,10 @@ export type ServerMessageType =
   | 'backgroundTask.tasks' | 'backgroundTask.outputResult' | 'backgroundTask.killResult'
   | 'backgroundTask:updated'
   // rollingRestart 域（crash-forensics-and-watchdog §3.3 D5，u7b 协议面）：status = 只读查询
-  // reply（与 request 同名）；deferred / forced = 两个全局推送事件（Server→Client 冒号
-  // camelCase，对齐 backgroundTask:updated 规则；与台账 event 值同源）。
-  | 'rollingRestart.status' | 'rollingRestart:deferred' | 'rollingRestart:forced'
+  // reply（与 request 同名）；deferred / forced = 全局推送事件（Server→Client 冒号
+  // camelCase，对齐 backgroundTask:updated 规则；与台账 event 值同源）；countdown =
+  // 执行前 T-30s 二次预告（D5 ③，u7c 补缺——推迟期内新开终端的知情窗口）。
+  | 'rollingRestart.status' | 'rollingRestart:deferred' | 'rollingRestart:countdown' | 'rollingRestart:forced'
   // watchdog 域（crash-forensics-and-watchdog §3.3 D4，u6）：memoryPressure = 内存压力
   // 全局推送（Server→Client 冒号 camelCase，对齐 rollingRestart:deferred 规则；越线期每
   // 采样拍重发，payload 见 WatchdogMemoryPressurePayload）。
@@ -1065,6 +1066,17 @@ export interface RollingRestartDeferredPayload {
 /** rollingRestart:forced —— 强制升级执行推送（D5 ②；台账 event=rolling-restart-forced 同源）。 */
 export interface RollingRestartForcedPayload {
   reason: 'hard-threshold' | 'defer-limit'
+  inflight: RollingRestartInflightSummary
+}
+
+/**
+ * rollingRestart:countdown —— 执行前 T-30s 二次预告推送（D5 ③，u7c 生产）：
+ * 覆盖「推迟期内新开终端」的知情窗口（T0 横幅只覆盖预告时刻的终端集合）；
+ * forced（硬升级/到点）路径立即执行，不发本预告（红牌即执行）。
+ */
+export interface RollingRestartCountdownPayload {
+  /** 预计执行时刻（ms epoch）——横幅倒计时数据源。 */
+  executesAt: number
   inflight: RollingRestartInflightSummary
 }
 
@@ -1874,6 +1886,9 @@ export interface ServerMessageMapBase {
   // deferred / forced：推迟开始 / 强制升级执行的全局推送（u7c 生产；与台账
   // rolling-restart-deferred / rolling-restart-forced 同源，在途摘要字段语义见 payload 类型）。
   'rollingRestart:deferred': RollingRestartDeferredPayload
+  // countdown：执行前 T-30s 二次预告（D5 ③，u7c 补缺；status 拉取是持续态唯一真相，
+  // 本广播只作加速显示——「broadcast 时序竞争」教训同源）。
+  'rollingRestart:countdown': RollingRestartCountdownPayload
   'rollingRestart:forced': RollingRestartForcedPayload
 
   // ── watchdog 域（crash-forensics-and-watchdog §3.3 D4，u6）──

@@ -47,6 +47,11 @@ import { RestartPolicy, MAX_RESTARTS } from './restart-policy.js'
 import { LivenessMonitor, LIVENESS_FAIL_THRESHOLD } from './liveness-probe.js'
 import { mainLogger } from '../logs/main-logger.js'
 import { crashJournal } from '../logs/crash-journal.js'
+// u7c（crash-forensics D5 ④）：planned 退出码 SSOT 在 shared（RUNTIME_PLANNED_EXIT_CODE）
+// ——runtime 执行链（rolling-restart.ts）与 main 判别式双端消费；两进程依赖方向单向
+// （main → runtime），runtime 无法 import 本侧符号，故 SSOT 落 shared。本模块导出面
+// 不变（PLANNED_EXIT_CODE 转发，u1f 既有测试与消费方 import 点不受影响）。
+import { RUNTIME_PLANNED_EXIT_CODE } from '@xyz-agent/shared'
 
 /**
  * 重启决策的触发源（杀链决策日志 D6-⑥ 的 trigger 字段）：
@@ -54,7 +59,7 @@ import { crashJournal } from '../logs/crash-journal.js'
  * - liveness_unhealthy：存活探针判死半活进程（forceRestartForLiveness）
  * - restart_failure：上一次重启尝试未达健康态（handleRestartFailure 递归）
  */
-type SupervisorRestartTrigger = 'process_exit' | 'liveness_unhealthy' | 'restart_failure'
+type SupervisorRestartTrigger = 'process_exit' | 'liveness_unhealthy' | 'restart_failure' | 'planned_rolling_restart'
 
 /** 重启决策日志的上下文字段（target/exitCode 随触发路径可得性不同，缺省省略）。 */
 interface RestartDecisionContext {
@@ -72,6 +77,7 @@ const RESTART_DECISION_REASONS: Record<SupervisorRestartTrigger, string> = {
   process_exit: 'runtime exited unexpectedly (exitCode in context); exponential backoff restart per policy (1-16s, MAX_RESTARTS=5)',
   liveness_unhealthy: 'half-alive process force-killed by liveness probe; backoff restart per policy',
   restart_failure: 'previous restart attempt failed to reach healthy state; continue backoff sequence',
+  planned_rolling_restart: 'runtime exited with planned rolling-restart code (86); immediate restart with zero backoff and no crash count (design D5)',
 }
 
 // ── 崩溃台账：runtime 自身死亡判别式（crash-forensics §3.3 D1 shutdown 行第四挂点群）──
@@ -80,8 +86,11 @@ const RESTART_DECISION_REASONS: Record<SupervisorRestartTrigger, string> = {
  * 滚动重启专用退出码（设计 D5；产生方 = runtime 滚动重启执行链，u7c 交付）。
  * main 侧是唯一在场消费者：runtime 被 SIGKILL 时自己写不了台账，supervisor 按此码
  * 识别 planned 退出。模块级导出供 u7c supervisor 侧接线（86→立即重启零退避）复用。
+ *
+ * u7c 起本常量是 shared `RUNTIME_PLANNED_EXIT_CODE` 的转发（SSOT 消除双 86 字面量，
+ * 导出面不变）。
  */
-export const PLANNED_EXIT_CODE = 86
+export const PLANNED_EXIT_CODE = RUNTIME_PLANNED_EXIT_CODE
 
 /** onRuntimeExit 台账分类结果（D1 runtime 自身事件三挂点 + 第四挂点的 exit 侧归宿）。 */
 export type RuntimeExitJournalClass = 'planned-shutdown' | 'crash' | 'suppressed'
@@ -411,6 +420,30 @@ export class RuntimeSupervisor implements IRuntimeSupervisor {
     // 重启在途幂等：已有定时器则不叠加（exit 事件可能重入）
     if (this.restartTimer) {
       console.log('[runtime] Restart already scheduled — skip')
+      return
+    }
+
+    // u7c（crash-forensics D5 ④）：planned 边（86）——滚动重启计划内退出走立即重启
+    // 零退避零计数：policy.recordPlanned() 不进 counting 状态机、不做 shouldRestart 门
+    // 检查（exhausted 态下滚动重启仍须照常重启）、延迟恒 0。重启成功后 start() 的
+    // recordSuccess 按既有稳定窗口规则收敛 crash 计数。start() 失败则经 attemptRestart
+    // → handleRestartFailure 回到既有退避路径（计划内重启失败 = 需要退避的异常形态）。
+    if (verdict === 'planned-shutdown') {
+      const delay = this.policy.recordPlanned()
+      mainLogger.info('[supervisor] restart decision', {
+        action: 'supervisor_restart',
+        trigger: 'planned_rolling_restart',
+        attempt: this.policy.count,
+        delayMs: delay,
+        target: { pid },
+        exitCode: code,
+        reason: RESTART_DECISION_REASONS.planned_rolling_restart,
+      })
+      this.broadcastToAllWindows('runtime-restarting', { attempt: this.policy.count })
+      this.restartTimer = setTimeout(() => {
+        this.restartTimer = null
+        void this.attemptRestart()
+      }, delay)
       return
     }
 

@@ -82,6 +82,28 @@ import { startWatchdog, resolveWatchdogConfig } from './infra/watchdog.js'
 import type { WatchdogHandle } from './infra/watchdog.js'
 export { startWatchdog, resolveWatchdogConfig } from './infra/watchdog.js'
 export type { WatchdogHandle, WatchdogOptions, WatchdogSample, WatchdogStatus } from './infra/watchdog.js'
+// u7c（crash-forensics-and-watchdog D5）：滚动重启编排（推迟判定/上限/硬升级/T-30s 预告/
+// 状态机）+ shutdown 步骤打点面（SHUTDOWN_STEP_SEQUENCE 是打点序列 SSOT）。
+import { startRollingRestart, resolveRollingRestartConfig, shutdownStep } from './services/session/rolling-restart.js'
+import type { RollingRestartHandle } from './services/session/rolling-restart.js'
+export {
+  startRollingRestart,
+  resolveRollingRestartConfig,
+  shutdownStep,
+  SHUTDOWN_STEP_SEQUENCE,
+  ENV_ROLLING_RESTART_DEFER_LIMIT_MS,
+  ENV_WATCHDOG_FORCE_PCT,
+  DEFAULT_ROLLING_RESTART_DEFER_LIMIT_MS,
+} from './services/session/rolling-restart.js'
+export type {
+  RollingRestartHandle,
+  RollingRestartOptions,
+  RollingRestartBroadcastType,
+  RollingRestartBroadcastPayload,
+  ShutdownStepName,
+} from './services/session/rolling-restart.js'
+// u7c：滚动重启计划内退出码（D5 ④；SSOT 在 shared，main 侧 PLANNED_EXIT_CODE 是同值转发）。
+import { RUNTIME_PLANNED_EXIT_CODE } from '@xyz-agent/shared'
 // A1-2（provider-config-quota 架构）：models.json 寄生字段 → config/providers.json 迁移。
 // 挂载薄包装在独立小模块 run-extras-migration.ts（失败语义 + 返回值契约可单测，
 // 组合根 import 即执行 main() 不可直测）；此处 readExtrasWithFallback 供 QuotaService 双读。
@@ -185,6 +207,18 @@ let watchdogHandle: WatchdogHandle | undefined
 export function stopWatchdog(): void {
   watchdogHandle?.stop()
   watchdogHandle = undefined
+}
+
+// ── u7c（crash-forensics-and-watchdog D5）：滚动重启编排句柄 ─────────────────
+// 句柄做成模块级可取消形态（对齐上方水位定时器/看门狗先例）：shutdown 首步
+// cancelRollingRestart（D5 退出链「取消推迟定时器是 shutdown 首步」——推迟等待中的
+// runtime 收到 app 级 SIGTERM 时不得继续执行滚动重启）。
+let rollingRestartHandle: RollingRestartHandle | undefined
+
+/** 取消滚动重启推迟/预告定时器并复位状态机（shutdown 首步收口）。幂等。 */
+export function cancelRollingRestart(): void {
+  rollingRestartHandle?.cancel()
+  rollingRestartHandle = undefined
 }
 
 /**
@@ -875,36 +909,62 @@ async function main(): Promise<void> {
   }
 
   // Graceful shutdown on signals
+  // u7c（crash-forensics-and-watchdog D5 退出链）：本序被 SIGINT/SIGTERM/uncaughtException
+  // 与滚动重启执行（rollingRestart → exit 86）四源共用，逐行继承既有链只加步骤打点
+  // （A4 机械验证继承完整性：每步经 shutdownStep(ShutdownStepName 字面量) 打点，序列
+  // SSOT = SHUTDOWN_STEP_SEQUENCE，写错名字 tsc 红）。
   let shuttingDown = false
   const shutdown = async (signal: string, exitCode = 0) => {
     if (shuttingDown) return
     shuttingDown = true
-    // D6-②：先停水位定时器（shutdown 后不再有水位行；u8 改造 shutdown 序列时
-    // 沿用本取消入口，注释见 stopMemoryWatermarkTimer 定义处）。
+    // u7c（D5 退出链首步）：取消推迟/预告定时器、使滚动重启状态机失效——推迟等待中的
+    // runtime 收到 app 级 SIGTERM 时不得继续执行滚动重启；86 执行序内的再入由
+    // shuttingDown guard 与编排 executed 标志双重防护。
+    shutdownStep('cancel-rolling-restart')
+    cancelRollingRestart()
+    // D6-②：停水位定时器（shutdown 后不再有水位行）。
+    shutdownStep('stop-memory-watermark-timer')
     stopMemoryWatermarkTimer()
-    // u6（crash-forensics D4）：停内存看门狗采样环（先取消先例同上；定时器已 unref，
-    // 此 stop 是显式收口双保险——shutdown 后不再有 relief/通知判定拍）。
+    // u6（crash-forensics D4）：停内存看门狗采样环（定时器已 unref，此 stop 是显式
+    // 收口双保险——shutdown 后不再有 relief/通知判定拍）。
+    shutdownStep('stop-watchdog')
     stopWatchdog()
     // u8（crash-resilience D7-②）：取消全部 pending 自动恢复 timer——必须在下方
     // server.stop（内部 destroyAll 全部 pi 子进程）之前：若取消晚于 destroyAll，shutdown
     // 中途 timer 触发会 spawn 新孤儿 pi（收割器只在下次启动后 5s 跑一次，用户直接退出
     // app 则孤儿无限存活烧 token）。对齐上方 stopMemoryWatermarkTimer 的先取消先例。
+    shutdownStep('cancel-pending-respawns')
     sessionService.cancelAllPendingRespawns()
     // u3b（idle-pi-reclamation）：停空闲回收判定循环（若已启动）——shutdown 后不再有
     // 回收拍。timer 已 unref，此 stop 是显式收口双保险（先取消先例同上）。
+    shutdownStep('stop-idle-reaper')
     idleReaperHandle?.stop()
     console.log(`\n[runtime] received ${signal}, shutting down...`)
     try {
+      shutdownStep('flush-stores')
       recentWorkspacesStore.flushAll()
       projectStore.flushAll()
       // R1：关闭 SkillRegistry 的 chokidar watcher（global + project），防句柄泄漏阻塞退出。
+      shutdownStep('dispose-skill-registry')
       skillRegistry.dispose()
       // sd-u6：退订完成回流（settled / exit 两腿）
+      shutdownStep('dispose-completion-backflow')
       completionBackflow.dispose()
       // E-2：relay 优雅关停——全部注册子进程杀链（SIGTERM → 3s grace → SIGKILL）+
       // 删 socket 文件。先于 server.stop（先收割自己受托的子进程再关传输层）。
+      shutdownStep('deinit-relay-server')
       await deinitRelayServer()
+      shutdownStep('server-stop')
       await server.stop()
+      // u7c（D5 退出链新增步骤）：引擎池 dispose——zcode appserver 杀链，挂点钉死在
+      // server.stop 之后、closeLogger 之前（杀链期间的日志与 stderr tee 要经 logger
+      // 落盘，closeLogger 先行则现场丢失）。引擎池的物理宿主在 pi 进程内（registry
+      // 是进程级 globalThis 状态）：server.stop 的 destroyAll 向全部 pi 发 SIGTERM →
+      // pi 侧 extension 收割钩子 killAllSpawnedChildren 先 disposeEngines（杀 zcode
+      // appserver 常驻进程，D6①「SIGTERM 先发会丢 close 帧」顺序由该入口保证）再杀
+      // per-record children。runtime 进程注册表当前恒空（无引擎注册），本步骤在场 =
+      // 设计钉死的序列位置与打点完整性；未来引擎宿主迁移 runtime 侧时此处是杀链接线点。
+      shutdownStep('engine-pool-dispose')
     // eslint-disable-next-line taste/no-silent-catch -- shutdown: best-effort stop, process exits regardless
     } catch (e) {
       console.error('[runtime] error during shutdown:', e)
@@ -912,6 +972,7 @@ async function main(): Promise<void> {
     // D10-1（perf W30）：退出 flush——closeLogger 现在需要 await（end 主日志 + 全部 pi
     // session 写流并等待落盘）。process.exit 立即终止进程不等待异步 IO，必须在 flush
     // 完成后才退出，否则缓冲窗口内尾部日志丢失（pi 卡死诊断证据，见 logger.ts 头部）。
+    shutdownStep('close-logger')
     await closeLogger()
     process.exit(exitCode)
   }
@@ -994,17 +1055,47 @@ async function main(): Promise<void> {
     () => pm.size,
   )
 
+  // ── u7c（crash-forensics-and-watchdog D5）：滚动重启编排启动 ─────────────
+  // 挂点 = listen 后、与 watchdog/reattach 同区（编排先例：startup-reattach）。Gate W
+  // armed 门与 watchdog 共用同一 resolveWatchdogConfig 结果（XYZ_RUNTIME_WATCHDOG_ARMED
+  // 默认 off）——off 时编排零动作（onMemoryPressure 对 critical 直接忽略，B2：u6 语义
+  // 延伸到重启编排）。执行 = onExecute → 既有完整 shutdown 序 + 专用退出码 86（D5 ④：
+  // supervisor 按码识别 planned 立即重启零退避零计数）；退出序首步取消本编排推迟定时器。
+  // status provider 注入 server：rollingRestart.status 只读 RPC（renderer 重连/刷新后
+  // 拉取恢复横幅——「broadcast 时序竞争」教训：持续态必须可拉取，deferred/forced/
+  // countdown 广播只作加速显示）。
+  const watchdogConfig = resolveWatchdogConfig(process.env)
+  const rollingRestartHandleLocal = startRollingRestart({
+    armed: watchdogConfig.armed,
+    ...resolveRollingRestartConfig(process.env),
+    listSessionIds: () => sessionService.getActiveSessionIds(),
+    // relay 在途面（D5 判定源 ②）组合根接线：registry 句柄归 index.ts（reclaim 豁免 #3
+    // 同款延迟解析），services 层不 value import 有状态 IO infra。
+    relayInFlight: () => getActiveRelayRegistry()?.size ?? 0,
+    onExecute: () => { void shutdown('rollingRestart', RUNTIME_PLANNED_EXIT_CODE) },
+    broadcast: (type, payload) => server.broadcast({ type, payload } as import('@xyz-agent/shared').ServerMessage),
+  })
+  rollingRestartHandle = rollingRestartHandleLocal
+  server.setRollingRestartStatusProvider(() => rollingRestartHandleLocal.getStatus())
+
   // ── u6（crash-forensics-and-watchdog D4）：内存看门狗启动 ─────────────
   // 挂点 = listen 后、与水位定时器同区（同为内存观测面；设计 D4 未指明 listen 前后，
   // 取「listen 后与 background-init 并行」的端口先就绪序）。武装门 Gate W 默认 off
   // （XYZ_RUNTIME_WATCHDOG_ARMED）——off 时纯观测：采样环照跑补全水位数据，relief 与
-  // renderer 通知不执行（设计 §3.2 方案 B）。onRelief 缺省（无动作）登记：D4 可回收物
-  // ① history-rebuild-cache 无 clear-all 出口（SessionHistoryReader 未暴露，领地外），
-  // ② renderer LRU 收紧走下方 broadcast → renderer useMemoryPressure 通道（D4 通道归属），
-  // runtime 侧动作接线待上述出口交付后补（u6 汇报项）。stop 挂 shutdown 序（下方）。
+  // renderer 通知不执行（设计 §3.2 方案 B）。
+  // u7c 接线两处：① onRelief = 清全部历史重建缓存（D4 可回收物 ①，偏差 #28①——
+  // renderer LRU 收紧 ② 走 broadcast → renderer useMemoryPressure 通道，动作本体随
+  // u7d 落地）；② broadcast 出口同拍喂滚动重启编排（critical 档 = D5 决策输入，warn
+  // 档编排侧忽略）。stop 挂 shutdown 序（上方）。
   watchdogHandle = startWatchdog({
-    ...resolveWatchdogConfig(process.env),
-    broadcast: (payload) => server.broadcast({ type: 'watchdog:memoryPressure', payload }),
+    ...watchdogConfig,
+    onRelief: () => {
+      sessionService.clearHistoryRebuildCache()
+    },
+    broadcast: (payload) => {
+      server.broadcast({ type: 'watchdog:memoryPressure', payload })
+      rollingRestartHandleLocal.onMemoryPressure(payload)
+    },
   })
 
   // 启动耗时分解探针（06 §5 m-7）：listen-ready 各段耗时（baseline 对比见汇报——

@@ -344,3 +344,16 @@ export const DEFAULT_PI_RECLAIM_TICK_MS = 5 * 60 * 1000
 export const DEFAULT_PI_RECLAIM_IDLE_MS = 2 * 60 * 60 * 1000
 // eslint-disable-next-line no-magic-numbers -- 设计标定阈值（D2 #6），校准依据见上方 JSDoc
 export const DEFAULT_PI_RECLAIM_VIEWED_WINDOW_MS = 30 * 60 * 1000
+
+// ── 滚动重启计划内退出码（crash-forensics-and-watchdog §3.3 D5 ④，u7c）──
+
+/**
+ * runtime 滚动重启计划内退出的专用退出码（86）。supervisor（classifyRuntimeExit
+ * 判别式 + planned 立即重启分支）与 runtime 执行链（rolling-restart 触发的
+ * process.exit）双端共用——两进程依赖方向单向（main → runtime），runtime 无法
+ * import main 侧符号，SSOT 落 shared 消除双 86 字面量。
+ *
+ * apps/electron/main/supervisor/runtime-supervisor.ts 的 `PLANNED_EXIT_CODE` 是
+ * 本值的转发常量（导出面不变，u1f 既有测试与消费方 import 点不受影响）。
+ */
+export const RUNTIME_PLANNED_EXIT_CODE = 86

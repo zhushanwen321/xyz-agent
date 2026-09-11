@@ -11,7 +11,7 @@
  * 业务逻辑在 services，经 handler 调用；本类不含领域计算，只做路由与编排。
  */
 import type { WebSocket as WsType } from 'ws'
-import type { ClientMessage, ClientMessageType, ServerMessage, SkillCacheScope } from '@xyz-agent/shared'
+import type { ClientMessage, ClientMessageType, RollingRestartStatusPayload, ServerMessage, SkillCacheScope } from '@xyz-agent/shared'
 import { OUTBOUND_FRAME_WARN_BYTES, OUTBOUND_FRAME_TRUNCATE_BYTES } from '@xyz-agent/shared'
 import type { SessionManagerAction } from '@xyz-agent/extension-protocol'
 import type { ISessionService, IConfigService, IModelService, IMessageBroker, IExtensionService, IPluginService, IAuthService } from '../interfaces.js'
@@ -146,6 +146,12 @@ export class RuntimeServer implements IMessageBroker {
   private sessionManagerHandler!: SessionManagerHandler
 
   /**
+   * u7c（crash-forensics D5）：滚动重启状态只读查询 provider（组合根 setRollingRestartStatusProvider
+   * 注入；未注入时路由回 idle 形态——renderer 拉到 idle 即「横幅不重现」，协议注释同源）。
+   */
+  private rollingRestartStatusProvider?: () => RollingRestartStatusPayload
+
+  /**
    * D1: 中央分发表。此前是 55 行 switch，每个 case 纯转发、零逻辑。
    * 改成 Map<ClientMessageType, (msg,ws)=>Promise<unknown>> 后：
    * - 加新消息类型只改一个 handler 的 handles 清单，不碰路由（开闭原则）。
@@ -188,6 +194,15 @@ export class RuntimeServer implements IMessageBroker {
     this.createBroker(optional.appInfo, optional.replyGuardResolver)
     this.assembleHandlers(optional)
     this.routes = this.buildRoutes()
+  }
+
+  /**
+   * u7c（crash-forensics D5）：注入滚动重启状态只读查询 provider（rollingRestart.status
+   * 路由消费；u7b 已钉协议类型，transport 路由面由本 setter 补挂——只读 RPC 供 renderer
+   * 重连/刷新后拉取恢复横幅，「broadcast 时序竞争」教训）。
+   */
+  setRollingRestartStatusProvider(provider: () => RollingRestartStatusPayload): void {
+    this.rollingRestartStatusProvider = provider
   }
 
   /** 阶段 1：核心 service 字段装配（含 D6a onSessionDestroyed 汇聚清理注册）。 */
@@ -457,6 +472,10 @@ export class RuntimeServer implements IMessageBroker {
     const presetHandler = this.presetMessageHandler
     return new Map([
       ['ping', (msg, ws) => this.broker.reply(ws, msg.id, 'pong', {})],
+      // u7c（crash-forensics D5）：滚动重启状态只读查询（与 request 同名 reply；provider
+      // 缺席回 idle 形态——renderer 拉到 idle 即「横幅不重现」，见 RollingRestartStatusPayload）。
+      ['rollingRestart.status', (msg, ws) => this.broker.reply(ws, msg.id, 'rollingRestart.status',
+        this.rollingRestartStatusProvider?.() ?? { state: 'idle', inflight: { inFlight: null } })],
       ['session.compact', (msg, ws) => this.sessionHandler.handleSessionCompact(msg as Extract<ClientMessage, { type: 'session.compact' }>, ws)],
       ...this.sessionHandler.handles.map(t => [t, (msg: ClientMessage, ws: WsType) => this.sessionHandler.handleSessionMessage(msg, ws)] as const),
       ...this.extensionHandler.handles.map(t => [t, (msg: ClientMessage, ws: WsType) => this.extensionHandler.handleExtensionMessage(msg, ws)] as const),

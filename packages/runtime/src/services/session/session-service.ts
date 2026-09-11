@@ -856,6 +856,13 @@ export class SessionService implements ISessionService, ILifecycleSessionOps, ID
    */
   async getHistory(sessionId: string, query?: { cursor?: string; limitTurns?: number; maxBytes?: number }): Promise<HistoryWindowResult> { return this.historyReader.getHistory(sessionId, query) }
 
+  /**
+   * 清空全部历史重建缓存（u7c：crash-forensics D4 memory-relief 可回收物 ① 的透传
+   * 出口——组合根 watchdog onRelief 接线调此方法，偏差 #28①；实现与语义见
+   * history-rebuild-cache.ts SessionHistoryReader.clearHistoryCache）。
+   */
+  clearHistoryRebuildCache(): number { return this.historyReader.clearHistoryCache() }
+
   // ── subagent/workflow 记录域（S6 迁出至 session-records.ts；磁盘扫描/引擎配置/动作详见该模块）──
 
   /** subagent 列表（冷启动磁盘扫描，实现迁 session-records.ts）。 */

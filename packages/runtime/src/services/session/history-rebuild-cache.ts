@@ -97,6 +97,17 @@ export class HistoryRebuildCache {
     this.entries.delete(sessionId)
   }
 
+  /**
+   * 清空全部条目，返回清除条目数（u7c：memory-relief 可回收物 ①——crash-forensics
+   * D4 降级代价清单：清后该 session 下次 getHistory 走全量重建（纯派生数据，丢弃
+   * 无一致性风险，见文件头生命周期注释）；watchdog onRelief 接线在组合根 index.ts）。
+   */
+  clearAll(): number {
+    const cleared = this.entries.size
+    this.entries.clear()
+    return cleared
+  }
+
   /** 当前缓存条目数（测试用）。 */
   get size(): number {
     return this.entries.size
@@ -509,6 +520,14 @@ export class SessionHistoryReader {
    */
   onSessionDisposed(sessionId: string): void {
     this.historyCache.delete(sessionId)
+  }
+
+  /**
+   * 清空全部历史重建缓存（u7c：memory-relief 可回收物 ① 的 reader 出口——组合根
+   * watchdog onRelief 接线经 SessionService 透传至此）。返回清除条目数（观测面）。
+   */
+  clearHistoryCache(): number {
+    return this.historyCache.clearAll()
   }
 }
 
