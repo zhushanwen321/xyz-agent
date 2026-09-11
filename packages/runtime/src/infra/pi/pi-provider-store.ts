@@ -95,7 +95,7 @@ export type { PiSettings } from './pi-settings-store.js'
 // 此处 models.json 的 read-through 缓存 + 原子读写收敛到 JsonStore（P0-1）。
 
 /**
- * models.json 路径。生产用 getModelsPath()（= ~/.xyz-agent/pi/agent/models.json）。
+ * models.json 路径。生产用 getModelsPath()（= <dataDir>/agent/models.json）。
  * 测试可经 setModelsPath() 指向临时目录，与 setSettingsPath 对称。
  */
 let modelsFilePath: string = getModelsPath()
@@ -763,7 +763,7 @@ export function refreshAll(): void {
 // ── Barrel re-export（Phase 1 拆分：保 import 路径不变）──────────────────
 // 以下函数已拆到 pi-maintenance / pi-enabled-models / pi-skill-paths / pi-provider-repair，
 // re-export 保 import 路径不变（现有测试零改动即全绿 = 行为零变化证据）。
-export { migrateToPiSubdir, isLeakedPackage, cleanLeakedPackages } from './pi-maintenance.js'
+export { isLeakedPackage, cleanLeakedPackages } from './pi-maintenance.js'
 export {
   getEnabledModels,
   setEnabledModels,

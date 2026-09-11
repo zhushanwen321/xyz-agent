@@ -1479,6 +1479,34 @@ if [ "$SKIP_ALL_CHECKS" != "1" ]; then
 fi
 
 # ============================================================================
+# 数据布局字面量守卫（C-pi-14，设计 §10 U18）
+#   staged 命中守卫范围（packages/ apps/ scripts/ 源码 + AGENTS.md +
+#   docs/troubleshooting.md + 守卫脚本自身）时触发：
+#   scripts/check-layout-literals.mjs —— 旧布局 pi/ 兄弟层字面量（join 形态
+#   'pi','agent'|'sessions' 与路径形态 pi/agent|pi/sessions，显式排除 .pi 前缀）
+#   回流即拦截。合法持有（bundled 资源布局/迁移语义/历史证据）集中登记在
+#   守卫的 LAYOUT_LITERAL_EXEMPT 常量表（file 级 + 理由）。
+#   全量扫描毫秒级，无增量模式。不设独立 SKIP_* 开关（R1 后惯例，总闸兜底）。
+# ============================================================================
+
+LAYOUT_STAGED=$(git diff --cached --name-only -- packages/ apps/ scripts/ AGENTS.md docs/troubleshooting.md scripts/check-layout-literals.mjs)
+if echo "$LAYOUT_STAGED" | grep -qE "^(packages/|apps/|scripts/)|^AGENTS\.md$|^docs/troubleshooting\.md$"; then
+    print_section "[数据布局字面量守卫]"
+    if [ ! -f "scripts/check-layout-literals.mjs" ]; then
+        echo -e "${RED}[ERROR] 找不到 scripts/check-layout-literals.mjs（C-pi-14 守卫交付物缺失）${NC}"
+        exit 1
+    fi
+    if ! node scripts/check-layout-literals.mjs; then
+        echo -e "${RED}[ERROR] 数据布局字面量守卫未通过——旧布局 pi/ 兄弟层引用回流（C-pi-14），按上方 ✗ 明细与恢复动作处理${NC}"
+        echo -e "${RED}[原则] 无论是否本次改动引入的问题，都必须正面修复解决，不允许跳过。${NC}"
+        exit 1
+    fi
+    echo -e "${GREEN}[OK] 数据布局字面量守卫通过（C-pi-14）${NC}"
+else
+    echo -e "${GREEN}[OK] 无守卫范围变更，跳过数据布局字面量守卫${NC}"
+fi
+
+# ============================================================================
 # 全部通过
 # ============================================================================
 
@@ -1548,6 +1576,7 @@ echo -e "  ${GREEN}[+]${NC} 文档-代码符号漂移守卫（C-proc-10：设计
 echo -e "  ${GREEN}[+]${NC} 消息流滚动跟随链路守卫（C-state-11：滚动到底唯一原语 + 禁 findItemIndex(scrollSize) 模式）"
 echo -e "  ${GREEN}[+]${NC} 测试 flake 卫生检查（F5 scripts.test --no-bail + F3 recursive 删除 maxRetries）"
 echo -e "  ${GREEN}[+]${NC} Provider 凭据读取单通道守卫（runtime 变更时触发：凭据直查禁令 + upsertProvider 直调清单，C-proc-14/15）"
+echo -e "  ${GREEN}[+]${NC} 数据布局字面量守卫（C-pi-14：pi/ 兄弟布局引用回流拦截，豁免集中 LAYOUT_LITERAL_EXEMPT）"
 echo ""
 echo -e "${CYAN}Hook 脚本位置:${NC} .githooks/"
 echo ""

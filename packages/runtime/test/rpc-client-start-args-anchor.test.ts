@@ -68,7 +68,7 @@ vi.mock('../src/infra/pi/pi-paths.js', async (importOriginal) => {
   return {
     ...actual,
     getSessionsDir: () => '/mock/home/.xyz-agent/sessions',
-    getPiAgentDir: () => '/mock/home/.xyz-agent/pi/agent',
+    getPiAgentDir: () => '/mock/home/.xyz-agent/agent',
   }
 })
 
@@ -197,7 +197,7 @@ describe('RpcClient start 启动参数锚定（W3 复杂度债务偿还）', () 
     // D4/G4 托管环境恒注入（不开放 options.env 覆盖）
     expect(spawnEnv.XYZ_AGENT_EXT_LOG).toBe('1')
     // xyz-pi agent 目录隔离
-    expect(spawnEnv.PI_CODING_AGENT_DIR).toBe('/mock/home/.xyz-agent/pi/agent')
+    expect(spawnEnv.PI_CODING_AGENT_DIR).toBe('/mock/home/.xyz-agent/agent')
     // 白名单基座继承（PATH 来自父 env）
     expect(spawnEnv.PATH).toBe(process.env.PATH)
   })

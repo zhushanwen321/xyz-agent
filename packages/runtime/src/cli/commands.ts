@@ -80,7 +80,7 @@ async function runListProviders(json: boolean): Promise<string> {
 function runGetDefaultModel(): string {
   // config.getProviders reply 是 { providers }，不含 defaultModel。
   // defaultModel 只通过 config.defaults 订阅推送（CLI 无订阅），故直接读 settings.json。
-  // settings.json 在 getPiAgentDir()（~/.xyz-agent/pi/agent/settings.json），由 getSettingsPath() 返回；
+  // settings.json 在 getPiAgentDir()（<dataDir>/agent/settings.json），由 getSettingsPath() 返回；
   // 磁盘格式是 { defaultProvider: string, defaultModel: string } 两个独立字符串字段（见 pi-provider-store.ts updateSettingsFields）。
   try {
     const raw = readFileSync(getSettingsPath(), 'utf-8')

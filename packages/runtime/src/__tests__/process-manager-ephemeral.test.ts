@@ -46,7 +46,7 @@ vi.mock('../infra/pi/rpc-client.js', () => ({ RpcClient: rpcMock.FakeRpcClient }
 
 import { ProcessManager } from '../infra/pi/process-manager.js'
 
-const SESSION_FILE = '/data/pi/sessions/abc/scan-target.jsonl'
+const SESSION_FILE = '/data/data/agent/sessions/abc/scan-target.jsonl'
 
 describe('ProcessManager.withEphemeralPi（W11 短命 pi 附着）', () => {
   let pm: ProcessManager

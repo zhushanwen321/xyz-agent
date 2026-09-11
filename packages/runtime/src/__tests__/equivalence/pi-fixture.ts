@@ -99,7 +99,7 @@ export interface PiFixtureOptions {
   extensions?: string[]
   /**
    * 显式 session-dir（默认 mkdtemp 临时目录）。U9 全链路 e2e 用：session-dir 须落在
-   * XYZ_AGENT_DATA_DIR/pi/sessions 下（名字带 u9-smoke）供 scanPiSessions 复扫断言；
+   * XYZ_AGENT_DATA_DIR 下 agent/sessions（名字带 u9-smoke）供 scanPiSessions 复扫断言；
    * dispose 仍会删除该目录（含自定义路径）。
    */
   sessionDir?: string

@@ -26,8 +26,8 @@ import {
 } from '../src/infra/pi/pi-provider-store.js'
 import { setSettingsPath, readSettings } from '../src/infra/pi/pi-settings-store.js'
 
-const DEV_MODELS = join(homedir(), '.xyz-agent-dev/pi/agent/models.json')
-const DEV_SETTINGS = join(homedir(), '.xyz-agent-dev/pi/agent/settings.json')
+const DEV_MODELS = join(homedir(), '.xyz-agent-dev/agent/models.json')
+const DEV_SETTINGS = join(homedir(), '.xyz-agent-dev/agent/settings.json')
 
 // 跳过条件：dev 无 models.json 或 providers 空。CI 无 dev 文件 → 跳过；
 // 本地 dev providers 空（如未配置 provider）→ 也跳过，否则 listProviders()
@@ -89,7 +89,7 @@ beforeAll(() => {
   if (!HAS_DEV_PROVIDERS) return
 
   tmpDir = mkdtempSync(join(tmpdir(), 'e1-e3-real-'))
-  const piAgentDir = join(tmpDir, 'pi', 'agent')
+  const piAgentDir = join(tmpDir, 'agent')
   mkdirSync(piAgentDir, { recursive: true })
   copyFileSync(DEV_MODELS, join(piAgentDir, 'models.json'))
   if (existsSync(DEV_SETTINGS)) copyFileSync(DEV_SETTINGS, join(piAgentDir, 'settings.json'))
@@ -191,7 +191,7 @@ describe('E1 分体系（D1③）· 自建 fixture（custom 落盘 api / catalog
 
   beforeAll(() => {
     fixtureDir = mkdtempSync(join(tmpdir(), 'e1-kind-fixture-'))
-    const piAgentDir = join(fixtureDir, 'pi', 'agent')
+    const piAgentDir = join(fixtureDir, 'agent')
     mkdirSync(piAgentDir, { recursive: true })
     const providers = {
       // catalog（id 命中内置快照），override 无 provider 级 api 键

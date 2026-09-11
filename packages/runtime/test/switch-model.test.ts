@@ -72,7 +72,7 @@ vi.mock('../src/infra/pi/session-file-utils.js', async (importOriginal) => {
 })
 vi.mock('../src/infra/pi/pi-paths.js', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../src/infra/pi/pi-paths.js')>()
-  return { ...actual, getPiAgentDir: () => '/mock/xyz-agent/pi/agent' }
+  return { ...actual, getPiAgentDir: () => '/mock/xyz-agent/agent' }
 })
 vi.mock('../src/infra/system/trash.js', () => ({ trash: vi.fn() }))
 vi.mock('../src/infra/pi/message-converter.js', () => ({ convertPiHistory: vi.fn((raw: unknown) => raw) }))
@@ -221,7 +221,8 @@ describe('model-control 写点①②（设计 §5 U8 承诺，写点接入属 U1
   })
 
   afterEach(() => {
-    rmSync(tmpDir, { recursive: true, force: true })
+    // maxRetries：teardown 递归删除与在途异步写竞争致 ENOTEMPTY 满载 flake（教训 d9ad39cb8）
+    rmSync(tmpDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
   })
 
   /** 建一个带已 materialize 主文件的 seed session（persistBindingSidecar 的 existsSync 守卫要求主文件存在）。 */

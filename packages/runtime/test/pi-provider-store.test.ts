@@ -42,19 +42,19 @@ let tmpDir: string
 
 beforeEach(async () => {
   tmpDir = await mkdtempP(join(tmpdir(), 'pi-provider-store-test-'))
-  mkdirSync(join(tmpDir, 'pi', 'agent'), { recursive: true })
+  mkdirSync(join(tmpDir, 'agent'), { recursive: true })
   // overlay 读侧（provider-catalog-refresh）与 auth.json 读经 getDataDir()/getPiAgentDir()
   // 实时解析 env，必须隔离到 tmpDir——否则 findValidDefaultModel 三态判定会读到真实
   // ~/.xyz-agent 的 overlay 缓存，态归属随开发机环境漂移（非确定性测试）。
   process.env.XYZ_AGENT_DATA_DIR = tmpDir
-  setModelsPath(join(tmpDir, 'pi', 'agent', 'models.json'))
-  setSettingsPath(join(tmpDir, 'pi', 'agent', 'settings.json'))
+  setModelsPath(join(tmpDir, 'agent', 'models.json'))
+  setSettingsPath(join(tmpDir, 'agent', 'settings.json'))
   // [HISTORICAL] discovery.json 也必须隔离，否则 setSkillPaths 写真实路径污染用户数据。
   // 2026-07-26 事故：本用例 skillPaths round-trip 调 setSkillPaths([tmpDir/skills-a, ...])，
   // 但 beforeEach 漏了 setDiscoveryPath，导致 discovery-store 模块级变量绑定的真实路径
-  // (~/.xyz-agent/pi/agent/discovery.json) 被写成 tmp 路径；afterEach rm(tmpDir) 后路径失效，
+  // (~/.xyz-agent/agent/discovery.json) 被写成 tmp 路径；afterEach rm(tmpDir) 后路径失效，
   // 用户重启 app 发现 skill 扫描路径「凭空消失」。
-  setDiscoveryPath(join(tmpDir, 'pi', 'agent', 'discovery.json'))
+  setDiscoveryPath(join(tmpDir, 'agent', 'discovery.json'))
   refreshModels()
 })
 
@@ -85,14 +85,14 @@ describe('pi-provider-store — models.json', () => {
     })
 
     it('returns fallback on corrupt JSON', () => {
-      const path = join(tmpDir, 'pi', 'agent', 'models.json')
+      const path = join(tmpDir, 'agent', 'models.json')
       writeFileSync(path, '{ broken', 'utf-8')
       refreshModels()
       expect(readModels()).toEqual({ providers: {} })
     })
 
     it('returns fallback on schema mismatch (providers not object)', () => {
-      const path = join(tmpDir, 'pi', 'agent', 'models.json')
+      const path = join(tmpDir, 'agent', 'models.json')
       writeFileSync(path, JSON.stringify({ providers: 'not-an-object' }), 'utf-8')
       refreshModels()
       expect(readModels()).toEqual({ providers: {} })
@@ -102,7 +102,7 @@ describe('pi-provider-store — models.json', () => {
       writeModels({ providers: { anthropic } })
       // 外部改盘，缓存应挡住
       writeFileSync(
-        join(tmpDir, 'pi', 'agent', 'models.json'),
+        join(tmpDir, 'agent', 'models.json'),
         JSON.stringify({ providers: { openai: { models: [{ id: 'gpt' }] } } }),
         'utf-8',
       )
@@ -112,7 +112,7 @@ describe('pi-provider-store — models.json', () => {
     it('re-reads disk after refreshModels', () => {
       writeModels({ providers: { anthropic } })
       writeFileSync(
-        join(tmpDir, 'pi', 'agent', 'models.json'),
+        join(tmpDir, 'agent', 'models.json'),
         JSON.stringify({ providers: { openai: { models: [{ id: 'gpt' }] } } }),
         'utf-8',
       )
@@ -330,7 +330,7 @@ describe('pi-provider-store — models.json', () => {
       // 处于 never-seen 态。D5 裁定：pass-through 不判定有效性、不 auto-fix、不改写
       // settings，`--model` 直传 pi 由执行侧解析。旧行为（回退 provider 第一个 model 并
       // 落盘改写）正是设计文档「失败模式 A」同族：静默改写用户显式配置。
-      const settingsPath = join(tmpDir, 'pi', 'agent', 'settings.json')
+      const settingsPath = join(tmpDir, 'agent', 'settings.json')
       const before = readFileSync(settingsPath, 'utf-8')
 
       const result = getDefaultModel()
@@ -396,7 +396,7 @@ describe('pi-provider-store — models.json', () => {
   describe('atomic write integrity', () => {
     it('write produces valid JSON file on disk', () => {
       writeModels({ providers: { anthropic } })
-      const raw = readFileSync(join(tmpDir, 'pi', 'agent', 'models.json'), 'utf-8')
+      const raw = readFileSync(join(tmpDir, 'agent', 'models.json'), 'utf-8')
       const parsed = JSON.parse(raw) as PiModelsConfig
       expect(parsed.providers.anthropic).toBeDefined()
     })
@@ -473,7 +473,7 @@ describe('pi-provider-store — models.json', () => {
           },
         },
       })
-      const raw = readFileSync(join(tmpDir, 'pi', 'agent', 'models.json'), 'utf-8')
+      const raw = readFileSync(join(tmpDir, 'agent', 'models.json'), 'utf-8')
       const parsed = JSON.parse(raw) as PiModelsConfig
       expect(parsed.providers.anthropic?.enabled).toBe(false)
       expect(parsed.providers.anthropic?.models?.[0]?.enabled).toBe(true)

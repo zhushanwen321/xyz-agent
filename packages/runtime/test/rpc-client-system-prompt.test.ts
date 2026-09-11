@@ -58,7 +58,7 @@ vi.mock('../src/infra/pi/pi-paths.js', async (importOriginal) => {
   return {
     ...actual,
     getSessionsDir: () => '/mock/home/.xyz-agent/sessions',
-    getPiAgentDir: () => '/mock/home/.xyz-agent/pi/agent',
+    getPiAgentDir: () => '/mock/home/.xyz-agent/agent',
   }
 })
 

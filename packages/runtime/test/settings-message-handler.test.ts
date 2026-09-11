@@ -622,9 +622,9 @@ describe('SettingsMessageHandler', () => {
     let p4TmpDir: string
     beforeEach(async () => {
       p4TmpDir = await mkdtempP(join(tmpdir(), 'p4-reconcile-'))
-      mkdirSync(join(p4TmpDir, 'pi', 'agent'), { recursive: true })
-      setSettingsPath(join(p4TmpDir, 'pi', 'agent', 'settings.json'))
-      setModelsPath(join(p4TmpDir, 'pi', 'agent', 'models.json'))
+      mkdirSync(join(p4TmpDir, 'agent'), { recursive: true })
+      setSettingsPath(join(p4TmpDir, 'agent', 'settings.json'))
+      setModelsPath(join(p4TmpDir, 'agent', 'models.json'))
       refreshModels()
     })
     afterEach(async () => {

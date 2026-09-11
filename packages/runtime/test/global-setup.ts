@@ -29,7 +29,7 @@ const REAL_DATA_DIR = resolve(join(homedir(), '.xyz-agent'))
 export function setup(): void {
   // [HISTORICAL] 2026-09-02 会话丢失事故第一层防线：env 注入的 XYZ_AGENT_DATA_DIR 指向
   // 真实用户数据目录时直接拒跑——旧版「尊重已有 env」使 tmp 重定向失效，测试的
-  // rmSync(getSessionsDir()) 删光 ~/.xyz-agent/pi/sessions 全部活跃会话，三个在跑
+  // rmSync(getSessionsDir()) 删光数据目录下全部活跃会话，三个在跑
   // pi 进程随后 ENOENT 崩溃。fail-fast 必须先于「尊重已有」判定。
   const injected = process.env.XYZ_AGENT_DATA_DIR
   if (injected) {

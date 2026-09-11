@@ -18,9 +18,9 @@ import { initLogger, closeLogger } from './infra/logger.js'
 import { isContainedStreamError } from './infra/system/uncaught-policy.js'
 
 import { ProcessManager } from './infra/pi/process-manager.js'
-import { migrateToPiSubdir, getProviderConfig, clearProviderApiKey, initProviderCredentialResolver, cleanLeakedPackages, sanitizeInvalidProviders } from './infra/pi/pi-provider-store.js'
+import { getProviderConfig, clearProviderApiKey, initProviderCredentialResolver, cleanLeakedPackages, sanitizeInvalidProviders } from './infra/pi/pi-provider-store.js'
 import { getExtensionsDir, getNpmDir, getTmpDir, getProviderExtrasPath } from './infra/pi/pi-paths.js'
-import { getPiGlobalAgentDir } from './infra/pi/pi-maintenance.js'
+import { getPiGlobalAgentDir, syncBundledResources, warnLegacyPiLayout } from './infra/pi/pi-maintenance.js'
 import { PiConfigStore } from './infra/pi/pi-config-store.js'
 import { PiSessionStore } from './infra/pi/session-store.js'
 import { ModelApiDiscoverer } from './infra/model-api-discoverer.js'
@@ -71,6 +71,9 @@ import { WorkspaceDetector } from './services/worktree/workspace-detector.js'
 // D8-1（perf W29）：后台初始化序列（listen 后执行）——独立模块承载使「migrateBuiltin →
 // autoUpgrade 顺序」可 spy 断言（06 §5 门禁），组合根只负责构造与注入。
 import { runStartupBackgroundInit } from './services/startup-background-init.js'
+// u17（设计 §6.12）：spawn 清单读侧在 infra SSOT（读写同模块）；组合根注入给 services 层
+// （D6c port 纪律——reap/startup-background-init 不直接 import infra）。
+import { readSpawnMarkerList } from './infra/pi/spawn-markers.js'
 // A1-2（provider-config-quota 架构）：models.json 寄生字段 → config/providers.json 迁移。
 // 挂载薄包装在独立小模块 run-extras-migration.ts（失败语义 + 返回值契约可单测，
 // 组合根 import 即执行 main() 不可直测）；此处 readExtrasWithFallback 供 QuotaService 双读。
@@ -191,13 +194,15 @@ async function main(): Promise<void> {
 
   // ── Phase 1: create all service instances (no cross-service deps at construction time) ──
 
-  // 一次性迁移：将旧路径下的配置/session/agent 文件移到新的 xyz-pi 目录结构。
-  // 原为 pi-config-bridge 的 import 副作用，现改为组合根显式调用（启动时序显式化）。
-  // 必须在首次配置读取（readModels/readSettings/migrateSettingsSkillsToDiscovery）前完成。
-  // 幂等：新路径已存在文件则跳过。
-  // D8-1（perf W29）：三个同步迁移保持 listen 前——「首次配置读取前」硬约束（06 §3.3 证据）。
+  // 打包模式 bundled 资源同步（skills/extensions，全仓唯一 bundled skills 同步点，
+  // 打包版全新安装依赖）+ 旧布局残留探测（WARN 指引 scripts/migrate-pi-layout-v2.mjs，
+  // 不迁移不阻塞启动）。
+  // [HISTORICAL] 此处曾为一次性目录迁移的启动调用位——迁移使命终结后退役删除
+  // （v9 布局对齐，设计 §6.11），残留交手工迁移脚本 + WARN 指引承接。
+  // D8-1（perf W29）：同步段保持 listen 前——「首次配置读取前」硬约束（06 §3.3 证据）。
   const tSyncMigrations = performance.now()
-  migrateToPiSubdir()
+  syncBundledResources()
+  warnLegacyPiLayout()
   // 清理 settings.json.packages 中泄漏到 pi 全局目录的相对路径项（架构约定 #1 隔离保障）
   cleanLeakedPackages()
   // PiConfigStore 提前构造（纯委托无副作用）：下方 A1-2 迁移经 port 读写 models.json。
@@ -900,6 +905,8 @@ async function main(): Promise<void> {
     broadcastAppInfo: () => server.broadcastAppInfo(),
     skillRegistry,
     pluginService,
+    // u17 判据 v2：spawn 清单读取（infra 读侧经 port 注入；闭包绑定组合根同源 getDataDir()）
+    readSpawnMarkers: () => readSpawnMarkerList(getDataDir()),
   })
 }
 

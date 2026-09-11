@@ -43,7 +43,7 @@ let dir: string
 let settingsPath: string
 
 function agentDir(): string {
-  return join(dir, 'pi', 'agent')
+  return join(dir, 'agent')
 }
 
 function writeOwnCache(entries: unknown): void {

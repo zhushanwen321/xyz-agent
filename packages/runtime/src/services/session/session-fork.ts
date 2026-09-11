@@ -24,13 +24,14 @@
  *   兄弟分支（不在路径上的 entry）全部丢弃。
  */
 
-import { readFile, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { existsSync } from 'node:fs'
 import { homedir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import { randomUUID } from 'node:crypto'
 import { parseJsonl } from '../../utils/jsonl.js'
 import { isEnoent } from '../../utils/errors.js'
+import { encodeCwd } from '../../infra/pi/pi-paths.js'
 
 /** pi JSONL entry 的最小结构（只关心树拓扑）。 */
 interface PiEntry {
@@ -66,7 +67,8 @@ export interface ForkedFile {
  * @param sourceFilePath   源 session JSONL 绝对路径
  * @param forkEntryId      fork 点的 pi entryId（截断用，message entry 的 id）
  * @param includeFrom      true: 保留到 forkEntry（含）；false: 保留到 forkEntry 前（不含）
- * @param targetDir        新 JSONL 写入目录（pi sessions 目录）
+ * @param targetDir        新 JSONL 写入目录（pi sessions 根；产物实际落在其下
+ *                         `<encodeCwd(header.cwd)>/` 子目录，方案 B 布局）
  * @param forkEntryIdField 可选，写入新 header 的 forkEntryId 字段（供后续 merge 定位 fork 点）。
  *                         与 forkEntryId 区别：后者用于截断回溯，前者是落盘标记（二者常相等，
  *                         但 includeFrom=false 等场景下语义不同；undefined 时不写该字段）。
@@ -150,14 +152,20 @@ function collectKeptEntryIds(
   return keepIds
 }
 
-/** 生成新 session id + 文件路径（pi 格式：<ISO_timestamp>_<uuid>.jsonl）（阶段 5）。now 同时供 header timestamp 用，单次取值。 */
-function buildForkTarget(targetDir: string): { newSessionId: string; now: Date; newFilePath: string } {
+/**
+ * 生成新 session id + 文件路径（阶段 5）。now 同时供 header timestamp 用，单次取值。
+ *
+ * 产物落 `<targetDir>/<encodeCwd(cwd)>/` 子目录（方案 B 布局对齐 pi：pi 默认布局按
+ * cwd 分子目录且原生 listAll 只枚举子目录，写平铺根的 fork session 会从 TUI /
+ * `/session-pick` 消失；写入形态与 import-service 对齐）。cwd 取源 header 的原始 cwd。
+ */
+function buildForkTarget(targetDir: string, cwd: string): { newSessionId: string; now: Date; newFilePath: string } {
   const newSessionId = randomUUID()
   const now = new Date()
   // pi 用 ISO 时间把 : 和 . 替换为 -，如 2026-07-07T03-23-49-092Z
   const isoTs = now.toISOString().replace(/[:.]/g, '-')
   const fileName = `${isoTs}_${newSessionId}.jsonl`
-  const newFilePath = join(targetDir, fileName)
+  const newFilePath = join(targetDir, encodeCwd(cwd), fileName)
   return { newSessionId, now, newFilePath }
 }
 
@@ -244,14 +252,17 @@ export async function createForkedSessionFile(
     keepIds.delete(forkEntryId)
   }
 
-  // 5. 生成新 session id + 文件名
-  const { newSessionId, now, newFilePath } = buildForkTarget(targetDir)
+  // 5. 生成新 session id + 文件名（产物写入源 header cwd 对应的 encodeCwd 子目录）
+  const { newSessionId, now, newFilePath } = buildForkTarget(targetDir, header.cwd)
 
   // 6. 构建新文件内容（header 血缘 + cwd 存活兜底）
   const resolvedParentSession = resolveParentSession(sourceFilePath, fallbackParentId)
   const newHeader = buildForkedHeader(header, newSessionId, now, resolvedParentSession, forkEntryIdField)
   const lines = renderForkedLines(newHeader, allEntries, keepIds)
 
+  // encodeCwd 子目录可能尚不存在（首个该 cwd 的 fork 产物）——recursive 创建
+  //（与 import-service 写入先例一致；pi 不预建未来 cwd 的目录）
+  await mkdir(dirname(newFilePath), { recursive: true })
   await writeFile(newFilePath, lines.join('\n') + '\n', 'utf-8')
 
   return { filePath: newFilePath, sessionId: newSessionId, sourceFilePath }

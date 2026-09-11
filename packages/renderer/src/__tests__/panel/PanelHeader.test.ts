@@ -40,7 +40,7 @@ vi.mock('@/composables/effects/usePlatformChrome', async () => {
 })
 
 const SESSION_FILE_PATH =
-  '/Users/u/.xyz-agent/pi/agent/sessions/cwd-hash/2026-07-09T11-16-46-632Z_019f4698-2fa8-791c-858f-d02ba39d9676.jsonl'
+  '/Users/u/.xyz-agent/agent/sessions/cwd-hash/2026-07-09T11-16-46-632Z_019f4698-2fa8-791c-858f-d02ba39d9676.jsonl'
 
 function mountHeader(overrides: Record<string, unknown> = {}) {
   return mount(PanelHeader, {

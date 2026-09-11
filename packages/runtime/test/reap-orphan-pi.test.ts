@@ -1,24 +1,37 @@
 /**
  * reapOrphanPiProcesses 收殓状态机定向测试（CRAP 靶子：killOrphan）。
  *
- * 全依赖注入设计（listProcesses / signal / delay 均可替换），零真实进程、零真实等待。
- * 覆盖 killOrphan 处置序列全分支 + reapOrphanPiProcesses 编排：
+ * 全依赖注入设计（listProcesses / signal / delay / readSpawnMarkers 均可替换），
+ * 零真实进程、零真实等待、零真实 fs。覆盖 killOrphan 处置序列全分支 + 编排层：
  * - SIGTERM 时目标已自行退出（ESRCH）→ 幂等按已回收计
  * - SIGTERM 其他错误（EPERM）→ failed
  * - 宽限后探活：已死（ESRCH）→ reaped（SIGTERM 生效）；探活 EPERM 按活着 → SIGKILL 兜底
  * - SIGKILL 成功 / SIGKILL 时已退出（ESRCH）→ reaped；SIGKILL 失败 → failed
  * - 编排层：无孤儿早退（零 signal 调用）、ps 枚举失败降级 unsupported、Windows 平台跳过
  *
+ * argv fixture 为判据 v2 四条合取形态（设计 §6.12：--mode rpc + --no-extensions +
+ * 清单值 --extension；ppid=1 由 ps 行给位）；清单一律经 readSpawnMarkers 注入，
+ * 与真实 <dataDir>/run/pi-spawn-markers.json 隔离（清单读取/降级分支的专测在
+ * src/services/reap-orphan-pi.test.ts）。
+ *
  * 运行：cd packages/runtime && npx vitest run test/reap-orphan-pi.test.ts
  */
 import { describe, expect, it, vi } from 'vitest'
 import { reapOrphanPiProcesses, type ReapOrphanOptions } from '../src/services/reap-orphan-pi.js'
 
-const SESSIONS_DIR = '/data/sessions-test'
+const DATA_DIR = '/data/xyz-agent'
+
+/** spawn 清单 fixture 值（staged 形态即可，本文件只测状态机，形态覆盖在 src 版专测）。 */
+const MARKER = '/data/xyz-agent/extensions/pi-agent-ext'
 
 function orphanRow(pid: number): string {
-  // ps -axo pid=,ppid=,command= 单行：ppid=1（reparent 证据）+ 本实例 session-dir 的 rpc pi
-  return `  ${pid}     1 /usr/bin/node /pi/cli.js --mode rpc --session-dir ${SESSIONS_DIR}`
+  // ps -axo pid=,ppid=,command= 单行：ppid=1（reparent 证据）+ 判据 v2 同形 argv
+  return `  ${pid}     1 /usr/bin/node /pi/cli.js --mode rpc --no-extensions --approve --extension ${MARKER}`
+}
+
+/** 清单注入替身（编排层正常路径恒有清单；缺失/坏 JSON 的 fail-safe 分支在 src 版专测）。 */
+function markers(): string[] {
+  return [MARKER]
 }
 
 /** signal 注入工厂：按脚本序列响应（esrch 模拟 throw ESRCH / eperm 模拟 throw EPERM）。 */
@@ -51,12 +64,13 @@ function makeOptions(script: Array<'ok' | 'esrch' | 'eperm'>, stdout = orphanRow
   const signal = scriptedSignal(script)
   const delays: number[] = []
   const options: ReapOrphanOptions = {
-    sessionsDir: SESSIONS_DIR,
+    dataDir: DATA_DIR,
     ownPid: 999,
     killGraceMs: 50,
     listProcesses: () => Promise.resolve(stdout),
     signal: signal.fn,
     delay: (ms) => { delays.push(ms); return Promise.resolve() },
+    readSpawnMarkers: markers,
   }
   return { options, calls: signal.calls, delays }
 }
@@ -137,12 +151,13 @@ describe('reapOrphanPiProcesses 编排层', () => {
     const stdout = `${orphanRow(4242)}\n${orphanRow(4243)}`
     const script = scriptedSignal(['ok', 'esrch', 'esrch'])
     const options: ReapOrphanOptions = {
-      sessionsDir: SESSIONS_DIR,
+      dataDir: DATA_DIR,
       ownPid: 999,
       killGraceMs: 5,
       listProcesses: () => Promise.resolve(stdout),
       signal: script.fn,
       delay: () => Promise.resolve(),
+      readSpawnMarkers: markers,
     }
     const result = await reapOrphanPiProcesses(options)
     expect(result.scanned).toBe(2)
@@ -152,22 +167,23 @@ describe('reapOrphanPiProcesses 编排层', () => {
 
   it('ps 枚举失败（无 ps / 不可执行）→ unsupported 降级返回，不抛', async () => {
     const result = await reapOrphanPiProcesses({
-      sessionsDir: SESSIONS_DIR,
+      dataDir: DATA_DIR,
       ownPid: 999,
       listProcesses: () => Promise.reject(new Error('spawn ps ENOENT')),
       signal: () => { throw new Error('should not be called') },
       delay: () => Promise.resolve(),
+      readSpawnMarkers: markers,
     })
     expect(result.unsupported).toBe(true)
     expect(result.reaped).toEqual([])
     expect(result.failed).toEqual([])
   })
 
-  it('活跃子进程（ppid=ownPid）与其他目录 pi 不误杀（防线② + 精确等值）', async () => {
+  it('活跃子进程（ppid=ownPid）与 argv 不同形 pi 不误杀（防线② + 判据 v2）', async () => {
     const stdout = [
-      ` 4242 999 /usr/bin/node /pi/cli.js --mode rpc --session-dir ${SESSIONS_DIR}`, // 本实例活跃子进程
-      ` 4243   1 /usr/bin/node /pi/cli.js --mode rpc --session-dir /other/data/sessions`, // 他人目录
-      ` 4244   1 /usr/bin/node /pi/cli.js --session-dir ${SESSIONS_DIR}`, // 交互式（无 --mode rpc）
+      ` 4242 999 /usr/bin/node /pi/cli.js --mode rpc --no-extensions --extension ${MARKER}`, // 本实例活跃子进程
+      ` 4243   1 /usr/bin/node /pi/cli.js --mode rpc --no-extensions --extension /other/data/extensions/user-ext`, // 值不在清单（他人/用户路径）
+      ` 4244   1 /usr/bin/node /pi/cli.js --mode rpc --extension ${MARKER}`, // 无 --no-extensions（AGENTS.md 实测模板形态）
       orphanRow(4245), // 唯一真孤儿
     ].join('\n')
     const { options, calls } = makeOptions(['ok', 'esrch'], stdout)
@@ -181,7 +197,7 @@ describe('reapOrphanPiProcesses 编排层', () => {
     const spy = vi.spyOn(process, 'platform', 'get').mockReturnValue('win32')
     try {
       const listProcesses = vi.fn(() => Promise.resolve('should not be called'))
-      const result = await reapOrphanPiProcesses({ sessionsDir: SESSIONS_DIR, ownPid: 1, listProcesses })
+      const result = await reapOrphanPiProcesses({ dataDir: DATA_DIR, ownPid: 1, listProcesses, readSpawnMarkers: markers })
       expect(result.unsupported).toBe(true)
       expect(listProcesses).not.toHaveBeenCalled()
     } finally {

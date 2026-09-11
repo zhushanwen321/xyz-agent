@@ -361,10 +361,12 @@ describe('D5① K6/K8：process-manager kill 日志（kill_source 结构化字�
 // ── K7：reap-orphan-pi（全依赖注入，零真实进程/等待）──
 
 const REAP_SESSIONS_DIR = '/data/sessions-kill-log-test'
+// 判据 v2（四条合取）的清单值 fixture：孤儿 argv 的 --extension 值须 ∈ 注入清单
+const MARKER = '/data/staged-pi-spawn-marker'
 
 function orphanRow(pid: number): string {
-  // ps 单行：ppid=1（reparent 证据）+ 本实例 session-dir 的 rpc pi
-  return `  ${pid}     1 /usr/bin/node /pi/cli.js --mode rpc --session-dir ${REAP_SESSIONS_DIR}`
+  // ps 单行：ppid=1（reparent 证据）+ 判据 v2 同形 argv（rpc + no-extensions + 清单值 --extension）
+  return `  ${pid}     1 /usr/bin/node /pi/cli.js --mode rpc --no-extensions --approve --extension ${MARKER}`
 }
 
 describe('D5① K7：reap-orphan-pi 收殓日志（kill_source 结构化字段）', () => {
@@ -382,10 +384,11 @@ describe('D5① K7：reap-orphan-pi 收殓日志（kill_source 结构化字段�
   it('K7: 启动孤儿收殓命中孤儿 → warn 含 kill_source=reap_orphan 与信号链', async () => {
     const signalCalls: Array<{ pid: number; signal: 'SIGTERM' | 'SIGKILL' | 0 }> = []
     const options: ReapOrphanOptions = {
-      sessionsDir: REAP_SESSIONS_DIR,
+      dataDir: REAP_SESSIONS_DIR,
       ownPid: 999,
       killGraceMs: 50,
       listProcesses: () => Promise.resolve(orphanRow(4242)),
+      readSpawnMarkers: () => [MARKER],
       signal: (pid, signal) => {
         signalCalls.push({ pid, signal })
         // SIGTERM(ok) → 探活 signal 0 抛 ESRCH（已死）→ 收殓完成
@@ -410,9 +413,10 @@ describe('D5① K7：reap-orphan-pi 收殓日志（kill_source 结构化字段�
 
   it('K7 无孤儿：零收殓不打 kill 日志', async () => {
     const options: ReapOrphanOptions = {
-      sessionsDir: REAP_SESSIONS_DIR,
+      dataDir: REAP_SESSIONS_DIR,
       ownPid: 999,
       listProcesses: () => Promise.resolve(''),
+      readSpawnMarkers: () => [MARKER],
       signal: () => {},
       delay: () => Promise.resolve(),
     }

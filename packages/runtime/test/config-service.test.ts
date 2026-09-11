@@ -45,17 +45,17 @@ let configService: ConfigService
 function makeResolver(store: PiConfigStore): ProviderCredentialResolver {
   return new ProviderCredentialResolver({
     authService: { getCredential: async () => undefined },
-    authStorage: new AuthStorage(join(tmpDir, 'pi', 'agent', 'auth.json')),
+    authStorage: new AuthStorage(join(tmpDir, 'agent', 'auth.json')),
     configStore: store,
   })
 }
 
 beforeEach(async () => {
   tmpDir = await mkdtempP(join(tmpdir(), 'config-service-test-'))
-  mkdirSync(join(tmpDir, 'pi', 'agent'), { recursive: true })
-  // 指向临时目录，避免污染真实 ~/.xyz-agent/pi/agent
-  setModelsPath(join(tmpDir, 'pi', 'agent', 'models.json'))
-  setSettingsPath(join(tmpDir, 'pi', 'agent', 'settings.json'))
+  mkdirSync(join(tmpDir, 'agent'), { recursive: true })
+  // 指向临时目录，避免污染真实 ~/.xyz-agent/agent
+  setModelsPath(join(tmpDir, 'agent', 'models.json'))
+  setSettingsPath(join(tmpDir, 'agent', 'settings.json'))
   refreshModels()
   // ConfigService 接受 IConfigStore；用真实 PiConfigStore 走完整读写链路
   configStore = new PiConfigStore()
@@ -172,7 +172,7 @@ describe('ConfigService · provider 级 enabled 读写链路（U2，enabledModel
     // 直接读盘验证（绕过 service 缓存）：enabledModels 白名单落盘到 settings.json（非 models.json）
     // eslint-disable-next-line @typescript-eslint/no-require-imports -- 动态读盘验证
     const raw = require('node:fs').readFileSync(
-      join(tmpDir, 'pi', 'agent', 'settings.json'),
+      join(tmpDir, 'agent', 'settings.json'),
       'utf-8',
     )
     const parsed = JSON.parse(raw) as { enabledModels?: string[] }
@@ -248,7 +248,7 @@ describe('ConfigService.setProvider · model 级字段写路径（U3b，修复 r
 
     // [G3] enabled 落 providers.json modelStates——注入 extrasStore（生产恒注入）；
     // 未注入时 enabled 丢弃 + warn（宁丢不写错位，provider-write-side-switch.test.ts 覆盖）
-    const extrasStore = new XyzProviderStore(join(tmpDir, 'pi', 'agent', 'config', 'providers.json'))
+    const extrasStore = new XyzProviderStore(join(tmpDir, 'agent', 'config', 'providers.json'))
     const svc = new ConfigService(tmpDir, configStore, undefined, extrasStore, undefined, makeResolver(configStore))
 
     // setProvider 传入含 enabled 的 model（新模型，base={}）。modelStates 写入经
@@ -267,7 +267,7 @@ describe('ConfigService.setProvider · model 级字段写路径（U3b，修复 r
     expect(models.find(m => m.id === 'm2')?.enabled).toBe(true)
 
     // models.json 不再序列化 enabled（pi schema 外寄生字段禁复活）
-    const raw = JSON.parse(readFileSync(join(tmpDir, 'pi', 'agent', 'models.json'), 'utf-8'))
+    const raw = JSON.parse(readFileSync(join(tmpDir, 'agent', 'models.json'), 'utf-8'))
     const rawModels = raw.providers.p1.models as Array<Record<string, unknown>>
     expect(rawModels.find(m => m.id === 'm1')).not.toHaveProperty('enabled')
     expect(rawModels.find(m => m.id === 'm2')).not.toHaveProperty('enabled')
@@ -396,7 +396,7 @@ describe('ConfigService.loadAgents · sourceType 随来源推断（W1，修复 t
     mockFiles: Array<{ name: string; path: string; content: string; sourceType: string }>,
   ) {
     return {
-      getPiAgentDir: () => '/fake/pi/agent',
+      getPiAgentDir: () => '/fake/agent',
       getAgentDirs: () => [] as string[],
       listAgentFiles: () => mockFiles,
       // 以下方法 loadAgents 不会触达，给空实现满足 ConfigService 构造签名
@@ -469,7 +469,7 @@ describe('ConfigService.loadAgents · sourceType 随来源推断（W1，修复 t
       },
       {
         name: 'default',
-        path: '/h/.xyz-agent/pi/agent/agents/default.md',
+        path: '/h/.xyz-agent/agent/agents/default.md',
         content: '---\nname: Default\n---',
         sourceType: 'pi',
       },

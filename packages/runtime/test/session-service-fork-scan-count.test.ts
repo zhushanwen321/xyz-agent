@@ -58,7 +58,7 @@ vi.mock('../src/infra/pi/pi-provider-store.js', async (importOriginal) => {
   }
 })
 // getSessionsDir 指向测试临时目录（fork 产物真实写入 tmp，不碰真实数据目录）
-const pathsMock = vi.hoisted(() => ({ getSessionsDir: vi.fn(() => '/tmp/placeholder'), getPiAgentDir: vi.fn(() => '/mock/xyz-agent/pi/agent') }))
+const pathsMock = vi.hoisted(() => ({ getSessionsDir: vi.fn(() => '/tmp/placeholder'), getPiAgentDir: vi.fn(() => '/mock/xyz-agent/agent') }))
 vi.mock('../src/infra/pi/pi-paths.js', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../src/infra/pi/pi-paths.js')>()
   return {
@@ -181,11 +181,13 @@ describe('fork handler 单次 scanSessions（W26 微项 12 find 合并）', () =
     const result = await service.forkSession('src-1', 'm2', true, 'forked')
     expect(countingStore.scanCount).toBe(1)
 
-    // 新文件在 sessions 目录（真实写出；pi 命名 <ISO_timestamp>_<uuid>.jsonl，排除源文件）
+    // 新文件在源 header cwd（/proj）的 encodeCwd 子目录（方案 B 布局，buildForkTarget
+    // 与 import-service 写入形态对齐；pi 命名 <ISO_timestamp>_<uuid>.jsonl）
     const { readdirSync, existsSync, readFileSync } = await import('node:fs')
-    const forkedFiles = readdirSync(sessionsDir).filter((f) => f.endsWith('.jsonl') && f !== 'src-session.jsonl')
+    const encodedDir = join(sessionsDir, '--proj--')
+    const forkedFiles = readdirSync(encodedDir).filter((f) => f.endsWith('.jsonl'))
     expect(forkedFiles).toHaveLength(1)
-    const forkedFilePath = join(sessionsDir, forkedFiles[0])
+    const forkedFilePath = join(encodedDir, forkedFiles[0])
     expect(existsSync(forkedFilePath)).toBe(true)
     const lines = readFileSync(forkedFilePath, 'utf-8').trim().split('\n')
     const header = JSON.parse(lines[0])

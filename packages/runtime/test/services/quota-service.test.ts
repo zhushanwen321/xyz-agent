@@ -76,7 +76,7 @@ let extrasPath: string
 
 beforeEach(() => {
   tmpDir = mkdtempSync(join(tmpdir(), 'quota-svc-'))
-  extrasPath = join(tmpDir, 'pi', 'agent', 'config', 'providers.json')
+  extrasPath = join(tmpDir, 'agent', 'config', 'providers.json')
   extrasStore = new XyzProviderStore(extrasPath)
   vi.clearAllMocks()
   vi.mocked(getProviderConfig).mockImplementation(() => undefined)

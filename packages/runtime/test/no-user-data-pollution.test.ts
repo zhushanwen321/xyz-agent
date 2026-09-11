@@ -2,7 +2,7 @@
  * [HISTORICAL] 用户数据污染回归测试 — 2026-07-26 事故防护。
  *
  * 事故：pi-provider-store.test.ts 的 beforeEach 漏调 setDiscoveryPath，
- * setSkillPaths 经模块级 discoveryStore 写真实路径 ~/.xyz-agent/pi/agent/discovery.json，
+ * setSkillPaths 经模块级 discoveryStore 写真实路径 ~/.xyz-agent/agent/discovery.json，
  * 内容是测试 tmp 路径（测试结束 rm 后路径失效），用户重启 app 发现 skill 扫描路径「凭空消失」。
  *
  * 本测试验证防护机制：globalSetup 强制 XYZ_AGENT_DATA_DIR → tmp，所有 store 的 eager
@@ -38,8 +38,8 @@ describe('[HISTORICAL] 用户数据污染防护 (2026-07-26 事故)', () => {
   it('discovery-store eager 初始化路径不指向真实用户数据目录', () => {
     const p = getDiscoveryPath()
     expect(p, `discovery path 不能是 ~/.xyz-agent 下: ${p}`).not.toContain(REAL_DATA_DIR)
-    // 真实路径形如 ~/.xyz-agent/pi/agent/discovery.json，断言不落到这里
-    expect(p.endsWith('/.xyz-agent/pi/agent/discovery.json')).toBe(false)
+    // 真实路径形如 <dataDir>/agent/discovery.json，断言不落到这里
+    expect(p.endsWith('/.xyz-agent/agent/discovery.json')).toBe(false)
   })
 
   it('settings-store eager 初始化路径不指向真实用户数据目录', () => {
@@ -47,12 +47,12 @@ describe('[HISTORICAL] 用户数据污染防护 (2026-07-26 事故)', () => {
     // 注意：若其他测试调过 setSettingsPath 指向 tmp，此处返回的是该 tmp；但全局默认（未调过）应是 globalSetup 路径
     const p = getSettingsPath()
     expect(p, `settings path 不能是 ~/.xyz-agent 下: ${p}`).not.toContain(REAL_DATA_DIR)
-    expect(p.endsWith('/.xyz-agent/pi/agent/settings.json')).toBe(false)
+    expect(p.endsWith('/.xyz-agent/agent/settings.json')).toBe(false)
   })
 
   it('getActiveSettingsPath 不指向真实用户数据目录', () => {
     const p = getActiveSettingsPath()
     // 此测试可能晚于其他测试执行，路径可能是某 tmp，但绝不能是真实路径
-    expect(p.endsWith('/.xyz-agent/pi/agent/settings.json')).toBe(false)
+    expect(p.endsWith('/.xyz-agent/agent/settings.json')).toBe(false)
   })
 })

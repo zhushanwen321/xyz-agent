@@ -192,9 +192,9 @@ describe('C2 reveal-in-folder IPC（trace MALFORMED 行「打开所在目录」�
 
   it('绝对路径 → shell.showItemInFolder 放行并返回 true', async () => {
     const reveal = handlers.get('reveal-in-folder')!
-    const result = await reveal({}, '/pi/sessions/s1.jsonl')
+    const result = await reveal({}, '/data/agent/sessions/s1.jsonl')
     expect(result).toBe(true)
-    expect(shellMock.showItemInFolder).toHaveBeenCalledWith('/pi/sessions/s1.jsonl')
+    expect(shellMock.showItemInFolder).toHaveBeenCalledWith('/data/agent/sessions/s1.jsonl')
   })
 
   it('相对路径 → 拒绝（返回 false）且不触 shell', async () => {
@@ -218,7 +218,7 @@ describe('C2 reveal-in-folder IPC（trace MALFORMED 行「打开所在目录」�
     const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
     try {
       const reveal = handlers.get('reveal-in-folder')!
-      const result = await reveal({}, '/pi/sessions/s1.jsonl')
+      const result = await reveal({}, '/data/agent/sessions/s1.jsonl')
       expect(result).toBe(false)
       expect(errSpy).toHaveBeenCalled()
     } finally {

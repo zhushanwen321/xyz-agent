@@ -1,6 +1,7 @@
-import { readdir, stat } from 'node:fs/promises'
+import { readdir, stat, realpath } from 'node:fs/promises'
 import type { Dirent } from 'node:fs'
-import { join } from 'node:path'
+import { join, basename, dirname } from 'node:path'
+import { performance } from 'node:perf_hooks'
 
 /**
  * M2 discovery 发现层：文件系统扫描（design §3.3 D-5 首行扫描策略的文件定位部分）。
@@ -8,7 +9,226 @@ import { join } from 'node:path'
  * agentDir 注入：本模块所有函数接收 `agentDir: string` 参数，**不调用** `getAgentDir()`
  *（pi SDK，调用留到 M3 tool-adapter 层）。故本模块零 pi 依赖，仅 node:fs + 相对
  * import M1 core，可完全单测。
+ *
+ * U1（design 2026-09-10 §6.1/§7B）：新增 `resolveSessionRoots(signals)` —— 信号包 →
+ * 带来源标签的候选根列表，逐根扫描、按 realpath 去重（同路径只扫一次，保留最高优先级
+ * kind 标签）。B 收缩（design §6.13）：布局对齐后无 `[env]` 信号，`[default]` 为主根。
+ * 旧签名 `listMainSessions`/`listSubagentSessions` 保留为薄包装（内部构造只含 agentDir
+ * 的信号包 → main 源退化为 `[default]`+`[legacy]` 两根），存量调用（find.ts /
+ * subagents.ts）不破。
  */
+
+// ============================================================
+// 候选根契约（U1 foundation：后续 doctor / find / family 共享）
+// ============================================================
+
+/** 发现层信号包（index.ts 采集，全部可降级；本模块只消费不采集） */
+export interface SessionRootSignals {
+  /** pi agent 数据目录（两宿主均成立；B 后 xyz-agent = `<dataDir>/agent`） */
+  agentDir: string
+  /**
+   * 宿主已解析的 live session 目录（`ctx.sessionManager.getSessionDir()`，§6.1 信号 1）。
+   * 缺失/undefined 时走三根降级（`[default]`+`[legacy]`+`[subagent]`，§7B 要点 2）。
+   */
+  liveSessionDir?: string
+}
+
+/** 候选根来源标签；kind 优先级 live > default > legacy > subagent（§6.1 信号序） */
+export type SessionRootKind = 'live' | 'default' | 'legacy' | 'subagent'
+
+/** main 源 = 主 session 根（live/default/legacy）；subagent 源 = subagent 会话根 */
+export type SessionRootSource = 'main' | 'subagent'
+
+/** 候选根（含扫描结果）。id 恒等于 kind：去重后每 kind 至多一个根，作 doctor 表行键。 */
+export interface SessionRoot {
+  id: SessionRootKind
+  kind: SessionRootKind
+  /** 规范化后的绝对路径（`[live]` 已剥 encodeCwd 层） */
+  path: string
+  source: SessionRootSource
+  /** 目录是否存在（不存在的根仍列出——doctor 表「存在」列与三根降级可见性需要） */
+  exists: boolean
+  /** 扫描所得 .jsonl 数（= files.length）；未扫描（被去重）时 undefined */
+  fileCount?: number
+  /** 本根 scanJsonlRecursive 耗时 ms；未扫描时 undefined */
+  scanMs?: number
+  /** 扫描所得文件列表（design §7B 要点 8「本就在返回值里」）；未扫描时空数组 */
+  files: SessionFileMeta[]
+  /**
+   * realpath 与更高优先级根同路径 → 指向保留根的 id，本根未扫描（doctor 渲染
+   * 「与 N 同路径，已去重」注记的依据，§7B 要点 4）。
+   */
+  dedupedInto?: SessionRootKind
+  /**
+   * 本根数据来自调用方注入缓存（resolveSessionRoots options.cache 命中）：fileCount/
+   * scanMs/exists 取缓存值，files 恒空数组——消费方不得把 cached 根的 files 当实扫
+   * 结果（u8 追加：doctor「同一数据源两处渲染」统一走 resolveSessionRoots，缓存语义
+   * 由调用方注入，§6.3）。
+   */
+  cached?: boolean
+}
+
+/** 各根固定子目录名（常量推导，不来自信号——§6.1 信号 5） */
+const SESSIONS_DIRNAME = 'sessions'
+const SUBAGENTS_DIRNAME = 'subagents'
+
+/**
+ * `[live]` 规范化（§6.1/§7B 要点 3）：`getSessionDir()` 在纯 pi 返回按 cwd 编码的子目录
+ *（`<agentDir>/sessions/--Users-x--`），在 xyz-agent 覆盖态返回根本身。判据：basename
+ * 匹配 encodeCwd 形态（`--` 开头 `--` 结尾，实证见 `~/.pi/agent/sessions/` 全部子目录
+ * 与 real-data.ts）则取 dirname，否则取自身。
+ */
+export function normalizeLiveSessionDir(liveSessionDir: string): string {
+  const base = basename(liveSessionDir)
+  return base.startsWith('--') && base.endsWith('--')
+    ? dirname(liveSessionDir)
+    : liveSessionDir
+}
+
+/**
+ * 从信号包推导候选根（未扫描骨架），数组序 = 优先级序（§6.1）。
+ * `[subagent]` 恒在（常量推导）；`[live]` 仅在信号存在时出现。
+ */
+function sessionRootSpecs(signals: SessionRootSignals): SessionRoot[] {
+  // 空 agentDir 防御：派生式会退化为 cwd 相对路径（'sessions'/'./sessions'），可能扫到
+  // 进程 cwd 下的无关目录——宁缺毋错（§11.14 空 agentDir 自举由宿主层兜底）
+  if (signals.agentDir.length === 0) return []
+  const specs: SessionRoot[] = []
+  if (signals.liveSessionDir !== undefined && signals.liveSessionDir.length > 0) {
+    specs.push(spec('live', 'main', normalizeLiveSessionDir(signals.liveSessionDir)))
+  }
+  specs.push(spec('default', 'main', join(signals.agentDir, SESSIONS_DIRNAME)))
+  specs.push(spec('legacy', 'main', join(dirname(signals.agentDir), SESSIONS_DIRNAME)))
+  specs.push(spec('subagent', 'subagent', join(signals.agentDir, SUBAGENTS_DIRNAME)))
+  return specs
+}
+
+function spec(id: SessionRootKind, source: SessionRootSource, path: string): SessionRoot {
+  return { id, kind: id, source, path, exists: false, files: [] }
+}
+
+/** realpath 解析失败（目录不存在等）→ 回退字面路径作去重键（同字面路径仍可去重） */
+async function safeRealpath(path: string): Promise<string> {
+  try {
+    return await realpath(path)
+  } catch {
+    return path
+  }
+}
+
+async function pathExists(path: string): Promise<boolean> {
+  try {
+    await stat(path)
+    return true
+  } catch {
+    return false
+  }
+}
+
+const SKIP_DIRS_NONE = new Set<string>()
+
+// ============================================================
+// 扫描 options（u8 追加：doctor「同一数据源两处渲染，不重复实现探测」§6.3——
+// doctor 经 options 驱动 subagent 根不扫与进程内缓存，本模块不内置 TTL/mtime
+// 失效逻辑，缓存语义全部由调用方注入的句柄定义）
+// ============================================================
+
+/** 缓存条目载荷（扫描统计快照；失效判定所需元数据由缓存实现方自持，不进本契约） */
+export interface SessionRootCacheEntry {
+  exists: boolean
+  fileCount: number
+  scanMs: number
+}
+
+/**
+ * 根扫描的进程内缓存句柄（调用方注入）。get 返回 undefined = 未命中（含调用方判定
+ * TTL 到期/目录 mtime 变化后自行淘汰）→ 本模块实扫并 set 回写；命中 → 直接以缓存值
+ * 构造根（cached: true，files 恒空数组）。get/set 允许同步或异步实现。
+ */
+export interface SessionRootCache {
+  get(key: string): Promise<SessionRootCacheEntry | undefined> | SessionRootCacheEntry | undefined
+  set(key: string, value: SessionRootCacheEntry): void | Promise<void>
+}
+
+/** resolveSessionRoots 扫描行为选项（全部可选，缺省 = 既有行为零变化） */
+export interface SessionRootScanOptions {
+  /**
+   * subagent 根扫描模式：`'scan'`（默认，现行为——递归扫出文件数）| `'stat'`
+   *（doctor 默认形态 §6.3——只做存在性检查，fileCount/scanMs 恒 undefined，
+   * 不产缓存条目）。subagent 根在纯 pi 下可达数千文件，doctor 可能被反复询问。
+   */
+  subagents?: 'scan' | 'stat'
+  /** 根扫描缓存句柄（见 SessionRootCache）。缺省 = 每次实扫（find 路径永不传）。 */
+  cache?: SessionRootCache
+}
+
+/**
+ * 解析候选根并逐根扫描（design 2026-09-10 §6.1 候选根探测 / §7B 要点 3/4/6）。
+ *
+ * 优先级 live > default > legacy > subagent；按 realpath 去重：同路径多信号只扫一次，
+ * 保留最高优先级 kind 标签，被去重的根以 `dedupedInto` 标注（不产生 fileCount/scanMs）。
+ * 逐根复用 scanJsonlRecursive（main 源跳 workflow-state；subagent 源不跳）。单根失败
+ * （不存在/无权限）→ 空结果继续，不抛错（沿用 listXxxSessions 契约）。
+ *
+ * options（u8 追加，全部缺省安全）：`subagents:'stat'` 让 subagent 根只做存在性检查；
+ * `cache` 提供进程内缓存句柄（命中即不实扫，cached 根 files 恒空）——cache 命中优先于
+ * 一切实扫，`set` 仅在实扫后回写（命中不回写）。find/F1 路径恒不传 options（自检行
+ * 计数必须取本次实扫，§7B 要点 8 PS-14）。
+ */
+export async function resolveSessionRoots(
+  signals: SessionRootSignals,
+  options?: SessionRootScanOptions,
+): Promise<SessionRoot[]> {
+  const subagentMode = options?.subagents ?? 'scan'
+  const out: SessionRoot[] = []
+  const byRealPath = new Map<string, SessionRoot>()
+  for (const candidate of sessionRootSpecs(signals)) {
+    const key = await safeRealpath(candidate.path)
+    const kept = byRealPath.get(key)
+    if (kept) {
+      // 同 realpath：不扫描，标注归属（exists 与保留根同目录，必然一致）
+      out.push({ ...candidate, exists: kept.exists, dedupedInto: kept.id })
+      continue
+    }
+    if (candidate.source === 'subagent' && subagentMode === 'stat') {
+      // doctor 默认形态（§6.3）：只列路径与可扫性，不产文件数、不入缓存
+      out.push({ ...candidate, exists: await pathExists(candidate.path) })
+      continue
+    }
+    const cached = options?.cache ? await options.cache.get(candidate.path) : undefined
+    if (cached) {
+      // 命中：缓存值即数据源（不实扫、不回写）；files 恒空——消费方不得当实扫结果
+      const root: SessionRoot = {
+        ...candidate,
+        exists: cached.exists,
+        fileCount: cached.fileCount,
+        scanMs: cached.scanMs,
+        cached: true,
+      }
+      byRealPath.set(key, root)
+      out.push(root)
+      continue
+    }
+    const skipDirs = candidate.source === 'main' ? SKIP_DIRS_MAIN : SKIP_DIRS_NONE
+    const t0 = performance.now()
+    const files = await scanJsonlRecursive(candidate.path, skipDirs)
+    const scanMs = performance.now() - t0
+    const exists = await pathExists(candidate.path)
+    if (options?.cache) {
+      await options.cache.set(candidate.path, { exists, fileCount: files.length, scanMs })
+    }
+    const root: SessionRoot = {
+      ...candidate,
+      exists,
+      fileCount: files.length,
+      scanMs,
+      files,
+    }
+    byRealPath.set(key, root)
+    out.push(root)
+  }
+  return out
+}
 
 export interface SessionFileMeta {
   /** 绝对路径 */
@@ -76,20 +296,28 @@ async function scanJsonlRecursive(
 }
 
 /**
- * 列出 agentDir/sessions/ 下所有主 session 文件。
+ * 旧签名薄包装（U1，design §7B 要点 7）：内部构造只含 agentDir 的信号包，main 源退化为
+ * 「`[default]`+`[legacy]`」两根并集。工具运行路径后续单元改走 resolveSessionRoots 新签名，
+ * 本包装仅为存量调用（find.ts / subagents.ts）与外部深 import 保持不破。
+ *
  * 递归扫描子目录（cwd 编码目录如 --Users-foo--），glob *.jsonl，排除 *.jsonl.finalized
  *（design §3.3 D-7 Q2）；跳过 workflow-state 子目录（workflow 运行状态文件，非 session）。
  */
 export async function listMainSessions(agentDir: string): Promise<SessionFileMeta[]> {
-  return scanJsonlRecursive(join(agentDir, 'sessions'), SKIP_DIRS_MAIN)
+  const roots = await resolveSessionRoots({ agentDir })
+  return roots
+    .filter((r) => r.source === 'main' && r.dedupedInto === undefined)
+    .flatMap((r) => r.files)
 }
 
 /**
- * 列出 agentDir/subagents/ 下所有 subagent session 文件（同样排除 .finalized）。
- * 结构：subagents/<cwd编码>/sessions/*.jsonl。records/ 子目录（.json manifest）无 .jsonl，
- * 天然不被误收。
+ * 旧签名薄包装：agentDir 信号包下 `[subagent]` 根 = `<agentDir>/subagents`（常量推导），
+ * 行为与旧实现等价。结构：subagents/<cwd编码>/sessions/*.jsonl。records/ 子目录
+ *（.json manifest）无 .jsonl，天然不被误收。
  */
 export async function listSubagentSessions(agentDir: string): Promise<SessionFileMeta[]> {
-  return scanJsonlRecursive(join(agentDir, 'subagents'), new Set())
+  const roots = await resolveSessionRoots({ agentDir })
+  const sub = roots.find((r) => r.kind === 'subagent')
+  return sub?.files ?? []
 }
 

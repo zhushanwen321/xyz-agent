@@ -460,7 +460,7 @@ export interface PiSessionLog {
  * 为一个 pi session 创建独立日志写入器。
  *
  * pi stdout 的 JSONL 事件流是诊断 pi 卡死的**决定性证据**（pi 发了什么 / 什么都没发）。
- * 每个独立文件，文件名含 sessionId 便于关联坏 session（与 ~/.xyz-agent-dev/pi/sessions/
+ * 每个独立文件，文件名含 sessionId 便于关联坏 session（与数据目录 agent/sessions/
  * 下的 session JSONL 对应）。
  *
  * size 轮转（2026-09 磁盘膨胀修复）：单 session 事件量并非总是可控——pi 的 message_update

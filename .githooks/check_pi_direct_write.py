@@ -33,12 +33,14 @@
        条目为准。
 
 allowlist（ALLOWLIST）：
-  空（W11 清空）：三条 legacy 直写链路（persistSessionName 非活跃 rename 直写 /
-  persistHandedOff handoff_marker 直写 / patchSessionCwd 整文件重写）已随 W11 全部
-  迁移或删除（分别切短命 pi set_session_name RPC / 迁 .handoff.json sidecar /
-  迁 restore tmp 读改写管线），规则自此无条件化——条件 A 命中且不落入内置豁免的
-  写点为 0（登记表 §5 维护规约第 2 条）。后续合法新形态的豁免闭环 = 先在
-  data-source-registry.md 补条目 + 本表登记（§5 第 3 条），禁止在代码里静默绕过。
+  文件级登记例外表（键 = 仓库相对路径，值 = 理由摘要；详情以
+  docs/architecture/data-source-registry.md §4 对应条目为准，豁免闭环 = 先登记表补条目
+  + 本表登记（§5 第 3 条），禁止在代码里静默绕过）。W11 曾清空为空集（三条 legacy
+  直写链路 persistSessionName / persistHandedOff / patchSessionCwd 已迁移或删除）；
+  2026-09-10 收录首条：scripts/migrate-pi-layout-v2.mjs（登记表 §4 ⑬，session-reader
+  布局迁移 U14a）——jsonl rename-only，writeFile 仅三件套 union tmp+rename 原子写。
+  匹配语义：文件级——该文件内未落内置豁免（条件 B）的写点按本表放行，命中处以
+  「文件:行」在通过报告中列出（防条目遮蔽新增写点而不可见）。
 
 与参照实现 check_path_whitelist.py 的差异（有意设计，非疏漏）：
   参照实现全文 re.search 不滤注释；本脚本匹配前剥离注释（// 行注释与块注释，保留字符串
@@ -154,13 +156,24 @@ CHAIN_LOOKBACK_LINES = 10   # 同函数单跳赋值链的最大回溯行数
 STATEMENT_MAX_SPAN = 5      # 多行语句（括号未闭合）向下拼接的最大行数
 
 # ---------------------------------------------------------------------------
-# allowlist：登记例外（按登记表 §5 第 3 条流程：data-source-registry.md §4 补条目
-# + 本表登记，禁止静默绕过）。W11 曾清空；2026-09-09 新增 db-isolation W5a 清理
-# 工具两写点（残留清单/操作凭证落盘，registry §4 ⑬）——行号随脚本漂移须同步更新
+# allowlist：文件级登记例外（registry_doc §4 条目 ↔ 本表一一对应；§5 维护规约第 3 条
+# 闭环流程——先登记表补条目，再在此登记，禁止代码静默绕过）。键 = 仓库相对路径
+# （文件级），值 = 理由摘要 + 登记表条目锚；命中处在通过报告按「文件:行」列出。
+# 行号键随脚本漂移永不生效（教训 impl-plan D-10），dev 侧行号键条目已转文件级。
 # ---------------------------------------------------------------------------
-ALLOWLIST: set[str] = {
-    "scripts/zcode-session-db-cleanup.mjs:445",
-    "scripts/zcode-session-db-cleanup.mjs:464",
+ALLOWLIST: dict[str, str] = {
+    # 登记表 §4 ⑭（session-reader 布局迁移 U14a / orchestrator D-7 登记）：
+    # 一次性手工迁移脚本（node 直跑，不在 app 启动路径）——对 session jsonl 本体
+    # 一律 rename-only（步骤 1 rename pi→备份 / 步骤 3/4 header.cwd 分发与旧旧布局
+    # 兼并均为 renameSync 搬移）；writeFile 仅 provider 三件套 keyed union 的
+    # tmp+rename 原子写与 sessionDir 清除写回（写目标为 agent/ 下 provider 配置，
+    # 非 session JSONL 本体，pi 唯一写方原则不破）。前置步骤 0b 进程检测 fail-fast
+    # 保证运行时无 pi 并发写方。设计锚：extensions/universal/session-reader/docs/
+    # 2026-09-10-session-root-discovery-and-env-transparency.md §6.11。
+    "scripts/migrate-pi-layout-v2.mjs": "一次性手工迁移脚本：jsonl rename-only，writeFile 仅三件套 union tmp+rename 原子写（登记表 §4 ⑭，设计 §6.11）",
+    # db-isolation W5a 清理工具（dev-0.9.16 侧登记，registry §4 对应条目锚见该侧）：
+    # 残留清单/操作凭证落盘两写点，原行号键 :445/:464 转文件级。
+    "scripts/zcode-session-db-cleanup.mjs": "zcode 会话 db 清理工具：残留清单/操作凭证落盘两写点（原行号键 :445/:464 转文件级）",
 }
 
 
@@ -338,10 +351,9 @@ def check_file(filepath: Path) -> tuple[list[str], list[str]]:
             # B③ restore-time 归一化临时名（登记表 §4 ⑨，语句级 + 单跳赋值链回溯）
             if exempt_tmp_migrate_target(lines, lineno):
                 continue
-            # allowlist：legacy 登记例外（data-source-registry.md §3/§4）
-            key = f"{rel_str}:{lineno}"
-            if key in ALLOWLIST:
-                consumed.append(key)
+            # allowlist：文件级登记例外（data-source-registry.md §4，§5 第 3 条闭环）
+            if rel_str in ALLOWLIST:
+                consumed.append(f"{rel_str}:{lineno}")
                 continue
             # B② 非 sessions 目标（tmpdir / xyz 自有目录推导，语句无 sessions 痕迹）
             if exempt_non_sessions_target(lines, lineno):

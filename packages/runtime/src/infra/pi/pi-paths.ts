@@ -4,7 +4,8 @@
  * 数据根目录委托 shared 的 getDataDir（SSOT，ADR-0009 隔离）。
  * 其余 pi 子路径在此派生。
  *
- * 目录结构：
+ * 目录结构（方案 B：布局完整对齐 pi 0.84.x，唯一差异是根目录；旧布局
+ * pi/ 兄弟层已由 scripts/migrate-pi-layout-v2.mjs 迁移退役）：
  *   ~/.xyz-agent/                    ← xyz-agent 配置根目录
  *     config.json                    ← xyz-agent 自身配置
  *     extensions/                    ← 用户安装的 extension（local/git + discovery 扫描根）
@@ -12,13 +13,14 @@
  *     tmp/                           ← extension 安装临时目录
  *     skills/                        ← skill 强制目录（ADR-0021）
  *     agents/                        ← agent 强制目录（ADR-0021）
- *     pi/                            ← xyz-pi 的根目录
- *       agent/                       ← xyz-pi 的 agent 目录
- *         models.json                ← Provider & Model 定义
- *         settings.json              ← xyz-pi 设置（pi 原生配置，不迁出）
- *         disabled-packages.json     ← extension 启停状态（不迁出）
- *         config/providers.json      ← xyz 扩展域（quota/authMethod/modelStates，pi 不扫描）
+ *     agent/                         ← pi 的 agent 目录（PI_CODING_AGENT_DIR，≙ ~/.pi/agent）
+ *       models.json                  ← Provider & Model 定义
+ *       settings.json                ← pi 设置（pi 原生配置，不迁出）
+ *       disabled-packages.json       ← extension 启停状态（不迁出）
+ *       config/providers.json        ← xyz 扩展域（quota/authMethod/modelStates，pi 不扫描）
  *       sessions/                    ← Session jsonl 文件
+ *         <encodeCwd>/               ← pi 按 cwd 自动分子目录（默认布局）
+ *       subagents/<encodeCwd>/sessions/  ← subagent session 目录（相对 agentDir 派生不变）
  */
 
 import {
@@ -36,7 +38,7 @@ export function getConfigDir(): string {
 
 /**
  * 用户安装的 extension 目录（`<dataDir>/extensions`）。
- * 委托 shared SSOT（@xyz-agent/shared/paths），原在 pi/agent/extensions/ 已迁出。
+ * 委托 shared SSOT（@xyz-agent/shared/paths），原在旧布局 agent/ 子树下，已迁出到 dataDir 根层。
  */
 export function getExtensionsDir(): string {
   return sharedGetExtensionsDir()
@@ -44,7 +46,7 @@ export function getExtensionsDir(): string {
 
 /**
  * npm 安装的 extension 目录（`<dataDir>/npm`）。
- * 委托 shared SSOT，原在 pi/agent/npm/ 已迁出。
+ * 委托 shared SSOT，原在旧布局 agent/ 子树下，已迁出到 dataDir 根层。
  */
 export function getNpmDir(): string {
   return sharedGetNpmDir()
@@ -52,20 +54,19 @@ export function getNpmDir(): string {
 
 /**
  * extension 安装临时目录（`<dataDir>/tmp`）。
- * 委托 shared SSOT，原在 pi/agent/tmp/ 已迁出。
+ * 委托 shared SSOT，原在旧布局 agent/ 子树下，已迁出到 dataDir 根层。
  */
 export function getTmpDir(): string {
   return sharedGetTmpDir()
 }
 
-/** xyz-pi root: ~/.xyz-agent/pi/ */
-export function getPiRoot(): string {
-  return join(getConfigDir(), 'pi')
-}
-
-/** xyz-pi agent directory: ~/.xyz-agent/pi/agent/ */
+/**
+ * xyz-pi agent directory（PI_CODING_AGENT_DIR）: `<dataDir>/agent/`。
+ * 方案 B 布局对齐 pi（≙ `~/.pi/agent`，唯一差异是根目录）；
+ * 旧布局 pi/ 兄弟层已由迁移脚本退役（pi/ 层保留为迁移备份）。
+ */
 export function getPiAgentDir(): string {
-  return join(getPiRoot(), 'agent')
+  return join(getConfigDir(), 'agent')
 }
 
 export function getModelsPath(): string {
@@ -102,8 +103,13 @@ export function getProviderExtrasPath(): string {
   return join(getPiAgentDir(), 'config', 'providers.json')
 }
 
+/**
+ * pi sessions directory: `<agentDir>/sessions/`（对齐 pi 默认派生，
+ * 锚点 dist/config.js getSessionsDir）。session jsonl 实际落在其下的
+ * `<encodeCwd>/` 子目录（pi 默认布局，按 cwd 分目录）。
+ */
 export function getSessionsDir(): string {
-  return join(getPiRoot(), 'sessions')
+  return join(getPiAgentDir(), 'sessions')
 }
 
 export function getAgentsDir(): string {
@@ -115,7 +121,7 @@ export function getAgentsDir(): string {
  *
  * 规则：'--' + cwd 去掉首斜杠 + 所有 / \ : 替换为 - + '--'
  * 例：/Users/x/proj → --Users-x-proj--
- *     C:\Users\x\proj → --C-Users-x-proj--
+ *     C:\Users\x\proj → --C--Users-x-proj--（盘符冒号与反斜杠各替换为一个 -）
  *
  * 用于定位 subagent session 目录：<piAgentDir>/subagents/<encodeCwd(cwd)>/sessions/
  */

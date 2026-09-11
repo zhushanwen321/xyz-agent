@@ -25,7 +25,7 @@ let dataDir: string
 
 beforeEach(() => {
   dataDir = mkdtempSync(join(tmpdir(), 'overlay-integration-'))
-  mkdirSync(join(dataDir, 'pi', 'agent'), { recursive: true })
+  mkdirSync(join(dataDir, 'agent'), { recursive: true })
   vi.stubEnv('XYZ_AGENT_DATA_DIR', dataDir)
 })
 

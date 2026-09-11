@@ -12,7 +12,7 @@ describe('auto-rename enabled 标志文件', () => {
   beforeEach(() => {
     // 每个测试独立临时目录，避免互相干扰
     tmpRoot = mkdtempSync(join(tmpdir(), 'auto-rename-test-'))
-    // getPiAgentDir 经 getDataDir 读 XYZ_AGENT_DATA_DIR → 临时目录/pi/agent
+    // getPiAgentDir 经 getDataDir 读 XYZ_AGENT_DATA_DIR → 临时目录/agent
     vi.stubEnv('XYZ_AGENT_DATA_DIR', tmpRoot)
   })
 
@@ -21,8 +21,8 @@ describe('auto-rename enabled 标志文件', () => {
     rmSync(tmpRoot, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
   })
 
-  it('getAutoRenameEnabledPath 解析到 <XYZ_AGENT_DATA_DIR>/pi/agent/auto-rename-enabled', () => {
-    expect(getAutoRenameEnabledPath()).toBe(join(tmpRoot, 'pi', 'agent', 'auto-rename-enabled'))
+  it('getAutoRenameEnabledPath 解析到 <XYZ_AGENT_DATA_DIR>/agent/auto-rename-enabled', () => {
+    expect(getAutoRenameEnabledPath()).toBe(join(tmpRoot, 'agent', 'auto-rename-enabled'))
   })
 
   it('文件不存在时 getAutoRenameEnabled 返回 false（默认关闭）', () => {
@@ -51,7 +51,7 @@ describe('auto-rename enabled 标志文件', () => {
 
 describe('ensureAutoRenameDefault', () => {
   let tmpRoot: string
-  const initializedPath = () => join(tmpRoot, 'pi', 'agent', 'auto-rename-initialized')
+  const initializedPath = () => join(tmpRoot, 'agent', 'auto-rename-initialized')
 
   beforeEach(() => {
     tmpRoot = mkdtempSync(join(tmpdir(), 'auto-rename-init-'))
@@ -79,7 +79,7 @@ describe('ensureAutoRenameDefault', () => {
     // 模拟用户已关闭 auto-rename（initialized 标记存在，但 enabled 文件不存在）
     setAutoRenameEnabled(false)
     // 手动创建 initialized 标记（表示已完成首次初始化）
-    // 先建好 pi/agent 目录再写标记（ensureAutoRenameDefault 检测到标记存在会直接 return，
+    // 先建好 agent/ 目录再写标记（ensureAutoRenameDefault 检测到标记存在会直接 return，
     // 不会自己 mkdir，所以测试要预先把目录和标记造好）
     const { writeFileSync, mkdirSync } = require('node:fs')
     const { dirname } = require('node:path')
@@ -110,7 +110,7 @@ describe('ensureAutoRenameDefault', () => {
 
 describe('rename-session 模型配置（config/rename-session-ext-config.json）', () => {
   let tmpRoot: string
-  const configPath = () => join(tmpRoot, 'pi', 'agent', 'config', 'rename-session-ext-config.json')
+  const configPath = () => join(tmpRoot, 'agent', 'config', 'rename-session-ext-config.json')
 
   /** 写入原始配置 JSON（预建目录）。 */
   function writeRawConfig(raw: unknown): void {
@@ -133,8 +133,8 @@ describe('rename-session 模型配置（config/rename-session-ext-config.json）
     rmSync(tmpRoot, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
   })
 
-  it('getRenameConfigPath 解析到 <XYZ_AGENT_DATA_DIR>/pi/agent/config/rename-session-ext-config.json', () => {
-    expect(getRenameConfigPath()).toBe(join(tmpRoot, 'pi', 'agent', 'config', 'rename-session-ext-config.json'))
+  it('getRenameConfigPath 解析到 <XYZ_AGENT_DATA_DIR>/agent/config/rename-session-ext-config.json', () => {
+    expect(getRenameConfigPath()).toBe(join(tmpRoot, 'agent', 'config', 'rename-session-ext-config.json'))
   })
 
   it('getRenameModel：文件不存在返回空串（未设置）', () => {
@@ -213,7 +213,7 @@ describe('rename-session-ext-config 写锁（D1e 跨进程锁）', () => {
   // 参照 pi-settings-store.test.ts 的锁测试模式：同一把 lockfile（<config>.json.lock，
   // realpath:false）模拟 extension 侧写方，验证 runtime RMW 的互斥与降级语义。
   let tmpRoot: string
-  const configPath = () => join(tmpRoot, 'pi', 'agent', 'config', 'rename-session-ext-config.json')
+  const configPath = () => join(tmpRoot, 'agent', 'config', 'rename-session-ext-config.json')
 
   beforeEach(() => {
     tmpRoot = mkdtempSync(join(tmpdir(), 'rename-model-lock-test-'))

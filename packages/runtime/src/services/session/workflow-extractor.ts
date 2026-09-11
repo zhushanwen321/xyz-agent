@@ -233,7 +233,8 @@ function extractWorkflowsFromEntriesLegacy(entries: unknown[]): WorkflowRunRecor
     const e = entry as JsonlCustomEntry
     // 真实 JSONL entry type 是 'custom'（不是 'custom_message'）。
     // custom_message 是 pi 推给前端的消息类型，JSONL 持久化层用 'custom' + customType 区分。
-    // 实测验证：~/.xyz-agent-dev/pi/sessions/*.jsonl 中 workflow-state-link 条目 type 均为 'custom'。
+    // 实测验证（B 布局迁移前，旧布局 `~/.xyz-agent-dev/pi/sessions/` 时期的存量文件；历史证据不改写）：
+    // workflow-state-link 条目 type 均为 'custom'。
     if (e.type !== 'custom' || e.customType !== 'workflow-state-link') continue
     const data = e.data as WorkflowStateLinkData | undefined
     if (!data?.runId || !data?.path) continue
