@@ -4,6 +4,8 @@
  * R2（socket 入口 error 挂载）、R4（readline 转发）行为必须机器锁定。
  */
 import { describe, it, expect } from 'vitest'
+import { dirname } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { scanFileLines, collectTsFiles, isCommentLine } from '../check-unsafe-stream-writes.mjs'
 
 describe('isCommentLine', () => {
@@ -64,8 +66,8 @@ describe('scanFileLines R4（readline 转发）', () => {
 describe('collectTsFiles', () => {
   it('递归收集 .ts，排除 __tests__ / *.test.ts / .d.ts', () => {
     // 对真实 RUNTIME_SRC 不可行（函数硬编码根），用行为断言代替：对脚本自身目录调用，
-    // 断言返回数组且不含 .md / __tests__ 条目
-    const files = collectTsFiles(new URL('.', import.meta.url).pathname)
+    // 断言返回数组且不含 .md / __tests__ 条目（fileURLToPath：pathname 在 Windows 返回 /D:/ 形态）
+    const files = collectTsFiles(dirname(fileURLToPath(import.meta.url)))
     expect(Array.isArray(files)).toBe(true)
     expect(files.every((f) => f.endsWith('.ts'))).toBe(true)
     expect(files.some((f) => f.includes('__tests__'))).toBe(false)

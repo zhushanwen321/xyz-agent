@@ -28,11 +28,13 @@
 import { createRequire } from 'node:module'
 import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs'
 import path from 'node:path'
+import { fileURLToPath } from 'node:url'
 
 const require = createRequire(import.meta.url)
 const ts = require('typescript')
 
-const PROJECT_ROOT = path.resolve(new URL('.', import.meta.url).pathname, '..')
+// fileURLToPath 而非 URL.pathname：Windows 上 pathname 返回 /D:/... 形态，resolve 叠加盘符成 D:\D:\
+const PROJECT_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 
 /**
  * 文档 → 权威源码模块映射（新增设计文档在此登记）。

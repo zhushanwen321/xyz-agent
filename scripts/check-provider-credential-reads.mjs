@@ -31,9 +31,11 @@
  */
 import { readFileSync, readdirSync, statSync } from 'node:fs'
 import path from 'node:path'
-import { pathToFileURL } from 'node:url'
+import { pathToFileURL, fileURLToPath } from 'node:url'
 
-const PROJECT_ROOT = path.resolve(new URL('.', import.meta.url).pathname, '..')
+// fileURLToPath 而非 URL.pathname：Windows 上 pathname 返回 /D:/... 前导斜杠形态，
+// path.resolve 会叠加当前盘符产生 D:\D:\... 双盘符路径（win runner 实测）
+const PROJECT_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const SCAN_ROOT = path.join(PROJECT_ROOT, 'packages/runtime/src')
 
 // ─── 白名单（相对 packages/runtime/src 的 POSIX 路径）─────────────────────────
