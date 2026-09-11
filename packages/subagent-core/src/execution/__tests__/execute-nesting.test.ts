@@ -138,7 +138,9 @@ describe("嵌套护栏 / 并发池 / 节流（D-030~D-033 回归锁）", () => {
   it("[D-033] execCtxAls depth=MAX 时 execute 抛错（nestingDepth=MAX+1 被拒）", async () => {
     const { service } = setup();
 
-    const execNesting = Reflect.get(service, "execNesting") as ExecCtxAls;
+    // [R1 深绑改写] execNesting 随域 #2 聚合迁入 SessionBaselines（壳转发 getter 透传），
+    // 深绑路径改为 service → baselines 聚合实例（断言对象与强度不变，路径对齐终态结构）。
+    const execNesting = (Reflect.get(service, "baselines") as { execNesting: ExecCtxAls }).execNesting;
 
     await expect(
       execNesting.run({ recordId: "parent", depth: MAX_FORK_DEPTH }, () =>
@@ -155,7 +157,8 @@ describe("嵌套护栏 / 并发池 / 节流（D-030~D-033 回归锁）", () => {
   it("[D-033] execCtxAls depth=MAX-1 时 execute 不抛（nestingDepth=MAX 允许）", async () => {
     const { service, fake } = setupWithFakeEngine();
 
-    const execNesting = Reflect.get(service, "execNesting") as ExecCtxAls;
+    // [R1 深绑改写] 同上：execNesting 经 baselines 聚合路径取用。
+    const execNesting = (Reflect.get(service, "baselines") as { execNesting: ExecCtxAls }).execNesting;
 
     const execPromise = execNesting.run({ recordId: "parent", depth: MAX_FORK_DEPTH - 1 }, () =>
       service.execute({ task: "at limit", slug: "test", ctxModel }),

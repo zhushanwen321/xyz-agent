@@ -331,9 +331,11 @@ describe("SubagentService", () => {
   // private 字段，用 Reflect.get 取（与 R0-D 块访问 store 同模式）。
 
   describe("dispose uiRequestHandler stub (dispose-cleanup)", () => {
-    /** 从 service 取出 private uiRequestHandler（trailing ui_request 实际调用入口）。 */
+    /** 从 service 取出 private uiRequestHandler（trailing ui_request 实际调用入口）。
+     *  [R1 深绑改写] uiRequestHandler 随域 #2 聚合迁入 SessionBaselines，深绑路径改为
+     *  service → baselines 聚合实例（断言对象与强度不变，路径对齐终态结构）。 */
     function getHandler(service: SubagentService): UiRequestHandler | undefined {
-      return Reflect.get(service, "uiRequestHandler") as UiRequestHandler | undefined;
+      return (Reflect.get(service, "baselines") as { uiRequestHandler: UiRequestHandler | undefined }).uiRequestHandler;
     }
 
     /** 最小 UiRequest（method 无关紧要——stub 不论 method 一律返回 cancelled）。 */

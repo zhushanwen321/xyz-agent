@@ -4,11 +4,7 @@
 // 上游：subagent-tool（execute/query/cancel）、TUI（onChange/collectRecords）。
 // session_start 时经 initSession 注入 pi；modelRegistry/entries 归 ModelConfigService.initModel。
 
-import { AsyncLocalStorage } from "node:async_hooks";
-
 import { getLogger } from "../core/logger.ts";
-
-import type { ExtensionMode } from "./host-mode.ts";
 
 import type { AgentResult as WorkflowAgentResult } from "../orchestration/models/types.ts";
 import { MAX_TIMER_DELAY_MS } from "../shared/timer-delay.ts";
@@ -27,7 +23,7 @@ import { DEFAULT_COLLECT_SYNC } from "./config.ts";
 // 在 notify-host.ts 消费，不经本文件。）
 import { disarmIdleTimer, DEFAULT_IDLE_TIMEOUT_MS } from "./lifecycle-manager.ts";
 import { type ConcurrencyPool,DefaultConcurrencyPool } from "./concurrency-pool.ts";
-import type { DialogGlobalQueue, UiRequestHandler } from "./dialog-queue.ts";
+import type { UiRequestHandler } from "./dialog-queue.ts";
 import { COLD_LOOKUP_SCAN_LIMIT, coldLookupForAction, type ColdLookupDeps } from "./cold-lookup.ts";
 import {
   completeRecord,
@@ -46,7 +42,8 @@ import {
   type ContinuationRoundHandlers,
 } from "./conversation-continuation.ts";
 import { assertTaskShapeSupported } from "./engine/common/capability-gate.ts";
-import { ExecutionNestingContext } from "./engine/common/nesting-guard.ts";
+// [R1] 转发 getter 返回类型标注（值构造已迁聚合，仅 type 引用）。
+import type { ExecutionNestingContext } from "./engine/common/nesting-guard.ts";
 import { JOURNAL_INITIAL_POOL_KEY, wireEventJournal } from "./engine/common/journal-wiring.ts";
 // [H2 W2 迁移步⑥] mergeRunSignals 提公共 helper（原 SAR 模块内直调）——workflow
 // 派发的 timeout+watchdog+外部 signal 三源合流。
@@ -144,9 +141,19 @@ import type {
 import { ForkDepthExceededError } from "./types.ts";
 import { DEFAULT_AGENT_NAME } from "./types.ts";
 import { isReconnectableFinalReason } from "./types.ts";
-import { registerGlobalObservability, UiRequestObservability } from "./ui-request-observability.ts";
+import { registerGlobalObservability } from "./ui-request-observability.ts";
+// [R1] 转发 getter 返回类型标注（实例已迁聚合，仅 type 引用）。
+import type { UiRequestObservability } from "./ui-request-observability.ts";
 import { WorktreeManager } from "./worktree-manager.ts";
 import { toErrorMessage } from "../core/error-message.ts";
+// [H3/R1] 域 #2 聚合（session 注入 + ALS/嵌套身份基线）——壳经转发 getter/方法透传，
+// 对外签名零变化。ENV_SELF_RECORD_ID 常量 SSOT 随消费主体迁入聚合（壳→聚合正向 import）。
+import {
+  disposedUiRequestStub,
+  ENV_SELF_RECORD_ID,
+  SessionBaselines,
+  type SubagentServiceSessionInit,
+} from "./service/session-baselines.ts";
 
 const logger = getLogger("subagents");
 
@@ -189,22 +196,8 @@ export interface SubagentChatActions {
 // 反向 import 本文件 helper 产生循环依赖）。同步路径（PiEngine 热路径投递，D2 协议知识
 // 下沉后）与异步路径（session-runner child.stdin.on('error')）共用 stdin-writer 的同一计数器。
 
-/** dispose 后注入的 stub UI 请求 handler。
- *
- * [背景] Pi 单进程 session 串行接管。session A shutdown 时 SIGTERM 子进程后、
- * 子进程彻底 close 前（pi 子进程 trap SIGTERM 做 graceful shutdown，窗口几十~几百 ms），
- * 子进程的 trailing extension_ui_request 仍可能被父进程 pump 解析，调到 A 的 handler 闭包。
- * 若 dispose 不清 uiRequestHandler，旧 handler 闭包仍持有 A 的 ctx，触发
- * inproc UI 请求队列（已删） 的 catch 分支打 `[subagents] uiRequestHandler threw` 误导性
- * logger.error（看起来像 bug，实际是预期竞态；三层兜底已确保功能正确）。
- *
- * stub 始终返回 {cancelled:true}，不调 ctx.ui、不捕获任何 ctx，让 trailing ui_request
- * 干净降级为 cancelled（等价于子进程主动取消）。
- *
- * 不置 undefined —— 那会让 trailing ui_request 走 inproc UI 请求队列（已删） 的 handler-missing
- * 分支触发 notifyMissingHandlerGlobal warn，噪声性质从 threw-error 变 missing-handler，
- * 没真正解决。 */
-const disposedUiRequestStub: UiRequestHandler = () => Promise.resolve({ cancelled: true });
+// [R1] disposedUiRequestStub（dispose 后 stub UI handler，含背景/降级语义注释）已随
+// 域 #2 聚合迁至 service/session-baselines.ts——壳 dispose 应答端替换经顶部 import 消费。
 
 /** UI streaming sink 的最小接口（ctx.ui.setWidget 的 duck-typed 子集）。
  *  session_start 时从 ctx.ui 注入，background 执行期间用于把合并后的 text_delta
@@ -231,35 +224,10 @@ export interface SubagentServiceInit {
   uiRequestHandler?: UiRequestHandler;
 }
 
-/** session_start 注入参数（session 级）。 */
-export interface SubagentServiceSessionInit {
-  pi: PiLike;
-  sessionId: string;
-  /** 主 session 文件路径（session_start 解析后直传）。
-   *  [E2E 实测] 不能经闭包缓存（getCachedMainSessionFile）读：jiti 多实例分裂下闭包
-   *  变量不跨实例共享，恢复逻辑读到的是滞后一个事件的值（读到未 flush 的新 session
-   *  ENOENT 路径，entry-born 孤儿整段漏判）。 */
-  mainSessionFile?: string;
-  /** UI streaming sink（ctx.ui.setWidget），用于 background text_delta 转发。 */
-  streamSink?: StreamSink;
-  /** 主进程运行模式（W4 守卫：headless 不注入 ask_user RPC 提示词）。
-   *  initSession 读取后存入 this.sessionMode，buildSessionRunnerContext 透传给 session-runner。 */
-  mode?: ExtensionMode;
-  /** UI 请求 handler（session 级覆盖进程级）。
-   *  [D4-④ UI 接线外提] 本字段是 handler 的唯一注入入口（原 setUiRequestHandler 方法已删）。
-   *  三态语义：undefined = 不动（保留进程级构造/上次值，供不注入 handler 的调用方）；
-   *  null = 显式清空（承载原 setUiRequestHandler(undefined) 语义——headless 的
-   *  createUiRequestHandlerForMode 返回 undefined 时壳侧传 null）；值 = 注入并重置
-   *  缺失告警去重。 */
-  uiRequestHandler?: UiRequestHandler | null;
-  /** L2 跨子进程全局 dialog 串行队列（进程单例）。子进程退出时经引擎镜像层
-   *  （SpawnedChildrenMirror → notifyChildProcessExited）取消该 pid 的挂起请求（SR-4）。 */
-  dialogQueue?: DialogGlobalQueue;
-  /** [竞态修复] 主 agent 是否空闲查询（ctx.isIdle），透传给 notifier 的 flush isIdle gate。
-   *  避免 background 完成通知在 agent_end→finishRun 窗口里走错 sendMessage 分支丢失。
-   *  可选：未注入时 notifier flush 不 gate（原行为）。 */
-  isIdle?: () => boolean;
-}
+/** session_start 注入参数（session 级）。
+ *  [R1] 接口本体已迁 service/session-baselines.ts（唯一消费者 SessionBaselines.initSession）；
+ *  此处类型别名 re-export 保持既有导出符号面（外部 `from "./subagent-service.ts"` 消费零改动）。 */
+export type { SubagentServiceSessionInit };
 
 /** background 优先级（保留 priority 排序机制，单一值）。 */
 const PRIORITY_BACKGROUND = 1000;
@@ -288,18 +256,9 @@ function delay(ms: number): Promise<void> {
   });
 }
 
-/** 跨进程身份贯穿的 env 名（父进程 spawn 子进程时注入，子进程 initSession 读取）。
- *  仿照 PI_SUBAGENT_FORK_DEPTH 机制，让递归 subagent 的身份（rootSessionId / parentRecordId / depth）
- *  跨进程传递，使主进程 /subagents 能看到完整递归树（设计见 docs/design/recursive-subagent-visibility.md）。
- *  语义：env 描述「子进程自己的身份」，不是父的身份（决策 1）。
- *  [MF-3] 第 4 个 env：真 ROOT 的 cwd（PI_SUBAGENT_ROOT_CWD）。worktree 模式下子进程 spawn cwd =
- *  checkout 路径，若按各自 cwd 编码落盘目录，深层 record 写到 enc(worktree) 段、ROOT 磁盘重建
- *  扫不到 → 全树可见性深度 ≥ 2 断裂。子进程经本 env 拿 ROOT cwd，sessions 与 records 两套目录
- *  统一编码在 enc(ROOT cwd) 段（与身份贯穿同构，见 session-runner 注入点）。 */
-const ENV_ROOT_SESSION_ID = "PI_SUBAGENT_ROOT_SESSION_ID";
-const ENV_SELF_RECORD_ID = "PI_SUBAGENT_SELF_RECORD_ID";
-const ENV_DEPTH = "PI_SUBAGENT_DEPTH";
-const ENV_ROOT_CWD = "PI_SUBAGENT_ROOT_CWD";
+// [R1] 跨进程身份贯穿 env 名常量（ENV_ROOT_SESSION_ID / ENV_SELF_RECORD_ID / ENV_DEPTH /
+// ENV_ROOT_CWD，含 [MF-3] 注释）SSOT 已随域 #2 聚合迁至 service/session-baselines.ts；
+// 壳经顶部 import 消费（reconcile sweep 装配闭包的 ENV_SELF_RECORD_ID 判据）。
 
 /** [v2 D4] E1 等待分支 settled 有界重扫上限。无上限重扫 = 泄漏（设计 §3.3 D4 被否
  *  谱系）；8 次覆盖重启后主 agent 对 resumable 成员的典型续跑轮次，达限仍有
@@ -373,7 +332,42 @@ export class SubagentService {
     this.cwd = init.cwd;
     this.modelService = init.modelService;
     this.getMainSessionFile = init.getMainSessionFile;
-    this.uiRequestHandler = init.uiRequestHandler;
+    // [R1] 域 #2 基线聚合：进程级初值（uiRequestHandler / rootCwd env 推导）在聚合构造期
+    // 落位；deps 全晚绑定闭包（构造期零求值——store/notifyHost 等后续才构造的依赖经闭包
+    // 现读，形态先例 = D4 late-bound getter 与 notifyHost 装配闭包）。
+    this.baselines = new SessionBaselines(
+      { cwd: init.cwd, uiRequestHandler: init.uiRequestHandler },
+      {
+        // [D4 late-bound getter `() => ({pi, disposed})`] assertReady 断言状态现读：
+        // pi（initSession 时点注入，经壳 getter 透传聚合）+ disposed（壳旗标）。
+        readAssertState: () => ({ pi: this.pi, disposed: this._disposed }),
+        // session 复活（initSession 内 revive 步骤回调）——旗标写点留壳（断言面同源）。
+        reviveDisposed: () => {
+          this._disposed = false;
+        },
+        // [C-2 显式回调] #5 SyncCollect 的 settledRescanState 复活重置（R2 抽取后改指
+        // 聚合显式接口；当前为壳字段的显式封装——跨聚合边不再隐式直写）。
+        resetSettledRescan: () => {
+          this.settledRescanState = null;
+        },
+        getStore: () => this.store,
+        getNotifyHost: () => this.notifyHost,
+        // [跨域编排回调] initSession 复活后编排（R3/R4 域方法；抽取后改指聚合显式接口）。
+        recoverOrphans: () => this.recoverOrphansIfRootProcess(),
+        bootRoundSupervisor: () => this.roundSupervisor.bootPartition(),
+        runPendingReconcileSweep: () =>
+          runPendingReconcileSweepForService(
+            {
+              getStore: () => this.store,
+              getPi: () => this.pi,
+              getSessionRootId: () => this.sessionRootId,
+              getMainSessionFile: () => this.mainSessionFile,
+              finalizeClosed: (record, result) => this.finalizeRecord(record, result, "closed", "gc"),
+            },
+            (process.env[ENV_SELF_RECORD_ID] ?? "") !== "",
+          ),
+      },
+    );
     // [W6 R3 MF-A] 壳侧应答端登记：cli 形态引擎经 host/askUser 反向请求消费（discovery
     // portFactory 构造 EngineClient 时读取该登记）。
     setHostUiRequestEndpoint(init.uiRequestHandler);
@@ -381,11 +375,9 @@ export class SubagentService {
     this.worktreeManager = new WorktreeManager(this.modelService.getAgentDir());
     // [MF-3] worktree 隔离下全树落盘目录统一到 ROOT cwd：子进程（spawn cwd = worktree checkout 路径）
     // 若按自身 cwd 编码目录，深层 record 写到 enc(worktree) 段，ROOT 磁盘重建扫不到。
-    // 读 env PI_SUBAGENT_ROOT_CWD（根进程无 env → init.cwd）。sessions 与 records 两套目录
-    // 必须同源（同一 rootCwd），否则 enc 段不变量断裂（只改其一会让同 record 的
+    // rootCwd 的 env 推导随域 #2 聚合（session-baselines.ts 构造器）；sessions 与 records 两套
+    // 目录必须同源（同一 rootCwd），否则 enc 段不变量断裂（只改其一会让同 record 的
     // session 文件与 manifest 分落两段，GC/重建互相找不到）。
-    const envRootCwd = process.env[ENV_ROOT_CWD];
-    this.rootCwd = envRootCwd && envRootCwd !== "" ? envRootCwd : init.cwd;
     const sessionsDir = getSubagentSessionDir(this.modelService.getAgentDir(), this.rootCwd);
     const recordsDir = getSubagentRecordsDir(this.modelService.getAgentDir(), this.rootCwd);
     this.sessionsDir = sessionsDir;
@@ -505,183 +497,49 @@ export class SubagentService {
     deliverChatMessage: (record, text) => this.deliverChatMessage(record, text),
   };
 
-  // ── 域 #2 session 注入 + ALS/嵌套身份基线（R1 SessionBaselines）（R0 重排）──
+  // ── 域 #2 SessionBaselines 聚合转发（R1 抽取；本体 execution/service/session-baselines.ts）──
 
-  /** UI 请求 handler（进程级，可被 setUiRequestHandler / initSession 覆盖）。 */
-  private uiRequestHandler: SubagentServiceInit["uiRequestHandler"];
+  /** [R1] 域 #2 聚合实例：session 级基线状态（pi / session 身份 / fork ALS / 嵌套 ALS /
+   *  UI handler 面）的唯一宿主与唯一写者（r0-inventory 清单① #13-#25 共 13 字段）。
+   *  deps 全晚绑定闭包（装配见构造器），壳经下方 getter/方法透传，对外签名零变化。 */
+  private readonly baselines: SessionBaselines;
 
-  /** L2 dialog 串行队列（进程级）。SR-4：子进程退出时经引擎镜像层
-   *  （SpawnedChildrenMirror → notifyChildProcessExited）取消该子进程的挂起请求。 */
-  private dialogQueue: DialogGlobalQueue | undefined;
+  // 基线字段读路径透传（R1 打样模式 2·strangler 转发壳）：壳内既有 this.X 引用点零改动；
+  // 写点已收口聚合方法（D1 单写者），只 getter 无 setter = 壳侧只读。
+  private get pi(): PiLike | null { return this.baselines.pi; }
+  private get sessionId(): string | null { return this.baselines.sessionId; }
+  private get mainSessionFile(): string | undefined { return this.baselines.mainSessionFile; }
+  private get sessionRootId(): string | null { return this.baselines.sessionRootId; }
+  private get streamSink(): StreamSink | null { return this.baselines.streamSink; }
+  private get isIdleFn(): (() => boolean) | undefined { return this.baselines.isIdleFn; }
+  private get execNesting(): ExecutionNestingContext { return this.baselines.execNesting; }
+  private get rootCwd(): string { return this.baselines.rootCwd; }
+  private get uiObservability(): UiRequestObservability { return this.baselines.uiObservability; }
 
-  /** UI 请求可观测性（sessionMode + handler 缺失告警去重，提取自本类降低行数）。 */
-  private readonly uiObservability = new UiRequestObservability();
-
-  private pi: PiLike | null = null;
-
-  /** 当前 Pi session ID（本进程 pi session，事件路由等用；record 过滤不用它）。initSession 时注入。 */
-  private sessionId: string | null = null;
-
-  /** 主 session 文件（initSession 按值直传——jiti 多实例下闭包缓存不可靠，见 SessionInit 注释）。 */
-  private mainSessionFile: string | undefined;
-
-  /** 所属根 session ID（record 归属过滤用）。根进程 = sessionId（自己是 root）；
-   *  子进程 = env PI_SUBAGENT_ROOT_SESSION_ID 贯穿的真 ROOT（initSession 读取）。
-   *  与 sessionId 正交：sessionId 是本进程 pi session（事件路由等），sessionRootId 是所属根
-   *  （collectRecords filter 用，与 createRecordForMode 的 rootSessionId 盖章同源——子进程
-   *  因此看到整棵 ROOT 树）。设计见 recursive-subagent-visibility.md 决策 3。 */
-  private sessionRootId: string | null = null;
+  /** session_start 注入 pi + revive（modelRegistry/entries 归 ModelConfigService.initModel）。
+   *  本体已迁 SessionBaselines.initSession（fork/exec 嵌套基线建立、复活与跨域编排时序
+   *  逐行等价随迁）；壳纯转发，对外签名不变。 */
+  initSession(init: SubagentServiceSessionInit): void {
+    this.baselines.initSession(init);
+  }
 
   /**
    * [F6] 当前根 session id 的只读访问——引擎接线方（SAR 等）构造 RunContext 注入
    * `ctx.sessionRootId`（pi 引擎 relay 归属键 SESSION_ID 权威源）。initSession 后有值
-   * （根进程 = 本 session id；嵌套 = env 贯穿的真 ROOT）。
+   * （根进程 = 本 session id；嵌套 = env 贯穿的真 ROOT）。[D3+] 壳终态保留面。
    */
   getSessionRootId(): string | null {
-    return this.sessionRootId;
+    return this.baselines.getSessionRootId();
   }
 
-  /**
-   * [D3-⑤ 嵌套防护合一] 进程内执行嵌套上下文（原 execCtxAls 私有字段下沉公共层
-   * common/nesting-guard.ts ExecutionNestingContext——机制注释含 ALS 断裂基线兜底）。
-   * 实例 per-Service：基线随宿主进程身份而异（initSession 从 env 建立）。
-   */
-  private readonly execNesting = new ExecutionNestingContext();
+  /** UI streaming sink 只读访问（workflow 域消费）。[D3+] 壳终态保留面。 */
+  getStreamSink(): StreamSink | null { return this.baselines.getStreamSink(); }
 
-  /** fork 深度基线（同 ALS 断裂问题：forkDepthAls.getStore() 兜底用）。根进程=0。 */
-  private forkDepthBaseline = 0;
-
-  /** [MF-3] 所属根进程 cwd（sessions/records 落盘目录编码键）。
-   *  根进程=自身 cwd（构造时 init.cwd）；子进程=env PI_SUBAGENT_ROOT_CWD 贯穿的真 ROOT cwd。
-   *  worktree 模式下子进程 this.cwd 是 checkout 路径，若按它编码目录，深层 record 落到
-   *  enc(worktree) 段、ROOT 扫描不到 → 全树可见性深度 ≥ 2 断裂（与 sessionRootId 同构）。 */
-  private rootCwd: string;
-
-  /** UI streaming sink（ctx.ui.setWidget）。workflow 域经 getStreamSink() 取用。 */
-  private streamSink: StreamSink | null = null;
-
-  /** [竞态修复] 主 agent isIdle 查询（ctx.isIdle）。notifier flush gate 用。
-   *  initSession 注入，piAdapter 透传给 NotifierHost。 */
-  private isIdleFn: (() => boolean) | undefined;
-  getStreamSink(): StreamSink | null { return this.streamSink; }
-
-  /** [MF#4][MF#2] fork 深度按 async 调用链传递（AsyncLocalStorage），替代共享可变计数器。
-   *  主 session=0；fork 进入子 session 期间推进为子深度，供嵌套 fork 经 ALS 读到自身深度作为
-   *  parentForkDepth。并发 background fork 各自独立调用链，不再互相压低深度值。
-   *  [MF#2] 旧实现用单实例字段跨执行链共享 → 并发下 A 还原深度后 B 读到被压低值 → 护栏失效。 */
-  private readonly forkDepthAls = new AsyncLocalStorage<number>();
-
-  // [D3-⑤] subagent 执行上下文（record 身份 + 递归深度）的 ALS 传递已下沉公共层
-  // （execNesting 字段，common/nesting-guard.ts）——「B run() 期间挂身份，B 内创建 C
-  // 时读到 B」的机制与 ALS 断裂基线兜底注释见该文件。与 forkDepthAls 独立：后者只数
-  // fork 链（fork=true 才递增），嵌套上下文数所有 subagent 嵌套。
-
-  /** session_start 注入 pi + revive（modelRegistry/entries 归 ModelConfigService.initModel）。 */
-  initSession(init: SubagentServiceSessionInit): void {
-    this.pi = init.pi;
-    // 同步注入 pi 到 RecordStore（构造时 this.pi 为 null，session_start 后才有真实 handle）。
-    // RecordStore 跳过损坏 manifest 时调 appendEntry 上报用户可见——若不重新注入，
-    // 上报通道永远是 no-op，事故排查依然静默。
-    this.store.setPi(this.pi);
-    this.sessionId = init.sessionId;
-    // 主 session 文件按值直传（jiti 多实例下闭包缓存不可靠，见接口注释）。
-    this.mainSessionFile = init.mainSessionFile;
-    this.streamSink = init.streamSink ?? null;
-    this.isIdleFn = init.isIdle;
-    // 读取 mode（W4 守卫透传给 session-runner）+ session 级 handler 覆盖
-    //（[D4-④] initSession.uiRequestHandler 是唯一注入入口；三态语义见接口注释——
-    //null = 显式清空，承载原 setUiRequestHandler(undefined) 语义）。
-    this.uiObservability.setMode(init.mode);
-    if (init.uiRequestHandler !== undefined) {
-      this.uiRequestHandler = init.uiRequestHandler ?? undefined;
-      this.uiObservability.resetMissingHandlerWarnings();
-      // [W6 R3 MF-A] session 级覆盖同步进壳侧应答端登记（三态：null = 显式清空）。
-      setHostUiRequestEndpoint(this.uiRequestHandler);
-    }
-    // SR-4：注入 L2 dialog 队列（child close 清理路径）。undefined 时 buildSessionRunnerContext
-    // 透传 undefined，session-runner onClose 跳过 L2 清理（仅清 L1，保留旧行为）。
-    if (init.dialogQueue !== undefined) {
-      this.dialogQueue = init.dialogQueue;
-    }
-    this.initForkDepthBaseline();
-    // [递归可见性] 跨进程身份贯穿（设计 recursive-subagent-visibility.md）。
-    // 父进程 spawn 时注入 env 描述「子进程自己的身份」（rootSessionId / selfRecordId /
-    // depth / rootCwd），语义与基线建立见 initExecContextBaseline。根进程无 env →
-    // sessionRootId = init.sessionId（自己是 root），execCtxAls 不 enterWith（顶层）。
-    const envRoot = process.env[ENV_ROOT_SESSION_ID];
-    this.sessionRootId = envRoot ?? init.sessionId;
-    this.initExecContextBaseline(envRoot, init.sessionId);
-    // revive（dispose 的逆操作：/resume /fork /new 后复活）
-    this._disposed = false;
-    // [v2 D4] settled 重扫状态随 revive 重置：新 session 的 E1 若再判「仍有 running」
-    // 可重新注册。旧 handler 闭包捕获旧 state：正常时序（session_shutdown →
-    // session_start）下已随 dispose() 惰化；未经 dispose 的时序残留仍会在 settled
-    // 边沿执行——其扫描 this.mainSessionFile 当前值（非注册时的旧文件），行为等价于
-    // 新 session 多注册一次扫描，由账本 sync-batch:<hash> 幂等 + batchFinalized 候选
-    // 过滤收敛，无跨 session 污染面。
-    this.settledRescanState = null;
-    this.store.revive();
-    this.notifyHost.revive();
-    // 孤儿终态恢复（放 initSession 末尾：setPi 已注入（appendEntry 可用）、
-    // sessionRootId 已建立（过滤当前根的 record）；单扫描者判据见 recoverOrphansIfRootProcess）
-    this.recoverOrphansIfRootProcess();
-    // [W4] boot 分区 + 注册对账 sweep（须在孤儿恢复之后——依赖关系见两方法注释：
-    // 孤儿恢复把「重启前在途」record 直断 closed、把 resumable 形态保留 running 落
-    // entry，监督器重认领消费后者；sweep 再对终态 record 补发注销落盘——表 3 行 2
-    // 「注销经对账 sweep 保证落盘」的编排点）。
-    this.roundSupervisor.bootPartition();
-    runPendingReconcileSweepForService(
-      {
-        getStore: () => this.store,
-        getPi: () => this.pi,
-        getSessionRootId: () => this.sessionRootId,
-        getMainSessionFile: () => this.mainSessionFile,
-        finalizeClosed: (record, result) => this.finalizeRecord(record, result, "closed", "gc"),
-      },
-      (process.env[ENV_SELF_RECORD_ID] ?? "") !== "",
-    );
+  /** [D4 下沉] 就绪断言本体已迁聚合（late-bound getter 现读 pi/disposed，错误文案不变）；
+   *  壳 9 个调用点经此转发。 */
+  private assertReady(): void {
+    this.baselines.assertReady();
   }
-
-  /**
-   * [SPAWN fork depth 跨进程传递] fork 链深度基线：子进程被父 spawn 时，父通过 env
-   * PI_SUBAGENT_FORK_DEPTH 传入当前 fork 链深度。子进程 session_start 时读取作为
-   * forkDepthAls 基线，使后续嵌套 spawn fork 能从正确深度递增。未设置（顶层主
-   * session）→ 基线 0。enterWith 贯穿整个 session 生命周期。
-   */
-  private initForkDepthBaseline(): void {
-    const envDepth = process.env.PI_SUBAGENT_FORK_DEPTH;
-    if (envDepth !== undefined && envDepth !== "") {
-      const base = Number.parseInt(envDepth, 10);
-      if (!Number.isNaN(base) && base > 0) {
-        this.forkDepthAls.enterWith(base);
-        this.forkDepthBaseline = base;
-      }
-    }
-  }
-
-  /**
-   * [递归可见性] exec 上下文基线：子进程读 env PI_SUBAGENT_SELF_RECORD_ID / DEPTH
-   * 建立身份基线后，createRecordForMode 读嵌套上下文自动正确（孙挂到子名下）。
-   * enterWith 贯穿整个 session 生命周期（与 forkDepthAls 同构，决策 4）。
-   */
-  private initExecContextBaseline(envRoot: string | undefined, sessionId: string): void {
-    const envSelfRecord = process.env[ENV_SELF_RECORD_ID];
-    if (envSelfRecord !== undefined && envSelfRecord !== "") {
-      const envNestingDepth = Number.parseInt(process.env[ENV_DEPTH] ?? "0", 10);
-      const nestingDepth = Number.isNaN(envNestingDepth) ? 0 : envNestingDepth;
-      // [ALS 断裂修复] 基线兜底：enterWith 在 pi 事件回调模型下不可靠（机制注释见
-      // common/nesting-guard.ts ExecutionNestingContext），基线是 createRecordForMode /
-      // 护栏读 ALS store 失败时的权威回退。
-      this.execNesting.setBaseline({ recordId: envSelfRecord, depth: nestingDepth });
-      this.execNesting.enterWith({ recordId: envSelfRecord, depth: nestingDepth });
-      if (process.env.XYZ_AGENT_DEBUG) {
-        logger.debug(
-          `[subagents] execNesting initialized: recordId=${envSelfRecord} depth=${nestingDepth} rootSessionId=${envRoot ?? sessionId}`,
-        );
-      }
-    }
-  }
-
   // ── 域 #5 sync 批（R2 SyncCollectDomain）（R0 重排）──
 
   /** collectCoordinator（subagent-sync-collect U2）：sync 批缓冲 + 闭合检测 + flush 分流。 */
@@ -3291,7 +3149,7 @@ export class SubagentService {
   // ── 壳生命周期编排与断言（dispose 时序留壳 = R3 检查点③；D4 断言面）（R0 重排）──
 
   private _disposed = false;
-  private _seq = 0;
+  // [B-7 已清] _seq 死字段（全文件零消费）按 r0-inventory 清单①登记于 R1 删除。
 
   /** session 结束清理（清定时器，丢弃 pending 通知）。幂等。
    *
@@ -3315,10 +3173,10 @@ export class SubagentService {
     // [dispose stub] 第一时间换 stub，防 trailing ui_request 调到 stale handler 闭包
     // （仍持有 disposed session 的 ctx）产生误导性 console.error。stub 干净降级为 cancelled。
     // 必须在 emit/abort 之前——这些步骤可能同步触发 trailing pump。
-    // [D4-④] 原 setUiRequestHandler 方法已删（initSession 参数为唯一注入入口），
-    // 此处内联其方法体（赋值 + 缺失告警去重重置）。
-    this.uiRequestHandler = disposedUiRequestStub;
-    this.uiObservability.resetMissingHandlerWarnings();
+    // [D4-④] 原 setUiRequestHandler 方法已删（initSession 参数为唯一注入入口）。
+    // [R1/C-3] 原直写聚合字段两行（handler 换 stub + 缺失告警去重重置）收敛为显式接口
+    // 方法 disposeSessionUi()——字段所有权在聚合（时序契约注释随迁）。
+    this.baselines.disposeSessionUi();
     // [W6 R3 MF-A] dispose 后壳侧应答端同步换 stub（trailing host/askUser 干净降级为
     // cancelled，与 inproc inproc UI 请求队列（已删） 的 trailing 语义同构）。
     setHostUiRequestEndpoint(disposedUiRequestStub);
@@ -3387,30 +3245,6 @@ export class SubagentService {
     } catch (err) {
       // 落盘复写是防丢失增强，失败不阻断 dispose（账本原 entry 仍随 pi flush 落盘）。
       bestEffort(err, "persistUndeliveredNotificationsForReplay", "error");
-    }
-  }
-
-  /**
-   * 校验 Service 就绪（pi 已注入 + 未 dispose）。
-   *
-   * dispose 后调用是异常路径：session_shutdown 已清资源，正常情况下紧接着
-   * session_start 会 initSession 复活。若走到这里说明 session_start 没跟上
-   * （RPC 边界 / reload 异常等），service 卡在 disposed 状态。
-   *
-   * 旧实现只抛 "hub disposed"——无信息，调用方和 AI 都看不懂，导致反复盲试。
-   * 现在给出原因 + 恢复指引（重启会话或 /new）。真实错误文本会经 renderResult
-   * 兜底透传到 AI（见 tool-render.ts extractResultError）。
-   */
-  private assertReady(): void {
-    if (this.pi === null) {
-      throw new Error("pi not injected (initSession not called?)");
-    }
-    if (this._disposed) {
-      throw new Error(
-        "subagents service disposed (session ended). " +
-          "This happens after session shutdown when the follow-up session_start did not arrive. " +
-          "Recovery: start a new session or run /new to revive the subagents runtime.",
-      );
     }
   }
 
