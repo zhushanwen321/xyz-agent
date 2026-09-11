@@ -36,7 +36,7 @@ import {
   snapshot,
   tryTransition,
 } from "./execution-record.ts";
-import { doFinalizeRecord, doFinalizeRoundToIdle, type RoundSettlementOutcome } from "./finalize-record.ts";
+import { doFinalizeRecord, doFinalizeRoundToIdle, writeManifestBestEffort, type RoundSettlementOutcome } from "./finalize-record.ts";
 // [H1 U2] chat 域统一进 run 域：ConversationContinuation（§3.4 全规格）——每 chatMode
 // record 一个实例，message/close 编排与轮末分流（D7）的唯一承接组件。
 import {
@@ -135,6 +135,7 @@ import type {
 } from "./types.ts";
 import { ForkDepthExceededError } from "./types.ts";
 import { DEFAULT_AGENT_NAME } from "./types.ts";
+import { isReconnectableFinalReason } from "./types.ts";
 import { registerGlobalObservability, UiRequestObservability } from "./ui-request-observability.ts";
 import { WorktreeManager } from "./worktree-manager.ts";
 import { toErrorMessage } from "../core/error-message.ts";
@@ -720,7 +721,9 @@ export class SubagentService {
    *  mainSessionFile 随调用透传（v2 D3 覆写 merge 数据源：主文件末条 entry 的批域
    *  标记与轮终 result/model；initSession 先赋值后恢复，时序就绪）。
    *  随后跑 entry-born 孤儿恢复（无子文件锚的 register-only record，spawn 窗口期死亡，
-   *  E2E 实测缺口）——主 session 文件经 getMainSessionFile 注入（构造期可空）。 */
+   *  E2E 实测缺口）——主 session 文件经 getMainSessionFile 注入（构造期可空）。
+   *  [M1 Gate B] 末段跑可重连 entry 的 manifest 重物化（闭含 dispose 时 manifest
+   *  fire-and-forget 写被 SIGKILL 竞态吞掉的窗口）。 */
   private recoverOrphanRecords(): void {
     try {
       this.store.recoverOrphanRecords(this.sessionRootId ?? undefined, this.mainSessionFile);
@@ -735,6 +738,66 @@ export class SubagentService {
       logger.warn("[subagents] entry-only orphan recovery failed", {
         reason: toErrorMessage(err),
       });
+    }
+    try {
+      this.rematerializeReconnectableEntryManifests();
+    } catch (err) {
+      logger.warn("[subagents] reconnectable entry manifest re-materialization failed", {
+        reason: toErrorMessage(err),
+      });
+    }
+  }
+
+  /**
+   * [M1 Gate B] 可重连终态 entry 的 manifest 重物化（boot 自愈段）。
+   *
+   * 缺口：编排性关闭（disposeAllRecords）的 manifest 写是 fire-and-forget——SIGKILL /
+   * 崩溃打进 shutdown 窗口时 entry（pi flush）与 manifest 写可能只活下来前者。末条
+   * subagent-record entry 为 closed + closedReason ∈ 可重连集（RECONNECTABLE_FINAL_
+   * REASONS = parent-shutdown/disconnected，types.ts SSOT）的 record，若查询面
+   * （collectRecords：内存∪磁盘∪manifest）已不可见，则从 entry 自描述快照重物化
+   * manifest——恢复 list 可见性 + message 的可重连分流（D4 revive 准入仍由
+   * cold-lookup 四守卫把门，重物化只补反查索引，不复活任何执行态）。
+   *
+   * 刻意收窄的语义边界：
+   *  - 只认可重连集。user-close/cancelled（主动告别，close 语义不可旁路）与
+   *    gc/parent-fork/parent-new（自洽终态，无续聊歧义）不重物化——条目自洽，
+   *    「不可恢复」即其对外语义，补可见性收益不抵语义面扩大（M1 负向断言锁定）。
+   *  - 只补本 rootSessionId 的 entry（每 session boot 治自己的树；跨 session 记录
+   *    归属其自身 boot 段，防本进程替异树批量落盘）。
+   *  - 已可见（磁盘锚或 manifest 幸存）的 id 跳过——重物化是幂等补缺，不是覆写源。
+   */
+  private rematerializeReconnectableEntryManifests(): void {
+    if (this.mainSessionFile === undefined) return;
+    const visibleIds = new Set(
+      this.store.collectRecords(COLD_LOOKUP_SCAN_LIMIT, "all", undefined).map((r) => r.id),
+    );
+    for (const rec of this.store.scanLastRecordEntries(this.mainSessionFile)) {
+      if (visibleIds.has(rec.id)) continue; // 查询面已可见：磁盘锚或 manifest 幸存
+      if (rec.rootSessionId !== this.sessionRootId) continue; // 只治本 session 树
+      if (rec.status !== "closed" || !isReconnectableFinalReason(rec.closedReason)) continue;
+      // manifest 投影（对齐 writeManifestBestEffort 字段面；status 恒 closed——
+      // entry 的 closed 即终态自描述，无 running 形态可达此处）。
+      void this.manifestStore
+        .writeManifest({
+          id: rec.id,
+          rootSessionId: rec.rootSessionId ?? "",
+          parentRecordId: rec.parentRecordId,
+          agentName: rec.agent,
+          status: "closed",
+          closedReason: rec.closedReason,
+          createdAt: rec.startedAt,
+          completedAt: rec.endedAt ?? Date.now(),
+          sessionFile: rec.sessionFile,
+          task: rec.task,
+          slug: rec.slug,
+          model: rec.model,
+        })
+        .catch((err: unknown) => {
+          logger.warn(`[subagents] re-materialized manifest write failed (record=${rec.id})`, {
+            reason: err instanceof Error ? err.message : String(err),
+          });
+        });
     }
   }
 
@@ -768,6 +831,19 @@ export class SubagentService {
    *  [v4 A-6] 旧实现的 recentlyCascaded 收集（供已删除的 before_agent_start 注入告知）
    *  与 drainCascaded 已一并移除——被关 record 的告知改由 list 的 closedReason 表达。
    *
+   *  [M1 Gate B] 本路径曾整体缺 manifest 反查索引（不经 doFinalizeRecord 的唯一终态
+   *  写点缺口）：优雅停机关掉的在途 record 重启后 list 不可见（records/<id>.json 不
+   *  存在）、message 报 not found——「展示层∪动作链」双失。现补 writeManifestBestEffort
+   *  （best-effort fire-and-forget，对齐既有 finalize 语义；shutdown 窗口内不阻塞——
+   *  session_shutdown handler 后续 await 给了 flush 窗，SIGKILL 竞态丢失由
+   *  recoverOrphanRecords 的可重连 entry 重物化自愈，见该处注释）。
+   *
+   *  [M1 sessionFile 锚点提升] 在途 record 的 sessionFile 尚未回填（run 应答未到）时，
+   *  R4 运行中句柄回填（onHandleReady → backfillEngineHandle）可能已把引擎上报的子
+   *  session 文件路径写进 engineHandle.sessionRef——提升为 record.sessionFile 后，
+   *  archive entry 与 manifest 都带上真实锚点，重启 revive/fork-from 可直接定位子文件。
+   *  提升源与 settle 回填（outcomeToAgentResult）同 authority（引擎 sessionRef）。
+   *
    *  @param reason 关闭原因（parent-fork / parent-new / parent-shutdown）
    *  @returns 被关闭的 record 数量
    */
@@ -798,6 +874,8 @@ export class SubagentService {
         toolCalls: [],
       };
       completeRecord(record, result, "closed", reason);
+      // [M1 sessionFile 锚点提升] 先于 archive——close 终态 entry 随之携带锚点。
+      this.promoteSessionFileFromEngineHandle(record);
       this.store.archive(record);
       // [F-5 修复] 本路径不经 doFinalizeRecord（编排性关闭直连 completeRecord+archive），
       // chat 轮路由注销在此补齐（幂等；闭包持 record/stream 引用，防泄漏）。
@@ -812,6 +890,9 @@ export class SubagentService {
       }
       // pending-notifications 注销
       this.notifyHost.emitPendingUnregister(record.id, "closed");
+      // [M1 Gate B] manifest 反查索引补写（Step 4 对位：cleanup 之后最后一步）。
+      // 内部自吞错（logger + appendEntry），void 即弃——不阻塞 shutdown 收尾。
+      void writeManifestBestEffort({ manifestStore: this.manifestStore, pi: this.pi }, record);
       count++;
     }
     return count;
@@ -828,6 +909,25 @@ export class SubagentService {
    *  （reason==="new"）handler 触发。 */
   onParentNew(): number {
     return this.disposeAllRecords("parent-new");
+  }
+
+  /**
+   * [M1 Gate B] sessionFile 锚点提升：record.sessionFile 未回填（run 应答未到）但 R4
+   * 运行中句柄回填已把引擎上报的子 session 文件路径写进 engineHandle.sessionRef 时，
+   * 提升为 record.sessionFile。提升源与 settle 回填（outcomeToAgentResult /
+   * finalizeEngineOutcome）同 authority（引擎 sessionRef.sessionFile）。
+   *
+   * 消费方：disposeAllRecords / cancelBackground 的终态化——让 archive entry 与
+   * manifest 带真实锚点，重启后 revive/fork-from 可定位子文件。无 engineHandle 或
+   * sessionRef 无 sessionFile（handle_ready 前就停机的残余形态）保持 undefined——
+   * 该子形态无确定性恢复路径（子文件名 `<ts>_<sessionId>.jsonl` 由子进程生成，
+   * 宿主无记录映射），恢复语义降级为「manifest 可见 + fork-from/start 指引」。
+   */
+  private promoteSessionFileFromEngineHandle(record: ExecutionRecord): void {
+    if (record.sessionFile !== undefined) return;
+    const sessionFile = record.engineHandle?.sessionRef.sessionFile;
+    if (typeof sessionFile !== "string" || sessionFile === "") return;
+    record.sessionFile = sessionFile;
   }
 
   /** SP-4: idle record GC（30 天 TTL，实现抽至 idle-gc.ts）。stop 函数（dispose 调）。 */
@@ -2818,11 +2918,19 @@ export class SubagentService {
     // collectRecords 重建时 override status=cancelled。durationMs 用真实耗时（startedAt → now）。
     const cancelledResult: AgentResult = { text: "", turns: record.turnCount, durationMs: Date.now() - record.startedAt, success: false, error: "cancelled by user", sessionId: record.id, toolCalls: [] };
     completeRecord(record, cancelledResult, "closed", "cancelled");
+    // [M1 sessionFile 锚点提升] 先于 sidecar/manifest——spawn 窗口期 cancel 的 record
+    // 经 engineHandle 提升后，sidecar 与 manifest 都能落在真实子文件上。
+    this.promoteSessionFileFromEngineHandle(record);
     // 写终态 sidecar（best-effort，sessionFile 可能为 undefined——窗口期 cancel）。
     if (record.sessionFile) {
       writeCancelledState(record.sessionFile, record.endedAt ?? Date.now());
     }
     this.store.archive(record);
+    // [M2 Gate B] manifest 反查索引补写（best-effort fire-and-forget）。本路径原不写
+    // manifest：sessionFile 缺失形态（spawn 窗口期 cancel）重启后 record 完全不可见，
+    // message 报原始 not-found（Gate B 实测 sq-c）——补写后 manifest 源可见且
+    // closedReason=cancelled 让 endedMessageGuard 走「主动关闭」专属文案。
+    void writeManifestBestEffort({ manifestStore: this.manifestStore, pi: this.pi }, record);
     // worktree cleanup + removeAliveMarker（终态 sidecar 单文件单状态，无互斥清理需求）。
     // cleanup 已 async 化——boolean 同步返回语义不变，清理 fire-and-forget。
     if (record.worktreeHandle) {

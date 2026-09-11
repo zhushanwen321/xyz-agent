@@ -6,6 +6,7 @@ import { getLogger } from "../core/logger.ts";
 
 import { bestEffort } from "./best-effort.ts";
 import { writeAtomicFile } from "../shared/atomic-write.ts";
+import type { ClosedReason } from "./types.ts";
 
 const logger = getLogger("subagents");
 
@@ -23,6 +24,14 @@ export interface ManifestRecord {
    * 历史 "error"/"completed"/"failed" 值由读侧 mapManifestStatus 向后兼容映射。
    */
   status: "running" | "closed" | "cancelled";
+  /**
+   * [M2 Gate B] closed 终态的 L2 关闭原因（status="closed" 时有意义）。旧 manifest 无
+   * 此字段（undefined = 死因不可考，读侧守卫归一 undefined）。缺失时 manifest 源重建
+   * 的快照丢 closedReason，endedMessageGuard 把 user-close/cancelled 误分流进
+   * 「reconnectable/fork-from」分支——本字段是 manifest 源快照三分流的唯一依据
+   * （磁盘 sidecar 源由 .state reason 承载，不经本字段）。
+   */
+  closedReason?: ClosedReason;
   createdAt: number;
   completedAt?: number;
   sessionFile?: string;

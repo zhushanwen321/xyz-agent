@@ -186,8 +186,16 @@ function removeAliveMarkerIfPresent(record: ExecutionRecord): void {
  * 跳过 Step 3 cleanup 或抛出打断 finalize 链。旧实现 Step 2.5 throw 会
  * 跳过 Step 3 cleanup。task/slug/model 从 ExecutionRecord 抓取（配合
  * ManifestRecord 补字段），manifestToSubagent 投影时用真实值而非硬编码空串。
+ *
+ * [M1/M2 Gate B] deps 收窄为 Pick（manifestStore + pi）并导出：disposeAllRecords /
+ * cancelBackground 的编排性终态化不经 doFinalizeRecord，但同属「终态必须留反查索引」
+ * 语义（曾缺失 → 重启后 list 不可见 + message not found），复用本函数单点投影
+ * （含 closedReason——manifest 源快照三分流的唯一依据）。
  */
-async function writeManifestBestEffort(deps: FinalizeDeps, record: ExecutionRecord): Promise<void> {
+export async function writeManifestBestEffort(
+  deps: Pick<FinalizeDeps, "manifestStore" | "pi">,
+  record: ExecutionRecord,
+): Promise<void> {
   try {
     await deps.manifestStore.writeManifest({
       id: record.id,
@@ -196,6 +204,9 @@ async function writeManifestBestEffort(deps: FinalizeDeps, record: ExecutionReco
       agentName: record.agent,
       // v4 B-1: manifest status 统一为 closed（cancelled 折入 closed，区分靠 tombstone sidecar）
       status: "closed",
+      // [M2 Gate B] L2 死因随 manifest 持久化：磁盘 sidecar 缺席形态（sessionFile 未
+      // 回填 / cancel 窗口期）下，manifest 源是快照 closedReason 的唯一恢复通道。
+      closedReason: record.closedReason,
       createdAt: record.startedAt,
       completedAt: record.endedAt ?? Date.now(),
       sessionFile: record.sessionFile,

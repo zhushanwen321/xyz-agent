@@ -1449,7 +1449,10 @@ export class RecordStore {
 
   /** FR-8: ManifestRecord → SubagentRecord（manifest 源投影）。
    *  task/slug/model 从 manifest 真实值投影（配合 writeManifest 补字段），缺失兜底空串。
-   *  status 越界（mapManifestStatus 返回 null）时返回 null，由 collectRecords 跳过。 */
+   *  status 越界（mapManifestStatus 返回 null）时返回 null，由 collectRecords 跳过。
+   *  [M2 Gate B] closedReason 投影（枚举守卫，同 mapManifestStatus 的越界容错口径）：
+   *  旧 manifest 无此字段 / 损坏值 → undefined。缺失曾让 manifest 源快照在
+   *  endedMessageGuard 丢失三分流依据（user-close/cancelled 误入 reconnectable 分支）。 */
   private static manifestToSubagent(m: ManifestRecord): SubagentRecord | null {
     const status = mapManifestStatus(m.status);
     if (status === null) return null;
@@ -1459,6 +1462,7 @@ export class RecordStore {
       task: m.task ?? "",
       slug: m.slug ?? "",
       status,
+      closedReason: isValidClosedReason(m.closedReason) ? m.closedReason : undefined,
       mode: "background" as const,
       startedAt: m.createdAt,
       rootSessionId: m.rootSessionId || undefined,

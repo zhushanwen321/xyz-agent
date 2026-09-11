@@ -118,6 +118,19 @@ describe("doFinalizeRecord — manifest status 透传 (M3 4 态)", () => {
     expect(manifest?.status).toBe("closed");
   });
 
+  it("[M2 Gate B] closedReason 随 manifest 持久化（manifest 源快照三分流唯一依据）", async () => {
+    // 曾不携带 closedReason：sessionFile 未回填 / sidecar 缺席形态下，重启后 manifest
+    // 源重建的快照丢死因，endedMessageGuard 把 user-close/cancelled 误分流进
+    // 「reconnectable/fork-from」分支。
+    for (const closedReason of ["user-close", "cancelled", "parent-shutdown", "gc"] as const) {
+      const id = `rec-reason-${closedReason}`;
+      await doFinalizeRecord(makeDeps(), makeMinimalRecord({ id }), makeMinimalResult(), "closed", closedReason);
+      const manifest = await manifestStore.readManifest(id);
+      expect(manifest?.status).toBe("closed");
+      expect(manifest?.closedReason).toBe(closedReason);
+    }
+  });
+
   it("manifest write 抛错时 cleanup-first 顺序仍执行（Step 3 before Step 4 throw）", async () => {
     // record 带 sessionFile 让 Step 3 finalized/aliveMarker 走真实路径；
     // 不设 worktreeHandle → Step 0 (collectPatch) 和 Step 3 worktree cleanup 都跳过。
