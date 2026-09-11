@@ -171,7 +171,8 @@ graph TD
 | 17 | u1f main.ts before-quit shutdown 行加 runtime.isRunning 在场性 guard（设计原文无条件写） | mock 模式/runtime 已崩/第二实例形态下 runtime 并未「关闭」，无条件写产生假 shutdown 行（设计自己反对的污染形态）；markAppQuitting 标记本身无条件。**阶段 6 回写设计措辞** | 实施期登记 |
 | 18 | 接线单元产生的全部新 reason 值（scheduled/attempt/succeeded/retry-scheduled/breaker-tripped/process_exit/liveness-unhealthy/renderer-unresponsive 等）未登记 shared CRASH_JOURNAL_KNOWN_REASONS 元组 | schema SSOT 属 u1a 领地而各接线单元领地互斥；开放枚举语义下值可携带不影响功能。**阶段 3 一致性审查统一扩充**（与 endAndAwait 双实现评估同批） | 实施期登记 |
 | 19 | 存量 supervisor 邻接风险（u1f 顺带发现，未修）：宽限超时 liveness 强杀的迟到 exit 落 crash 分类（stopping 已被 reset 清除）；onRuntimeExit 清 child 引用不分新旧进程代际 | 均为既有行为非本次引入；修复属行为变更超出台账接线单元 scope。登记残留风险待办 | 实施期登记 |
-| 20 | u7b 的 spawn 形态预置 0 生命周期接线分发：u4（session-service 钩子：新 session/respawn，fork 归属核实）/ u5（reattach/lazy restore）；u7b 只交付 mirror API + 事件适配 + 协议 | 领地互斥约束下的必要拆分；设计契约（五形态预置 0 + 对账 + errs 判别）不变，u4/u5 任务书承接 | 实施期登记 |
+| 20 | u7b 的 spawn 形态预置 0 生命周期接线分发：u4（session-service 钩子：新 session/respawn，fork 归属核实）/ u5（reattach/lazy restore）；u7b 只交付 mirror API + 事件适配 + 协议 | 领地互斥约束下的必要拆分；设计契约（五形态预置 0 + 对账 + errs 判别）不变，u4/u5 任务书承接（u4 本期 scope 已剔除该项，待 u7b 落地后另派） | 实施期登记 |
+| 21 | **P0 集成缺陷（u1e 交付核验发现）**：runtime 组合根 `packages/runtime/src/index.ts` 从未调用 `initCrashJournal()`——未初始化时 getCrashJournal() 返回 NOOP，真实 app 中 runtime.jsonl 永不创建，u1b/u1d1/u1d2/u1e 全部 runtime 侧事件静默丢弃（单测因显式 init(tmpdir) 掩盖），A1/A2 真实场景无法成立。同类项：HEAD 存量 lint 红（u1b crash-journal.ts 未用 import + 3 no-magic-numbers；u1d1 pi-respawn.ts 2 no-magic-numbers）挡 `pnpm lint`/Gate A | 派 u-init 接线收口任务（index.ts 启动期 init + 两文件 lint 清理 + u1e 遗留死代码 resetWatermarkDailyForTest 清理）；logger.ts max-lines 已由 u2 commit 的 eslint.config.mjs override 登记解决 | 修复中（u-init） |
 
 ## 6 状态表
 
@@ -182,7 +183,7 @@ graph TD
 | u1c | committed | 2（前任限流中断 + 接替核验补 1 用例） | main.jsonl writer 同步 append 无在途写窗口；vitest 8 passed + apps/electron tsc 0（编排者重跑核验） |
 | u1d1 | committed | 1 | 抑制语义下 deleted/shutdown 仍产生 + planned 不误记 crash；新增 6 用例 + 全量 5380 零回归 + typecheck 绿（编排者重跑核验） |
 | u1d2 | pending | — | — |
-| u1e | in-progress（额度中断，产物在盘待收口） | 1 | 产物：logger.ts 水位聚合 + message-bus.ts + message-broker.ts（信号事件双写）+ 2 测试文件 538 行（**本地实测 13 用例全绿**）。待办：全量 runtime 回归 + 收口汇报 |
+| u1e | committed | 2（前任额度中断 + 接替核验收口） | 三信号事件接线 + 守卫行为不变（26 既有用例佐证）+ 日翻转/coverage 重置/数值聚合全绿；13 tests + runtime 全量 5393/5393 + tsc 0（编排者重跑核验）；**发现 P0 集成缺陷→转 u-init 修复（见偏差 #21）** |
 | u1f | committed | 2（轮次 2 补 renderer unresponsive 接线） | 判别式 8 组合真值表 + liveness 双写 + renderer oom/crashed/熔断/unresponsive（卡死期单行+responsive 复位）；18 tests + tsc 0（编排者重跑核验） |
 | u7b | in-progress（额度中断，无产物） | 1 | 703s 时死于额度耗尽，未落任何文件——恢复后全新开工即可（任务书同前，偏差 #20 已登记 spawn 预置接线分发 u4/u5） |
 | u2 | committed | 2（前任额度中断 + 接替核验收口） | 20 条全状态表 + #8 absent-report 关联窗排除 + #16 计划内排除（源码实锚）+ coverage 50% 边界；30 tests + main 池 1052/1052 + tsc 0（编排者重跑核验）；max-lines 走 eslint.config.mjs override 登记 |

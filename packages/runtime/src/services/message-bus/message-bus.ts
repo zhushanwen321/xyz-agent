@@ -33,9 +33,29 @@ import {
   DEFAULT_OUTBOUND_FRAME_GUARD_OPTIONS,
   guardOutboundPushFrame,
 } from './outbound-frame-registry.js'
+import { getCrashJournal } from '../../infra/crash-journal.js'
 // 组合根（index.ts）经本模块导入守卫默认值——省一条独立 import 行（index.ts max-lines 门禁），
 // 阈值 SSOT 仍在 outbound-frame-registry（shared 常量的 registry 出口）。
 export { DEFAULT_OUTBOUND_FRAME_GUARD_OPTIONS } from './outbound-frame-registry.js'
+
+/**
+ * 条件信号事件 → 崩溃台账（crash-forensics-and-watchdog §3.3 D1 写入点矩阵，u1e）。
+ *
+ * 出站守卫判定点与既有日志/守卫行为**同点双写**：告警档 → frame-truncated(warn-tier)、
+ * 契约保持式截断档 → frame-truncated(trunc-tier)、注册表 miss（含替换后仍超限）→
+ * registry-miss。守卫行为本身零改动（append 是 fire-and-forget 旁路，writer 未初始化时
+ * no-op 单例、内部自吞异常——台账任何故障不反噬出站主链，D1 best-effort 语义）。
+ * 事件是评估器条件 #1/#2 的数据源（附录 A）。
+ */
+function appendFrameJournal(event: 'frame-truncated' | 'registry-miss', reason: string, sessionId: string, detail: Record<string, unknown>): void {
+  getCrashJournal().append({
+    layer: 'runtime',
+    event,
+    reason,
+    sessionId,
+    detailDigest: JSON.stringify(detail),
+  })
+}
 
 /** streamRing 默认容量（O(1) 覆盖写环形缓冲）。 */
 const DEFAULT_RING_CAPACITY = 1000
@@ -291,8 +311,26 @@ export class MessageBus implements IMessageBus {
       // 克隆随 spread 携带已写入的 seq），ring/快照/广播统一存截断版。
       const guarded = guardOutboundPushFrame(message, sessionId, this.guardOptions)
       if (guarded.action === 'dropped') {
+        // u1e（crash-forensics D1）：注册表 miss（含替换后仍超限）→ registry-miss 台账
+        // 事件（reason 保留守卫 dropReason 原值区分两形态）。评估器条件 #2 出现即 tripped。
+        appendFrameJournal('registry-miss', guarded.dropReason, sessionId, {
+          frameType: message.type,
+          bytes: guarded.bytes,
+          channel: 'push',
+          dropReason: guarded.dropReason,
+        })
         this.rollbackSeq(state, message, isTransient)
         return
+      }
+      if (guarded.action === 'replaced') {
+        // u1e（crash-forensics D1）：契约保持式截断 → frame-truncated(trunc-tier)。
+        appendFrameJournal('frame-truncated', 'trunc-tier', sessionId, {
+          frameType: message.type,
+          bytesBefore: guarded.bytesBefore,
+          bytesAfter: guarded.bytesAfter,
+          fieldPaths: guarded.fieldPaths,
+          channel: 'push',
+        })
       }
       const truncated = guarded.message
       if (!isTransient) {
@@ -312,6 +350,13 @@ export class MessageBus implements IMessageBus {
     if (bytes > this.guardOptions.warnBytes) {
       // u4a 告警档（8MB 哨兵）：不截断，warn 暴露（上游自截失效时先于此档可见）。
       console.warn(`[outbound-frame-guard] large outbound push frame (warn): type=${message.type} sessionId=${sessionId} bytes=${bytes}`)
+      // u1e（crash-forensics D1）：告警档 → frame-truncated(warn-tier) 台账事件（评估器
+      // 条件 #1 数据源，附录 A「周均 >10 次」按此事件窗口计数）。
+      appendFrameJournal('frame-truncated', 'warn-tier', sessionId, {
+        frameType: message.type,
+        bytes,
+        channel: 'push',
+      })
     }
     if (isTransient) {
       // transient：不占 seq、不进 ring、不写快照——高频流直传，丢失可接受

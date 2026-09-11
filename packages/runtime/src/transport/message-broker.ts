@@ -17,8 +17,26 @@ import { OUTBOUND_FRAME_WARN_BYTES, OUTBOUND_FRAME_TRUNCATE_BYTES } from '@xyz-a
 import type { ISessionService, IConfigService, IModelService, IMessageBroker, IPluginService, IExtensionService } from '../interfaces.js'
 import { buildDirConfigs, PRESET_SKILL_DIRS, PRESET_AGENT_DIRS, PRESET_EXTENSION_DIRS } from '../services/skill-dir-config.js'
 import { formatReplyOversizeMessage } from '../services/message-bus/outbound-frame-registry.js'
+import { getCrashJournal } from '../infra/crash-journal.js'
 import type { ErrorDetails } from './message-context.js'
 import { WS_OPEN } from './connection-manager.js'
+
+/**
+ * reply 通路条件信号事件 → 崩溃台账（crash-forensics-and-watchdog §3.3 D1 写入点矩阵
+ * 「message-broker reply 超限分支」，u1e）：告警档 → frame-truncated(warn-tier)、整帧
+ * 替换 error envelope → frame-truncated(trunc-tier)。与既有日志/替换行为同点双写，
+ * append 为 fire-and-forget（writer 未初始化 no-op 单例、内部自吞异常），不改变 reply
+ * 守卫本身行为。reply 通路无注册表（整帧 envelope 替换），不产生 registry-miss。
+ */
+function appendReplyFrameJournal(reason: 'warn-tier' | 'trunc-tier', type: string, sid: string | undefined, bytes: number): void {
+  getCrashJournal().append({
+    layer: 'runtime',
+    event: 'frame-truncated',
+    reason,
+    sessionId: sid ?? null,
+    detailDigest: JSON.stringify({ frameType: type, bytes, channel: 'reply' }),
+  })
+}
 
 /**
  * reply 通路守卫阈值（u4a：阈值参数化——生产默认 shared 常量 8MB/32MB，测试注入小阈值）。
@@ -178,6 +196,8 @@ export class ServerMessageBroker implements IMessageBroker {
     const sid = (payload as { sessionId?: string } | undefined)?.sessionId
     if (bytes > this.replyGuard.truncateBytes) {
       console.warn(`[outbound-frame-guard] oversize reply replaced with error envelope: type=${type} sessionId=${sid ?? 'unknown'} bytes=${bytes}`)
+      // u1e（crash-forensics D1）：reply 超限整帧替换 → frame-truncated(trunc-tier)。
+      appendReplyFrameJournal('trunc-tier', type, sid, bytes)
       this.sendError(ws, 'payload_too_large', formatReplyOversizeMessage(bytes, sid, {
         warnBytes: this.replyGuard.warnBytes,
         truncateBytes: this.replyGuard.truncateBytes,
@@ -187,6 +207,8 @@ export class ServerMessageBroker implements IMessageBroker {
     }
     if (bytes > this.replyGuard.warnBytes) {
       console.warn(`[outbound-frame-guard] large outbound reply (warn): type=${type} sessionId=${sid ?? 'unknown'} bytes=${bytes}`)
+      // u1e（crash-forensics D1）：reply 告警档 → frame-truncated(warn-tier)。
+      appendReplyFrameJournal('warn-tier', type, sid, bytes)
     }
     if (ws.readyState === WS_OPEN) ws.send(text)
   }
