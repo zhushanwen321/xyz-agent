@@ -77,3 +77,4 @@ graph TD
 
 - 残留风险：①P-like-1 逆变摩擦全集待 typecheck 定案（降级路径已给：单点回退省略标注）；②场景 4 的 0.13.0 entry fixture 以 req 清单+serializeState 输出推导，必要时按 npm 实际产物校准；③E3 的 theme 形态自由度（SDK Theme 结构兼容可直接透传）。
 - 变更历史：2026-09-12 初版（来源设计 v3，双审查 0 must-fix 证据齐）。
+- 2026-09-12 Gate B 组 1 证据（阶段 5）：场景 1/2/4/5/6 = pass（pi CLI 0.85.1 + mimo-v2.5-pro 真实链路：resume 查表无 throw、terminal 守卫文案回归、22 字段旧 entry 加载重建 + 新 entry 19 字段无两字段、token 计数单调增长）；场景 7 = blocked（环境无交互 TTY，TUI 视觉不可观测）+ 替代证据（rpc 模式 widget 渲染真实执行、ANSI 色码 accent/警告/绿色正确、六进程零异常栈）。环境事实登记：本机装有 npm 旧版 @zhushanwen/pi-goal 时与显式 --extension 加载冲突（Tool "goal_control" conflicts），CLI 验收须追加 --no-extensions（显式 -e 不受影响）。执行事件：首跑 AI 将 objective 误当真实任务在仓库执行 edit（自造 4 文件改动），执行者已 git restore 还原并经 mtime+diff 双重核实，后续场景加 --no-builtin-tools 防再发；tracked 文件零残留（协调者已复核）。
