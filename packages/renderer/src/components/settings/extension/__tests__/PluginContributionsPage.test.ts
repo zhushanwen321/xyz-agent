@@ -116,6 +116,7 @@ function stubTransport(): SettingsTransport {
     listProviders: async () => ({ providers: [] }),
     listModels: async () => [],
     setProvider: async () => undefined,
+    setScopedModels: async () => [],
     discoverModels: async () => ({ success: true, models: [] }),
     setSkillDirs: async () => undefined,
     setAgentDirs: async () => undefined,
@@ -212,7 +213,6 @@ beforeEach(() => {
         onerror: null,
       }),
     },
-    ipc: null,
   })
   provideSettingsTransport(stubTransport())
 })

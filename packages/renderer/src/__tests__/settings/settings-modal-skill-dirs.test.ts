@@ -53,6 +53,7 @@ function makeTransport(): SettingsTransport {
     listProviders: vi.fn(async () => ({ providers: [] })),
     listModels: vi.fn(async () => []),
     setProvider: vi.fn(async () => undefined),
+    setScopedModels: vi.fn(async () => [] as string[]),
     discoverModels: vi.fn(async () => ({ success: true, models: [] })),
     setSkillDirs: vi.fn(() => Promise.reject(new Error('network down'))),
     setAgentDirs: vi.fn(async () => undefined),
@@ -87,7 +88,7 @@ beforeEach(() => {
   __resetPlatformForTesting()
   __resetSettingsStoreForTesting()
   __resetSettingsTransportForTesting()
-  providePlatform({ kind: 'mock', storage: inMemoryStorage(), webSocket: { create: () => ({ readyState: 0, send: () => {}, close: () => {}, onopen: null, onclose: null, onmessage: null, onerror: null }) }, ipc: null })
+  providePlatform({ kind: 'mock', storage: inMemoryStorage(), webSocket: { create: () => ({ readyState: 0, send: () => {}, close: () => {}, onopen: null, onclose: null, onmessage: null, onerror: null }) } })
   provideSettingsTransport(makeTransport())
   const { toasts } = useToast()
   toasts.value = []
@@ -124,7 +125,7 @@ describe('SettingsModal onUpdateSkillDirs 错误反馈（W2 D10）', () => {
 
     const resourcePage = wrapper.findComponent(SettingsResourcePage)
     expect(resourcePage.exists()).toBe(true)
-    const dirs: SkillDirConfig[] = [{ path: '/x', enabled: true }]
+    const dirs: SkillDirConfig[] = [{ path: '/x', enabled: true, scope: 'global' }]
     resourcePage.vm.$emit('update-dirs', dirs)
     await flushPromises()
 

@@ -87,6 +87,7 @@ function stubTransport(): SettingsTransport {
     listProviders: async () => ({ providers: [] }),
     listModels: async () => [],
     setProvider: async () => undefined,
+    setScopedModels: async () => [],
     discoverModels: async () => ({ success: true, models: [] }),
     setSkillDirs: async () => undefined,
     setAgentDirs: async () => undefined,
@@ -131,11 +132,10 @@ describe('SettingsModal 首屏冒烟（AC12 渲染 gate）', () => {
       kind: 'mock',
       storage: inMemoryStorage(),
       webSocket: { create: () => ({ readyState: 0, send: () => {}, close: () => {}, onopen: null, onclose: null, onmessage: null, onerror: null }) },
-      ipc: null,
     })
     provideSettingsTransport(stubTransport())
 
-    const wrapper = mount(SettingsModal, {
+    mount(SettingsModal, {
       props: { open: true },
       attachTo: document.body,
       global: {
@@ -166,7 +166,6 @@ describe('SettingsModal 懒加载挂载即 open 的 open 语义（W31 review maj
       kind: 'mock',
       storage: inMemoryStorage(),
       webSocket: { create: () => ({ readyState: 0, send: () => {}, close: () => {}, onopen: null, onclose: null, onmessage: null, onerror: null }) },
-      ipc: null,
     })
     // refreshProviders → getSettingsTransport().listProviders()（模块级单例）→ spy 在此
     const listProvidersSpy = vi.fn(async () => ({ providers: [] }))

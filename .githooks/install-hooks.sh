@@ -52,6 +52,21 @@ cat > "$GIT_HOOKS_DIR/pre-commit" << 'HOOK_EOF'
 
 set -e
 
+# ── [HISTORICAL] 自保护：先复制自身再 exec ──────────────────────────────────
+# bare repo + worktree 布局下 pre-commit 是**共享单槽**资源（<bare>/hooks/pre-commit）：
+# 任何 worktree 的 `pnpm install`（prepare → install-hooks.sh）都会按**该分支的模板**重写
+# 它。若重写恰好发生在某个正在执行的 hook 中间，bash 按字节偏移懒读脚本会读到错位内容，
+# 报出与真实代码无关的随机错误（2026-09-11 实测：`line 871: syntax error near unexpected
+# token 'then'`、`line 140: cho: command not found`；同一 commit 重试时两次命中，三个不同
+# 字节数 65100/66987/67901 对应三个 worktree 的模板，且每份单独 `bash -n` 均通过）。
+# 复制成私有副本再 exec，运行中的字节流不再受后续重写影响；副本退出时自删。
+if [ "${XYZ_PRE_COMMIT_REEXEC:-0}" != "1" ]; then
+    _xyz_self_copy="$(mktemp -t xyz-pre-commit.XXXXXX)"
+    cp "$0" "$_xyz_self_copy"
+    XYZ_PRE_COMMIT_REEXEC=1 exec bash "$_xyz_self_copy" "$@"
+fi
+trap 'rm -f "$0"' EXIT
+
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
@@ -161,6 +176,21 @@ if [ -n "$FRONTEND_FILES" ]; then
             fi
 
             echo -e "${GREEN}[OK] vue-tsc 类型检查通过${NC}"
+
+            # 测试 tsconfig（tsconfig.typecheck-test.json）：vitest 测试文件被默认 tsconfig
+            # 的 exclude 挡在门外，只有此处纳入 include——测试桩与生产契约漂移的唯一编译期
+            # 拦截点（残留风险 8：该脚本此前从未被任何 gate 执行，3 个测试文件的基线漂移
+            # 因此长期无信号）。
+            echo -e "${BLUE}[INFO] 执行测试类型检查（tsconfig.typecheck-test.json）...${NC}"
+
+            if ! (cd packages/renderer && npx vue-tsc --noEmit -p tsconfig.typecheck-test.json 2>&1); then
+                echo ""
+                echo -e "${RED}[ERROR] vue-tsc 测试类型检查失败（测试桩与生产契约漂移）${NC}"
+                echo -e "${RED}[原则] 无论是否本次改动引入的问题，都必须正面修复解决，不允许跳过。${NC}"
+                exit 1
+            fi
+
+            echo -e "${GREEN}[OK] vue-tsc 测试类型检查通过${NC}"
         else
             echo -e "${GREEN}[OK] 无 .vue/.ts 文件变更${NC}"
         fi
@@ -1420,7 +1450,7 @@ echo -e "${BLUE}======================================${NC}"
 echo ""
 echo -e "${CYAN}已安装的检查项目:${NC}"
 echo -e "  ${GREEN}[+]${NC} 前端 ESLint 代码检查"
-echo -e "  ${GREEN}[+]${NC} vue-tsc 类型检查（全量，与 CI 等价）"
+echo -e "  ${GREEN}[+]${NC} vue-tsc 类型检查（全量 + 测试 tsconfig，与 CI 等价）"
 echo -e "  ${GREEN}[+]${NC} pi extensions ESLint + tsc 类型检查（extensions/ 目录）"
 echo -e "  ${GREEN}[+]${NC} pi extensions manifest & convention 检查（禁废弃 namespace / 禁 console.log / pi manifest 字段）"
 echo -e "  ${GREEN}[+]${NC} extension 结构一致性检查（分组/role/依赖台账/一层路径残留）"

@@ -78,6 +78,11 @@ jobs:
       - name: TypeCheck - renderer
         run: pnpm --filter @xyz-agent/frontend run typecheck
 
+      # 测试 tsconfig（tsconfig.typecheck-test.json）：vitest 测试文件被默认 tsconfig 的
+      # exclude 挡在门外，只有此脚本纳入 include——测试桩与生产契约漂移的唯一编译期拦截点。
+      - name: TypeCheck - renderer tests
+        run: pnpm --filter @xyz-agent/frontend run typecheck:test
+
       - name: TypeCheck - runtime
         run: pnpm --filter @xyz-agent/runtime run typecheck
 
