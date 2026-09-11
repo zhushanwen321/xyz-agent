@@ -73,9 +73,9 @@ export function notifyInFlightChanged(): void {
   if (listener === null) return;
   try {
     listener(getInFlightSnapshot());
+  // eslint-disable-next-line taste/no-silent-catch -- 上报出口故障刻意静默（D5 约束①）：壳层 bug 不得打断生命周期主链；绝对计数语义下后续事件自愈，丢失单帧无累积误差，记日志徒增 core logger 噪音面
   } catch {
-    // 上报出口故障不阻断生命周期主链（D5 约束①）；留痕降级给 core logger 噪音面
-    // 之外的处理——静默是接受的（绝对计数语义下后续事件自愈，丢失单帧无累积误差）。
+    // 同上：静默是接受的。
   }
 }
 
