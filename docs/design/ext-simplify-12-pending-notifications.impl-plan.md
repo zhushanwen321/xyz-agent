@@ -126,7 +126,7 @@ Commit 映射（执行期 subagent 禁 git，commit 由主会话核验验收条�
 | u1 M1 包内原子改（E1-E5+changeset） | committed | 1 | 编排方核验（领地 4 文件吻合 + 包测试 32 绿重跑 + pathspec 提交）。验收①-⑦全过（删除面 rg 零命中 / 导出恰 5 / 根三连绿 / ⑦ conformance 预期红定位 u2 领地）。deviations 3 条见下 |
 | u2 跨包测试+SSOT（E6+E7） | committed | 1 | 编排方核验（领地 4 文件吻合 + render 幂等复核 + drift 绿）。验收①-⑤全过（subagent-core 2833 tests 全绿收口红窗口；constraints 新措辞落位 + md5 幂等；extension-dependencies reason 三处失实修正）。deviations 3 条合理（头注行号漂移清理 / reason 修正扩围在授权内 / C-proc-13 追加删除登记属 C-proc-10 精神） |
 | u3 注释/文档回写+守卫（E8-E10） | committed | 1 | 编排方核验（领地 7 文件吻合 + drift/「自身 TTL」断言重跑绿）。验收①-⑤全绿（8 符号 docs/ 扫描逐处判别归零 + bte 242 tests + lint）。deviations 4 条合理（E10 映射扩 4 模块实测自证 / ENGINE_ 白名单本体修正 / :84 顺手修正属 C-proc-10 / 去字面量+标注弥合口径差） |
-| u4 真实场景验收 V1-V5 | pending | 无（产物贴 PR） | 探针 P1/P2/P3 复核结果：待回填 |
+| u4 真实场景验收 V1-V5 | done | 无（验证型，产物贴 PR） | 验收①-④全过（编排方核验：git 零残留改动 + 产物证据抽查一致）。V1-V5 五场景全 PASS：V1 同 turn register 落盘→list 立见（P1 PASS + 秒死轮负向对照）、V2 三段（bte 投影 count 1→0 / resume 直读 0 / SIGTERM 收殓后恰 1 条 unregister=cancelled）、V3 三步（kill -9 续存 1→孤儿自然完成同进程仍 1→二次 resume 对账收口 0）、V4a fork 子 session count=0 零新写（P3 PASS）、V4b 两条对账链 unregister count 均=1（P2 PASS）；V5 与 u0 基线 v5b 逐项一致（goal-state 序列 / goal:log 逐字段 / pending entry 形态含 background-bash:1 / 工具输出文案 / defer 0=0 / notify 四条结构）。探针 P1/P2/P3 全 PASS，§7 检查点全部关闭。产物留存 /tmp/ext-simplify-12-u4/（sessions-v1c/v2b/v3/v5 + u4-*-evidence.txt 4 份 + 驱动日志 + git 起止快照）。deviations 4 条合理：V1 subagent 以 schema 既有参数 engine=zcode 派发（pi inproc 引擎已从仓删除，register/unregister 契约与引擎无关）；V5 重跑 LLM 非确定性微差不触及比对项；u0 artifact-1 漏登 background-bash:1 属提取脚本口径（基线原始 JSONL 复核两侧一致）；跑测期间并行流水线 11 文件修改态（非本领地）未动用豁免 |
 
 ## 7 残留风险与变更历史
 
@@ -152,3 +152,4 @@ Commit 映射（执行期 subagent 禁 git，commit 由主会话核验验收条�
 **变更历史**：
 
 - v1（2026-09-12）：初稿。基于设计 v3（0 must-fix 收敛）+ 两份 R2 审查报告（各 0 must-fix，suggestion 已全修）；领地全量实读核实（E1-E10 行号锚点、测试入口、消费方回归面、changeset/config 惯例）；设计 §9.2 u1-u5 重整为 u0-u4 五单元（偏差 D-1/D-2/D-3），DAG 关键路径深度 4、反链宽度 2。
+- v1.1（2026-09-12）：u0-u4 全部完成，状态表回填；§7 探针检查点 P1/P2/P3 经 u4 真实场景复核全 PASS（失败降级路径未触发），流水线收口。
