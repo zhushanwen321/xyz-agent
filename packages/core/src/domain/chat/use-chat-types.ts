@@ -110,7 +110,11 @@ export interface EnsureStreamSubDeps {
    * Pick 子集），u4b 的 submitQueuedEntry 依赖组装得以按实际用量窄化注入。
    */
   chatApi: Pick<ChatApiPort, 'streamSubscribe'>
-  toast: { error: (msg: string) => void }
+  /**
+   * [session-dead 第三环] error = 操作失败；warning = defer 重投连续失败达阈值的「可能卡死、
+   * 需用户处置」信号（与 error 语义区分，壳侧 useToast().warning 对接）。
+   */
+  toast: { error: (msg: string) => void; warning: (msg: string) => void }
   t: (key: string, params?: Record<string, unknown>) => string
   getCompactQueue: () => CompactQueueLike
 }
@@ -131,7 +135,8 @@ export interface SubmitQueuedEntryDeps {
   /** chat store：send 通道挂 inflight 占位 + 透传 ensureStreamSubscription */
   chat: ChatStoreInstance
   sessionStore: SessionStoreLike
-  toast: { error: (msg: string) => void }
+  /** [session-dead 第三环] 同 EnsureStreamSubDeps：本 deps 向 ensureStreamSubscription 透传 toast 端口 */
+  toast: { error: (msg: string) => void; warning: (msg: string) => void }
   t: (key: string, params?: Record<string, unknown>) => string
   getCompactQueue: () => CompactQueueLike
 }
@@ -150,7 +155,8 @@ export interface UseChatDeps {
   writeSegments: WriteSegmentsFn
   getChatStore: () => ChatStoreInstance
   getSessionStore: () => SessionStoreLike
-  toast: { error: (msg: string) => void }
+  /** [session-dead 第三环] warning 同 EnsureStreamSubDeps（defer 重投熔断的行动信号） */
+  toast: { error: (msg: string) => void; warning: (msg: string) => void }
   t: (key: string, params?: Record<string, unknown>) => string
   getCompactQueue: () => CompactQueueLike
 }

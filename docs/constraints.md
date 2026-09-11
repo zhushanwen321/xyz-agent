@@ -4,7 +4,7 @@
 > 「约束（摘要）」列仅导航，非权威表述；约束内容的唯一权威源 = 「权威源」列指向的文档。
 > scope 为 `global` 的条目每次 CR 必载；其余按改动路径前缀命中（`node scripts/select-constraints.mjs --base main`）。
 
-共 97 条（生成于 2026-09-09）。
+共 98 条（生成于 2026-09-11）。
 
 ## pi 关系（外部依赖边界）
 
@@ -47,6 +47,7 @@
 | C-data-16 | 全局默认模型不得由 session 级模型切换改写：ModelService.switchModel 禁广播 config.defaults（source=model-switch），settingsStore.defaultModel 单一语义 = Settings 配置值（消费点不得因 session 级切换写默认或弹「默认模型自动更新」toast）；landing 新任务默认模型显式化为 lastUsedModel KV（仅显式选择写入，staging 试选不写），landing 兜底链 currentModel \|\| lastUsedModel \|\| defaultModel 仅限 landing 态 | packages/runtime/src/**、packages/core/src/**、packages/renderer/src/** | [composer-model-session-isolation](design/composer-model-session-isolation.md#33-关键决策与权衡) | review: review-business-logic |
 | C-data-17 | 新 session 生效配置（model/thinkingLevel/presetId/cwd）单一解析点：chip 显示与 submit 创建必须消费同一 resolveLaunchConfig 输出（packages/core/src/domain/new-task-search/launch-config.ts），「显示 ≡ 生效」by construction；禁止新链路自建独立 fallback 链或旁路解析（lastUsedModel 等候选源只进 resolve，不得单挂显示链）；守卫 = L1 等价矩阵测试（packages/core/src/domain/new-task-search/__tests__/launch-config-equivalence.test.ts，全组合断言 chip 显示值 ≡ resolve 输出 ≡ create 入参） | packages/core/src/domain/composer/**、packages/core/src/domain/new-task-search/**、packages/ui/src/features/new-task/**、packages/renderer/src/composables/** | [state-truth-sync-architecture](design/state-truth-sync-architecture.md#d1resolvelaunchconfig-单一解析模块c1-核心选定) | review: review-data-governance + review: review-test-coverage |
 | C-data-18 | 对账机制三分处置框架：renderer 副本 vs runtime/pi 真值的对账机制按「对抗外部异步真值（保留）/ 同构重复 ≥3 处（收编共享原语）/ 根修后失去存在理由（删除）」裁决——in-flight 去重族收编 createInflightDedup()、KV 单键族收编 createKVSlot()（均 core foundation，新增对账禁再手写同构实现），FR-15 perCwd 默认预设特性全链随本设计 U9 删除（零消费死链）；新增/修改对账机制须过三分裁决并在 impl-plan 处置表登记 | packages/core/src/foundation/**、packages/core/src/domain/**、packages/core/src/coordination/**、packages/renderer/src/composables/** | [state-truth-sync-architecture](design/state-truth-sync-architecture.md#d9对账机制三分处置c3选定只保留核心对账的执行框架) | review: review-arch-boundary |
+| C-data-19 | session 忙闲状态单写原语：runtime session 域的 isGenerating/isCompacting/isBashRunning 三布尔与 occupancy 投影的唯一写入口 = event-interpreter.ts 的 applySessionOccupancyTransition（封闭转移枚举 SessionOccupancyTransition + SESSION_OCCUPANCY_TRANSITIONS 表，转移表即文档；新增转移先扩枚举再登记派生行，原语内部经 SessionOccupancyStateStore 写视图完成派生）。三布尔为派生存储——IManagedSessionView 类型层 readonly 使绕开原语的直写在编译期红（TS2540）；occupancy 合并/全等去重/session.occupancy state-topic 广播由原语原子完成，禁止第二广播出口。执行方式 = review（本条 enforcement）+ 编译期 readonly（TS2540，主防线）；辅以 CR 阶段 grep 人工复核（`\\.isGenerating\\s*=\|\\.isCompacting\\s*=\|\\.isBashRunning\\s*=` 于 packages/runtime/src 生产代码应零命中；测试 fixture 的运行期置位/复位一律经原语，构造期对象字面量初始化除外）——grep 复核为人工步骤，暂无自动化挂钩。C-data-04 同族范式在 occupancy 域的实例（session-dead-structural-fixes D2） | packages/runtime/src/services/session/** | [session-occupancy-send-closure](design/session-occupancy-send-closure.md) · [event-interpreter.ts](../packages/runtime/src/services/session/event-interpreter.ts) | review: review-data-governance |
 
 ## 进程与通信架构
 

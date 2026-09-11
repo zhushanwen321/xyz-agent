@@ -84,6 +84,8 @@ function makeMocks(opts: {
     createSession: createSessionMock,
     rekey: vi.fn(),
     destroySession: vi.fn(async () => {}),
+    // D5② 短路预检读点（session-dead-structural-fixes）：undefined = 无 client → 不短路 → 全流程。
+    getClient: vi.fn(() => undefined),
   } as unknown as IProcessManager
 
   const session = { id: 'pi-s1', cwd: '/repo', sessionFilePath: '/tmp/pi.jsonl' } as IManagedSessionView

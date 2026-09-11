@@ -1454,6 +1454,8 @@ export class EventAdapter {
     private sessionId: string,
     private interpret: (events: PiTranslatedEvent[]) => void,
     private onBackgroundTaskActivity?: (sessionId: string) => void,
+    /** [定向复审缺陷 2] detach 转调（组合根传 interpreter.dispose）——销毁时清 interpreter 在途 timer + 置短路标志。 */
+    private onDetach?: () => void,
   ) {}
 
   /** Start listening to events from an RpcClient. */
@@ -1501,5 +1503,9 @@ export class EventAdapter {
       this.unsub()
       this.unsub = null
     }
+    // [定向复审缺陷 2] 转调宿主清理（interpreter.dispose）：detach 是全部销毁路径的收口
+    // （forceQuit/exit/delete/restore 清场均经 adapter.detach），interpreter 的在途
+    // settling 延迟 timer 与 disposed 短路在此一并收口。
+    this.onDetach?.()
   }
 }

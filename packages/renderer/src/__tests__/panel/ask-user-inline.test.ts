@@ -7,16 +7,22 @@
  *
  * - U4: 有 ask-user 请求 → 渲染 AskUserOverlay，不渲染 Composer
  * - U5: 无 ask-user 请求 → 渲染 Composer，不渲染 AskUserOverlay
+ * - U6 [session-dead V5②]: ask-user 等待期 turn 活跃 → TurnProgressBar 存活（挂载在
+ *   overlay/composer 互斥对之外）并显示「在等待你的输入」分型（Gate B 实测断点回归锁定：
+ *   观测条原挂 Composer 内，等待期随 Composer 一起卸载，分型文案无处渲染）
  *
  * mock 策略：vi.mock useExtensionUI，用 vi.hoisted 模块级 ref 让每个 it 设置不同的
  * currentAskUserRequest 值。Panel 内 useExtensionUI(computed(sessionId)) 的返回值由此 mock 决定。
  *
  * 运行：cd packages/renderer && npx vitest run src/__tests__/panel/ask-user-inline.test.ts
  */
-import { describe, it, expect, beforeEach, vi } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { mount } from '@vue/test-utils'
+import { nextTick } from 'vue'
 import { createPinia, setActivePinia } from 'pinia'
 import Panel from '@/components/panel/Panel.vue'
+import { useChatStore } from '@/stores/chat'
+import { useExtensionUIStore } from '@/stores/extension-ui'
 import type { ExtensionUIRequest } from '@xyz-agent/core/transport/api/domains/extension'
 
 // ── vi.hoisted：mock 状态在 vi.mock 工厂执行前就绪，且可在 it 中改值 ──
@@ -95,5 +101,37 @@ describe('Panel inline ask-user 渲染（W2）', () => {
     expect(wrapper.find('[data-testid="composer-box"]').exists()).toBe(true)
     // ask-user overlay 不渲染
     expect(wrapper.find('[data-testid="ask-user-overlay"]').exists()).toBe(false)
+  })
+
+  it('U6 [session-dead V5②]: ask-user 等待期 turn 活跃 → 观测条存活并切换「在等待你的输入」分型', async () => {
+    vi.useFakeTimers()
+    try {
+      mockState.askUserReq.value = askUserReq
+      const wrapper = mountPanel('session-A')
+      // TurnProgressBar 读真实 chat/extension-ui store（Panel 的 AskUserOverlay 判据走
+      // mock 的 useExtensionUI，两处数据源分别喂——生产运行时同源：useExtensionUI 写 store）
+      const store = useChatStore()
+      const extensionUI = useExtensionUIStore()
+      store.setOccupancy('session-A', { turn: 'generating', compacting: false, bash: false })
+      store.applyMessageEvent('session-A', { type: 'message.message_start', payload: { sessionId: 'session-A', messageId: 'a1' } })
+      extensionUI.addRequest('session-A', {
+        sessionId: 'session-A', requestId: 'req-1', method: 'select', askUser: true, receivedAt: Date.now(),
+      })
+      await nextTick()
+      // 豁免信号每 tick 轮询（≤1 tick 生效）
+      vi.advanceTimersByTime(1_000)
+      await nextTick()
+
+      // 观测条在等待期存活（互斥对之外挂载——本修复核心断言）
+      expect(wrapper.find('[data-testid="turn-progress-bar"]').exists()).toBe(true)
+      // 分型文案切换（用户可见 DOM 断言）
+      expect(wrapper.find('[data-testid="turn-progress-awaiting"]').exists()).toBe(true)
+      expect(wrapper.find('[data-testid="turn-progress-elapsed"]').exists()).toBe(false)
+      // 互斥语义保持：Composer 仍隐藏、overlay 仍渲染
+      expect(wrapper.find('[data-testid="composer-box"]').exists()).toBe(false)
+      expect(wrapper.find('[data-testid="ask-user-overlay"]').exists()).toBe(true)
+    } finally {
+      vi.useRealTimers()
+    }
   })
 })

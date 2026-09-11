@@ -29,7 +29,7 @@ import { PiExtensionSettings } from './infra/pi/pi-extension-settings.js'
 import { PiRetrySettings } from './infra/pi/pi-retry-settings.js'
 import { EventAdapter } from './infra/pi/event-adapter.js'
 import { FileChangeDiffAdapter } from './infra/pi/file-change-diff-adapter.js'
-import { EventInterpreter, updateSessionOccupancy } from './services/session/event-interpreter.js'
+import { EventInterpreter, applySessionOccupancyTransition } from './services/session/event-interpreter.js'
 import { join, resolve, isAbsolute } from 'node:path'
 import { spawn } from 'node:child_process'
 import * as fs from 'node:fs'
@@ -399,21 +399,23 @@ async function main(): Promise<void> {
       onSilentAbort: ({ sessionId: sid }) => {
         sessionService.abort(sid).catch(() => {})
       },
-      // M4 compaction 事件驱动：interpreter 从 compaction_start/end 唯一置位/复位
-      // runtime active.isCompacting（sendPrompt/sendBash 预检互斥依据）。与原 dispatcher
-      // 手动路径置位对称——事件驱动后 dispatcher 不再置位，复位责任转移到 interpreter（三路对称）。
-      // getSession 返回 IManagedSessionView，isCompacting 为可写字段（types.ts 注释明言子模块可读写）。
+      // M4 compaction 事件驱动：interpreter 从 compaction_start/end 唯一编排广播（session.compacting /
+      // message.compactionSummary / session.compacted）。[session-dead-structural-fixes D2 挂点迁移，
+      // u3b] 原此处对三布尔的直写（布尔赋值）改调原语对应行（'compacting-start' /
+      // 'compacting-end'）：isCompacting 派生 + occupancy 合并 + state 帧广播原子完成——结构上
+      // 消灭「只写布尔不写投影」的残留直写（interpreter #5/#6 的 onOccupancyTransition 通道
+      // 调同一原语行，幂等去重）。
       onCompactingStateChange: (sid, v) => {
         const s = sessionService.getSession(sid)
-        if (s) s.isCompacting = v
+        if (s) applySessionOccupancyTransition(s, messageBus, v ? 'compacting-start' : 'compacting-end')
       },
-      // occupancy 挂点接线（session-occupancy-send-closure D3 #2-#6）：interpreter 侧成功路径
-      // 挂点经本回调写 session 记录 occupancy 并广播 session.occupancy state 帧——与上方
-      // onCompactingStateChange 同构（interpreter 不持有全量 occupancy，合并/去重在
-      // updateSessionOccupancy 内，经 session 记录权威聚合）。
-      onOccupancyTransition: (patch) => {
+      // occupancy 挂点接线（session-dead-structural-fixes D2 挂点迁移，u3b）：interpreter 侧
+      // 挂点（#2-#6 + turn-end 异常兜底）传封闭转移枚举值，经本闭包写 session 记录——原语
+      // 原子完成「合并三维 + 派生三布尔 + 幂等去重 + state 帧广播」（interpreter 不持有全量
+      // occupancy，经 session 记录权威聚合，与上方 onCompactingStateChange 同构）。
+      onOccupancyTransition: (transition) => {
         const s = sessionService.getSession(sessionId)
-        if (s) updateSessionOccupancy(s, messageBus, patch)
+        if (s) applySessionOccupancyTransition(s, messageBus, transition)
       },
       // session-trace（A33）：增量腿触发回调——interpreter 的四类触发事件到达后做
       // 追赶式 since 补拉（syncTraceEntries 内部自查 leaf 基线，无基线 no-op；串行链
@@ -444,6 +446,11 @@ async function main(): Promise<void> {
       // fanOutSettled（agent-settled-fanout.ts，可单测——本文件 import 即执行 main() 不可直测）。
       onAgentSettled: (sid) => {
         sessionService.flushPendingBashResults(sid)
+        // [session-dead 2026-09-10] run 级联结束（pi _runAgentPrompt 的 finally 确定性 emit）→
+        // 复位 isGenerating。agent_end 在 retry / auto-compaction 续跑时会重发、post-run 尾段
+        // 直接 settle 的收尾路径更不含 agent_end——只靠 agent_end 复位会让 processing 分支置的
+        // true 残留（幽灵忙碌）。语义与竞态自愈论证见 handleAgentSettledSideEffects 注释。
+        sessionService.handleAgentSettledSideEffects(sid)
         fanOutSettled(agentSettledListeners, sid)
       },
     })
@@ -458,6 +465,10 @@ async function main(): Promise<void> {
       sessionId,
       (events) => interpreter.interpret(events),
       (_sid) => sessionService.backgroundTasks?.checkForChanges(),
+      // [定向复审缺陷 2] detach 转调 interpreter.dispose：销毁路径（forceQuit/exit/delete/
+      // restore 清场）经 adapter.detach 收口时，清 interpreter 在途 settling 延迟 timer +
+      // 置 disposed 短路，防迟到副作用打在同 id restore 重注册的新 session 记录上。
+      () => interpreter.dispose(),
     )
   }
 

@@ -19,6 +19,7 @@ import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { SessionManagerHandler } from './session-manager-handler.js'
 import { createSessionDeliveryRegistry } from '../services/session/session-delivery-registry.js'
+import { applySessionOccupancyTransition } from '../services/session/event-interpreter.js'
 import type { SessionDeliveryRegistry } from '../services/session/session-delivery-registry.js'
 import type { ISessionService } from '../interfaces.js'
 import type { IManagedSessionView } from '../services/session/types.js'
@@ -127,9 +128,9 @@ async function flushMicrotasks(): Promise<void> {
   for (let i = 0; i < 10; i++) await Promise.resolve()
 }
 
-/** 切换 view busy/idle（同一对象原地改，isIdle 读同源标志） */
+/** 切换 view busy/idle（经转移原语派生，isIdle 读同源标志；u3c 单写原语收口——fixture 直写禁令对测试同样生效） */
 function setBusy(h: ReturnType<typeof makeHarness>, busy: boolean): void {
-  h.view.isGenerating = busy
+  applySessionOccupancyTransition(h.view, null, busy ? 'generating' : 'idle')
 }
 
 beforeEach(() => {

@@ -10,6 +10,7 @@
  */
 import { describe, it, expect, vi } from 'vitest'
 import { createSessionDeliveryRegistry } from '../session-delivery-registry.js'
+import { applySessionOccupancyTransition } from '../event-interpreter.js'
 import type { SkillInjector, SkillInjectionResult } from '../skill-injector.js'
 import type { IMessageBus } from '../../message-bus/message-bus.js'
 import type { IManagedSessionView } from '../types.js'
@@ -73,8 +74,10 @@ describe('A2-MF-C：deliverText 挂 skill 注入', () => {
     expect(h.inject.mock.calls[0][1]).toBe('首条消息')
     // prompt 收到注入产物（三参形态：images undefined + streamingBehavior undefined）
     expect(h.client.prompt).toHaveBeenCalledWith('<<injected:首条消息>>', undefined, undefined)
-    // 顺序：ensureActive → prompt → notice（发送成功后才发布）
-    expect(h.calls).toEqual(['ensureActive:s1', 'prompt', 'publish:session.skillNotice'])
+    // 顺序：ensureActive → prompt → notice（发送成功后才发布）→ occupancy 'dispatching' 帧
+    //（session-dead-structural-fixes D2 挂点迁移：deliverText 置位收编为原语调用，受理后
+    // 投影广播 dispatching，与 notice 同在 prompt 成功之后）
+    expect(h.calls).toEqual(['ensureActive:s1', 'prompt', 'publish:session.skillNotice', 'publish:session.occupancy'])
     const noticeMsg = h.publish.mock.calls.find(([, msg]) => (msg as { type: string }).type === 'session.skillNotice')
     expect(noticeMsg![0]).toBe('s1')
     expect((noticeMsg![1] as unknown as { payload: { reason: string; skills: string[] } }).payload)
@@ -91,13 +94,14 @@ describe('A2-MF-C：deliverText 挂 skill 注入', () => {
 
   it('busy 入队 → settled flush 的投递同样经注入（queued 路径不旁路）', async () => {
     const h = makeHarness()
-    h.view.isGenerating = true
+    // busy 置位/复位经转移原语（u3c 单写原语收口；publish null 与改前直写一致零广播）
+    applySessionOccupancyTransition(h.view, null, 'generating')
     const handle = h.registry.getOrCreateDelivery('s1')
     handle.send({ payload: { kind: 'text', content: '排队的消息' } })
     expect(h.inject).not.toHaveBeenCalled() // busy 期只入队，未注入
     expect(handle.depth()).toBe(1)
     // idle 边沿（settled + 标志复位）→ flush：此刻才注入 + prompt
-    h.view.isGenerating = false
+    applySessionOccupancyTransition(h.view, null, 'idle')
     h.emitSettled()
     await vi.waitFor(() => expect(handle.depth()).toBe(0))
     expect(h.inject).toHaveBeenCalledTimes(1)
@@ -112,10 +116,12 @@ describe('A2-MF-C：deliverText 挂 skill 注入', () => {
     expect(h.publish).not.toHaveBeenCalled()
   })
 
-  it('notices 为空：不发布（no-op 零噪音）；真注入器纯文本 no-op 原文通过', async () => {
+  it('notices 为空：不发布 skillNotice（no-op 零噪音）；真注入器纯文本 no-op 原文通过', async () => {
     const h = makeHarness()
     await h.registry.sendDirect('s1', '纯文本')
-    expect(h.publish).not.toHaveBeenCalled()
+    // skillNotice 零发布；occupancy 帧是 D2 挂点迁移后的合法投影输出（'dispatching'），
+    // 不在本断言否定面内（顺序契约用例已单独锁定）
+    expect(h.publish.mock.calls.filter(([, m]) => (m as { type: string }).type === 'session.skillNotice')).toHaveLength(0)
     // 真 SkillInjector：无标记在 parseSkillMarkers 短路，mock client 无 getCommands
     // 也不发起 RPC（若发起即 TypeError 翻红）
     const { createSessionDeliveryRegistry: createReal } = await import('../session-delivery-registry.js')

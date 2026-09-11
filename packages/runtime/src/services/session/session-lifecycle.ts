@@ -36,6 +36,10 @@ import type { ISessionStore } from '../ports/session.js'
 import type { WorkspaceService } from '../workspace/workspace-service.js'
 import { toErrorMessage, errorWithCode, MODEL_NOT_CONFIGURED, SESSION_NOT_FOUND } from '../../utils/errors.js'
 import { createForkedSessionFile, resolveEntryIdByTimestamp } from './session-fork.js'
+// session-dead-structural-fixes D2/D4：转移原语（宣告帧 announce-idle 行）+ userStopped 门面
+//（restore 标记检测 / delete 清理 / 收敛环）。event-interpreter 是唯一无环的兄弟依赖方向
+//（session-service 值导入本文件与本文件引用的两者，反向 import 成环）。
+import { applySessionOccupancyTransition, userStoppedGate } from './event-interpreter.js'
 // restore 附着辅助（F2/F3 归一化 + U2/D1 生效值播种 + get_state 共用解析）——
 // 自本文件迁出（max-lines 行数合规），函数体逐字节等价，见 restore-seeding.ts。
 import { normalizeInactiveSessionFileIfNeeded, readEffectiveModelFromState, seedRestoreMetaOverride } from './restore-seeding.js'
@@ -189,6 +193,12 @@ export class SessionLifecycle implements ISessionRegistry {
     private readonly workspaceService: WorkspaceService,
     /** registerSession 装配依赖（adapterFactory + send 闭包窄依赖,S3/D2② 随迁注入）。 */
     private readonly registerDeps: ISessionRegisterDeps,
+    /**
+     * D4（session-dead-structural-fixes）restore-abort 失败链的强杀收敛兜底（可选，组合根
+     * 经 SessionService 构造注入 = dispatcher.forceQuit）。未注入时（存量测试）restore-abort
+     * 失败仅记日志保留标记，下次 restore 重试。
+     */
+    private readonly userStoppedOps?: { forceQuitFallback: (sessionId: string) => Promise<void> },
   ) {}
 
   // ── ISessionRegistry：sessions Map 只读查询面（Facade 残余域读点的统一通道）──
@@ -295,9 +305,11 @@ export class SessionLifecycle implements ISessionRegistry {
       forkEntryId,
     }
     this.sessions.set(id, session)
-    // occupancy idle 宣告帧（session-occupancy-send-closure D3 转移 #10 respawn 衔接，
-    // Gate B V6b 反例修复）：直接 publish 而非 updateSessionOccupancy——对象初值即 idle，
-    // 全等去重会短路广播，而本帧职责恰恰是「宣告」而非「转移」：
+    // occupancy idle 宣告帧（session-dead-structural-fixes D2：收编为转移原语 announce-idle
+    // 行，Gate B V6b 反例修复）：原语对该行合并/派生均为 no-op、跳过全等去重强制广播当前
+    // 投影（对象初值即 idle，「转移」的全等去重会短路广播，而本帧职责恰恰是「宣告」），
+    // 广播走原语既有 state-topic 通路（实时广播 + 快照写入/重订阅回放双腿随通路保留，
+    // 不绕过 state topic 裸 publish）：
     // 1. 写 bus state 快照：restore（respawn）后 renderer 重订阅时 stateSnapshot 回放必含
     //    idle 帧。旧假设「重订阅无帧 = idle 缺省」被帧丢失击穿——占用中 pi 死亡时 renderer
     //    的 session.exited 兜底 handler 同步失效本地订阅（invalidateStreamSubscription），
@@ -308,10 +320,7 @@ export class SessionLifecycle implements ISessionRegistry {
     //    restore 场景旧订阅集合已随 onSessionExit 的 bus.clearSession 清除——两腿实际都只
     //    落快照，由重订阅回放消费，时序上 subscribe 必然晚于本 publish（postLoadSession 在
     //    restore RPC resolve 之后），无竞态。
-    this.registerDeps.getMessageBus()?.publish(id, {
-      type: 'session.occupancy',
-      payload: { sessionId: id, turn: 'idle', compacting: false, bash: false },
-    })
+    applySessionOccupancyTransition(session, this.registerDeps.getMessageBus(), 'announce-idle')
     // 注册事件同步直发（sessions.set 之后——订阅者可经 Registry 读到条目）：S3 期订阅者
     // = Facade（组装根接线），按迁移前体内顺序执行 registerReplicatedStates →
     // ensureRecordEntriesCache → reconciler 对账（fire-and-forget）。
@@ -761,8 +770,15 @@ export class SessionLifecycle implements ISessionRegistry {
   }
 
   async delete(sessionId: string): Promise<void> {
+    // D4 清理路径：delete = 彻底删除，userStopped 标记随 session 一起清理（收敛环定时器
+    // 一并停——active 分支的 removeSessionEntry 只停环不清标记，本调用补齐标记清理）。
+    // 两分支共用（非 active 分支不经过 removeSessionEntry 也必须清）。
+    userStoppedGate.disposeForDelete(sessionId)
     const session = this.get(sessionId)
     if (session) {
+      // D5①（session-dead-structural-fixes）：kill 路径全量日志 K5——活跃 session 被删除时
+      // 其 pi 进程被杀，含调用源与信号链（仅 active 分支有 kill；非 active 分支无进程可杀）。
+      console.warn(`[session-lifecycle] deleting active session, killing pi, session ${sessionId} (kill_source=delete | who: user delete session action | chain: detach -> pm destroy -> trash session file)`)
       this.detachSession(sessionId)
       await this.pm.destroySession(sessionId)
       this.svc.removeSessionEntry(sessionId)
@@ -828,6 +844,24 @@ export class SessionLifecycle implements ISessionRegistry {
 
   /** 从持久化文件恢复 session。 */
   async restoreSession(sessionId: string): Promise<SessionSummary> {
+    // D5②（session-dead-structural-fixes）：幂等短路复用——client 已活跃且未退出时直接
+    // 返回现有 summary（等价 ensureActive 的既有短路分支），不再无条件清场重开。
+    //
+    // 背景（设计 §2.2 附带缺陷①）：restoreSession 无幂等保护——本事故中 restore #2（用户
+    // 点击 dead session 的 session.restore RPC，直连本方法不经 ensureActive）把 restore #1
+    // 0.6 秒前刚拉起的 pi 杀了重开（14:14:03.104 的「幽灵 exit 143」，K3 撞车实证）。
+    // 短路条件取 ensureActive 同款判定（existing && !existing.exited）+ sessions Map 条目
+    // 存在（toSummary 需要；缺条目 = registerSession 未完成的半截态，走全流程重开安全）。
+    // 短路命中不产生 kill 日志、不重开进程（错误规格 §3.4「session.restore 短路命中」行）。
+    const existingClient = this.pm.getClient(sessionId)
+    if (existingClient && !existingClient.exited) {
+      const active = this.get(sessionId)
+      if (active) {
+        console.log(`[session-lifecycle] restoreSession: client already active for ${sessionId}, short-circuiting to existing summary (D5②)`)
+        return this.svc.toSummary(active)
+      }
+    }
+
     const target = this.svc.findScannedSession(sessionId)
     // 文案是追加（非替换）：既有测试用 toThrow 子串匹配「Persisted session X not found」
     //（test/session-service.test.ts / test/session-pool-restoresession.test.ts），见设计文档 §7.3。
@@ -843,6 +877,10 @@ export class SessionLifecycle implements ISessionRegistry {
     }
     const existing = this.get(sessionId)
     if (existing) {
+      // D5①（session-dead-structural-fixes）：kill 路径全量日志 K3——旧 pi 被清场重开时
+      // 必须留「谁发起、为什么」痕迹（2026-09-10 事故 14:14:03.104 exit 143 无 kill 日志
+      // 排查一整晚的直接教训；K3 撞车实证：restore #2 杀掉 restore #1 刚拉起的 pi）。
+      console.warn(`[session-lifecycle] killing active pi before restore, session ${sessionId} (kill_source=restore_clear | who: restore request while old pi still active (session.restore RPC / ensureActive) | chain: detach -> safeDestroy old pi -> respawn + switch_session)`)
       this.detachSession(sessionId)
       await this.safeDestroy(sessionId)
       this.svc.removeSessionEntry(sessionId)
@@ -949,6 +987,40 @@ export class SessionLifecycle implements ISessionRegistry {
       handedOffTo: target.handedOffTo,
     }, 'restore')
     const restoredSummary = this.svc.toSummary(session)
+    // D4（session-dead-structural-fixes）：restore-abort——返回前检测 userStopped 标记，
+    // 在 → await client.abort()（对 idle pi 是无害 no-op——pi 实装对无活跃 run 幂等无副作用；
+    // 对 session_start 钩子补投（notify replay / scheduler）已起跑的 replay turn 是精准中止）。
+    //
+    // 标记不在此清：notify-ledger 有两条投递腿（session_start 恢复扫描 + settled 补发腿——
+    // abort 掐掉的 turn 收尾产生 agent_settled 边沿，busy parked 的通知在该边沿补投开新
+    // turn），一次性 abort 后清标记会被补发腿击穿（R1 审查反例）。改由收敛环接管：
+    // abort 成功后启动静默观察窗（起点 = abort 完成，idle 场景同样有明确起点），标记存活
+    // 期内 interpreter 观测到非显式投递引发的 agent_start 一律再 abort，窗满且最后一次被掐
+    // turn 的 agent_settled 已到达 → 判收敛清标记（挂点与状态机见 event-interpreter.ts
+    // UserStoppedGate）。显式投递（sendPrompt 等）在 dispatcher 投递前清标记放行。
+    if (userStoppedGate.hasUserStoppedMark(sessionId)) {
+      try {
+        await client.abort()
+        // 主 abort 成功 → 启动收敛环（abort 失败路径不起环：标记不视为已消费，收敛环未
+        // 完成，下次 restore 重试——错误规格 §3.4 restore-abort 失败行）。
+        userStoppedGate.beginRestoreConvergence(sessionId)
+      } catch (abortErr) {
+        // 既有 abort 失败链收口（错误规格 §3.4）：超时/断链 → forceQuit 强杀收敛（幂等：
+        // 进程已死时成功返回）。经注入的 dispatcher.forceQuit（构造注入，避免双倍 abort
+        // RPC 超时等待直达强杀）。强杀失败（极端）→ 标记保留 + 环不启动，用户再点
+        // 「强制退出」即达终态（设计恢复指引）。
+        console.warn(`[session-lifecycle] restore-abort failed for ${sessionId}, falling back to force-quit convergence:`, toErrorMessage(abortErr))
+        try {
+          await this.userStoppedOps?.forceQuitFallback?.(sessionId)
+        } catch (fallbackErr) {
+          // 强杀收敛吞错（降级策略）：走到此处时 abort RPC 已超时，fallback 走 forceQuitSession
+          // 完整链（含自己的日志与广播），此处异常不改变收敛路径——标记保留 + 环不启动（见上），
+          // 下次 restore 重试；restore 主体不可回滚（session 已复活进 Map），向上传播只会把
+          // 收敛细节泄漏成 restore 失败。极端兜底再失败的用户出口：再点「强制退出」即达终态。
+          console.warn(`[session-lifecycle] restore-abort force-quit fallback also failed for ${sessionId}, mark kept for next restore:`, toErrorMessage(fallbackErr))
+        }
+      }
+    }
     // S3-W2：创建入口收敛点（restoreSession 路径）——session 复活进 Map，插件 didCreate 投递。
     this.svc.notifySessionCreated(restoredSummary)
     return restoredSummary

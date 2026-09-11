@@ -31,6 +31,7 @@ import { mkdtempSync, mkdirSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createSessionDeliveryRegistry } from '../../services/session/session-delivery-registry.js'
+import { applySessionOccupancyTransition } from '../../services/session/event-interpreter.js'
 import type { IManagedSessionView } from '../../services/session/types.js'
 import { spawnPiFixture, REAL_PI_READY, REAL_PI_SKIP_REASON, type PiFixture } from './pi-fixture.js'
 
@@ -103,7 +104,7 @@ describe.skipIf(!REAL_PI_READY)(`send queue e2e real pi${REAL_PI_READY ? '' : `�
         const all = targetFx!.collectEvents()
         for (; lastSeenEventIdx < all.length; lastSeenEventIdx++) {
           if (all[lastSeenEventIdx]!.type === 'agent_settled') {
-            view.isGenerating = false
+            applySessionOccupancyTransition(view, null, 'idle')
             for (const cb of [...settledCbs]) cb(targetSessionId!)
           }
         }
@@ -134,7 +135,8 @@ describe.skipIf(!REAL_PI_READY)(`send queue e2e real pi${REAL_PI_READY ? '' : `�
       })
 
       // ── 3. 长任务（dispatcher 同款先置位后 prompt：busy 前提的 runtime 侧标志）──
-      view.isGenerating = true
+      // u3c readonly 收口：经原语 #1 'dispatching' 行（对齐 dispatcher markSessionActive 语义）
+      applySessionOccupancyTransition(view, null, 'dispatching')
       const sendResp = await targetFx.sendCommand('prompt', {
         message: 'Count from 1 to 40, one number per line, plain text only. Do not use any tools.',
       }, STEP_TIMEOUT_MS)

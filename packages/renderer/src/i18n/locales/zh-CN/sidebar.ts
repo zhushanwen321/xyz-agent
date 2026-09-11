@@ -79,6 +79,21 @@ export default {
   },
   assignProjectFailed: '归入项目失败',
   forceQuitFailed: '强制退出失败：{msg}',
+  // [session-dead 结构性修复 D3] 强制退出后 defer 队列回收进 Composer 草稿的显式提示
+  forceQuitQueueRecovered: '{count} 条排队消息已收回草稿',
+  // [session-dead 结构性修复 D6/D7 C1 方案一] 长 turn 观测面（Composer 上方常驻条）。
+  // 文案纪律（D7）：只陈述事实，禁止判断词（卡死/无响应/异常/建议中止）；操作项中性不预置推荐
+  turnProgress: {
+    turnElapsed: '本 turn 已 {duration}',
+    toolElapsed: '当前 {tool} 已 {duration}',
+    generatedChars: '已生成 {chars} 字符',
+    awaitingUser: '在等待你的输入',
+    abortTurn: '中止此 turn',
+    keepWaiting: '继续等待',
+    durationSec: '{sec} 秒',
+    durationMin: '{min} 分钟',
+    durationHourMin: '{h} 小时 {min} 分',
+  },
   forkGroup: {
     title: '本会话的分支',
     branchN: '分支 {n}',

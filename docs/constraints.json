@@ -2085,6 +2085,26 @@
           "agent": "review-business-logic"
         }
       ]
+    },
+    {
+      "id": "C-data-19",
+      "summary": "session 忙闲状态单写原语：runtime session 域的 isGenerating/isCompacting/isBashRunning 三布尔与 occupancy 投影的唯一写入口 = event-interpreter.ts 的 applySessionOccupancyTransition（封闭转移枚举 SessionOccupancyTransition + SESSION_OCCUPANCY_TRANSITIONS 表，转移表即文档；新增转移先扩枚举再登记派生行，原语内部经 SessionOccupancyStateStore 写视图完成派生）。三布尔为派生存储——IManagedSessionView 类型层 readonly 使绕开原语的直写在编译期红（TS2540）；occupancy 合并/全等去重/session.occupancy state-topic 广播由原语原子完成，禁止第二广播出口。执行方式 = review（本条 enforcement）+ 编译期 readonly（TS2540，主防线）；辅以 CR 阶段 grep 人工复核（`\\\\.isGenerating\\\\s*=|\\\\.isCompacting\\\\s*=|\\\\.isBashRunning\\\\s*=` 于 packages/runtime/src 生产代码应零命中；测试 fixture 的运行期置位/复位一律经原语，构造期对象字面量初始化除外）——grep 复核为人工步骤，暂无自动化挂钩。C-data-04 同族范式在 occupancy 域的实例（session-dead-structural-fixes D2）",
+      "scope": [
+        "packages/runtime/src/services/session/**"
+      ],
+      "authority": [
+        "design/session-occupancy-send-closure.md",
+        "../packages/runtime/src/services/session/event-interpreter.ts"
+      ],
+      "dimensions": [
+        "data-governance"
+      ],
+      "enforcement": [
+        {
+          "type": "review",
+          "agent": "review-data-governance"
+        }
+      ]
     }
   ]
 }
