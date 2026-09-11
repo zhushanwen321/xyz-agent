@@ -144,6 +144,7 @@ graph TD
 |---|---|---|---|
 | u1 | committed | 1 | 编排方核验（git status 领地比对 22+1 文件吻合 + A1/A2/A3 重跑 + typecheck/changeset status 重跑绿）→ u1 单 commit（A1-A12 全过；deviations 3 条：E4 追加 --no-frozen-lockfile（pnpm v10.27 对 importer 目录消失不敏感）/ E2① 行界 :72-82 以 JSON 合法为准 / guard v8 行日期 2026-09-11） |
 | u2 | committed | 1 | 仓库外操作无 commit。B1-B4 全过：pi uninstall exit 0（removed 409 packages，R1 顶层子命令实存无降级）；settings.json 零 unified 且 bte 行在（编排方复核 grep=0 / node_modules 无该包）；P-single 单通道探针（bash 正常执行 + bte force-background 指纹 + 新 session JSONL 零 unified-hooks entry）；P-npm deprecated 标记在（0.2.9）；历史不断链（672 个 session 命中，最旧 2026-06-21，session-reader 渲染链 14 个 brief 精确渲染 `[custom:unified-hooks:tool-error]`）。deviations 2 条见 §5 |
+| 阶段 5 双级验收 | pass | 1 | Gate A 全绿（8 项命令 exit 0：extensions 24 包 3987 cases 0 failed / subagent-core 2833 passed / constraints 幂等 / 3 守卫绿；零绕过信号）+ Gate B PASS（5 场景证据链逐行核验全 pass + 退役态三查抽验 pass：settings 零命中 / node_modules 无包 / npm deprecated 标记在）。报告留档 .review/stage5-gate-a-report.md、stage5-gate-b-report.md |
 
 ## 7 残留风险与变更历史
 
@@ -172,3 +173,4 @@ graph TD
 **变更历史**：
 
 - v1（2026-09-12）：初稿。依据设计 v3（双审 0 must-fix 收官）+ DAG 判据（`~/.agents/skills/dev-flow/references/dag-authoring.md`）起草；单元领地全部路径/行号/现状基数（19 命中、junit 38、config.json:21、lock:697）于起草时点实读核实。
+- v1.1（2026-09-12）：阶段 3 一致性审查修复（impl-plan:48 计数笔误 12→10、设计附录 A 行号锚点 :222→:226 漂移更新、§5 补 E8① 措辞偏差登记）+ 阶段 5 双级验收 pass 回填（Gate A 全绿 + Gate B 退役态三查抽验 pass，报告 .review/stage5-gate-{a,b}-report.md）。
