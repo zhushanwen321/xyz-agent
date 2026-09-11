@@ -2,17 +2,19 @@
 // bash 跨 session 可见性显式断言（R4 一刀语义钉住）+ 偏差 #4 探针（goal 守卫口径）。
 //
 // 设计权威源：chat-domain-v1x-liveness-governance.md §3.2 D4（翻档三连带——读侧
-// 过滤三口 + PENDING_LIFECYCLE 翻 process 档）+ 修订记录 v5-⑤（bash 跨 session
-// 可见性一刀钉成显式选择）+ 验收 A9② + impl-plan §5 偏差 #4（W4 交接：goal 守卫
-// 消费点未传基准，W6 实测裁决是否需 goal 侧两行传参）。
+// 过滤三口；分档常量已随 ext-simplify-12 删除，三类型 process 档成为无条件代码
+// 自然状态）+ 修订记录 v5-⑤（bash 跨 session 可见性一刀钉成显式选择）+ 验收 A9②
+// + impl-plan §5 偏差 #4（W4 交接：goal 守卫消费点未传基准，W6 实测裁决是否需
+// goal 侧两行传参）。
 //
 // 被测函数 = `extensions/universal/pending-notifications/src/state.ts` 的导出纯函数
 // （零依赖、不触 Pi 运行时——文件头注自证；经相对路径源码消费，subagent-core 无该
 // workspace 依赖声明，不加 phantom dep）。分工：
-//   - 过滤函数本体 / rebuild 投影的两口径行为：本套件钉语义（conformance 视角）；
+//   - 过滤函数本体 / pending_notifications 工具投影（entries 现算）的两口径行为：
+//     本套件钉语义（conformance 视角）；
 //   - 过滤①②③的**接线**（goal/subagent-workflow/pending-notifications 三消费点
 //     透传 currentSessionId）：W4 包内测试已承载（pi-pending-notifications
-//     __tests__ :523/:532、subagent-workflow pi-host.test :199-223）；
+//     __tests__、subagent-workflow pi-host.test）；
 //   - 后代判定口（读侧过滤②）的差集口径与①共用同一函数——本套件①的断言即其
 //     语义核心；接线透传由上述 W4 测试守护。
 //
@@ -27,13 +29,9 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 // 相对路径源码消费（7 层上溯到仓库根）：state.ts 是零依赖纯函数（不触 Pi 运行时），
 // 无需为探针/契约测试给 subagent-core 添加 workspace 依赖声明。
-import {
-  PENDING_LIFECYCLE,
-  PENDING_TTL_MS,
-  countActiveFromEntries,
-  createRegistry,
-  rebuildFromEntries,
-} from "../../../../../../../extensions/universal/pending-notifications/src/state.ts";
+// [ext-simplify-12] import 面收窄到 countActiveFromEntries——历史的 registry/
+// session 档机器已整体删除，entries 是唯一状态源（跨包语义耦合面收敛到该函数）。
+import { countActiveFromEntries } from "../../../../../../../extensions/universal/pending-notifications/src/state.ts";
 
 import { runReconcileSweep } from "../../../round-supervisor/index.ts";
 
@@ -52,15 +50,12 @@ function registerEntry(
       name: id,
       registeredAt: 1_000,
       sessionId,
-      // bash 真实落盘无 expiresAt 键（写入侧省略，D16）；subagent/workflow 翻
-      // process 档后同理——overrides 仅用于 TTL 对照面。
+      // 真实落盘无 expiresAt 键（写入侧无条件省略）；overrides.expiresAt 模拟历史
+      // session 文件遗留的带 TTL 键 entry——差集读取侧刻意不读该键（对照面）。
       ...(overrides.expiresAt !== undefined ? { expiresAt: overrides.expiresAt } : {}),
     },
   };
 }
-
-/** 语义对照面的基准时刻（远超旧 1h TTL——钉「无 TTL 清理」而非「窗口内未到期」假绿）。 */
-const NOW = 10 * PENDING_TTL_MS + 1;
 
 let tmpDirs: string[] = [];
 
@@ -69,23 +64,23 @@ afterEach(() => {
   tmpDirs = [];
 });
 
-describe("[W6/D4 翻档] PENDING_LIFECYCLE 三类型全 process 档（跨时长无 TTL 清理的判据锚）", () => {
-  it("subagent/workflow 翻 process 档（bash 原生 process 档）——翻档事实钉住", () => {
-    expect(PENDING_LIFECYCLE).toEqual({ subagent: "process", workflow: "process", bash: "process" });
-  });
-
-  it("翻档后跨时长（远超旧 1h TTL）无 TTL 清理：三类型 register 均不进 expiredToFlush", () => {
-    const registry = createRegistry();
+describe("[W6/D4 翻档余义] 三类型跨时长无 TTL 清理（entries 差集现算）", () => {
+  it("翻档后跨时长（远超旧 1h TTL）无 TTL 清理：三类型 register 均仍 active", () => {
+    // NOW = 10 * 3_600_000 + 1：语义对照面基准时刻（旧 1h TTL = 3_600_000ms 的
+    // 10 倍 + 1ms，远超旧 1h TTL）。entries 差集不接收时间参数——差集语义刻意
+    // 不校验时间，NOW 仅标注对照语义：若旧 session 档 TTL 机器仍在，NOW 时刻
+    // bg-1/wf-1 早已被过期清理。
+    const NOW = 10 * 3_600_000 + 1;
+    // 护栏：钉住对照面确实覆盖「超 TTL」域而非「窗口内未到期」假绿。
+    expect(NOW - 1_000).toBeGreaterThan(3_600_000);
     const entries = [
-      registerEntry("bg-1", "subagent", "sess-root", { expiresAt: 1_000 + 1 }), // 远过去
+      registerEntry("bg-1", "subagent", "sess-root", { expiresAt: 1_000 + 1 }), // 历史遗留 TTL 键（读取侧不读）
       registerEntry("wf-1", "workflow", "sess-root", { expiresAt: 1_000 + 1 }),
       registerEntry("bt-1", "bash", "sess-root"), // 真实落盘形态：无 expiresAt 键
     ];
-    const result = rebuildFromEntries(registry, entries, "sess-root", NOW);
     // 旧 session 档语义（1h TTL + 跨 session 补注销）曾把长任务/跨重启注册静默
-    // 清除 → 守卫失明（事故环 4 放大器）；翻档后三类型全部续存。
-    expect(result.expiredToFlush).toEqual([]);
-    expect(result.activeIds).toEqual(["bg-1", "wf-1", "bt-1"]);
+    // 清除 → 守卫失明（事故环 4 放大器）；三类型全 process 档后差集一律续存。
+    expect(countActiveFromEntries(entries).ids).toEqual(["bg-1", "wf-1", "bt-1"]);
   });
 });
 
@@ -130,20 +125,22 @@ describe("[W6/R4 一刀] bash 跨 session 可见性显式断言（钉成显式�
   });
 });
 
-describe("[W6/D4 读侧过滤③] registry rebuild 投影（pending_notifications 工具读侧）", () => {
-  it("跨 session 残留不入 registry、不补 unregister entry（跳过不补注销——落盘收口归 core sweep）", () => {
-    const registry = createRegistry();
+describe("[W6/D4 读侧过滤③] pending_notifications 工具投影（entries 现算）", () => {
+  it("跨 session 残留不进差集、不产生任何写回（跳过不补注销——落盘收口归 core sweep / bte 对账通道）", () => {
     const entries = [
       registerEntry("parent-bg", "subagent", "sess-parent"),
       registerEntry("own-bg", "subagent", "sess-child"),
     ];
-    const result = rebuildFromEntries(registry, entries, "sess-child", NOW);
-    // 工具投影面（count/list）不虚报继承残留（A9②：count/list 不含继承残留）。
-    expect(result.activeIds).toEqual(["own-bg"]);
-    expect(registry.operations.has("parent-bg")).toBe(false);
+    // 工具投影面（count/list）不虚报继承残留（A9②：count/list 不含继承残留）——
+    // 现算后与读侧过滤①共用同一 countActiveFromEntries 扫描，「落盘了什么」与
+    // 「查询到什么」构造性一致。
+    const result = countActiveFromEntries(entries, { currentSessionId: "sess-child" });
+    expect(result.ids).toEqual(["own-bg"]);
     // 「跳过不补注销」：残留 entry 留在 session 文件（读侧①③口各自兜住差集消费
-    // 方），禁止 rebuild 写侧补发——跨 session 写达域缺口由 core 对账 sweep 收口。
-    expect(result.expiredToFlush).toEqual([]);
+    // 方），countActiveFromEntries 只读不写——跨 session 写达域缺口由 core 对账
+    // sweep 收口（bte 对账同理直接 appendEntry）。只读性实证：输入数组长度不变，
+    // 无补发的 unregister entry。
+    expect(entries).toHaveLength(2);
   });
 });
 
