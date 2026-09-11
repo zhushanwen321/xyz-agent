@@ -12,6 +12,7 @@
  * 的落盘形状（session-manager.ts）。
  */
 import { appendFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { createHash } from "node:crypto";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -23,10 +24,14 @@ import {
 	readPersistedBaseline,
 	writePersistedBaseline,
 } from "../baseline.js";
-import { computePromptHash, createSystemPromptTrace } from "../trace.js";
+import { createSystemPromptTrace } from "../trace.js";
 import type { SystemPromptTrace, TraceContext, TraceEnv } from "../trace.js";
 import { isSystemPromptTraceEntryData, SYSTEM_PROMPT_CUSTOM_TYPE } from "../types.js";
 import type { SystemPromptTraceEntryData, SwitchStash } from "../types.js";
+
+// trace.ts 的 computePromptHash 已收敛为包内私有（无外部消费方）；测试本地同款实现计算期望值。
+const computePromptHash = (text: string): string =>
+	createHash("sha256").update(text, "utf-8").digest("hex");
 
 const P1 = "base prompt\nline-1";
 const P2 = "base prompt\nline-1\nline-2-added";

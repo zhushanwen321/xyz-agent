@@ -10,12 +10,18 @@
  *
  * 本文件用内存 fake env（文件系统路径的跨重启恢复归 A12）。
  */
+import { createHash } from "node:crypto";
+
 import { describe, expect, it } from "vitest";
 
-import { computePromptHash, createSystemPromptTrace } from "../trace.js";
+import { createSystemPromptTrace } from "../trace.js";
 import type { SystemPromptTrace, TraceContext, TraceEnv } from "../trace.js";
 import { isSystemPromptTraceEntryData, SYSTEM_PROMPT_CUSTOM_TYPE } from "../types.js";
 import type { SystemPromptTraceEntryData, SwitchStash } from "../types.js";
+
+// trace.ts 的 computePromptHash 已收敛为包内私有（无外部消费方）；测试本地同款实现计算期望值。
+const computePromptHash = (text: string): string =>
+	createHash("sha256").update(text, "utf-8").digest("hex");
 
 const P1 = "You are a coding agent.\nFollow AGENTS.md.";
 const P2 = "You are a coding agent.\nFollow AGENTS.md.\n[Available Models] glm-5.1 / ds-flash";
@@ -168,14 +174,6 @@ describe("A11 留痕时机与去重", () => {
 			hReload.logic.onTurnStart(hReload.ctx);
 			expect(hFork.entries[0]?.reason).toBe("resume");
 			expect(hReload.entries[0]?.reason).toBe("resume");
-		});
-
-		it("未知 reason（untyped extension 场景）按 startup → initial", () => {
-			const h = makeHarness(P1);
-			h.logic.onSessionStart("garbage-value", undefined, h.ctx);
-			h.logic.onTurnStart(h.ctx);
-			expect(h.entries).toHaveLength(1);
-			expect(h.entries[0]?.reason).toBe("initial");
 		});
 	});
 });

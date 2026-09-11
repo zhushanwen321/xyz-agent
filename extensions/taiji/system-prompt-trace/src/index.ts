@@ -1,14 +1,21 @@
 /**
  * pi extension wiring：把 ExtensionContext 适配进 trace.ts 状态机并订阅三个事件。
  *
- * 事件宽松类型（参考 rename-session TurnEndLikeEvent 先例）：pi 的 on() 重载对严格事件类型
- * 做参数逆变匹配，收窄字段的本地接口更稳；字段在逻辑侧运行时归一化（normalizeSessionStartReason）。
+ * 事件直接标注 SDK 具名类型（与同组 msg-id-mapper / system-prompt 的既有风格一致）：
+ * pi 的 on() 按事件名重载，handler 参数即 SDK 事件类型。SDK reason 枚举演进时
+ * mapReasonForFirstWrite 的 switch 在编译期报 non-exhaustive（负防腐），不再有运行时静默归一。
  */
 
 import { join } from "node:path";
 
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
-import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import type {
+	ExtensionAPI,
+	ExtensionContext,
+	SessionBeforeSwitchEvent,
+	SessionStartEvent,
+	TurnStartEvent,
+} from "@earendil-works/pi-coding-agent";
 
 import { setPiHandle } from "@zhushanwen/pi-extension-logger";
 
@@ -21,24 +28,6 @@ import {
 import { createSystemPromptTrace } from "./trace.js";
 import type { TraceContext, TraceEnv } from "./trace.js";
 import type { SwitchStash } from "./types.js";
-
-interface SessionStartLikeEvent {
-	type: "session_start";
-	reason: string;
-	previousSessionFile?: string;
-}
-
-interface SessionBeforeSwitchLikeEvent {
-	type: "session_before_switch";
-	reason: string;
-	targetSessionFile?: string;
-}
-
-interface TurnStartLikeEvent {
-	type: "turn_start";
-	turnIndex: number;
-	timestamp: number;
-}
 
 // 模块级单例：session_before_switch（旧 runtime）→ session_start（新 runtime）之间传递
 // targetSessionFile 直读基线。switch 会 teardown 并重建 extension runtime，闭包状态不跨
@@ -72,7 +61,7 @@ export default function systemPromptTraceExtension(pi: ExtensionAPI): void {
 
 	const logic = createSystemPromptTrace(env, switchStash);
 
-	pi.on("session_start", async (event: SessionStartLikeEvent, ctx: ExtensionContext) => {
+	pi.on("session_start", async (event: SessionStartEvent, ctx: ExtensionContext) => {
 		logic.onSessionStart(
 			event.reason,
 			typeof event.previousSessionFile === "string" ? event.previousSessionFile : undefined,
@@ -80,14 +69,14 @@ export default function systemPromptTraceExtension(pi: ExtensionAPI): void {
 		);
 	});
 
-	pi.on("session_before_switch", async (event: SessionBeforeSwitchLikeEvent) => {
+	pi.on("session_before_switch", async (event: SessionBeforeSwitchEvent) => {
 		logic.onSessionBeforeSwitch(
 			event.reason,
 			typeof event.targetSessionFile === "string" ? event.targetSessionFile : undefined,
 		);
 	});
 
-	pi.on("turn_start", async (_event: TurnStartLikeEvent, ctx: ExtensionContext) => {
+	pi.on("turn_start", async (_event: TurnStartEvent, ctx: ExtensionContext) => {
 		logic.onTurnStart(toTraceContext(pi, ctx));
 	});
 }

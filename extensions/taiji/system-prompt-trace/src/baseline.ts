@@ -42,7 +42,7 @@ interface PersistedBaselineFile {
  * pi 落盘形状：{"type":"custom","customType":"xyz:system-prompt","data":{...},...}
  * （session-manager.ts:1122 appendCustomEntry）。
  */
-export function parseTraceEntryData(line: string): { hash: string; version: number; fullText: string } | null {
+function parseTraceEntryData(line: string): { hash: string; version: number; fullText: string } | null {
 	let parsed: unknown;
 	try {
 		parsed = JSON.parse(line);

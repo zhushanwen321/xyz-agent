@@ -11,6 +11,7 @@
  * - switchStash 是模块级单例：beforeEach vi.resetModules 隔离用例；同 it 内二次 dynamic import
  *   模拟「switch 重建 extension runtime + 同进程模块缓存延续」的真实链路
  */
+import { createHash } from "node:crypto";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -20,9 +21,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
 import { BASELINE_FILENAME, readPersistedBaseline } from "../baseline.js";
-import { computePromptHash } from "../trace.js";
 import { isSystemPromptTraceEntryData, SYSTEM_PROMPT_CUSTOM_TYPE } from "../types.js";
 import type { SystemPromptTraceEntryData } from "../types.js";
+
+// trace.ts 的 computePromptHash 已收敛为包内私有（无外部消费方）；测试本地同款实现计算期望值。
+const computePromptHash = (text: string): string =>
+	createHash("sha256").update(text, "utf-8").digest("hex");
 
 const P1 = "wiring prompt\nline-1";
 const P2 = "wiring prompt\nline-1\nline-2-added";

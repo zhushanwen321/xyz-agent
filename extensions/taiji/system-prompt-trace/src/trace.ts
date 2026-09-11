@@ -12,18 +12,15 @@
 
 import { createHash } from "node:crypto";
 
+import type { SessionStartEvent } from "@earendil-works/pi-coding-agent";
+
 import { getLogger } from "@zhushanwen/pi-extension-logger";
 
 const logger = getLogger("pi-system-prompt-trace");
 import { summarizePromptDiff } from "./diff.js";
-import {
-	mapReasonForFirstWrite,
-	normalizeSessionStartReason,
-	SYSTEM_PROMPT_CUSTOM_TYPE,
-} from "./types.js";
+import { mapReasonForFirstWrite, SYSTEM_PROMPT_CUSTOM_TYPE } from "./types.js";
 import type {
 	PromptBaseline,
-	SessionStartReason,
 	SwitchStash,
 	SystemPromptTraceEntryData,
 	TraceReason,
@@ -44,7 +41,11 @@ export interface TraceEnv {
 }
 
 export interface SystemPromptTrace {
-	onSessionStart(reason: string, previousSessionFile: string | undefined, ctx: TraceContext): void;
+	onSessionStart(
+		reason: SessionStartEvent["reason"],
+		previousSessionFile: string | undefined,
+		ctx: TraceContext,
+	): void;
 	onSessionBeforeSwitch(reason: string, targetSessionFile: string | undefined): void;
 	onTurnStart(ctx: TraceContext): void;
 }
@@ -56,12 +57,12 @@ interface CurrentPrompt {
 	fullText: string;
 }
 
-export function computePromptHash(text: string): string {
+function computePromptHash(text: string): string {
 	return createHash("sha256").update(text, "utf-8").digest("hex");
 }
 
 export function createSystemPromptTrace(env: TraceEnv, stash: SwitchStash): SystemPromptTrace {
-	let sessionStartReason: SessionStartReason | null = null;
+	let sessionStartReason: SessionStartEvent["reason"] | null = null;
 	let baseline: PromptBaseline | null = null;
 	let current: CurrentPrompt | null = null;
 
@@ -90,7 +91,7 @@ export function createSystemPromptTrace(env: TraceEnv, stash: SwitchStash): Syst
 
 	return {
 		onSessionStart(reason, previousSessionFile, ctx) {
-			sessionStartReason = normalizeSessionStartReason(reason);
+			sessionStartReason = reason;
 			current = null;
 			// 基线解析（设计 D2 跨重启四路径，优先级从高到低）：
 			// 1. session_before_switch 直读目标文件（进程内 resume；stash 为模块级单例，跨 runtime 传递）

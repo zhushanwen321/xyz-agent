@@ -5,11 +5,10 @@
  * 数据形状见 SystemPromptTraceEntryData。
  */
 
+import type { SessionStartEvent } from "@earendil-works/pi-coding-agent";
+
 /** 留痕 entry 的 customType（xyz: 前缀 = xyz-agent 自定义命名空间）。 */
 export const SYSTEM_PROMPT_CUSTOM_TYPE = "xyz:system-prompt";
-
-/** pi SessionStartEvent.reason 原生 5 值（pi 源码 core/extensions/types.ts:565）。 */
-export type SessionStartReason = "startup" | "reload" | "new" | "resume" | "fork";
 
 /** 落盘 reason 枚举（initial/resume/change，对齐 DSH request/header 语义，设计 D2）。 */
 export type TraceReason = "initial" | "resume" | "change";
@@ -72,19 +71,6 @@ export function isSystemPromptTraceEntryData(value: unknown): value is SystemPro
 	);
 }
 
-const SESSION_START_REASONS: readonly SessionStartReason[] = [
-	"startup",
-	"reload",
-	"new",
-	"resume",
-	"fork",
-];
-
-/** 事件侧 reason 归一化：untyped extension 传入非 5 值时按 startup 处理（最保守：无基线则 initial）。 */
-export function normalizeSessionStartReason(raw: string): SessionStartReason {
-	return SESSION_START_REASONS.find((r) => r === raw) ?? "startup";
-}
-
 /**
  * 无基线时 SessionStartEvent.reason → 落盘 reason 的映射（A11）。
  *
@@ -97,7 +83,7 @@ export function normalizeSessionStartReason(raw: string): SessionStartReason {
  *
  * 注意：只要恢复了任一 hash 基线，首个 turn 一律写 resume（见 trace.ts），不走本映射。
  */
-export function mapReasonForFirstWrite(reason: SessionStartReason): TraceReason {
+export function mapReasonForFirstWrite(reason: SessionStartEvent["reason"]): TraceReason {
 	switch (reason) {
 		case "startup":
 		case "new":
