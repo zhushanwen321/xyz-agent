@@ -95,7 +95,7 @@ graph TD
 | U5 | committed | 1 | commit 465bb7d0d：26 文件 +396/-2996；grep 门三包源码+测试双方向零命中；sdk 133 / pi 303 / zcode 243+3 skipped 全绿 + 三 typecheck 0（主 agent 独立重跑逐字相符）；处置表前 8 行清零；7 偏差登记 §5；UF-1 并行在途改动共存未触碰 |
 | U6 | pending | 0 | — |
 | U7 | pending | 0 | — |
-| UF-1 | in-progress | 1 | dev 在途（工作区 4 文件：subagent-service/state-marker/record-store/record-binding.test.ts 新增） |
+| UF-1 | in-progress | 2 | 首任 dev 完成主体实现（工作区 4 文件 +249/-19：state-marker 载体 + record-store 消费 + service 写点 + 13 用例 10 绿）后因账户限流 1302 阵亡；残留 3 红用例（collectRecords 重建分支 / ⑤写失败不阻塞 / ③跨重启全链）+ typecheck 仅剩已登记的 9 处 U5→U6 过渡态 TS2305（非本单元面）；接替 dev 已带失败明细证据包派出 |
 
 ## 7 残留风险与变更历史
 
@@ -109,3 +109,4 @@ graph TD
   - 2026-09-11 **U2 流转 committed（51e971a82）**：接替 dev 派出 200s 即召回（原 ID 截断致 TaskOutput 查无——完整 ID 下前任 dev 仍在跑并正常送达完整汇报），按前任汇报硬核验（文件集合 ⊆ 领地逐一对上、全量独立重跑 2886 passed 与汇报逐字相符、tsc 0）后流转。教训入账：后台 agent 句柄查询必须用完整 agentId；「通知未到 ≠ agent 已死」。就绪集重算：U4 就绪（U2+U3 双 committed），U5 仍锁于 U4。
   - 2026-09-11 **U4 真机基线轮完成**：隔离实例（/tmp/xyz-iso-data，PORT_OFFSET=200，vite 1421，CDP 9242，真实 LLM MiMo-V2.5-Pro，staged 引擎 bundle-extensions 重建含 U1-U3）。逐场景签收见 §2 U4 行：S1/S2/S3/S4/S7/S8 ✅（**sess_8590cc5a 遗留热路径零通知确认修复**——快续聊轮通知到达）；S6 ❌ 触发 **UF-1**（跨重启续聊绑定断裂，engine-CLI 时代预存缺口：PI_SUBAGENT_SELF_RECORD_ID 无注入点 → 身份条目永不落盘 → coldLookupForAction 无映射可查；展示层 3 条 vs message 链 not-found 双注册表不同源实测钉位）。新增 UF-1 单元（§2/§3 DAG/§6），与 U5 并行、先于 U6，Gate B 复验 S6 三变体。冷启量化入表。气泡观察项未复现、Gate B 续观；两项低优观察（turns/tok 计数、exit code 128 vs 143）随 UF-1/U7 批带走。
   - 2026-09-11 **U5 流转 committed（465bb7d0d）**：删路①引擎侧完成——SDK 通道族 9→8/方法 10→9、pi chat-session.ts 删、zcode interact 桩删、处置表前 8 行清零，grep 门三包零命中；三包测试/typecheck 独立重跑全绿。U5→U6 过渡态（core 6 处 TS2305 type-only import）登记 §5，U6 收敛。UF-1 与 U5 同批派发（领地不相交），U5 硬核验时文件集严格二分，UF-1 在途 4 文件未触碰。
+  - 2026-09-11 **UF-1 首任 dev 限流阵亡 → 接替派出**：主体实现已完成（+249/-19，13 用例 10 绿），账户限流 1302 中断于收尾段；残留 3 红用例钉位（collectRecords 重建分支消费缺口 / 写失败不阻塞 warn 路径 / service 跨重启集成链）。按接替程序补派（失败明细 + TS2305 过渡态禁触清单随 task 附上）。U6 仍锁于 UF-1（subagent-service.ts 串行）。
