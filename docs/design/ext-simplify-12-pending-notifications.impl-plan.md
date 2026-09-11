@@ -23,7 +23,7 @@
 **目标（设计 §2 逐字，5 条）**：
 
 1. **entries 单一权威源**：本包内不再存在第二份 pending 状态——工具投影与写入侧判断与 goal/bte/subagent-workflow 读同一份 entries 差集；「落盘了什么」与「查询到什么」在结构上不可分歧。
-2. **主链路零回归**：注册/注销落盘契约（entry 形态）、`countActiveFromEntries` 签名与行为、`pending_notifications` 工具 count/list 输出语义，全部与现状一致；写侧去重语义与现状**语义等价**，附带两条显式登记的边缘差异（fork 残留跨 session 注销口径、id 复用去重窗口——均被 per-session EventBus / id 全局唯一前提约束为理论窗口，见 §6.1 边缘差异登记）。
+2. **主链路零回归**：注册/注销落盘契约（entry 形态）、`countActiveFromEntries` 签名与行为、`pending_notifications` 工具 count/list 输出语义，全部与现状一致；写侧去重语义与现状**语义等价**，附带三条显式登记的边缘差异（fork 残留跨 session 注销口径、fork 残留同 id 重复注册口径、id 复用去重窗口——均被 per-session EventBus / id 全局唯一前提约束为理论窗口，见 §6.1 边缘差异登记）。
 3. **删 session 档死机器**：PENDING_TTL_MS、isExpiredEntry、expiredToFlush、TTL 回填、session_start 补 flush 循环、session_shutdown handler 及其测试用例整体移除；分档常量 `PENDING_LIFECYCLE` 一并删除（D2 裁决）。
 4. **导出面收敛**：npm 具名导出从 14 个收敛到 5 个（default 出口不计；唯一消费函数 + 其签名所需类型）。
 5. **SSOT 同步**：C-proc-13 ③ 的读侧消费枚举随 rebuild 删除同批回写（C-proc-10 纪律）。

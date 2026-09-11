@@ -13,7 +13,8 @@
  * - index.ts（本文件）: 工厂入口（EventBus 写侧监听 + session 基准 + 查询 tool）
  *
  * 事件契约（emit 端在 packages/subagent-core：notify-host.ts、
- * orchestration/lifecycle.ts 与 worker-message-pump.ts）：
+ * orchestration/lifecycle.ts、worker-message-pump.ts 与
+ * round-supervisor/reconcile-sweep.ts（崩溃恢复 sweep 补注销））：
  * - emit("pending:register", { id, type, name })
  * - emit("pending:unregister", { id, reason })
  *
