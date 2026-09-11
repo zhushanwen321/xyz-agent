@@ -92,7 +92,7 @@ const INBOUND_GUARD_ATTRIBUTION_WINDOW = 4096
 const IN_FLIGHT_SUBSCRIBE_TTL_MS = 90_000
 
 // ── 状态 ────────────────────────────────────────────────────
-// taste:allow-no-data-owner W24-EX-B（模块级单例 UI 瞬态，12 类未覆盖存量，登记草稿）：WS 连接状态单例 ref（UI 连接指示的数据源，12 类未覆盖）
+// taste:allow-no-data-owner W24-EX-B（模块级单例 UI 瞬态，12 类未覆盖存量，已登记）：WS 连接状态单例 ref（UI 连接指示的数据源，12 类未覆盖）
 const state = ref<ConnectionState>('disconnected')
 let ws: WebSocketLike | null = null
 let heartbeatTimer: ReturnType<typeof setInterval> | null = null
@@ -113,7 +113,7 @@ let currentToken: string | null = null
  */
 let connectionAuthed = false
 /** pre-auth 窗口入队的出站消息（FIFO；auth.result ok 后按序 flush） */
-// taste:allow-no-data-owner W24-EX-B（模块级单例传输瞬态，登记草稿）：pre-auth 发送队列（容量上限 256，非 GUI 数据）
+// taste:allow-no-data-owner W24-EX-B（模块级单例传输瞬态，已登记）：pre-auth 发送队列（容量上限 256，非 GUI 数据）
 const preAuthQueue: ClientMessage[] = []
 
 /** 队列丢弃原因（onQueueDrop 回调第二参，消费方按需区分日志/错误文案） */
@@ -160,10 +160,10 @@ export function onInboundFrameDropped(cb: (info: InboundFrameDroppedInfo) => voi
 }
 
 /** per-session 连续丢帧计数（终止阀判定依据；正常帧到达清零——「连续」语义）。 */
-// taste:allow-no-data-owner W24-EX-C（非 GUI 数据技术结构，登记草稿）：入站守卫 per-session 丢帧计数簿记（防死循环阀门依据）
+// taste:allow-no-data-owner W24-EX-C（非 GUI 数据技术结构，已登记）：入站守卫 per-session 丢帧计数簿记（防死循环阀门依据；登记见 docs/architecture/data-source-registry.md §4 ⑧）
 const inboundDropStreakBySession = new Map<string, number>()
 /** 终止阀生效中的 session（自动重订阅被 send 层拦截；retryInboundDroppedSession 解除）。 */
-// taste:allow-no-data-owner W24-EX-C（非 GUI 数据技术结构，登记草稿）：终止阀生效 session 集合（自动重订阅暂停的判定依据）
+// taste:allow-no-data-owner W24-EX-C（非 GUI 数据技术结构，已登记）：终止阀生效 session 集合（自动重订阅暂停的判定依据；登记见 docs/architecture/data-source-registry.md §4 ⑧）
 const inboundValveTrippedSessions = new Set<string>()
 /**
  * in-flight subscribe 簿记（requestId → 目标 session）：超界帧归因锚。
@@ -171,7 +171,7 @@ const inboundValveTrippedSessions = new Set<string>()
  * subscribe reply 超界是 D8 死循环主形态（拉取响应同样超界）——reply 不可 parse 拿不到 id，
  * 反向经簿记把丢帧归因回目标 session。
  */
-// taste:allow-no-data-owner W24-EX-C（非 GUI 数据技术结构，登记草稿）：in-flight subscribe 归因簿记（超界 reply 的反查锚）
+// taste:allow-no-data-owner W24-EX-C（非 GUI 数据技术结构，已登记）：in-flight subscribe 归因簿记（超界 reply 的反查锚；登记见 docs/architecture/data-source-registry.md §4 ⑧）
 const inFlightSubscribes = new Map<string, { sessionId: string; at: number }>()
 
 /**

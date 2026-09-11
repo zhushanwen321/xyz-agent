@@ -47,6 +47,9 @@ import { getCrashJournal } from '../../infra/crash-journal.js'
 // D3 checkpoint（crash-forensics §3.3 D3，u4）：活跃 session 清单持续交接——attach /
 // respawn（经 registerSession 汇聚）/ detach / reclaim 四类生命周期事件处增量维护。
 import { getRuntimeCheckpointStore } from './runtime-checkpoint.js'
+// D5 在途镜像（crash-forensics §3.3 D5，u7b API + 偏差 #20 生命周期接线）：attach 预置 0 /
+// detach、reclaim 摘除——挂点与 checkpoint 同点位（同一收敛面，无双写）。
+import { inflightMirror } from './inflight-mirror.js'
 // main（file-lock-unification reaper 下沉，D2 触发面 A）：removeSessionEntry 汇聚点收殓
 // 孤儿后台任务——重构仅迁域，触发面挂点语义不变，import 随调用点留 Facade。
 import { reapSessionBackgroundTasks } from './background-task-reaper.js'
@@ -367,6 +370,21 @@ export class SessionService implements ISessionService, ILifecycleSessionOps, ID
         // best-effort 降级：checkpoint 是崩溃恢复的旁路设施，写入异常绝不外抛——
         // 外抛会打断 registerSession 主链，把旁路故障放大成创建/恢复失败。
         console.error(`[session-service] checkpoint attach update failed (sessionId=${sessionId}):`, e)
+      }
+    })
+    // D5 mirror 预置 0（crash-forensics §3.3 D5，偏差 #20 接线）：五 spawn 形态（新 session /
+    // respawn / reattach / lazy restore / fork）的条目建立腿——与上一挂点同一 registerSession
+    // 收敛面（fork 产生新 sessionId，同点覆盖），一挂点覆盖全部附着形态。presetZero = 新
+    // reporting epoch（inFlight=0 + 清 hasEverReported，不触碰 injected——spawn 装配顺序
+    // 无关，语义见 inflight-mirror.ts 文件头）。独立第二订阅而非并入 checkpoint 订阅体：
+    // 两个旁路设施各自 best-effort 异常隔离，故障日志可归因、互不放大。
+    this.lifecycle.onSessionRegistered((sessionId) => {
+      try {
+        inflightMirror.presetZero(sessionId)
+      } catch (e: unknown) {
+        // best-effort 降级：mirror 是 errs 判别的旁路设施，预置异常绝不外抛——
+        // 外抛会打断 registerSession 主链，把旁路故障放大成创建/恢复失败。
+        console.error(`[session-service] mirror preset failed (sessionId=${sessionId}):`, e)
       }
     })
     this.dispatcher = new MessageDispatcher(this, this.pm, this.workspaceService, messageBus)
@@ -748,6 +766,15 @@ export class SessionService implements ISessionService, ILifecycleSessionOps, ID
         // best-effort 降级：摘除条目失败不影响回收主流程（回收已完成的事实不变）。
         console.error(`[session-service] checkpoint reclaim removal failed (sessionId=${sessionId}):`, e)
       }
+      // D5 mirror（偏差 #20 接线）：回收 ≠ 销毁（刻意不经 removeSessionEntry 汇聚点）但该
+      // session 已摘出活跃清单，mirror 条目与 checkpoint 同语义同步摘除；恢复后经预置 0
+      // 重建（新 reporting epoch）。挂 ok 分支：未回收路径零改动，防误摘（与 checkpoint 同型）。
+      try {
+        inflightMirror.dropSession(sessionId)
+      } catch (e: unknown) {
+        // best-effort 降级：摘除条目失败不影响回收主流程（回收已完成的事实不变）。
+        console.error(`[session-service] mirror reclaim removal failed (sessionId=${sessionId}):`, e)
+      }
     }
     return reclaimed
   }
@@ -1110,6 +1137,15 @@ export class SessionService implements ISessionService, ILifecycleSessionOps, ID
     } catch (e: unknown) {
       // best-effort 降级：旁路设施故障不得打断销毁收敛链（销毁已完成的事实不变）。
       console.error(`[session-service] checkpoint detach removal failed (sessionId=${sessionId}):`, e)
+    }
+    // D5 mirror（偏差 #20 接线）：detach 同点位摘除条目——「该 session 已不存在」的精确
+    // 时点与 checkpoint 同语义（主动删 / 进程退出 / forceQuit / restore 清场全覆盖）。
+    // pi 崩死路径先摘、respawn 成功经 onSessionRegistered 预置重建（新 reporting epoch）。
+    try {
+      inflightMirror.dropSession(sessionId)
+    } catch (e: unknown) {
+      // best-effort 降级：旁路设施故障不得打断销毁收敛链（销毁已完成的事实不变）。
+      console.error(`[session-service] mirror detach removal failed (sessionId=${sessionId}):`, e)
     }
     // S3-W2：删除前缓存 summary（插件 didDestroy 通知需要 SessionInfo；删除后 Map 查不到）。
     // Map 无条目（防御路径）时构造最小形状——id 之外的字段无从得知，宁发少知不发错。
