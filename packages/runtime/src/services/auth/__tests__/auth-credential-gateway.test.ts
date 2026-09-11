@@ -109,7 +109,7 @@ describe('A1-4 验收 3：saveCredential 写通道（唯一写入口）', () => 
 })
 
 describe('A1-4 验收 3（全链路）：setProvider catalog apiKey → AuthService → auth.json 落盘', () => {
-  it('catalog provider 保存 apiKey 经 credentialWriter（AuthService）写 auth.json，models.json 不落 apiKey', async () => {
+  it('catalog provider 保存 apiKey 经 credentialWriter（AuthService）写 auth.json，models.json 不物化条目', async () => {
     // models.json 指向临时目录（隔离本机真实配置）；anthropic 是 builtin catalog provider
     setModelsPath(join(dir, 'models.json'))
     writeFileSync(join(dir, 'models.json'), JSON.stringify({ providers: {} }), 'utf-8')
@@ -122,9 +122,8 @@ describe('A1-4 验收 3（全链路）：setProvider catalog apiKey → AuthServ
 
     // 物理读 auth.json：凭据经 AuthService 唯一写入口落盘
     expect(readAuthRaw()['anthropic']).toEqual({ type: 'api_key', key: 'sk-secret' })
-    // models.json 条目不含 apiKey（catalog 凭据不双写）
+    // models.json 不物化空壳条目（防线③：catalog apiKey 只归 auth.json；无既有条目 → 不落盘）
     const models = JSON.parse(readFileSync(join(dir, 'models.json'), 'utf-8')).providers as Record<string, Record<string, unknown>>
-    expect(models.anthropic).toBeDefined()
-    expect('apiKey' in models.anthropic).toBe(false)
+    expect(models.anthropic).toBeUndefined()
   })
 })

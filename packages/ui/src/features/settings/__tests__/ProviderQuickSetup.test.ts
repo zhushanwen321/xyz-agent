@@ -119,6 +119,61 @@ describe('内置信息块（TC2）', () => {
   })
 })
 
+/**
+ * M4：模板卡协议/端点展示来自模型集聚合（设计 catalog-provider-field-authority §3.3 D5）。
+ * 模板 provider 级 api/baseUrl 是构建期 artifact（取 models[0].api 冒充 provider 协议、
+ * `provider.baseUrl ?? ''`）——直接展示会把 artifact 泄漏到 settings 第一步入口。
+ */
+describe('模板卡协议/端点聚合展示（M4/D5）', () => {
+  it('单协议 + 单端点：展示该协议与该端点（不使用 provider 级 artifact 字段）', async () => {
+    const w = await mountSetup({
+      template: tpl({
+        // artifact 字段与模型集不一致（历史快照即如此）——展示必须以模型集为准
+        api: 'anthropic-messages',
+        baseUrl: 'https://artifact.example',
+        models: [
+          { id: 'm1', name: 'M1', api: 'openai-completions', baseUrl: 'https://api.deepseek.com', reasoning: true, input: ['text'], contextWindow: 200_000 },
+          { id: 'm2', name: 'M2', api: 'openai-completions', baseUrl: 'https://api.deepseek.com', reasoning: true, input: ['text'], contextWindow: 200_000 },
+        ],
+      }),
+    })
+
+    expect(query('[data-testid="builtin-api"]')!.textContent).toContain('openai-completions')
+    expect(query('[data-testid="builtin-baseurl"]')!.textContent).toContain('https://api.deepseek.com')
+    // artifact 不再展示
+    expect(query('[data-testid="builtin-api"]')!.textContent).not.toContain('anthropic-messages')
+    expect(query('[data-testid="builtin-baseurl"]')!.textContent).not.toContain('https://artifact.example')
+    w.unmount()
+  })
+
+  it('混合协议/混合端点：展示「按模型分发」而非第一个模型的 artifact', async () => {
+    const w = await mountSetup({
+      template: tpl({
+        api: 'anthropic-messages',
+        baseUrl: 'https://artifact.example',
+        models: [
+          { id: 'm1', name: 'M1', api: 'anthropic-messages', baseUrl: 'https://opencode.ai/zen/go', reasoning: true, input: ['text'], contextWindow: 200_000 },
+          { id: 'm2', name: 'M2', api: 'openai-completions', baseUrl: 'https://opencode.ai/zen/go/v1', reasoning: true, input: ['text'], contextWindow: 200_000 },
+        ],
+      }),
+    })
+
+    expect(query('[data-testid="builtin-api"]')!.textContent).toContain('settings.providerEdit.apiMixed')
+    expect(query('[data-testid="builtin-baseurl"]')!.textContent).toContain('settings.providerEdit.apiMixed')
+    w.unmount()
+  })
+
+  it('模型集无协议/无端点信息：协议显示空值占位、端点显示「内置目录未提供」', async () => {
+    const w = await mountSetup({
+      template: tpl({ models: [{ id: 'm1', name: 'M1', reasoning: false, input: ['text'], contextWindow: 8192 }] }),
+    })
+
+    expect(query('[data-testid="builtin-api"]')!.textContent).toContain('settings.provider.builtinTemplate.emptyValue')
+    expect(query('[data-testid="builtin-baseurl"]')!.textContent).toContain('settings.providerEdit.endpointNotProvided')
+    w.unmount()
+  })
+})
+
 describe('env 检测态（TC3）', () => {
   it('envCheck true → ✓ 检测到文案；false → ⚠ 未设置文案', async () => {
     const w = await mountSetup({ envCheck: { TEST_API_KEY: true } })
@@ -228,6 +283,26 @@ describe('onSave authMethod（TC6，I6 契约）', () => {
     const w = await mountSetup({ template: tpl({ authMode: 'oauth', envVars: [] }), oauthAuthorized: false })
     const saveBtn = query('[data-testid="provider-quick-setup-save"]') as HTMLButtonElement
     expect(saveBtn.disabled).toBe(true)
+    w.unmount()
+  })
+
+  it('防线⑥：模板 api/baseUrl 不落 payload（快照 artifact 不写 override；api 是从未生效的死键）', async () => {
+    const w = await mountSetup({
+      template: tpl({ api: 'openai-completions', baseUrl: 'https://api.moonshot.cn/v1' }),
+    })
+    ;(query('[data-testid="auth-option-plaintext"]')! as HTMLElement).click()
+    await flushPromises()
+    const input = query('[data-testid="credential-apikey-input"]') as HTMLInputElement
+    input.value = 'sk-abc'
+    input.dispatchEvent(new Event('input'))
+    await flushPromises()
+    ;(query('[data-testid="provider-quick-setup-save"]')! as HTMLElement).click()
+    const save = w.emitted('save')![0][0] as { data: Record<string, unknown> }
+    expect('baseUrl' in save.data).toBe(false)
+    expect('api' in save.data).toBe(false)
+    // catalog 模板导入只写凭据相关字段（name 仍是 provider 标识，保留）
+    expect(save.data.authMethod).toBe('api_key')
+    expect(save.data.apiKey).toBe('sk-abc')
     w.unmount()
   })
 })

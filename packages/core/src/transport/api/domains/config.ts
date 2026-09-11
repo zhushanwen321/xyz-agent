@@ -146,6 +146,8 @@ export interface DiscoveredModelsResult {
   models: Array<{ id: string; name?: string; contextWindow?: number }>
   success: boolean
   error?: string
+  /** test 模式填（形状与 shared/protocol.ts 的 config.discoveredModels.results 逐字一致） */
+  results?: Array<{ api: string; modelId: string; ok: boolean; error?: string }>
 }
 
 export function discoverModels(req: {
@@ -153,6 +155,8 @@ export function discoverModels(req: {
   apiKey?: string
   providerType?: string
   providerId?: string
+  /** 缺省 'discover'（runtime 侧缺省语义；'test' 只需 providerId，端点回落归 runtime） */
+  mode?: 'test' | 'discover'
 }): Promise<DiscoveredModelsResult> {
   return command('config.discoverModels', req, RPC_BACKSTOP_TIMEOUT_MS)
 }

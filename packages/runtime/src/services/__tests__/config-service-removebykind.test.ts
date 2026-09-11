@@ -16,6 +16,7 @@
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { ConfigService } from '../config-service.js'
+import { ProviderCredentialResolver } from '../auth/provider-credential-resolver.js'
 import type { IConfigStore, ConfigModelsConfig } from '../ports/config.js'
 import type { AuthStorage } from '../auth/auth-storage.js'
 
@@ -69,7 +70,14 @@ function makeAuth(): FullAuthPick {
 function makeService(opts: StoreOpts = {}): { svc: ConfigService; store: ReturnType<typeof makeStore>; auth: FullAuthPick } {
   const store = makeStore(opts)
   const auth = makeAuth()
-  const svc = new ConfigService('/tmp/project', store, auth)
+  // M2fg 恒注入形态：凭据判定（含 M5-03 重选凭据优先）经 resolver 批量 sync 版，
+  // 同源于上方 store/auth mock
+  const resolver = new ProviderCredentialResolver({
+    authService: { getCredential: async () => undefined },
+    authStorage: auth,
+    configStore: store,
+  })
+  const svc = new ConfigService('/tmp/project', store, auth, undefined, undefined, resolver)
   return { svc, store, auth }
 }
 
@@ -141,7 +149,14 @@ describe('TC2: removeProviderByKind(catalog) 清 auth.json 凭据 + override + e
       hasOAuthSync: vi.fn(() => false),
     } as unknown as FullAuthPick
     const store = makeStore({})
-    const svc = new ConfigService('/tmp/project', store, auth)
+    // M2fg 恒注入形态：凭据判定经 resolver 批量 sync 版（同源于本用例 auth mock——
+    // remove 后 listCredentialIds 返回的集合随之变化，resolver 读同一 mock）
+    const resolver = new ProviderCredentialResolver({
+      authService: { getCredential: async () => undefined },
+      authStorage: auth,
+      configStore: store,
+    })
+    const svc = new ConfigService('/tmp/project', store, auth, undefined, undefined, resolver)
 
     // 删除前：openai 凭据在 auth.json → listProviders catalog 聚合显示
     expect(svc.listProviders().some(p => p.id === 'openai')).toBe(true)

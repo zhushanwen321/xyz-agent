@@ -424,7 +424,9 @@ describe('quota 域', () => {
 
   it('configure 透传全量字段并解包 ok/error', async () => {
     mockCommand.mockResolvedValueOnce({ ok: true })
-    await expect(quota.configure('p', true, 'ck', 'fetcher', 'key', 'ws1')).resolves.toEqual({ ok: true, error: undefined })
+    await expect(
+      quota.configure({ providerId: 'p', enabled: true, cookie: 'ck', fetcher: 'fetcher', apiKey: 'key', workspace: 'ws1' }),
+    ).resolves.toEqual({ ok: true, error: undefined })
     expect(mockCommand.mock.calls[0][1]).toEqual({ providerId: 'p', enabled: true, cookie: 'ck', fetcher: 'fetcher', apiKey: 'key', workspace: 'ws1' })
   })
 })

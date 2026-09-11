@@ -53,6 +53,8 @@ function mockCtx() {
     broadcastSkillDirs: vi.fn(),
     broadcastAgentDirs: vi.fn(),
     broadcastExtensionDirs: vi.fn(),
+    // D-21 端口化：ctx connectionTester 构造必需——本文件用例不走 mode=test，vi.fn 替身即可
+    connectionTester: { supports: vi.fn(), test: vi.fn() },
   }
   return { ctx: ctx as unknown as SettingsHandlerContext, replies, configService }
 }

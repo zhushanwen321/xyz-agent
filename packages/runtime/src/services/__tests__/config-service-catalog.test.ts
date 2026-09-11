@@ -20,8 +20,12 @@ type AuthPick = Pick<AuthStorage, 'remove' | 'hasOAuth' | 'hasOAuthSync' | 'hasC
 
 function makeStore() {
   return {
-    getProviderConfig: vi.fn(() => ({ name: 'anthropic' })),
+    // 无既有 models.json 条目（catalog 定义来自 pi 内置 catalog，条目只是可选 override）——
+    // 用于验证防线③「不物化**新**空壳」：apiKey 归 auth.json 后 models.json 无条目可写
+    getProviderConfig: vi.fn(() => undefined),
     upsertProvider: vi.fn(() => ({})),
+    // 无既有条目 → existingConfig === undefined → setProvider 末尾走白名单守卫（新建语义）
+    ensureProviderInWhitelist: vi.fn(),
     removeProvider: vi.fn(() => ({ removed: true })),
     cleanEnabledModelsResidue: vi.fn(),
   } as unknown as IConfigStore & { upsertProvider: ReturnType<typeof vi.fn> }
@@ -42,7 +46,7 @@ function makeCredentialWriter(): CredentialWriter & { saveCredential: ReturnType
 }
 
 describe('M5-01: setProvider catalog 分支（真实 isCatalogProvider，不 mock）', () => {
-  it('catalog provider（anthropic）保存 apiKey → 经 credentialWriter 写 auth.json，upsertProvider 收到的 merged 不含 apiKey（不双写 models.json）', async () => {
+  it('catalog provider（anthropic）保存 apiKey → 只写 auth.json，不物化 models.json 条目', async () => {
     const store = makeStore()
     const auth = makeAuth()
     const writer = makeCredentialWriter()
@@ -53,9 +57,9 @@ describe('M5-01: setProvider catalog 分支（真实 isCatalogProvider，不 moc
 
     // catalog 凭据归 auth.json（pi-alignment 决策 1）；A1-4 收口后经 credentialWriter
     expect(writer.saveCredential).toHaveBeenCalledWith('anthropic', { type: 'api_key', key: 'sk-secret' })
-    // models.json 不落 apiKey（G5 迁移的安全动机：catalog 秘钥不写 0644 明文 models.json）
-    const merged = store.upsertProvider.mock.calls[0][1] as Record<string, unknown>
-    expect('apiKey' in merged).toBe(false)
+    // 防线③（不物化新空壳）：models.json 无既有条目 + apiKey 归 auth.json → 不产生条目
+    // （凭据只归 auth.json 0600，不写 0644 明文 models.json；G5 迁移的安全动机）
+    expect(store.upsertProvider).not.toHaveBeenCalled()
   })
 
   it('catalog provider 不传 apiKey（只改 baseUrl）→ 不写 auth.json，merged 无 apiKey', () => {
@@ -88,13 +92,12 @@ describe('M5-01: setProvider catalog 分支（真实 isCatalogProvider，不 moc
     expect(merged.apiKey).toBe('sk-x')
   })
 
-  it('catalog provider + 未注入 credentialWriter → 不抛错，merged 不含 apiKey（凭据无处安放宁丢不写错位）', () => {
+  it('catalog provider + 未注入 credentialWriter → 不抛错，不物化 models.json 条目（凭据无处安放宁丢不写错位）', () => {
     const store = makeStore()
     const svc = new ConfigService('/tmp/project', store)
 
     expect(() => svc.setProvider('anthropic', { apiKey: 'sk-secret' })).not.toThrow()
-    const merged = store.upsertProvider.mock.calls[0][1] as Record<string, unknown>
-    expect('apiKey' in merged).toBe(false)
+    expect(store.upsertProvider).not.toHaveBeenCalled()
   })
 
   it('MF-1：catalog provider 保存 apiKey 时 await 落盘后才 upsertProvider（防 stale 广播）', async () => {

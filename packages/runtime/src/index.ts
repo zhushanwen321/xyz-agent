@@ -7,6 +7,8 @@ import { fanOutSettled } from './services/session/agent-settled-fanout.js'
 import { ConfigService } from './services/config-service.js'
 import { AuthService } from './services/auth/auth-service.js'
 import { AuthStorage } from './services/auth/auth-storage.js'
+import { ProviderCredentialResolver } from './services/auth/provider-credential-resolver.js'
+import type { IProviderCredentialResolver } from './services/ports/provider-credential-resolver.js'
 import { PresetService } from './services/preset-service.js'
 import { ModelService } from './services/model-service.js'
 
@@ -16,12 +18,13 @@ import { initLogger, closeLogger } from './infra/logger.js'
 import { isContainedStreamError } from './infra/system/uncaught-policy.js'
 
 import { ProcessManager } from './infra/pi/process-manager.js'
-import { migrateToPiSubdir, getProviderConfig, upsertProvider, cleanLeakedPackages, sanitizeInvalidProviders } from './infra/pi/pi-provider-store.js'
+import { migrateToPiSubdir, getProviderConfig, clearProviderApiKey, initProviderCredentialResolver, cleanLeakedPackages, sanitizeInvalidProviders } from './infra/pi/pi-provider-store.js'
 import { getExtensionsDir, getNpmDir, getTmpDir, getProviderExtrasPath } from './infra/pi/pi-paths.js'
 import { getPiGlobalAgentDir } from './infra/pi/pi-maintenance.js'
 import { PiConfigStore } from './infra/pi/pi-config-store.js'
 import { PiSessionStore } from './infra/pi/session-store.js'
 import { ModelApiDiscoverer } from './infra/model-api-discoverer.js'
+import { ModelConnectionTester } from './infra/model-connection-tester.js'
 import { NpmGitInstaller } from './infra/installers/npm-git-installer.js'
 import { NpmPluginInstaller } from './infra/installers/plugin-installer-adapter.js'
 import { ExtensionResolver } from './infra/installers/extension-resolver.js'
@@ -210,17 +213,37 @@ async function main(): Promise<void> {
   // providers.json。迁移失败不阻塞启动（warn + 下次重试，幂等），失败语义收在
   // run-extras-migration.ts 薄包装（返回值契约由其单测守卫）。
   const extrasMigration = await runProviderExtrasMigration(configStore, providerExtrasStore)
-  // 剔除 models.json 里的空壳 provider（五字段全缺）：空壳导致 bundled pi 0.80.3 严格校验时
-  // 整个 models.json 加载失败（Model not found）。系统 pi 0.83 容错但 bundled 不容错，
-  // 重装后必现。sanitize 让 xyz-agent 自愈这种脏数据（如外部脚本写入的测试 fixture）。
+  // 清洗 models.json：① 空串键剥除（pi minLength:1 全集）+ ② catalog 条目的 provider 级键处置
+  // （api 一律剥除 / baseUrl 按 extras 网关标记）→ 再做既有空壳判定/修复（设计 D2 顺序契约）。
+  // 历史背景：空壳 provider（五字段全缺）导致 bundled pi 0.80.3 严格校验时整个 models.json
+  // 加载失败（Model not found）。系统 pi 0.83 容错但 bundled 不容错，重装后必现；
+  // sanitize 让 xyz-agent 自愈这种脏数据（如外部脚本写入的测试 fixture）。
   // 仅迁移成功后执行（失败时寄生数据未出 models.json，sanitize 会物理删除空壳条目致
   // 寄生数据永久丢失，round 1 review DG#3；门控返回值语义由 run-extras-migration.test.ts 守卫）。
   if (extrasMigration.ok) {
-    sanitizeInvalidProviders()
+    // 标记读取经注入的同步原语（C-comm-03：infra/pi 层不 import services 实现，设计 D2 审查 R3-3）。
+    const sanitizeOutcome = sanitizeInvalidProviders({
+      getExtrasSync: (providerId) => providerExtrasStore.getExtrasSync(providerId),
+    })
+    // D2② 写读错位自愈（写序契约「先写 extras 标记、后写 models.json」的崩溃中间态 =
+    // 标记在、models.json 无 baseUrl 键）：清多余标记。锁内写在本 async 阶段执行，
+    // 不塞进同步清洗段。标记已被并发清除时短路不调 modify（modify 无内容 diff 守卫，
+    // 避免无谓写盘）。
+    for (const providerId of sanitizeOutcome.staleGatewayMarkers) {
+      if (providerExtrasStore.getExtrasSync(providerId)?.gatewayBaseUrl === undefined) continue
+      await providerExtrasStore.modify(providerId, current => {
+        const next = { ...current }
+        delete next.gatewayBaseUrl
+        return next
+      })
+    }
   }
 
   const sessionStore = new PiSessionStore()
   const modelSource = new ModelApiDiscoverer()
+  // IModelConnectionTester port 的 infra 实现（D-21 端口化）：组合根构造 + 经
+  // server.setServices 注入 settingsHandler ctx（transport 不再 value import infra）。
+  const connectionTester = new ModelConnectionTester()
   const extensionInstaller = new NpmGitInstaller()
   const extensionResolver = new ExtensionResolver({
     settingsDir: configStore.getPiAgentDir(),
@@ -246,8 +269,23 @@ async function main(): Promise<void> {
   // AuthStorage（OAuth 路径 B）：auth.json 在 pi agent 目录（与 models.json 同路径，与 pi 读取侧一致）。
   // ConfigService 用它做 I9 清理①（setProvider 保存 apiKey 时清 auth.json oauth）+ I8（deleteProvider 清 auth.json）。
   const authStorage = new AuthStorage(join(configStore.getPiAgentDir(), 'auth.json'))
+  // D3 链 3 接线（M2c）：凭据解析唯一通道实例 + 模块级 init 注入（检查点 5 首选形态——
+  // pi-provider-store 的消费点是模块级函数，构造参数到不了）。
+  // 装配序契约：本行位于上方全部迁移/清洗之后、**全部 service 装配与 server.start 之前**，
+  // 因此严格早于任何 findValidDefaultModel 调用（默认模型裁定只发生在 server.start 之后的
+  // pi spawn / session 激活 / RPC 处理与启动后台初始化里）。resolver 构造无 IO、读取懒发生。
+  // authService 在下方才构造（它依赖 configService 与 clearApiKey），此处经闭包延迟引用：
+  // resolver 的 sync 腿只碰 authStorage，async 腿（resolveProviderCredential）只在
+  // server.start 之后消费，届时 authService 已就绪。
+  const providerCredentialResolver: IProviderCredentialResolver = new ProviderCredentialResolver({
+    authService: { getCredential: (providerId: string) => authService.getCredential(providerId) },
+    authStorage,
+    configStore,
+  })
+  initProviderCredentialResolver(providerCredentialResolver)
   // providerExtrasStore 注入：setProvider 的 authMethod 改写 providers.json（A1-5 写侧切换）。
-  const configService = new ConfigService(effectiveRoot, configStore, authStorage, providerExtrasStore, llmRetrySettings)
+  // providerCredentialResolver（D3 链 5 接线）：listProviders 的凭据判定经唯一通道批量 sync 版。
+  const configService = new ConfigService(effectiveRoot, configStore, authStorage, providerExtrasStore, llmRetrySettings, providerCredentialResolver)
   // ADR-0021 §1 一次性迁移：旧版本 skill 路径存在 settings.json.skills，
   // 首启用时提升为 discovery.json SSOT。幂等：discovery 已有数据则 no-op。
   // D8-1 位置判断（perf W29，06 §5 m-7 结论）：保持 listen 前同步执行——
@@ -544,12 +582,10 @@ async function main(): Promise<void> {
     getOAuthConfig: (providerId) => configService.listBuiltinProviders().find(p => p.id === providerId)?.oauthConfig,
     broadcast: (msg) => server.broadcast(msg),
     nextPushId: () => server.nextPushId(),
-    clearApiKey: (providerId) => {
-      const existing = getProviderConfig(providerId)
-      if (!existing || !('apiKey' in existing)) return
-      const { apiKey: _removed, ...rest } = existing
-      upsertProvider(providerId, rest)
-    },
+    // I9 清理②：OAuth 授权成功后清除 models.json apiKey（both provider 切换凭据源，防冲突）。
+    // 语义 = 纯删键 RMW（不写空串）——实现提取到 pi-provider-store.clearProviderApiKey
+    // 以便落盘断言（本文件不可 import：import 即执行 main()）。
+    clearApiKey: clearProviderApiKey,
   })
   // A1-4 收口：auth.json 写入唯一入口 = AuthService.saveCredential。AuthService 依赖
   // configService（getOAuthConfig），构造在 configService 之后——setter 回填（回填前无
@@ -701,7 +737,15 @@ async function main(): Promise<void> {
     providerExists: (providerId) => configService.listProviders().some(p => p.id === providerId),
     getAuthCredential: (providerId) => authService.getCredential(providerId),
     getProviderConfig: (providerId) => configStore.getProviderConfig(providerId),
+    // D3 链 1 接线（M2c）：api-key 形态的 provider 凭据经唯一通道（secrets 专属 key 段保留在前）。
+    providerCredentialResolver,
   })
+
+  // D12（改动 5）：删除链 quota 副产物清理回填——QuotaService 依赖 ConfigService（providerExists /
+  // readExtrasWithFallback），构造在 configService 之后，构造期拿不到，故 setter 后置回填
+  // （先例 setCredentialWriter）。漏回填不报错但 D12 静默失效（可选注入 = 未注入 no-op），
+  // 只有 S14 场景能发现。删除链侧保证只在 extras 条目确认清除后调用（防幽灵标记）。
+  configService.setQuotaStateCleaner((providerId) => quotaService.clearProviderState(providerId))
 
   const tServicesReady = performance.now()
   server.setServices(sessionService, configService, modelService, {
@@ -719,6 +763,10 @@ async function main(): Promise<void> {
     preset: presetService,
     auth: authService,
     project: projectStore,
+    // D3 链 2 接线（M2c）：settingsHandler ctx 的 discover 凭据回查经唯一通道。
+    providerCredentialResolver,
+    // D-21 端口化接线：settingsHandler ctx 的测试连接 HTTP 适配器（mode=test 路由）。
+    connectionTester,
     // sd-u5：sessionId 单例注册表（上方 createSessionDeliveryRegistry 装配）。
     // 缺席时 server 构造退化实例并 warn（违反单例约束，仅测试装配遗漏场景）。
     delivery: sessionDelivery,

@@ -47,6 +47,8 @@ const DOC_MODULE_MAP = {
   'docs/design/chat-stream-perf-architecture.impl-plan.md': ['packages/core/src/domain/chat', 'packages/core/src/domain/session', 'packages/renderer/src/composables/features/sidebar', 'packages/renderer/src/composables/features/trace'],
   'docs/design/zcode-session-db-isolation.md': ['packages/subagent-core/src/execution/engine', 'packages/zcode-subagent-cli/src', 'packages/shared/src/paths.ts', 'packages/runtime/src/infra/pi/pi-paths.ts'],
   'docs/design/zcode-session-db-isolation.impl-plan.md': ['packages/subagent-core/src/execution/engine', 'packages/zcode-subagent-cli/src', 'packages/shared/src/paths.ts', 'packages/runtime/src/infra/pi/pi-paths.ts'],
+  'docs/design/catalog-provider-field-authority.md': ['packages/runtime/src/services/provider-config-helper.ts', 'packages/runtime/src/services/provider-catalog.ts', 'packages/runtime/src/services/auth/provider-credential-resolver.ts', 'packages/runtime/src/infra/pi/pi-provider-store.ts', 'packages/core/src/domain/settings/use-provider-edit.ts', 'scripts/check-doc-symbol-drift.mjs'],
+  'docs/design/catalog-provider-field-authority.impl-plan.md': ['packages/runtime/src/services/provider-config-helper.ts', 'packages/runtime/src/services/provider-catalog.ts', 'packages/runtime/src/services/auth/provider-credential-resolver.ts', 'packages/runtime/src/infra/pi/pi-provider-store.ts', 'packages/core/src/domain/settings/use-provider-edit.ts', 'scripts/check-doc-symbol-drift.mjs'],
 }
 
 /** 环境变量名白名单（非导出符号，文档合法引用）：项目（XYZ_/PI_）与运行平台（NODE_/ELECTRON_/ZCODE_）env 前缀 */

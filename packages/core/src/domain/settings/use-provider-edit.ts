@@ -21,6 +21,7 @@ import { ref, reactive, watch, computed, type Ref } from 'vue'
 import type { ProviderInfo } from '@xyz-agent/shared'
 import { getSettingsStore } from './settings-store'
 import { getSettingsTransport } from './transport'
+import type { DiscoverModelsRequest } from './transport'
 
 // ── 类型 ──
 
@@ -99,16 +100,22 @@ export const CONTEXT_OPTIONS = [
 ] as const
 
 /**
- * 思考策略预设 → thinkingLevelMap。thinkingLevelMap 语义：
- * - key = UI 可选档位（ThinkingLevel 枚举值，含 max），用于展示和判定可用
- * - value = 发给 runtime/pi 的实际 level（string=可用，null=不可用）
- * - 发给 pi 的是 value（如 max 档发 xhigh），不是 key——展示是展示，传递 value 是 value
- * 预设：all-levels(undefined=全档) / on-off(off+high) / high-max(off+high+max→xhigh)
+ * 思考策略预设 → thinkingLevelMap。thinkingLevelMap 语义是 pi 的**黑名单过滤**，
+ * 不是「key = UI 可选档位」的白名单（按白名单心智写预设会多出未列出的默认档）：
+ * pi `getSupportedThinkingLevels`（pi-ai dist/models.js:548-558）对 reasoning=true 的
+ * 模型遍历 EXTENDED_THINKING_LEVELS（off/minimal/low/medium/high/xhigh/max）逐档判定：
+ * - value = null → 剔除该档
+ * - xhigh / max → 必须显式列出（未列即视为不支持）
+ * - 其余档（off/minimal/low/medium/high）→ 默认保留（未列也参与）
+ * 所以「只保留某几档」必须把不要的档显式写 null，不能靠不写 key 实现。
+ * value = 发给 pi 的实际 level（如 max 档发 xhigh），不是 key——展示是展示、传递是 value。
+ * 预设：all-levels(undefined = pi 默认五档 off~high；xhigh/max 需显式映射，要最高档选 high-max)
+ *      / on-off(off+high 两档) / high-max(off+high+max→xhigh 三档)
  */
 const THINKING_PRESETS: Record<ThinkingStrategy, Record<string, string | null> | undefined> = {
   'all-levels': undefined,
-  'on-off': { off: 'off', high: 'high' },
-  'high-max': { off: 'off', high: 'high', max: 'xhigh' },
+  'on-off': { off: 'off', high: 'high', minimal: null, low: null, medium: null },
+  'high-max': { off: 'off', high: 'high', max: 'xhigh', minimal: null, low: null, medium: null },
 }
 
 /** 思考策略 Select 选项（template thinkingStrategies 来源）。
@@ -127,10 +134,21 @@ export const THINKING_STRATEGIES: Array<{
 export type DiscoverAction = 'test' | 'discover'
 
 /**
+ * 测试连接按协议分组的单条结果（runtime `config.discoveredModels.results` 元素，设计 §3.5 D4）：
+ * 每协议一条，代表模型 + 成败 + 失败时的真实原因（HTTP 状态码与响应截断）。
+ */
+export interface TestConnectionResult {
+  api: string
+  modelId: string
+  ok: boolean
+  error?: string
+}
+
+/**
  * apiKey「清除」哨兵值（D18）。
  * 表单内 form.apiKey 默认 ''=不变（save 时 `apiKey || undefined` 跳过）。
  * 用户点「清除」时把 form.apiKey 置为此哨兵，save 识别后发送空串给 runtime
- * （config-service `if (data.apiKey !== undefined) merged.apiKey = data.apiKey`，空串=清空 key）。
+ * ——runtime 防线②把空串转译为删键（delete merged.apiKey），不落空串。
  */
 export const API_KEY_CLEAR_SENTINEL = '__CLEAR__'
 
@@ -298,6 +316,10 @@ export function useProviderEdit(providerRef: Ref<ProviderInfo | null>, deps: Pro
   const discovering = ref(false)
   /** test 结果：ok=连接成功 / error=失败 / null=未测 */
   const testResult = ref<'ok' | 'error' | null>(null)
+  /** test 模式按协议分组的连接结果（runtime results；空数组 = 无分组结果，如整体性失败） */
+  const testResults = ref<TestConnectionResult[]>([])
+  /** test 模式整体性失败原因（success=false 的 error；有分组结果时留空） */
+  const testError = ref('')
   /** discover 结果文案（如「已发现 N 个模型，新增 M 个已合并」） */
   const discoverResult = ref('')
   const showAddModel = ref(false)
@@ -323,6 +345,8 @@ export function useProviderEdit(providerRef: Ref<ProviderInfo | null>, deps: Pro
   function resetTransientState(): void {
     showKey.value = false
     testResult.value = null
+    testResults.value = []
+    testError.value = ''
     discoverResult.value = ''
     showAddModel.value = false
     actionError.value = ''
@@ -394,15 +418,24 @@ export function useProviderEdit(providerRef: Ref<ProviderInfo | null>, deps: Pro
     actionError.value = ''
 
     try {
-      const res = await getSettingsTransport().discoverModels({
-        baseUrl: form.baseUrl,
-        // D18：探活与 save 同路径解析——哨兵（清除标记）→ undefined，不把哨兵串当真 key 发出
-        apiKey: resolveApiKeyForSave(form.apiKey),
-        providerType: form.api,
+      // M3b（D4）：discover 显式带 mode（协议缺省即 discover，显式化防默认值将来变化）；
+      // test 只需 providerId + mode——代表模型选择归 runtime（前端零推导，对齐 view-ready
+      // 原则），baseUrl/apiKey/providerType 在 test 模式被 runtime 忽略故不发
+      // （baseUrl 是协议形状必填键，传 '' 占位）。
+      const req: DiscoverModelsRequest = {
+        mode: action === 'test' ? 'test' : 'discover',
+        baseUrl: action === 'test' ? '' : form.baseUrl,
         providerId: providerRef.value?.id,
-      })
+        ...(action === 'test'
+          ? {}
+          : { providerType: form.api, apiKey: resolveApiKeyForSave(form.apiKey) }),
+      }
+      const res = await getSettingsTransport().discoverModels(req)
 
       if (action === 'test') {
+        // 分组结果与整体性失败互斥：成功走 results（每协议一行），失败走 error
+        testResults.value = res.results ?? []
+        testError.value = res.success ? '' : res.error ?? ''
         testResult.value = res.success ? 'ok' : 'error'
         if (!res.success && res.error) actionError.value = res.error
         return
@@ -414,7 +447,14 @@ export function useProviderEdit(providerRef: Ref<ProviderInfo | null>, deps: Pro
         const existing = new Set(localModels.value.map((m) => m.id))
         const merged = discovered.filter((m) => !existing.has(m.id))
         localModels.value.push(
-          ...merged.map((m) => ({ id: m.id, name: m.name, contextWindow: m.contextWindow })),
+          ...merged.map((m) => ({
+            id: m.id,
+            name: m.name,
+            contextWindow: m.contextWindow,
+            // D9①：出厂显式 reasoning（对齐 addModel）——pi 两级门控把缺失判「关」，
+            // 缺字段会让合并进来的模型思考档位恒只有「关」（失败模式 D 用户数据命中此入口）。
+            reasoning: true,
+          })),
         )
         discoverResult.value = t('composable.discoveredModels', { count: discovered.length, merged: merged.length > 0 ? t('composable.newMerged', { count: merged.length }) : t('composable.allExisted') })
       } else {
@@ -461,11 +501,23 @@ export function useProviderEdit(providerRef: Ref<ProviderInfo | null>, deps: Pro
     saving.value = true
     actionError.value = ''
     const providerId = providerRef.value?.id ?? form.name
+    // 防线①（设计 D1）：catalog / custom 的 provider 级字段分体系。kind 缺失（旧数据 / 新建态
+    // 无 providerRef）按 custom 处理（自定义 provider 需要 provider 级协议）。
+    const isCatalog = providerRef.value?.kind === 'catalog'
+    // 网关输入框值：trim 后判定（纯空白串与空串同视，runtime 侧同样按 trim 判定）
+    const baseUrl = form.baseUrl.trim()
     try {
       await getSettingsTransport().setProvider(providerId, {
-        name: form.name,
-        type: form.api,
-        baseUrl: form.baseUrl,
+        // 防线①：custom 空串 name 不带键（truthy 守卫，对齐 use-quick-setup-form 既有先例）；
+        // catalog 的 name 是 provider 展示名（正常态非空），保持回传。
+        ...(isCatalog || form.name.trim() ? { name: form.name } : {}),
+        // 防线①：catalog 不带 type 键——协议是模型级属性，provider 级 api 对 catalog 无用户语义
+        // （前端回传的是快照 artifact，runtime 侧对 catalog 的 type 同样忽略；不发是双保险）。
+        ...(isCatalog ? {} : { type: form.api }),
+        // 防线①：catalog 的 baseUrl **恒显式带键**（值 = trim 结果：非空 = 设置网关 / '' = 清除
+        // 网关——「undefined = 不变」是既有 merge 协议，清空输入框必须走显式空串带键，否则网关
+        // 回退通道不可达）；custom 空串不带键（runtime 对 custom 空串同样是「不变」）。
+        ...(isCatalog || baseUrl ? { baseUrl } : {}),
         // D18：apiKey 空=不变（undefined）；哨兵=清空（''）；非空=原值
         apiKey: resolveApiKeyForSave(form.apiKey),
         // B-1：凭证形态回传（undefined = 不变；runtime 写 providers.json authMethod 标注）
@@ -556,8 +608,15 @@ export function useProviderEdit(providerRef: Ref<ProviderInfo | null>, deps: Pro
     m.contextWindow = value
   }
 
-  /** 行级思考策略（Select → 写 thinkingLevelMap） */
+  /**
+   * 行级思考策略（Select → 写 thinkingLevelMap）。
+   * D9②：reasoning 缺失时补显式 true——pi 两级门控把缺失判「关」，不补则用户设的策略
+   * 根本轮不到被读取（弹层只显示「关」）。永不覆盖用户显式 false（显式选择优先于联动）；
+   * all-levels 与其余策略同规则——存量最常见形态正是「从未设策略 = all-levels + reasoning
+   * 缺失」，救回路径必须闭合在 all-levels 分支上。
+   */
   function pickStrategy(m: LocalModel, strategy: ThinkingStrategy): void {
+    if (m.reasoning === undefined) m.reasoning = true
     m.thinkingLevelMap = THINKING_PRESETS[strategy]
       ? structuredClone(THINKING_PRESETS[strategy])
       : undefined
@@ -648,6 +707,8 @@ export function useProviderEdit(providerRef: Ref<ProviderInfo | null>, deps: Pro
     testing,
     discovering,
     testResult,
+    testResults,
+    testError,
     discoverResult,
     showAddModel,
     saving,

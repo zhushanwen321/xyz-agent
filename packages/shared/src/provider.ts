@@ -8,6 +8,8 @@
  * 反序列化边界（settings.json `defaultProvider` / auth.json key / builtin-providers.json `id`）
  * 从磁盘读出是裸 string，用 `as ProviderId` 提升（design D5，先不加运行时 guard，P5 审查清单）。
  */
+import type { QuotaCredentialSource } from './quota-types'
+
 declare const __providerIdBrand: unique symbol
 export type ProviderId = string & { readonly [__providerIdBrand]: true }
 
@@ -27,7 +29,12 @@ export type ModelId = string
 export interface BuiltinModelSummary {
   id: string
   name: string
-  api: string
+  /**
+   * 模型级协议（pi model.api）。optional：overlay 归一化不再用空串捏造缺省
+   * （design catalog-provider-field-authority §3.3 D7），缺失 = 该模型无显式协议，
+   * 由消费方按 pi 语义回落；快照条目恒有值，消费方须容忍缺省（旧消费方行为不变）。
+   */
+  api?: string
   baseUrl?: string
   reasoning: boolean
   input: string[]
@@ -61,7 +68,16 @@ export interface BuiltinModelSummary {
 export interface BuiltinProviderTemplate {
   id: string
   name: string
+  /**
+   * 构建期 artifact：gen-builtin-providers.mjs 为对齐 provider 级单值 schema 捏造
+   * （取 models[0].api 冒充 provider 协议）。禁止新代码消费——展示用 runtime 派生值
+   * （ProviderInfo.api，design §3.3 D5）。
+   */
   api?: string
+  /**
+   * 构建期 artifact：gen-builtin-providers.mjs 的 `provider.baseUrl ?? ''`（pi 无此字段时为空串）。
+   * 禁止新代码消费——展示用 runtime 派生值（ProviderInfo.baseUrl，design §3.3 D5）。
+   */
   baseUrl?: string
   authMode: 'api_key' | 'oauth' | 'both' | 'ambient'
   envVars: string[]
@@ -106,7 +122,17 @@ export type ProviderKind = 'catalog' | 'custom'
 export interface ProviderInfo {
   id: ProviderId
   name: string
+  /**
+   * 协议（design catalog-provider-field-authority §3.3 D5 派生语义，runtime 聚合层下发、
+   * 前端零推导）：catalog = 按合并模型集派生——全模型同 api → 该值；混合协议 / 全空 → undefined
+   * （前端展示「按模型分发」）。custom = provider 级定义值。
+   */
   api?: string
+  /**
+   * 请求端点（同 D5）：catalog = 用户网关优先（override 非空 baseUrl 原值下发）；无网关时按
+   * 合并模型集派生——全模型同值且非空 → 该值；混合 / 全空缺省 → undefined（前端分别展示
+   * 「内置端点（按模型分发）」「内置目录未提供」）。custom = provider 级定义值。
+   */
   baseUrl?: string
   apiKeySet: boolean
   /**
@@ -180,6 +206,11 @@ export interface ProviderInfo {
      * 未设置/false = 复用 ProviderInfo.apiKey（provider 的 API Key）。
      */
     apiKeySet?: boolean
+    /**
+     * 凭证来源（D3，coding-plan-quota-config-ux §6.4）。未设置 = 按 resolveQuotaCredentialSource
+     * 推断（兼容历史数据：apiKeySet=true → exclusive，否则 provider）。
+     */
+    credentialSource?: QuotaCredentialSource
     /**
      * 资源维度 fetcher（opencode）的 workspace 归一化地址（规范 URL，非凭证可明文回显）。
      * 未配置 = 查询返回 not_configured（D1-3，timeout-audit-hygiene-batch）。

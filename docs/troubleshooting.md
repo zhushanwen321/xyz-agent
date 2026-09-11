@@ -245,6 +245,47 @@ CI=true ELECTRON_SKIP_BINARY_DOWNLOAD=1 pnpm install   # 约 6-7s 重建本地�
 
 **防护与根治**：护栏 `.githooks/check_pnpm_store_layout.sh` 挂在 pre-commit 第 0 段（install-hooks.sh 生成）与 validate-runtime-bundle.sh Gate 0，翻转即红并输出 [FIX] 指引——同时也兼作引擎侧「不覆写 HOME」修复的验收探针（修复落地后护栏应恒绿，红 = 回退信号）。根治在引擎侧不覆写 HOME（2026-09-03 开发中）；备选方案 `.npmrc` pin `store-dir` 评估结论：`~` 展开仍 HOME 相对（无效）、相对路径解析基准未验证（有 per-package store 撕裂风险）、写死绝对路径不可移植——均不采用。
 
+### 12. catalog provider 自定义网关失效 / 端点与官网不符：启动清洗剥除了手编网关（2026-09-10 D2 已接受代价）
+
+**症状**：catalog provider（openai / opencode-go 等内置目录 provider）的请求端点回到内置值——自定义网关（镜像站/代理）失效，或发现端点与官网文档不符。启动日志有：
+
+```bash
+grep "stripped unmarked provider-level keys" ~/.xyz-agent/logs/runtime-*.log   # dev 用 ~/.xyz-agent-dev
+# 形如 [provider-repair] stripped unmarked provider-level keys on "<id>": baseUrl
+```
+
+**根因**（设计 D2 已接受代价，docs/design/catalog-provider-field-authority.md §3.3）：models.json 手编的 catalog 网关（provider 级 `baseUrl` override）且**从未经新 UI 保存过**的条目，启动清洗会剥除该键——判定锚是 providers.json extras 的 `gatewayBaseUrl` 显式标记，无标记即判「历史冻结 artifact」剥除（防 pi 升级后快照漂移导致网关钉死过时值）。
+
+**检查**：数据目录 `pi/agent/models.json` 中该 provider 条目——`baseUrl` 键已被剥除（当前生效 = 内置目录端点）。
+
+**恢复**：Settings → Providers 展开该 provider，在「端点（自定义网关）」输入框重设网关 URL 并保存一次——extras `gatewayBaseUrl` 标记同步写入，之后启动清洗不再剥除该键。
+
+### 13. Coding Plan 额度查询失败 / 数据疑似过期：先查 reason 与凭证来源（2026-09-10 配置交互重构）
+
+**症状**：设置页「保存并测试」报查询失败；对话页容量浮层的 Coding Plan 区显示失败或无数据；或改过查询类型后浮层仍显示旧平台的数据。
+
+**根因/现状**（设计 docs/design/coding-plan-quota-config-ux.md，D1/D3/D4/D6/D12）：本次把「用哪份凭证」从隐式约定改为**显式持久化字段** `providers.json` 的 `providers[*].quota.credentialSource`（`'provider'` | `'exclusive'`），并新增失败原因 `no-credential`。因此排查第一步是核对「界面显示的来源」与「磁盘上的字段 / 文件」是否一致，而不是猜凭证有没有填。
+
+**检查**：
+
+```bash
+CD=~/.xyz-agent            # dev 用 ~/.xyz-agent-dev
+# ① 失败原因：no-credential = 按当前来源选中的链路解析不到任何凭证
+grep "\[quota\] fetch failed" $CD/logs/runtime-*.log | tail -20
+# ② 凭证来源字段（'provider' = 用 Provider 凭据；'exclusive' = 只读专属 Key 文件）
+grep -n -A6 '"quota"' $CD/pi/agent/config/providers.json
+# ③ secrets 实际文件（cookieSet / apiKeySet 标记必须与文件存在性一致）
+ls -la $CD/secrets/
+```
+
+- **`no-credential` 的判据是「选中的链路解析不到凭证」，不是「凭证一个都没有」**：`exclusive` 只读 `secrets/<pid>-apikey.txt`，缺失即失败、**不再回退** auth.json → models.json；`provider` 分支则完全跳过该文件。所以「专属 Key 明明填过却报 no-credential」的第一嫌疑是 `credentialSource` 为 `exclusive` 而文件不在（手工删过 / 半提交窗口），恢复 = 重填专属 Key，或把来源切回 Provider 后重新「保存并测试」。
+- **Cookie 的「空串 = 清除」**：Cookie 提交空串时 runtime 删除 `secrets/<pid>-cookie.txt` 并把 `cookieSet` 落为 `false`；删除失败会让本次保存整体失败（`[quota] failed to remove cookie secret file`）。看到「标记 false 但文件仍在」的告警即这条失败方向，重贴 Cookie 保存一次即自愈（孤儿文件在 `credentialSource` 兜底为 `'provider'` 后不再被读取）。
+- **provider 删除 / 移除会一并清理**：`secrets/<pid>-{cookie,apikey}.txt` + `quota-cache.json` 条目 + 内存失败标记（D12）。删除时 `cleanProviderExtras` 失败 → secrets 删除被跳过（留下「标记与文件一致」的残留，重试删除即清）；extras 成功而 secrets 删除失败 → 惰性孤儿文件（`[quota] failed to clear provider quota secrets`，下次同 id 删除或手工删）。**注意**：删除是用户显式动作，删掉的是用户粘贴的 Cookie / 专属 Key，重新导入 provider 不会恢复，需重新粘贴。
+- **类型变更后旧数据不应残留**：改类型并保存会删 `quota-cache.json` 中该 provider 的条目（内存镜像同步删），旧类型的行不会再被 `getCached` 取回并以新类型标签展示。若仍看到旧数据，查 `[quota-cache] failed to remove cache entry` 与该文件同目录的 `.tmp` 残留（`.tmp` 为原子写中间产物，rename 即消费）。
+- **`not_configured`**：opencode 类 fetcher 的 Workspace 必填项为空——虽然 UI 的齐备性会挡住这个保存（按钮置灰），但 runtime 保留该分支作权威兜底；浮层提示指向「去设置里填 Workspace」。
+
+**恢复入口**：失败态浮层的 footer 现在同时给「刷新」与「配置」（D11，此前只有「刷新」——凭证缺失时刷新只会再失败一次，形成死路）；设置页的「保存并测试」是唯一落盘 + 查询动作，齐备性不满足时按钮置灰并给字段级提示。
+
 ## 环境变量速查
 
 | 变量 | 用途 | 生产默认值 | 开发默认值 |
@@ -386,9 +427,10 @@ pi 升级（`PI_VERSION` bump）或触碰相关模块时逐条重验；锚点均
 
 ### 7. reasoning 是思考能力总开关，缺失即「仅关」（PS-02，2026-08-27 事故 B）
 
-- **pi 锚点**：`pi-ai dist/models.js:546-557`——getSupportedThinkingLevels 在 `!model.reasoning`（含 undefined）时直接返回 `["off"]`，thinkingLevelMap 仅在开关打开后参与档位计算
+- **pi 锚点**：`pi-ai dist/models.js:548-558`——getSupportedThinkingLevels 在 `!model.reasoning`（含 undefined）时直接返回 `["off"]`，thinkingLevelMap 仅在开关打开后参与档位计算
 - **机制**：同一字段缺失两侧语义相反——pi 解释 undefined 为「关」，历史上前端 resolveAvailableLevels 解释为「支持全档」；GUI 手动添加模型若无 reasoning 字段，思考等级设置恒被钳回 off（用户表象：「设了最高过一会自动变关」，实际从第一毫秒起就是关）
 - **处置建议**：已由能力注册表结构性消除（C-pi-12：runtime 经 pi-ai 同源函数算 supportedLevels 下发，前端零推导；addModel 表单显式写 reasoning）——禁止任何域内代码复活「本地推断档位」
+- **存量恢复（失败模式 D，2026-09-10 用户数据实测）**：修复前经 discover 合并 / 行级策略写入的模型，models.json 里 `reasoning` 字段可能缺失（pi 判「关」，弹层只剩「关」）。无需迁移脚本，两条路径任选——① GUI：在 Settings → Providers 编辑体里对该模型行重新设置一次思考策略（**含 all-levels**），保存即救回（`pickStrategy` 联动补显式 `reasoning: true` 并重写 thinkingLevelMap）；② 手动：在 `~/.xyz-agent/pi/agent/models.json` 该模型条目补 `"reasoning": true`，重启应用后生效。判据：composer 的思考档位弹层不再只显示「关」
 
 ### 8. set_thinking_level RPC 响应无 data，生效值须补读（PS-03，2026-08-27 事故 B）
 

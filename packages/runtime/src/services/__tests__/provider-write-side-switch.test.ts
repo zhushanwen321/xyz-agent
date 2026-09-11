@@ -19,6 +19,14 @@ import type { SetProviderInput } from '../provider-config-helper.js'
 import { setModelsPath } from '../../infra/pi/pi-provider-store.js'
 import { setSettingsPath, invalidateSettingsCache } from '../../infra/pi/pi-settings-store.js'
 import { PiConfigStore } from '../../infra/pi/pi-config-store.js'
+import type { IProviderCredentialResolver } from '../ports/provider-credential-resolver.js'
+
+/** 恒注入形态的 resolver 替身（M2fg：QuotaService 构造必需；configure 路径不消费凭据）。 */
+const stubResolver: IProviderCredentialResolver = {
+  hasProviderCredential: () => false,
+  listCredentialBackedProviderIds: () => new Set<string>(),
+  resolveProviderCredential: async () => undefined,
+}
 
 let dir: string
 let agentDir: string
@@ -41,7 +49,7 @@ function readExtrasRaw(): Record<string, unknown> {
 }
 
 function makeQuotaService(providerExists: (id: string) => boolean): QuotaService {
-  return new QuotaService({ dataDir: dir, providerExtrasStore: extrasStore, providerExists })
+  return new QuotaService({ dataDir: dir, providerExtrasStore: extrasStore, providerExists, providerCredentialResolver: stubResolver })
 }
 
 beforeEach(() => {
@@ -69,7 +77,7 @@ describe('QuotaService.configure 写侧切换（A1-5 路径 1）', () => {
     })
     const svc = makeQuotaService(() => true)
 
-    const result = await svc.configure('zai-coding-cn', true, undefined, 'zhipu')
+    const result = await svc.configure({ providerId: 'zai-coding-cn', enabled: true, fetcher: 'zhipu' })
 
     expect(result).toEqual({ ok: true })
     expect(readExtrasRaw()['zai-coding-cn']).toEqual({
@@ -84,7 +92,7 @@ describe('QuotaService.configure 写侧切换（A1-5 路径 1）', () => {
     writeModelsJson({}) // models.json 完全无该 provider
     const svc = makeQuotaService(id => id === 'kimi-coding')
 
-    const result = await svc.configure('kimi-coding', true)
+    const result = await svc.configure({ providerId: 'kimi-coding', enabled: true })
 
     expect(result).toEqual({ ok: true })
     expect(readExtrasRaw()['kimi-coding']).toEqual({ quota: { enabled: true } })
@@ -92,9 +100,13 @@ describe('QuotaService.configure 写侧切换（A1-5 路径 1）', () => {
 
   it('聚合层不存在的 provider → 拒绝（ok:false，不落盘）', async () => {
     const svc = makeQuotaService(() => false)
-    const result = await svc.configure('nonexistent', true)
+    const result = await svc.configure({ providerId: 'nonexistent', enabled: true })
     expect(result.ok).toBe(false)
-    expect(existsSync(extrasPath)).toBe(false)
+    // §7.3 改动 2：存在性检查移进 modify 回调后，modify 的锁前 ensureFileExists 会物化
+    // 空的 providers.json（原检查在 modify 之前完全不触文件）——文件被物化但**无该
+    // provider 条目**（回调抛 ProviderGoneError → 写入被跳过，僵尸条目未产生）
+    expect(existsSync(extrasPath)).toBe(true)
+    expect(readExtrasRaw()['nonexistent']).toBeUndefined()
   })
 
   it('fetcher 未传时继承既有值：providers.json 已有 fetcher 优先', async () => {
@@ -104,7 +116,7 @@ describe('QuotaService.configure 写侧切换（A1-5 路径 1）', () => {
     await extrasStore.modify('p1', () => ({ quota: { fetcher: 'zhipu', enabled: false } }))
     const svc = makeQuotaService(() => true)
 
-    await svc.configure('p1', true) // fetcher 未传
+    await svc.configure({ providerId: 'p1', enabled: true }) // fetcher 未传
 
     // providers.json 的 zhipu 优先，models.json 旧值 legacy-kimi 不复活
     expect(readExtrasRaw()['p1']).toEqual({ quota: { fetcher: 'zhipu', enabled: true } })
@@ -119,7 +131,7 @@ describe('QuotaService.configure 写侧切换（A1-5 路径 1）', () => {
     })
     const svc = makeQuotaService(() => true)
 
-    await svc.configure('p1', true) // fetcher 未传
+    await svc.configure({ providerId: 'p1', enabled: true }) // fetcher 未传
 
     expect(readExtrasRaw()['p1']).toEqual({
       quota: { fetcher: 'legacy-kimi', enabled: true, cookieSet: true },
@@ -139,9 +151,10 @@ describe('QuotaService.configure 写侧切换（A1-5 路径 1）', () => {
       providerExists: () => true,
       getProviderConfig: (id) =>
         id === 'p1' ? { quota: { fetcher: 'from-injection', enabled: false } } : undefined,
+      providerCredentialResolver: stubResolver,
     })
 
-    await svc.configure('p1', true) // fetcher 未传 → readQuotaFallback 兜底
+    await svc.configure({ providerId: 'p1', enabled: true }) // fetcher 未传 → readQuotaFallback 兜底
 
     expect(readExtrasRaw()['p1']).toEqual({
       quota: { fetcher: 'from-injection', enabled: true },
@@ -150,9 +163,9 @@ describe('QuotaService.configure 写侧切换（A1-5 路径 1）', () => {
 
   it('未注入 providerExtrasStore → 持久化失败返回（宁失败不写错位）', async () => {
     writeModelsJson({ p1: { baseUrl: 'https://x.example.com' } })
-    const svc = new QuotaService({ dataDir: dir, providerExists: () => true })
+    const svc = new QuotaService({ dataDir: dir, providerExists: () => true, providerCredentialResolver: stubResolver })
 
-    const result = await svc.configure('p1', true)
+    const result = await svc.configure({ providerId: 'p1', enabled: true })
 
     expect(result.ok).toBe(false)
     expect(existsSync(extrasPath)).toBe(false)

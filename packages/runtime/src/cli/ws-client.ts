@@ -101,7 +101,11 @@ export async function rpc<T = Record<string, unknown>>(
           settled = true
           clearTimeout(timer)
           ws.close()
-          resolve(msg as T)
+          // 信封解包：线上帧是 { type, id, payload }，全部调用方按 payload 字段读取
+          // （reply.providers / reply.models / reply.success …）。曾在此 resolve 整个信封，
+          // 所有 CLI 读命令对真实 runtime 静默返回空（单测 mock rpc 未覆盖信封层故不可见，
+          // 2026-09-10 验收场景 7 实测发现）。
+          resolve((msg.payload ?? {}) as T)
         }
       // eslint-disable-next-line taste/no-silent-catch -- ignore non-JSON heartbeat/keepalive frames
       } catch {

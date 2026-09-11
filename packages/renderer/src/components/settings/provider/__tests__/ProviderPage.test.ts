@@ -477,10 +477,11 @@ describe('B-1: 编辑体凭证区 OAuth 事件接线', () => {
     authSuccessHandler!({ providerId: 'openai' })
     await flushPromises()
 
-    expect(configMock.setProvider).toHaveBeenCalledWith('openai', expect.objectContaining({
-      name: 'OpenAI',
-      authMethod: 'oauth',
-    }))
+    // 防线⑤：OAuth 收尾只发 authMethod（不随行 name/type/baseUrl 快照 artifact）
+    expect(configMock.setProvider).toHaveBeenCalledTimes(1)
+    expect(configMock.setProvider).toHaveBeenCalledWith('openai', { authMethod: 'oauth' })
+    const oauthPayload = configMock.setProvider.mock.calls[0]![1] as Record<string, unknown>
+    expect(Object.keys(oauthPayload)).toEqual(['authMethod'])
     // presence 刷新（authMethod 切 oauth 后 hasOAuth 至少再查一次）
     expect(configMock.hasOAuth.mock.calls.filter((c) => c[0] === 'openai').length).toBeGreaterThanOrEqual(2)
   })

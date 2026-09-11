@@ -7,14 +7,15 @@
  *（依赖 modelsStore 模块级缓存）+ barrel re-export 保 import 路径不变，行为/签名零变化。
  */
 
-import { existsSync, readFileSync } from 'node:fs'
-import { join } from 'node:path'
 // builtin provider catalog（QuickSetup 模板源）：sanitizeInvalidProviders 对 catalog 已知的
 // 空壳 provider 合并 models 修复而非删除（对齐 config-service 的 builtinModelsById 先例）。
 import builtinData from '../../generated/builtin-providers.json'
-import { deriveEnabled, getMergedCatalogModels } from '../../services/provider-catalog.js'
+import { deriveEnabled, getMergedCatalogModels, isCatalogProvider } from '../../services/provider-catalog.js'
+// 链 3（凭据读路径收口，D3）：infra 层只 type-only import 接口，不 value import 实现
+// （C-comm-03；实现在 services/auth，由组合根经模块级 init setter 注入）。
+import type { IProviderCredentialResolver } from '../../services/ports/provider-credential-resolver.js'
 import { JsonStore } from '../../utils/json-store.js'
-import { getModelsPath, getPiAgentDir } from './pi-paths.js'
+import { getModelsPath } from './pi-paths.js'
 // settings.json 的唯一读写层（D17 收口）：readSettings/updateSettingsFields/PiSettings/缓存/
 // 跨进程锁/原子写都收敛到 pi-settings-store，model 域（本文件）与 extension 域共享同一
 // 所有者 + 缓存 + 锁。
@@ -168,22 +169,23 @@ function pickFirstModelProvider(
 }
 
 /**
- * 读 auth.json 凭据表（catalog 兜底的凭据校验用）。
- * 文件不存在返回 {}；JSON 损坏返回 {} + warn（兜底是 best-effort，不因损坏阻断）。
- * 不依赖 AuthStorage 实例——本模块是纯函数读写层，无注入依赖。
+ * Provider 凭据解析唯一通道（D3 链 3 消费面）：模块级 init 注入（检查点 5 首选形态）。
+ *
+ * 为什么是模块级 setter 而非构造参数：本模块的消费点（findValidDefaultModel / getDefaultModel）
+ * 是模块级函数，调用方（rpc-client spawn / session 激活 / PiConfigStore 委托）到不了构造参数。
+ * 组合根（index.ts）在装配期调用 initProviderCredentialResolver，且**必须先于任何
+ * findValidDefaultModel 调用**——本模块在未注入时的降级是「视为无凭据」（安全、不抛错），
+ * 旧的私有裸读（直读 agentDir/auth.json）已随本单元删除——这正是要消灭的第 3 条解析链。
+ * resolver 构造无 IO、读取懒发生（auth.json 经 AuthStorage 同步原语 + models.json 经 configStore）。
  */
-function readAuthCredentials(): Record<string, unknown> {
-  const authPath = join(getPiAgentDir(), 'auth.json')
-  if (!existsSync(authPath)) return {}
-  try {
-    const raw = readFileSync(authPath, 'utf-8')
-    if (raw.trim() === '') return {}
-    const parsed = JSON.parse(raw)
-    return parsed && typeof parsed === 'object' ? parsed : {}
-  } catch (cause) {
-    console.warn(`[provider-store] auth.json 损坏: ${authPath}`, cause)
-    return {}
-  }
+let credentialResolver: IProviderCredentialResolver | undefined
+
+/**
+ * 注入凭据 resolver（生产 = 组合根装配期调用；测试可传 undefined 清空注入，用于断言
+ * 「未注入 → 视为无凭据」的安全降级行为与装配序契约）。
+ */
+export function initProviderCredentialResolver(resolver: IProviderCredentialResolver | undefined): void {
+  credentialResolver = resolver
 }
 
 /**
@@ -279,6 +281,23 @@ export function removeProvider(providerId: string): {
   return outcome
 }
 
+/**
+ * 清除 provider 的 models.json apiKey（I9 both 清理②：OAuth 授权成功后清另一种凭据）。
+ *
+ * 语义契约（纯删键 RMW）：条目存在且含 apiKey 键时，以「去掉 apiKey 的 rest」重新 upsert——
+ * 盘上结果是键被删除，**绝不写空串**（空串是 pi schema 违规值：minLength:1，会让 pi 拒绝
+ * 整个 models.json）。models 未参与本次更新时 upsertProvider 的 default 校验自动跳过。
+ *
+ * 从组合根闭包提取为具名函数：index.ts 不可 import（import 即执行 main()），提取后 I9
+ * 清理②的落盘语义（删键而非空串）可在单测中直接断言。
+ */
+export function clearProviderApiKey(providerId: string): void {
+  const existing = getProviderConfig(providerId)
+  if (!existing || !('apiKey' in existing)) return
+  const { apiKey: _removed, ...rest } = existing
+  upsertProvider(providerId, rest)
+}
+
 export function getAllModels(): Array<PiModelDefinition & { providerId: string }> {
   const result: Array<PiModelDefinition & { providerId: string }> = []
   const models = readModels()
@@ -288,10 +307,6 @@ export function getAllModels(): Array<PiModelDefinition & { providerId: string }
     }
   }
   return result
-}
-
-export function getApiKeyForProvider(providerId: string): string | undefined {
-  return readModels().providers[providerId]?.apiKey
 }
 
 // ── Settings.json 操作 ───────────────────────────────────────
@@ -345,13 +360,13 @@ function adjudicateOverrideDefault(
 function adjudicateCatalogOnlyDefault(
   defaultProvider: string,
   defaultModel: string,
-  models: PiModelsConfig,
   isEnabled: boolean,
 ): { result: { provider: ProviderId; modelId: string } | null; wasFixed: boolean } | null {
   const mergedCatalog = getMergedCatalogModels(defaultProvider)
   if (!mergedCatalog || mergedCatalog.models.length === 0) return null
-  const authCredentials = readAuthCredentials()
-  const hasCredential = defaultProvider in authCredentials || !!models.providers[defaultProvider]?.apiKey
+  // 链 3（D3 收口）：凭据判定经唯一通道 sync 布尔版（auth.json → models.json 双源），
+  // 未注入 resolver 时视为无凭据（安全降级：不抛错、不误选，装配序由组合根保证）。
+  const hasCredential = credentialResolver?.hasProviderCredential(defaultProvider) ?? false
   if (!hasCredential || !isEnabled) return null
   // D5 态 3（never-seen）：pass-through——不判定有效性、不触发 auto-fix、不改写
   // settings.json，`--model` 直传 pi 由执行侧解析（模型确实不存在时 pi 报
@@ -377,18 +392,20 @@ function adjudicateCatalogOnlyDefault(
  * wasFixed=false：兜底是临时展示，不是配置修复——写回 settings.json 会污染用户配置
  * （曾踩坑：兜底结果经 updateSettingsFields 覆盖用户默认 provider，见 2026-08-09 回归）。
  */
-function pickCredentialBackedCatalogProvider(models: PiModelsConfig): {
+function pickCredentialBackedCatalogProvider(): {
   result: { provider: ProviderId; modelId: string } | null
   wasFixed: boolean
-} {
-  const authCredentials = readAuthCredentials()
+} { // eslint-disable-line indent -- standard TS function signature with multi-line return type
   const builtinProviders = (builtinData.providers ?? []) as Array<{
     id: string
     models?: Array<{ id: string }>
   }>
+  // 链 3（D3 收口）：遍历 39 个 builtin 候选用**批量形态**——auth.json / models.json 各单次
+  // 读盘（B3 先例：消除 N+1；逐个 hasProviderCredential 会对 auth.json 做 N 次同步读）。
+  // 未注入 resolver 时视为无凭据（安全降级：不抛错、不误选）。
+  const credentialBackedIds = credentialResolver?.listCredentialBackedProviderIds() ?? new Set<string>()
   for (const bp of builtinProviders) {
-    const hasCredential =
-      bp.id in authCredentials || !!models.providers[bp.id]?.apiKey
+    const hasCredential = credentialBackedIds.has(bp.id)
     // ES3：被 enabledModels 禁用的 catalog provider 不作 default 候选（避免返回用户已禁用的 provider）。
     // deriveEnabled 复用 listProviders 的启用判定（DM3），保持「可用 provider」语义一致。
     if (hasCredential && deriveEnabled(bp.id, getEnabledModels()) && bp.models && bp.models.length > 0) {
@@ -424,7 +441,7 @@ export function findValidDefaultModel(): {
     if (!providerConfig?.models?.length) {
       // D3 修复：auth.json-only catalog provider（OAuth 形态）无 models.json 条目时，
       // 校验 defaultModel ∈ 该 provider 的有效模型集，通过则不 fallback 不写回。
-      const catalogOnlyOutcome = adjudicateCatalogOnlyDefault(defaultProvider, defaultModel, models, isEnabled)
+      const catalogOnlyOutcome = adjudicateCatalogOnlyDefault(defaultProvider, defaultModel, isEnabled)
       if (catalogOnlyOutcome) return catalogOnlyOutcome
       console.warn(`[provider-store] defaultProvider "${defaultProvider}" not found in models.json`)
     }
@@ -436,7 +453,7 @@ export function findValidDefaultModel(): {
     return { result: { provider: fallback.provider, modelId: fallback.modelId }, wasFixed: true }
   }
 
-  return pickCredentialBackedCatalogProvider(models)
+  return pickCredentialBackedCatalogProvider()
 }
 
 /**
@@ -492,10 +509,16 @@ export function setDefaultThinkingLevel(level: string): void {
  * 快照 catalog 索引（provider id → 快照 models），仅剩 sanitizeInvalidProviders 空壳
  * 修复在用（MF-5）。
  *
- * 为什么修复路径不用合并视图（D4）：MF-6 守卫要求 catalog models 每个模型都有真实
- * baseUrl，而 overlay 条目归一化时 baseUrl 缺省填 ''（远程目录不保证该字段）——混入
- * 合并视图会让 every(m => !!m.baseUrl) 误判，provider 从「合并 models 修复」退化成
- * 「删除」，用户数据丢失。修复的数据源必须是编译期快照（构建期权威）。
+ * 为什么修复路径不用合并视图（D4；[D7 前提更新]）：修复是**写盘动作**，其输入必须是
+ * 与运行期缓存状态无关的确定性数据源——MF-6 守卫要求 catalog models 每个模型都有真实
+ * baseUrl（every(m => !!m.baseUrl)），编译期快照（构建期权威）满足该要求；合并视图不满足：
+ * overlay never-seen/expired 时它退化为快照、fresh 时混入远程模型，修复名单随运行期缓存
+ * 漂移（同一份 models.json 在不同启动时刻可能得到「修复」与「删除」两种处置），用户数据
+ * 丢失风险正来自这种不确定性。故修复数据源固定为编译期快照。
+ *
+ * [HISTORICAL] 本注释原论证前提是「overlay 条目归一化时 baseUrl 缺省填 ''，混入合并视图会
+ * 让 every(!!baseUrl) 误判」——该前提随设计 D7（overlayToCatalogModel 不再产空串）失效。
+ * 判据换成「数据源的确定性 + 构建期权威」，不依赖 overlay 会不会填空串这一会漂移的细节。
  *
  * 默认模型有效性判定（upsertProvider / findValidDefaultModel）已改走
  * getMergedCatalogModels 合并视图单点（D4/D5），不再消费本索引。
@@ -505,8 +528,125 @@ const snapshotCatalogModelsById = new Map<string, PiModelDefinition[]>(
 )
 
 /**
+ * 清洗段的 providers.json 标记读取注入面（设计 D2 分层约束，审查 R3-3）。
+ *
+ * providers.json 的唯一读写者是 services 层 XyzProviderStore（C-comm-03）——本层（infra/pi）
+ * 不得 value import 其实现，标记读取经调用方注入的同步原语（与 XyzProviderStore.getExtrasSync
+ * 同形）。判定语义 = **仅存在性**（键在不在），禁按值比对（标记值 stale 不影响判定）。
+ */
+export interface SanitizeProviderMarkerReader {
+  getExtrasSync: (providerId: string) => { gatewayBaseUrl?: string } | undefined
+}
+
+/** sanitizeInvalidProviders 结果（removed/repaired 为既有语义，新增待清标记清单）。 */
+export interface SanitizeInvalidProvidersOutcome {
+  /** 被剔除（非 catalog 空壳 / catalog 无可修复模型）的 provider id。 */
+  removed: string[]
+  /** 被修复（合并快照 catalog models）的 catalog 空壳 provider id。 */
+  repaired: string[]
+  /**
+   * 待清 extras 网关标记清单（设计 D2② 写读错位）：extras 有 gatewayBaseUrl 标记、但
+   * models.json 条目无 baseUrl 键（写序契约「先写标记、后写 models.json」的崩溃中间态）。
+   * 清标记是 **async 锁内写**，不在同步清洗段执行——由调用方（组合根启动流程）编排
+   * `extrasStore.modify`。
+   */
+  staleGatewayMarkers: string[]
+}
+
+/**
+ * pi schema 的 `minLength: 1` 字段集（node_modules 实装 model-config.js:137-140 模型级 /
+ * :170-173 provider 级）——这些字段写入空串会让 pi TypeBox 校验拒绝**整个** models.json（P-poison 实测）。
+ * 模型级 `id` 是必需字段（不在「删键」组，见 stripEmptyStringSchemaKeys）。
+ */
+const EMPTY_STRING_PROVIDER_KEYS = ['name', 'baseUrl', 'apiKey', 'api'] as const
+const EMPTY_STRING_MODEL_KEYS = ['name', 'api', 'baseUrl'] as const
+
+/**
+ * D2① 空串键剥除（幂等）：pi minLength:1 全集字段值为空串（trim 后同视——拦纯空白串）
+ * 即删该键。模型级 `id` 例外：空 id 的模型无有效标识，整条丢弃（只删键会留下无 id 条目，
+ * 同样过不了 pi 校验；与 M1b 写侧防线 translateModelSchemaFields 同口径）。
+ *
+ * 就地改写 cfg，返回被剥除的键路径（诊断日志用，形如 `baseUrl` / `models[0].api`；
+ * 空数组 = 无剥除 = 不触发写盘）。
+ */
+function stripEmptyStringSchemaKeys(cfg: PiProviderConfig): string[] {
+  const raw = cfg as Record<string, unknown>
+  const stripped: string[] = []
+  for (const key of EMPTY_STRING_PROVIDER_KEYS) {
+    const value = raw[key]
+    if (typeof value === 'string' && value.trim() === '') {
+      delete raw[key]
+      stripped.push(key)
+    }
+  }
+  if (Array.isArray(raw.models)) {
+    const kept: unknown[] = []
+    raw.models.forEach((model, index) => {
+      if (!model || typeof model !== 'object' || Array.isArray(model)) {
+        kept.push(model) // 非对象模型不归本清洗段管（pi schema 层拒绝）
+        return
+      }
+      const m = model as Record<string, unknown>
+      if (typeof m.id === 'string' && m.id.trim() === '') {
+        stripped.push(`models[${index}].id`)
+        return // 空 id 模型整条丢弃
+      }
+      for (const key of EMPTY_STRING_MODEL_KEYS) {
+        const value = m[key]
+        if (typeof value === 'string' && value.trim() === '') {
+          delete m[key]
+          stripped.push(`models[${index}].${key}`)
+        }
+      }
+      kept.push(m)
+    })
+    raw.models = kept
+  }
+  const overrides = raw.modelOverrides
+  if (overrides && typeof overrides === 'object' && !Array.isArray(overrides)) {
+    for (const [modelId, override] of Object.entries(overrides as Record<string, unknown>)) {
+      if (!override || typeof override !== 'object' || Array.isArray(override)) continue
+      const o = override as Record<string, unknown>
+      if (typeof o.name === 'string' && o.name.trim() === '') {
+        delete o.name
+        stripped.push(`modelOverrides.${modelId}.name`)
+      }
+    }
+  }
+  return stripped
+}
+
+/**
+ * D2② catalog 条目的 provider 级键处置（设计 D2，判定锚 = extras 的 gatewayBaseUrl 标记，
+ * **仅存在性判定**）：
+ * - `api` 键一律剥除——xyz 对 catalog 的 provider 级 api 无合法写入通道（编辑体撤输入框 /
+ *   QuickSetup 死键清理 / importer 走写入策略后不写），保留只会成为「pi 消费（override 模型
+ *   协议缺省）但 xyz 不展示」的不可见生效配置；
+ * - `baseUrl` 键：有标记 = 用户网关 → 保留；无标记 = 冻结 artifact / 模板默认值 → 剥除。
+ *
+ * 就地改写 cfg，返回被剥除的 provider 级键（诊断日志用）。
+ */
+function stripCatalogProviderLevelKeys(cfg: PiProviderConfig, hasGatewayMarker: boolean): string[] {
+  const raw = cfg as Record<string, unknown>
+  const stripped: string[] = []
+  if (raw.api !== undefined) {
+    delete raw.api
+    stripped.push('api')
+  }
+  if (raw.baseUrl !== undefined && !hasGatewayMarker) {
+    delete raw.baseUrl
+    stripped.push('baseUrl')
+  }
+  return stripped
+}
+
+/**
  * 启动时清理 models.json 里的无效 provider（八字段全缺的空壳，判定 = isInvalidProvider，
  * 对齐 pi 0.84.1 applyModelsJson 抛错条件，锚点与 known-issue 见 pi-provider-repair.ts）。
+ *
+ * 注：本函数的 `isInvalidProvider` 判定与 services 层防线载体的 `hasSubstantiveProviderFields`
+ * （provider-config-helper.ts，八字段任一在场即非空壳）是**双份本地复刻**——C-comm-03 分层约束
+ * 下 services 不可 value import 本层，两侧必须保持同口径，任一改动须同步另一侧。
  *
  * 修复根因（历史）：空壳 provider（如仅 {name}，八字段全缺）导致 bundled pi 0.80.3
  * 严格校验时整个 models.json 加载失败。系统 pi 0.83 对此容错但 bundled 0.80.3 不容错，
@@ -524,18 +664,50 @@ const snapshotCatalogModelsById = new Map<string, PiModelDefinition[]>(
  * 直接 throw，毒化整个 provider 组合且无自愈路径）。catalog models 含空 baseUrl 的 provider
  * （azure-openai-responses）排除出修复名单，维持删除语义；catalog 未来补全 baseUrl 后自动恢复修复。
  *
- * 启动时一次性调用（index.ts cleanLeakedPackages 之后）。幂等：无无效 provider 时不触发写。
+ * [D2 新增] 清洗顺序契约（设计 catalog-provider-field-authority v3.3 §3.3 D2）：先 ① 空串键剥除、
+ * 再 ② catalog 条目的 provider 级键处置（api 一律剥除 / baseUrl 按 extras 网关标记），最后做
+ * **既有**空壳判定/修复（MF-5 语义不变）——剥完只剩 name 的条目由既有修复分支接管，不新增第三套
+ * 空壳语义。② 的判定锚 = providers.json extras 的 gatewayBaseUrl 标记（仅存在性），标记读取经
+ * deps 注入；「清多余标记」是 async 锁内写，本函数只产出 staleGatewayMarkers 清单由调用方编排。
+ *
+ * 启动时一次性调用（index.ts cleanLeakedPackages 之后）。幂等：无剥除/无效 provider 时不触发写。
  * 永不抛错：失败仅 warn 不阻塞启动（对齐 cleanLeakedPackages ES1 风格）。
  *
- * @returns { removed: string[]; repaired: string[] } 被剔除 / 被修复（合并 models）的 provider id 列表
+ * @param deps 注入的 providers.json 标记读取原语（见 SanitizeProviderMarkerReader）；缺省 = 无标记
  */
-export function sanitizeInvalidProviders(): { removed: string[]; repaired: string[] } {
+export function sanitizeInvalidProviders(
+  deps?: SanitizeProviderMarkerReader,
+): SanitizeInvalidProvidersOutcome {
   try {
     modelsStore.invalidate()
     const draft: PiModelsConfig = JSON.parse(JSON.stringify(readModels()))
     const removed: string[] = []
     const repaired: string[] = []
+    const staleGatewayMarkers: string[] = []
+    let strippedAny = false
     for (const [id, cfg] of Object.entries(draft.providers)) {
+      // ① 空串键剥除 + ② catalog provider 级键处置（顺序契约：均先于下方既有空壳判定）
+      if (cfg && typeof cfg === 'object' && !Array.isArray(cfg)) {
+        const strippedKeys = stripEmptyStringSchemaKeys(cfg)
+        if (strippedKeys.length > 0) {
+          strippedAny = true
+          console.log(`[provider-repair] stripped empty-string schema keys on "${id}": ${strippedKeys.join(', ')}`)
+        }
+        if (isCatalogProvider(id)) {
+          // ② 判定锚 = extras 的 gatewayBaseUrl 标记（仅存在性判定，禁按值比对）
+          const hasGatewayMarker = deps?.getExtrasSync(id)?.gatewayBaseUrl !== undefined
+          const strippedProviderKeys = stripCatalogProviderLevelKeys(cfg, hasGatewayMarker)
+          if (strippedProviderKeys.length > 0) {
+            strippedAny = true
+            console.log(`[provider-repair] stripped unmarked provider-level keys on "${id}": ${strippedProviderKeys.join(', ')}`)
+          }
+          // 写读错位（写序契约崩溃中间态：标记在、models.json 无 baseUrl 键）→ 待清清单；
+          // 清标记的 async 锁内写归调用方（本段同步，不在此写 extras）
+          if (hasGatewayMarker && (cfg as Record<string, unknown>).baseUrl === undefined) {
+            staleGatewayMarkers.push(id)
+          }
+        }
+      }
       if (isInvalidProvider(cfg)) {
         // catalog 已知内置 provider 的空壳 → 合并 catalog models 修复（保留 name/authMethod
         // 等既有字段；[W1b 语义变更] 含 apiKey 的条目直接合法，不进此分支）。
@@ -555,7 +727,7 @@ export function sanitizeInvalidProviders(): { removed: string[]; repaired: strin
         }
       }
     }
-    if (removed.length > 0 || repaired.length > 0) {
+    if (removed.length > 0 || repaired.length > 0 || strippedAny) {
       writeModels(draft)
       if (removed.length > 0) {
         console.log('[provider-store] sanitized invalid providers:', removed)
@@ -564,11 +736,11 @@ export function sanitizeInvalidProviders(): { removed: string[]; repaired: strin
         console.log('[provider-store] repaired catalog-known invalid providers (merged builtin models):', repaired)
       }
     }
-    return { removed, repaired }
+    return { removed, repaired, staleGatewayMarkers }
   } catch (e) {
     // best-effort 降级：models.json 异常不阻塞启动（pi 自身加载时也会容错或报错）
     console.warn('[provider-store] sanitizeInvalidProviders failed:', e)
-    return { removed: [], repaired: [] }
+    return { removed: [], repaired: [], staleGatewayMarkers: [] }
   }
 }
 

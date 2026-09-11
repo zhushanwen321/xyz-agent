@@ -18,6 +18,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { ConfigService } from '../config-service.js'
+import { ProviderCredentialResolver } from '../auth/provider-credential-resolver.js'
 import { setModelsPath } from '../../infra/pi/pi-provider-store.js'
 import { setSettingsPath, invalidateSettingsCache } from '../../infra/pi/pi-settings-store.js'
 import { PiConfigStore } from '../../infra/pi/pi-config-store.js'
@@ -32,9 +33,15 @@ function writeModelsJson(providers: Record<string, unknown>): void {
 
 function makeSvc(authIds: string[] = []): ConfigService {
   const auth = authIds.length > 0
-    ? { listCredentialIds: () => authIds } as never
+    ? { listCredentialIds: () => authIds, hasCredentialSync: () => true } as never
     : undefined
-  return new ConfigService('/tmp/project', configStore, auth)
+  // M2fg 恒注入形态：凭据判定经 resolver 批量 sync 版（真 PiConfigStore 读同一 models.json）
+  const resolver = new ProviderCredentialResolver({
+    authService: { getCredential: async () => undefined },
+    authStorage: auth ?? { listCredentialIds: () => [] as string[], hasCredentialSync: () => false },
+    configStore,
+  })
+  return new ConfigService('/tmp/project', configStore, auth, undefined, undefined, resolver)
 }
 
 function providerModels(svc: ConfigService, id: string): ReturnType<ConfigService['listProviders']>[number]['models'] {

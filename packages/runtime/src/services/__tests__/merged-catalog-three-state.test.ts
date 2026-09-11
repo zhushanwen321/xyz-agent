@@ -24,8 +24,10 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { getMergedCatalogModels } from '../provider-catalog.js'
 import { getCatalogOverlayState, getCatalogGeneratedAt } from '../provider-catalog-refresh.js'
-import { findValidDefaultModel, getDefaultModel, setModelsPath } from '../../infra/pi/pi-provider-store.js'
+import { findValidDefaultModel, getDefaultModel, initProviderCredentialResolver, readModels, getProviderConfig, setModelsPath } from '../../infra/pi/pi-provider-store.js'
 import { setSettingsPath, invalidateSettingsCache } from '../../infra/pi/pi-settings-store.js'
+import { ProviderCredentialResolver } from '../auth/provider-credential-resolver.js'
+import { AuthStorage } from '../auth/auth-storage.js'
 import builtinData from '../../generated/builtin-providers.json'
 
 const GENERATED_AT = getCatalogGeneratedAt()
@@ -76,6 +78,13 @@ beforeEach(() => {
   setSettingsPath(settingsPath)
   invalidateSettingsCache()
   writeAuth({ [PROVIDER]: { type: 'api_key', key: 'kz' } })
+  // M2c 链 3：凭据判定只走注入的 resolver（原私有裸读已删除）——按生产组合根形态注入，
+  // auth.json 经真实 AuthStorage（无缓存，后续 writeAuth 立即可读）。
+  initProviderCredentialResolver(new ProviderCredentialResolver({
+    authService: { getCredential: async () => undefined },
+    authStorage: new AuthStorage(join(agentDir(), 'auth.json')),
+    configStore: { readModels, getProviderConfig },
+  }))
 })
 
 afterEach(() => {

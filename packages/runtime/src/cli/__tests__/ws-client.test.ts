@@ -63,10 +63,11 @@ describe('rpc', () => {
     const secondMsg = JSON.parse(String((lastMockWs.send as ReturnType<typeof vi.fn>).mock.calls[1][0]))
     expect(secondMsg.type).toBe('config.getProviders')
     expect(secondMsg.payload).toEqual({ extra: 1 })
-    // reply 到达 → resolve + close
+    // reply 到达 → resolve（信封解包后的 payload）+ close——调用方按 payload 字段读取
+    // （reply.providers / reply.models…），信封字段（id/type）不外泄
     const replyId = secondMsg.id
     lastMockWs.emit('message', Buffer.from(JSON.stringify({ id: replyId, payload: { providers: [] } })))
-    await expect(promise).resolves.toMatchObject({ id: replyId })
+    await expect(promise).resolves.toEqual({ providers: [] })
     expect(lastMockWs.close).toHaveBeenCalled()
   })
 

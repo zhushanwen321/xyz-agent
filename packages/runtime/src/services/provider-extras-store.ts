@@ -17,6 +17,7 @@
  */
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { dirname } from 'node:path'
+import type { QuotaCredentialSource } from '@xyz-agent/shared'
 import { withFileLockAsync } from '../utils/file-lock.js'
 import { atomicWrite } from '../utils/fs-utils.js'
 import { quarantineCorruptFile } from '../utils/json-store.js'
@@ -40,6 +41,16 @@ export interface ProviderExtras {
     cookieSet?: boolean
     apiKeySet?: boolean
     /**
+     * 凭证来源（D3，coding-plan-quota-config-ux §7.3 改动 6）：恒由 configure payload
+     * 显式值经继承链落盘（键缺省 = 继承既存），写侧禁止调 resolveQuotaCredentialSource
+     * 补默认——那是读侧推断（**显式值优先**），补默认的危害不是覆盖显式值，而是把未设置的
+     * 字段**物化**成推断值：setEnabled 式缺省 payload 会静默写入用户从未选择过的来源，
+     * 此后该 provider 不再跟随推断（专属 Key 被清后 apiKeySet 变 false，读侧本应回落
+     * provider，冻结的显式值会让查询走向 no-credential）。未设置时读侧按
+     * resolveQuotaCredentialSource 推断（兼容历史数据：apiKeySet=true → exclusive）。
+     */
+    credentialSource?: QuotaCredentialSource
+    /**
      * 资源维度 fetcher（opencode）的 workspace 归一化地址（规范 URL，非凭证明文存储——
      * 用户浏览器地址栏可见的同一 URL，timeout-audit-hygiene-batch D1-1）。
      */
@@ -47,6 +58,16 @@ export interface ProviderExtras {
   }
   /** 模型启停（自 models.json providers.<id>.models[].enabled 迁入，key = modelId）。 */
   modelStates?: Record<string, { enabled: boolean }>
+  /**
+   * 用户网关标记（catalog provider 的 models.json provider 级 baseUrl 属用户显式设置时写入，
+   * 与 authMethod 同域显式标注先例）。
+   *
+   * 仅作 D2 存量清洗判定锚：清洗时**仅存在性判定**（键在 = 用户网关 → 保留 models.json 键；
+   * 键不在 = 历史冻结 artifact → 剥除），禁按值比对（标记值 stale 不影响判定）。
+   * 不参与任何展示/取值的推导——网关展示与取值的唯一来源是 models.json override 非空 baseUrl
+   * （避免「键已剥、标记待清」窗口展示 stale 标注）。
+   */
+  gatewayBaseUrl?: string
 }
 
 const EMPTY_FILE: ProviderExtrasFile = { version: 1, providers: {} }

@@ -85,6 +85,39 @@ const openProxy = computed<boolean>({
   },
 })
 
+// ── M4：模板卡协议 / 端点展示（设计 catalog-provider-field-authority §3.3 D5）──
+//
+// 模板 provider 级 api/baseUrl 是构建期 artifact（gen-builtin-providers.mjs 取
+// `models[0].api` 冒充 provider 协议、`provider.baseUrl ?? ''` 落空串），直接展示会把
+// 「取第一个模型的协议冒充 provider 协议」泄漏给用户（混合协议 provider 如 opencode-go
+// 卡片显示 anthropic-messages）。改为按模板模型集聚合：单一值 → 该值；混合 → 按模型分发；
+// 无值 → 空值占位（协议）/ 内置目录未提供（端点）。
+
+/**
+ * 模型集单值字段聚合：undefined = 无任何非空值；null = 混合（>1 种）；string = 单值。
+ * null 与 undefined 分开返回——「混合」与「没有」在展示上是两种不同事实。
+ */
+function aggregateModelField(values: Array<string | undefined>): string | undefined | null {
+  const distinct = [...new Set(values.filter((v): v is string => !!v))]
+  if (distinct.length === 0) return undefined
+  if (distinct.length > 1) return null
+  return distinct[0]
+}
+
+/** 协议单元格：混合 → 「按模型分发」；无 → 「—」；单值 → 该协议 */
+const templateApiText = computed<string>(() => {
+  const aggregated = aggregateModelField(props.template.models.map(m => m.api))
+  if (aggregated === null) return t('settings.providerEdit.apiMixed')
+  return aggregated ?? t('settings.provider.builtinTemplate.emptyValue')
+})
+
+/** 端点单元格：混合 → 「按模型分发」；模板模型集无端点信息 → 「内置目录未提供」；单值 → 该端点 */
+const templateBaseUrlText = computed<string>(() => {
+  const aggregated = aggregateModelField(props.template.models.map(m => m.baseUrl))
+  if (aggregated === null) return t('settings.providerEdit.apiMixed')
+  return aggregated ?? t('settings.providerEdit.endpointNotProvided')
+})
+
 /** footer hint：动态落盘说明 */
 const footerHint = computed(() => t(`settings.provider.builtinTemplate.${footerHintKey.value}`))
 
@@ -104,12 +137,13 @@ function onOAuthLogin(): void {
         <DialogTitle>{{ t('settings.provider.builtinTemplate.setupTitle', { name: template.name }) }}</DialogTitle>
       </DialogHeader>
 
-      <!-- 内置配置信息块（demo builtinInfo） -->
+      <!-- 内置配置信息块（demo builtinInfo）。端点/协议按模板模型集聚合展示（M4/D5）：
+           模板 provider 级 api/baseUrl 是构建期 artifact，禁止直接展示。 -->
       <div class="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1.5 rounded-md border border-border bg-surface-2 px-3 py-2.5 text-[12px]">
         <span class="text-neutral-dim">{{ t('settings.provider.builtinTemplate.infoBaseUrl') }}</span>
-        <span class="truncate font-mono text-[11px] text-neutral-fg">{{ template.baseUrl || '—' }}</span>
+        <span class="truncate font-mono text-[11px] text-neutral-fg" data-testid="builtin-baseurl">{{ templateBaseUrlText }}</span>
         <span class="text-neutral-dim">{{ t('settings.provider.builtinTemplate.infoApi') }}</span>
-        <span class="truncate text-neutral-fg">{{ template.api || '—' }}</span>
+        <span class="truncate text-neutral-fg" data-testid="builtin-api">{{ templateApiText }}</span>
         <!-- 推荐环境变量（demo envLine） -->
         <template v-if="template.envVars.length > 0">
           <span class="text-neutral-dim">{{ t('settings.provider.builtinTemplate.infoEnvVar') }}</span>

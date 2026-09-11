@@ -10,6 +10,7 @@
  */
 import { describe, it, expect, vi } from 'vitest'
 import { SettingsMessageHandler, type SettingsHandlerContext } from '../src/transport/settings-message-handler.js'
+import { ModelConnectionTester } from '../src/infra/model-connection-tester.js'
 import type { ClientMessage, ServerMessage } from '@xyz-agent/shared'
 
 function makeHandler(configOverrides: Record<string, ReturnType<typeof vi.fn>> = {}, modelOverrides: Record<string, ReturnType<typeof vi.fn>> = {}) {
@@ -87,6 +88,7 @@ function makeHandler(configOverrides: Record<string, ReturnType<typeof vi.fn>> =
     broadcastSkillDirs: vi.fn(),
     broadcastAgentDirs: vi.fn(),
     broadcastExtensionDirs: vi.fn(),
+    connectionTester: new ModelConnectionTester(),
   }
   const handler = new SettingsMessageHandler(ctx as unknown as SettingsHandlerContext)
   return { ctx, replies, broadcasts, sendErrorCalls, handler }

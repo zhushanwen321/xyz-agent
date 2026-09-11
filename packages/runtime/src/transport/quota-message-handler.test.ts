@@ -79,6 +79,36 @@ describe('QuotaMessageHandler · quota.configure await 竞态（A1-5）', () => 
     )
     expect(ctx.broadcastProviderList).toHaveBeenCalledTimes(1)
   })
+
+  it('configure 分支整对象透传 wire payload（含 handler 当期不消费的字段，不被逐字段裁剪）', async () => {
+    // 防的回归：handler 退回逐参调用（configure(providerId, enabled, cookie, …)）时，上方
+    // 3 条用例仍全绿——它们只断 reply/广播时序，不检查入参形状，透传正确性此前仅靠 tsc 的
+    // 单参签名强制。payload 里放一个 handler 当期不消费的额外字段（workspace），逐字段解构
+    // 重组会把它丢掉或改写形状，两条断言互补可证伪（分工见下方 ①②）。
+    const configure = vi.fn().mockResolvedValue({ ok: true })
+    const ctx = mockContext({ configure })
+    const handler = new QuotaMessageHandler(ctx)
+    const payload = {
+      providerId: 'zai-coding-cn',
+      enabled: true,
+      credentialSource: 'exclusive',
+      workspace: 'https://wrk.example.com',
+    }
+
+    await handler.handleQuotaMessage(msg('quota.configure', payload), WS)
+
+    expect(configure).toHaveBeenCalledTimes(1)
+    // ① 关心字段逐一到位（漏传任一字段即红）
+    expect(configure).toHaveBeenCalledWith(expect.objectContaining({
+      providerId: 'zai-coding-cn',
+      enabled: true,
+      credentialSource: 'exclusive',
+      workspace: 'https://wrk.example.com',
+    }))
+    // ② 整对象深比较：handler 凭空补字段（如归一化后再传）同样红——① 对此不变红，
+    //    两者可证伪的 mutation 不同，故不互为冗余
+    expect(configure).toHaveBeenCalledWith(payload)
+  })
 })
 
 describe('QuotaMessageHandler · providerId 防御（W3）', () => {

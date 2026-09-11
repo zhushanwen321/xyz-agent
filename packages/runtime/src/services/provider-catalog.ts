@@ -66,13 +66,17 @@ const snapshotModelsById = new Map<string, CatalogModel[]>(
  * pi.dev 条目字段与内置 catalog 同构，缺省字段按展示/校验层安全默认填充。
  * （原 provider-config-helper 内联 overlayToBuiltinShape 搬迁——合并单点拥有归一职责，
  * 消费方不再各自拼接。）
+ *
+ * D7：`api`/`baseUrl` **不再用空串捏造缺省**——pi 的 OverlayModel 这两字段本就是 optional，
+ * 空串是归一化捏造（会被合并视图/派生的消费方当成真实值，也可能经某条写路径进 models.json）。
+ * 缺省 = 不置键，消费方按 pi 语义回落（BuiltinModelSummary.api/baseUrl 已 optional）。
  */
 function overlayToCatalogModel(m: OverlayModel): CatalogModel {
   return {
     id: m.id,
     name: m.name ?? m.id,
-    api: m.api ?? '',
-    baseUrl: m.baseUrl ?? '',
+    ...(m.api !== undefined ? { api: m.api } : {}),
+    ...(m.baseUrl !== undefined ? { baseUrl: m.baseUrl } : {}),
     reasoning: m.reasoning ?? false,
     input: m.input ?? ['text'],
     cost: (m.cost ?? null) as CatalogModel['cost'],
