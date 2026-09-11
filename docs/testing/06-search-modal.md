@@ -139,7 +139,7 @@ cd packages/renderer && npx vitest run src/__tests__/lib/match-engine.test.ts  #
 | T1.13/T1.14/T3.7/T3.8/T5.4 | | open/close 竞态/孤儿守卫/loading 防闪烁/容错 |
 | T1.5 | | Tab 切类（AC-9.1~9.4，P2）|
 
-**live 等价覆盖合计 84 测**（8 + 12 + 10 + 16 + 13 + 25）；原 execution-plan 基线 86 测为迁移前 renderer 口径，已随实现迁移失效。
+**live 等价覆盖合计 84 测**（8 + 12 + 10 + 16 + 13 + 25）；原 execution-plan 基线 86 测为迁移前 renderer 口径，已随实现迁移失效。**口径注**：84 仅合计上表矩阵映射的文件；搜索域另有 `file-match.test.ts`（12 测，TC-9 系列，见 TEST-STRATEGY 基线行）与 renderer 侧 `__tests__/lib/match-engine.test.ts`（15 测，core 纯函数导出契约测试，见上方运行命令）不在本合计内。
 
 > 测数为 2026-09-11 各 live 文件实测 `it()` 计数（`packages/core/test-results/vitest-junit.xml` / `packages/ui` vitest 输出）。用例 ID（T#/AC-#）沿用 2026-06-30 execution-plan 编号作为验收追溯锚点；迁移后 core 侧按 `TC-#` 组织，ID 与 TC 编号的逐条映射未重建。
 
