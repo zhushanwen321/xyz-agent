@@ -27,7 +27,7 @@
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { effectScope } from 'vue'
-import type { LatestReleaseInfo, UpdateCheckResult } from '@xyz-agent/shared'
+import type { LatestReleaseInfo, LaunchResult, UpdateCheckResult } from '@xyz-agent/shared'
 
 // vi.hoisted：mock factory 内不能引用顶层变量，用 hoisted 拿稳定引用
 const hoisted = vi.hoisted(() => {
@@ -35,12 +35,12 @@ const hoisted = vi.hoisted(() => {
   let errorCb: ((e: { stage: string; message: string; errorCode?: string }) => void) | null = null
   return {
     checkForUpdate: vi.fn<(opts?: { force?: boolean }) => Promise<UpdateCheckResult>>(),
-    performUpdate: vi.fn<(release: LatestReleaseInfo) => Promise<{ triggerRestart: boolean }>>(),
     updateDownload: vi.fn<(release: LatestReleaseInfo) => Promise<{ downloaded: boolean }>>(),
     updateInstall: vi.fn<() => Promise<{ triggerRestart: boolean }>>(),
     getPreloaded: vi.fn<() => Promise<{ release: LatestReleaseInfo; filePath: string } | null>>(),
     getPendingUpdate: vi.fn<() => Promise<LatestReleaseInfo | null>>(),
     getUpdateSettings: vi.fn<() => Promise<{ preDownload: boolean; autoUpdate?: boolean }>>(),
+    getLaunchResult: vi.fn<() => Promise<LaunchResult | null>>(),
     openUpdateFallbackUrl: vi.fn<(url: string) => Promise<void>>(),
     onUpdateProgress: vi.fn((cb: typeof progressCb) => {
       progressCb = cb
@@ -56,12 +56,12 @@ const hoisted = vi.hoisted(() => {
 
 vi.mock('@/api/domains/settings', () => ({
   checkForUpdate: hoisted.checkForUpdate,
-  performUpdate: hoisted.performUpdate,
   updateDownload: hoisted.updateDownload,
   updateInstall: hoisted.updateInstall,
   getPreloaded: hoisted.getPreloaded,
   getPendingUpdate: hoisted.getPendingUpdate,
   getUpdateSettings: hoisted.getUpdateSettings,
+  getLaunchResult: hoisted.getLaunchResult,
   openUpdateFallbackUrl: hoisted.openUpdateFallbackUrl,
   onUpdateProgress: hoisted.onUpdateProgress,
   onUpdateError: hoisted.onUpdateError,
@@ -88,11 +88,12 @@ function makeRelease(version = '0.9.0'): LatestReleaseInfo {
 beforeEach(() => {
   _resetForTest()
   hoisted.checkForUpdate.mockReset()
-  hoisted.performUpdate.mockReset()
   hoisted.updateDownload.mockReset()
   hoisted.updateInstall.mockReset()
   hoisted.getPreloaded.mockReset()
   hoisted.getPendingUpdate.mockReset()
+  // initAutoCheck 恢复链的 checkLaunchResult 消费启动结果（consumed 一次性）；null = 无待通知结果
+  hoisted.getLaunchResult.mockReset().mockResolvedValue(null)
   // u4a：initAutoCheck 读 autoUpdate 开关（默认 true，存量行为不变）
   hoisted.getUpdateSettings.mockReset().mockResolvedValue({ preDownload: false, autoUpdate: true })
   hoisted.openUpdateFallbackUrl.mockReset()

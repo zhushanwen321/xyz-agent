@@ -14,7 +14,8 @@
  *
  * mock 策略（对齐 settings-modal-smoke.test.ts + ProviderPage.test.ts）：
  *   - vi.mock('@/api') 把 config/extension 门面替成可控 mock（ExtensionPage/InstallFlow 依赖）
- *   - vi.mock('@/lib/ipc') 避免 electronAPI 缺失（chooseDirectory/SystemPage 依赖）
+ *   - vi.mock('@/api/domains/settings') 避免 electronAPI 缺失（chooseDirectory/SystemPage 依赖；
+ *     settings 组件已收编走该 seam，不再直取 lib/ipc 原始模块）
  *   - providePlatform + provideSettingsTransport + pinia（SettingsModal 打开时刷新 providers）
  *   - global.provide 注入 SETTINGS_TOAST_KEY/USE_QUOTA_CONFIGURE_KEY/SETTINGS_CONFIG_API_KEY
  *   - global.stubs 把 LoadPaths/ExtensionInstallFlow/ExtensionList 重子组件 stub 掉（聚焦入口 + 子页）
@@ -94,14 +95,15 @@ vi.mock('@/api', () => ({
   },
 }))
 
-// lib/ipc mock（SystemPage/TerminalPage/LoadPaths chooseDirectory 依赖）
-vi.mock('@/lib/ipc', () => ({
+// settings 域 seam mock（SystemPage/TerminalPage/LoadPaths chooseDirectory 依赖）
+vi.mock('@/api/domains/settings', () => ({
   listSystemSounds: vi.fn(async () => ({ sounds: [] })),
   getProxyConfig: vi.fn(async () => ({})),
   setProxyConfig: vi.fn(async () => undefined),
   testProxy: vi.fn(async () => ({ success: true })),
   getDataDir: vi.fn(async () => undefined),
   chooseDirectory: vi.fn(async () => null),
+  openUpdateManualDir: vi.fn(async () => ({ success: true })),
 }))
 
 import SettingsModal from '@/components/settings/SettingsModal.vue'

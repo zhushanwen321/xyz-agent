@@ -6,6 +6,7 @@
 // - 代理配置（update:getProxyConfig / update:setProxyConfig / update:testProxy）
 // - 升级设置与升级操作（update:getSettings / update:setSettings / update:check /
 //   update:download / update:install / 预下载与启动结果 / 进度错误事件订阅）
+// - settings 页面通用 IPC（数据目录路径 / 目录选择 dialog / 系统提示音清单）
 // settings 域 WS 部分（config/extension 订阅转发 + worktree/smart-context 等 RPC）真源在
 // @xyz-agent/core/transport/api/domains/settings，消费方直接 import core 子路径，不经本文件。
 import type {
@@ -34,6 +35,10 @@ import {
   onUpdateError as onUpdateErrorIpc,
   getLaunchResult as getLaunchResultIpc,
   openUpdateFallbackUrl as openUpdateFallbackUrlIpc,
+  getDataDir as getDataDirIpc,
+  openUpdateManualDir as openUpdateManualDirIpc,
+  chooseDirectory as chooseDirectoryIpc,
+  listSystemSounds as listSystemSoundsIpc,
 } from '@/lib/ipc'
 
 // ── 代理配置（update:getProxyConfig / update:setProxyConfig / update:testProxy）──
@@ -112,4 +117,31 @@ export function getLaunchResult(): Promise<LaunchResult | null> {
 /** 不支持当前平台时，打开备用下载页（release 页面）。 */
 export function openUpdateFallbackUrl(url: string): Promise<void> {
   return openUpdateFallbackUrlIpc(url)
+}
+
+/** 打开手动升级产物目录（main 幂等建目录 + shell.openPath），打开失败 reject。 */
+export function openUpdateManualDir(): Promise<{ success: boolean }> {
+  return openUpdateManualDirIpc()
+}
+
+// ── settings 页面通用 IPC（数据目录路径 / 目录选择 dialog / 系统提示音清单）──
+// 消费方均为 settings 页面组件（UpdateCheckCard 路径展示 / ExtensionPage 与
+// SettingsResourcePage 的 LoadPaths 目录选择 / SystemSoundSection 提示音清单）。
+
+/** 读取数据目录（~ 缩写展示路径）。无 IPC（web/mock）返回 undefined，调用方需 fallback。 */
+export function getDataDir(): Promise<string | undefined> {
+  return getDataDirIpc()
+}
+
+/** 打开目录选择 dialog，返回所选路径（canceled → null）。 */
+export async function chooseDirectory(): Promise<string | null> {
+  return chooseDirectoryIpc()
+}
+
+/** 当前平台可用系统提示音清单。无 IPC 返回空 sounds。 */
+export function listSystemSounds(): Promise<{
+  platform: string
+  sounds: Array<{ id: string; name: string }>
+}> {
+  return listSystemSoundsIpc()
 }
