@@ -52,8 +52,7 @@ vi.mock('@/composables/features/sidebar/useSidebar', () => ({
     focusedSession: { value: null },
   }),
 }))
-vi.mock('@/composables/features/chat/useSubagentListSync', () => ({ useSubagentListSync: vi.fn() }))
-vi.mock('@/composables/features/chat/useWorkflowListSync', () => ({ useWorkflowListSync: vi.fn() }))
+vi.mock('@/composables/features/chat/useListSync', () => ({ useListSync: vi.fn() }))
 vi.mock('@/composables/features/chat/useSessionDerivations', () => ({
   useSessionDerivations: () => ({
     derivedStatus: vi.fn(() => 'idle'),
