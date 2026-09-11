@@ -326,9 +326,12 @@ export async function doFinalizeRoundToIdle(
 ): Promise<void> {
   // [A3 硬断言] 本方法会把 closed 回滚为 running（下方状态机段）——对「终态簿记已
   // 冻结」record 的调用会复活终态（S7 破坏：close 抢先后迟到轮末回滚 + 追加通知 +
-  // 二次 unregister）。冻结的权威判据 = record.endedAt 已设（completeRecord 是唯一
-  // 生产写点——execution-record.ts；tryTransition 只置 status/closedReason 刻意不触
-  // endedAt，其 CAS 乐观置位与本方法的回滚是设计配套）。两个构造性调用面均满足：
+  // 二次 unregister）。冻结的权威判据 = record.endedAt 已设。endedAt 写点枚举：
+  // ① 运行时唯一生产写点 = completeRecord（execution-record.ts；tryTransition 只置
+  // status/closedReason 刻意不触 endedAt，其 CAS 乐观置位与本方法的回滚是设计配套）；
+  // ② 磁盘重建路径（record-store.ts 终态 sidecar 分支）亦写 endedAt——record 生而
+  // 终态形态，本断言对该形态行为正确（已终态重建 record 被拦截回滚，不再复活）。
+  // 两个构造性调用面均满足：
   //   - Continuation 轮末分流：onRunSettled 终态守卫整体 early-return 后同步进入
   //    （守卫与断言间无 await 窗），record 从未终态化 → endedAt undefined；
   //   - settleOneShotOutcome SP-5 共享调用点：CAS 抢锁成功后的锁内回滚，tryTransition

@@ -32,7 +32,8 @@ import type {
   ContinuationHost,
 } from "../conversation-continuation.ts";
 import type { RoundSettlementOutcome } from "../finalize-record.ts";
-import type { BgNotifyRecord } from "../notifier.ts";
+import { createNotifier, type BgNotifyRecord } from "../notifier.ts";
+import { bindNotifyLedgerHost } from "../notify-ledger.ts";
 import type { AgentOutcome } from "../engine/types.ts";
 import { registerFakePiEngine, type FakePiEnginePort } from "./helpers/fake-engine-port.ts";
 import { clearEngines, registerEngine } from "../engine/registry.ts";
@@ -479,37 +480,96 @@ describe("ConversationContinuation — 轮末分流（D7）与通知面", () => 
     expect(calls.transitions).toEqual([record.id]);
   });
 
-  it("[A2] drain 守卫失败 → 不 throw（无 unhandled rejection）+ 队列丢弃失败通知 + queue 清空（锚点缺失触发链）", async () => {
+  it("[A2] drain 守卫失败 → 不 throw（无 unhandled rejection）+ 队列丢弃失败通知 + queue 清空（锚点缺失触发链）+ 丢弃通知独立 dedup 身份过真实去重链", async () => {
     // 可达触发链：首轮在途 message 打断入队 → 首轮崩溃（合成 outcome 无 sessionFile
     // ——mock host 不回填锚点）→ 失败 settle → drain 以 firstRound=false 走锚点守卫
     // → throw。修复前 throw 逃逸 settleRoundFailed 的 void promise = unhandled
     // rejection（Node ≥15 默认崩宿主）且队列消息静默丢失。
     const record = makeRecord({ id: "sa-drain-guard" }); // sessionFile undefined（首轮未回填）
     const { host, calls } = makeHost(record);
-    const cont = new ConversationContinuation(record, host);
-    cont.startFirstRound("round 1"); // firstRound=true，无锚点守卫
-    await vi.waitFor(() => expect(calls.dispatched.length).toBe(1));
-    cont.onMessage("queued while running");
-    expect(cont.pendingCount).toBe(1);
 
-    // 首轮失败收敛 → settleRoundFailed 尾部 drain 触发锚点守卫 throw（修复后就地转错误面）
-    cont.onRunSettled(makeOutcome({ content: "", error: "engine_crashed: child died" }));
+    // 通知面接真实 notifier + ledger（生产装配形态：ContinuationHost.notifyRecord →
+    // notifyHost.notify → createNotifier().notify → ledger 四步链）。纯 push mock 不过
+    // 真实去重——修复前丢弃通知与同轮失败单发同 key（`id:round`）会被 ledger 幂等吞
+    // （sentMessages 恒 1 条），本用例的 2 条断言即该 bug 的回归锚。
+    // 元素形态 = 两列合一（ledger 写账 entry 带 data；送达落盘 entry 带 content 等，
+    // 与 notify-ledger.test.ts makeLedgerHost 的 entries/sessionEntries 共享数组同构）。
+    const ledgerEntries: Array<{
+      type: string;
+      customType: string;
+      data?: unknown;
+      content?: string;
+      display?: boolean;
+      details?: unknown;
+    }> = [];
+    const delivered: Array<{ customType: string; content: string; display: boolean; details?: unknown }> = [];
+    bindNotifyLedgerHost({
+      appendLedgerEntry: (customType, data) => {
+        ledgerEntries.push({ type: "custom", customType, data });
+      },
+      readSessionEntries: () => ledgerEntries,
+      isIdle: () => true,
+      onAgentSettled: () => {},
+      // 送达即落盘 custom_message entry（ledger 回执扫描输入，模拟 pi 落盘）。
+      sendDelivery: (message) => {
+        delivered.push(message);
+        ledgerEntries.push({
+          type: "custom_message",
+          customType: message.customType,
+          content: message.content,
+          display: message.display,
+          details: message.details,
+        });
+      },
+    });
+    const notifier = createNotifier({
+      sendMessage: () => {}, // ledger 路径送达出口 = sendDelivery；本端口仅内核兜底路径消费
+      hasRunningBackground: () => false,
+      isIdle: () => true,
+    });
+    const origNotifyRecord = host.notifyRecord;
+    host.notifyRecord = (n) => {
+      origNotifyRecord(n);
+      notifier.notify(n);
+    };
 
-    // 第一条 = 失败单发（既有语义）；第二条 = drain 守卫失败的队列丢弃通知
-    await vi.waitFor(() => expect(calls.notified.length).toBe(2));
-    const dropped = calls.notified[1]!;
-    expect(dropped.status).toBe("closed");
-    expect(dropped.outcome).toBe("failed");
-    expect(dropped.error).toContain("queued message could not be dispatched");
-    expect(dropped.error).toContain("no transcript anchor");
-    // 队列清空 + record 保持 running-resumable + 无僵尸轮派发
-    expect(cont.pendingCount).toBe(0);
-    expect(record.status).toBe("running");
-    expect(calls.dispatched.length).toBe(1);
-    // 队列丢弃留痕（warn）
-    expect(loggerMock.warn).toHaveBeenCalledWith(
-      expect.stringContaining("queued message dispatch rejected"),
-    );
+    try {
+      const cont = new ConversationContinuation(record, host);
+      cont.startFirstRound("round 1"); // firstRound=true，无锚点守卫
+      await vi.waitFor(() => expect(calls.dispatched.length).toBe(1));
+      cont.onMessage("queued while running");
+      expect(cont.pendingCount).toBe(1);
+
+      // 首轮失败收敛 → settleRoundFailed 尾部 drain 触发锚点守卫 throw（修复后就地转错误面）
+      cont.onRunSettled(makeOutcome({ content: "", error: "engine_crashed: child died" }));
+
+      // 第一条 = 失败单发（既有语义）；第二条 = drain 守卫失败的队列丢弃通知
+      await vi.waitFor(() => expect(calls.notified.length).toBe(2));
+      const dropped = calls.notified[1]!;
+      expect(dropped.status).toBe("closed");
+      expect(dropped.outcome).toBe("failed");
+      expect(dropped.error).toContain("queued message could not be dispatched");
+      expect(dropped.error).toContain("no transcript anchor");
+      // 独立 dedup 身份：与同轮失败单发 key（`id:round`）区分，避免被永久去重吞掉
+      expect(dropped.dedupKey).toBe("sa-drain-guard:1:drain-drop");
+      // 真实去重链上两条都可达（修复前第二条同 key 被 ledger 吞——本断言红），
+      // 且第二条 notifyId 独立、正文为丢弃文案（key 独立性在投递产物上可见）
+      await vi.waitFor(() => expect(delivered).toHaveLength(2));
+      expect(delivered[0]!.details).toMatchObject({ notifyId: "sa-drain-guard:1" });
+      expect(delivered[1]!.details).toMatchObject({ notifyId: "sa-drain-guard:1:drain-drop" });
+      expect(delivered[1]!.content).toContain("queued message could not be dispatched");
+      // 队列清空 + record 保持 running-resumable + 无僵尸轮派发
+      expect(cont.pendingCount).toBe(0);
+      expect(record.status).toBe("running");
+      expect(calls.dispatched.length).toBe(1);
+      // 队列丢弃留痕（warn）
+      expect(loggerMock.warn).toHaveBeenCalledWith(
+        expect.stringContaining("queued message dispatch rejected"),
+      );
+    } finally {
+      // dispose 摘除 ledger 模块级绑定——防泄漏到同文件后续用例
+      notifier.dispose();
+    }
   });
 
   it("[A2] drain 守卫失败 + notifyGate 门拦（cancelled 竞态窗）→ 通知不发（防双发语义一致）", async () => {

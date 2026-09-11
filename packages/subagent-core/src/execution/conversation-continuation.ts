@@ -456,6 +456,18 @@ export class ConversationContinuation {
         `${next.length} queued message(s) dropped`,
       );
       if (notifyGateAllowsDelivery(this.record.closedReason)) {
+        // dedup 身份必须独立于同轮失败通知（settleRoundFailed 缺省 key = `id:round`）：
+        // 主可达场景「首轮崩溃 → 失败 settle（通知1 发出）→ drain 守卫 throw → 丢弃
+        // 通知（通知2）」中两通知同轮同 key，沿用缺省 key 会被 ledger/内核按 key 永久
+        // 去重吞掉（notifier dedupe 永久 + ledger 幂等）——「队列消息被丢」的显式反馈
+        // 永不可达。故经 dedupKey 传 `id:round:drain-drop`：
+        //   - 带 round：不同轮的 drain 丢弃是不同事件（各轮 queue 的消息不同，每次都
+        //     应显式反馈），不带 round 会让本 bug 在「第二轮及以后」以同构路径复现；
+        //   - 同轮重放同 key 合理：同轮 drain 丢弃是同一事件的反馈（queue 已 splice
+        //     清空，单飞守卫下同轮不会二次丢弃），at-least-once 幂等语义成立。
+        const dropDedupKey = this.record.round != null
+          ? `${this.record.id}:${this.record.round}:drain-drop`
+          : `${this.record.id}:drain-drop`;
         this.host.notifyRecord({
           id: this.record.id,
           // status:"closed" + outcome:"failed" 载荷 = 失败文案形态（settleRoundFailed
@@ -470,6 +482,7 @@ export class ConversationContinuation {
           endedAt: Date.now(),
           round: this.record.round,
           ...(this.record.sessionFile !== undefined ? { sessionFile: this.record.sessionFile } : {}),
+          dedupKey: dropDedupKey,
         });
       }
     }
