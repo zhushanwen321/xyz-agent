@@ -1,6 +1,6 @@
 # ext-simplify-01（unified-hooks 删包 + llm-shared 清理）实施计划
 
-基线: 7bee3310c | 来源设计: docs/design/ext-simplify-01-unified-hooks-llm-shared.md | 日期: 2026-09-12
+基线: 3d1d396f0 | 来源设计: docs/design/ext-simplify-01-unified-hooks-llm-shared.md | 日期: 2026-09-12
 
 审查证据: 主审 `.review/ext-simplify-01-review-r3.md`（0 must-fix, 0 suggestion）+ 影响面 `.review/ext-simplify-01-review-impact-r3.md`（0 must-fix, 0 suggestion；1 INFO 计数口径，不计数，无需修订）。设计文档 v3（286 行）双审收官，可进入实施。
 

@@ -1,6 +1,6 @@
 # ext-simplify-02（system-prompt-trace baseline 删除 + 类型归一）实施计划
 
-基线: 7bee3310c | 来源设计: docs/design/ext-simplify-02-system-prompt-trace.md | 日期: 2026-09-12
+基线: 3d1d396f0 | 来源设计: docs/design/ext-simplify-02-system-prompt-trace.md | 日期: 2026-09-12
 
 审查证据: `.review/ext-simplify-02-review-r4.md`（主审第 4 轮聚焦复审：0 must-fix, 0 suggestions，另 2 条 INFO 不计数）+ `.review/ext-simplify-02-review-impact-r3.md`（影响面第 3 轮聚焦复审：0 must-fix, 0 suggestions，另 1 INFO）——两份报告均确认上轮修复成立、新反例未击穿，设计 v4 达到可实施状态。
 

@@ -1,6 +1,6 @@
 # ext-simplify-12（pending-notifications 死代码删除 + registry 现算化）实施计划
 
-基线: 7bee3310c | 来源设计: docs/design/ext-simplify-12-pending-notifications.md | 日期: 2026-09-12
+基线: 3d1d396f0 | 来源设计: docs/design/ext-simplify-12-pending-notifications.md | 日期: 2026-09-12
 
 审查证据: 主审 `.review/ext-simplify-12-review-r2.md`（0 must-fix + 2 suggestion + 5 INFO）+ 影响面 `.review/ext-simplify-12-review-impact-r2.md`（0 must-fix + 2 suggestion + 2 INFO）。4 条 suggestion（主审：E9 补 base-tool-enhance.md:192 行为断言行、§9.3 清扫口径显式化 + R9 报告豁免登记；影响审：13 号协调约束双登记至 `ext-simplify-index.md` 13 号行、E10 清扫/回护不对称登记）已由设计文档 v3 第 2 轮修订全修（见设计文档附录「修订记录 · 第 2 轮」逐条对照，含实跑/实读自证），无未修项。
 
