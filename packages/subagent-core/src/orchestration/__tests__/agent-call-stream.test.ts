@@ -98,7 +98,8 @@ function makeAgentCallMsg(callId: number): unknown {
 /** "streamSink" ∈ keyof LifecycleDeps 时为 true——与下方显式 false 标注冲突即编译红。 */
 type HasStreamSink = "streamSink" extends keyof LifecycleDeps ? true : false;
 // 结构断言本体：字段已删 = false。若有人重新引入 streamSink 字段，本行类型错误，
-// tsc 与 vitest 转译期同时拦截（比运行时负向用例更强的注入面消失护栏）。
+// tsc / vue-tsc 拦截（vitest 转译不做类型检查；类型门由 pre-commit/CI 的 tsc 面
+// 覆盖——比运行时负向用例更强的注入面消失护栏）。
 const assertNoStreamSinkField: HasStreamSink = false;
 void assertNoStreamSinkField;
 

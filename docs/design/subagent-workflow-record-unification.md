@@ -96,7 +96,7 @@ workflow 域早于引擎协议化演进定型。协议化（D3 系列）把真�
 
 - **D1 `origin` 字段（建议新增）+ 投影层隐藏**：`ExecutionRecord` 增 `origin: "tool" | "workflow"`（缺省 `"tool"`）与 `parentRunId?: string`。**过滤在投影/查询层，不在 store 层**（治理面 sweep/恢复/监督需全量）。消费面逐一点：
   ① subagents tool `list`（`subagents.ts:234`）默认过滤，增 `includeWorkflow?: boolean` 参数（缺省 false）——runner 恢复指引（`:445/502`）文案更新为带 `includeFinished:true` + `includeWorkflow:true` 配对（与 message-guard 文案族同款）；
-  ② renderer `useSidebarCounts` active bucket（`:36`）过滤；
+  ② renderer `useSidebarCounts` 过滤——badge/active bucket 计数 + `subagentList` 组装点（[阶段3-R1 裁决] 三桶全滤：Agents tab 域 = 手动派发 subagent，与 badge 同语义、与 TUI 对称；下游 filterSubagents/countSubagents/查看全部(N) 同源自洽）；
   ③ renderer `useBackgroundWork.hasRunning`（`:26`）过滤 origin=workflow（配合 D7 终态化后此条自然缓解，过滤保留为双保险）；
   ④ TUI `/subagents` 同 list（同参数）；
   ⑤ 磁盘重建投影不过滤（record 全量持久化，重建后投影层同规则生效）；

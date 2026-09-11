@@ -291,7 +291,7 @@ grep -E "\[sessionfile\]|agent_end get_state backfill|workflow no-progress watch
 - **env `XYZ_SUBAGENT_SETTLED_WATCHDOG_MS<=0` 会连带关掉本节这个熔断**：`subagent-service.ts` 的 `armWorkflowNoProgressWatchdog`（原 SAR.run 挂载点，[H2 W4] 掏空归位）经同一原语入口挂载，watchdog 不 arm 则 workflow 域静默楔死同样没有独立回收计时——排查「workflow 又挂死且无终态通知」时先确认该 env 没被设成非正值（warn 文案已明示这层连带，`settled-watchdog.ts` 头注同步登记）。
 - 工具执行期**不会**误 fire：pi 内置 bash 无默认超时，其执行期流式输出（`tool_execution_update`）自 2026-09-10 起被计入活性信号（1s 节流、不进正文槽）——长构建/长测试即使超过 30min 也持续刷新；静默楔死的工具仍在 30min 后被照常回收。
 - 下一步：同引擎并发 run 可能被 killAll **连带** engine_crashed 失败终态化（有失败通知 + `executeAgentCall` 退避重试通道，四要素见设计决策 9）；check `subagents action:'list' includeFinished:true` (add `includeWorkflow:true` to also see workflow-dispatched subagents) 后重派 workflow。产出仍在刷新（事件/delta 持续到达）时不 fire——fire 只在连续静默满窗时发生。
-- **H2 排查通道（workflow record 默认隐藏）**：workflow origin record 在 subagents 工具 list / TUI /subagents / 侧栏计数 / 后台工作指示四处投影**默认过滤**——排查 workflow 子代理必须带 `includeFinished:true` + `includeWorkflow:true` 成对（fire 后 record 必然终态，缺 includeFinished 只查 running 得空列表；成功 record 终态 = closed + reason gc，D7 成功即终态化，非异常，成败判读看 outcome 不看 closedReason）；run 视图实时进度经 parentRunId 查询（record 为真相）。
+- **H2 排查通道（workflow record 默认隐藏）**：workflow origin record 在五处投影**默认过滤**——subagents 工具 list / TUI /subagents / 侧栏 badge 与计数 / 后台工作指示 / GUI subagent 列表（三桶全滤）——排查 workflow 子代理必须带 `includeFinished:true` + `includeWorkflow:true` 成对（fire 后 record 必然终态，缺 includeFinished 只查 running 得空列表；成功 record 终态 = closed + reason gc，D7 成功即终态化，非异常，成败判读看 outcome 不看 closedReason）；run 视图实时进度经 parentRunId 查询（record 为真相）。
 
 **旧文案去留（明确，防按旧串误判）**：
 
