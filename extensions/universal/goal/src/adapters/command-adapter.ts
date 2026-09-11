@@ -154,7 +154,7 @@ function handleResume(pi: ExtensionAPI, session: GoalSession, ctx: ExtensionCont
 		return;
 	}
 	if (state.status !== "active") {
-		state.status = "active";
+		state.status = transitionStatus(state.status, "active");
 		state.timeStartedAt = Date.now();
 	}
 	// W5：resume = 新激活周期——熔断计数清零。主判据总次数（continuationsSent）只经
