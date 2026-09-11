@@ -120,9 +120,9 @@ Commit 映射（执行期 subagent 禁 git，commit 由主会话核验验收条�
 | Unit | 状态 | commit | 产物/备注 |
 |---|---|---|---|
 | u0 V5 基线采集 | committed | 1 | 零仓库改动。基线留存 /tmp/ext-simplify-12-u0-v5-iQxi/（13 session JSONL + 3 产物 + 驱动日志，勿清理）；主基线 = sessions-v5b/。三件产物：① goal-state 状态机 active→complete/blocked + goal:log 序列 + entry 类型清单；② defer 通知 0 次（14 轮实测，触发契约锚点 agent-end.ts:202-225 登记）；③ pending 工具输出全形态（list/count/归零/空）。命令形态：pi --mode rpc + -e 显式入口 + --no-extensions 隔离。deviations 5 条见报告（CLI 0.85.1 与 u4 同版本可比；defer 0=0 比对口径成立） |
-| u1 M1 包内原子改（E1-E5+changeset） | in-progress | 待回填 | 已派发（后台）；已知中间态：subagent-core conformance 暂红至 u2 |
-| u2 跨包测试+SSOT（E6+E7） | pending | 待回填 | |
-| u3 注释/文档回写+守卫（E8-E10） | pending | 待回填 | |
+| u1 M1 包内原子改（E1-E5+changeset） | committed | 1 | 编排方核验（领地 4 文件吻合 + 包测试 32 绿重跑 + pathspec 提交）。验收①-⑦全过（删除面 rg 零命中 / 导出恰 5 / 根三连绿 / ⑦ conformance 预期红定位 u2 领地）。deviations 3 条见下 |
+| u2 跨包测试+SSOT（E6+E7） | in-progress | 待回填 | 已派发（后台） |
+| u3 注释/文档回写+守卫（E8-E10） | in-progress | 待回填 | 已派发（后台） |
 | u4 真实场景验收 V1-V5 | pending | 无（产物贴 PR） | 探针 P1/P2/P3 复核结果：待回填 |
 
 ## 7 残留风险与变更历史
