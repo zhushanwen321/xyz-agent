@@ -156,7 +156,7 @@
 
 # 另有 12 处代码级清理点（语句级，移交 code-simplify）
 
-1. 零引用导出收窄（约 40 个符号，六分区汇总：ToastOptions、SPINNER_STATUSES、NEUTRAL_ENGINE_ICON、ProviderOAuth* 四类型、AuthedModelOption、ImportState、BackgroundTask* 三类型、IMPORT_* 三常量、DetailPaneState、PreviewStatus、TraceJumpResult、AttachedContextItem、NEW_SUBAGENT_ITEM_ID、SymbolCandidate、SlashCandidateInput、SkillCandidate*、SlashCommandSource、CwdFileFetchStatus、ApplyDeltaFn、FinalizeStreamFn、SetMessagesFn、LineStats、LoadStatus、MAX_ENTRIES、ROOT_PANEL_ID、BackgroundTaskBucketValue、SubagentBucket、EmptyResultStrikeGuard、PartitionedRecords、ResolvePreviewPathResult、DetectedPlatform 等）——去 export 零行为变更，一次机械提交
+1. 零引用导出收窄（约 40 个符号，六分区汇总：ToastOptions、SPINNER_STATUSES、NEUTRAL_ENGINE_ICON、ProviderOAuth* 四类型、AuthedModelOption、ImportState、BackgroundTask* 三类型、IMPORT_* 四常量（[修正 2026-09-11 阶段 3] 原记「三常量」有误；执行时核实四个均有活引用——ImportSessionDialog.vue:292,448、useImportSession.ts:36,39,50,53、2 个测试文件，实为不可收窄）、DetailPaneState、PreviewStatus、TraceJumpResult、AttachedContextItem、NEW_SUBAGENT_ITEM_ID、SymbolCandidate、SlashCandidateInput、SkillCandidate*、SlashCommandSource、CwdFileFetchStatus、ApplyDeltaFn、FinalizeStreamFn、SetMessagesFn、LineStats、LoadStatus、MAX_ENTRIES、ROOT_PANEL_ID、BackgroundTaskBucketValue、SubagentBucket、EmptyResultStrikeGuard、PartitionedRecords、ResolvePreviewPathResult、DetectedPlatform 等）——去 export 零行为变更，一次机械提交
 2. `useAppUpdate.ts:787-788` restorePendingUpdate/restorePreloadedUpdate 移出生产返回对象（生产调用方 0，仅测试消费）
 3. `useAccordionGuard.ts:14-19,72-84` PendingAction 三态判别联合 → `pendingTarget: string | null`（三分支收敛为同一赋值，值域被类型重编码）
 4. `useBackgroundTasks.ts:129-136` parseListReply 的防「契约回退」Array.isArray 分支（防不存在于任何 roadmap 的场景）

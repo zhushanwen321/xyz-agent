@@ -1,6 +1,6 @@
 # renderer 过度设计审计修复 实施计划
 
-基线: <待回填> | 来源设计: docs/design/renderer-over-engineering-remediation.md | 日期: 2026-09-11
+基线: 6bd34d6c029573797f9c5cc1a76f189f13a1ebb2 | 来源设计: docs/design/renderer-over-engineering-remediation.md | 日期: 2026-09-11
 审计证据: docs/design/renderer-over-engineering-audit-20260911.md
 
 ## 0 章节映射
@@ -34,7 +34,7 @@
 |------|------|---------------------|------|------|---------|
 | u01 | 候选1：search 死链全删 + core app-commands 收口（留 renderer 版） | R/composables/features/search/useSearch.ts、useSearchJump.ts；R/composables/features/new-task/useRecents.ts；R/composables/features/command/useCommandRegistry.ts；R/__tests__/composables/useSearch.test.ts、useSearchJump.test.ts、useRecents.test.ts；R/__tests__/i18n/section-kind.test.ts（仅清引用）；packages/core/src/domain/new-task-search/app-commands.ts（删）、index.ts（删 re-export 行） | 无 | plain | 删除文件 grep 零残留引用；renderer+core typecheck 绿；既有测试绿 |
 | u02 | 候选2+8：markdown 交互死链 + shell 孤儿删除 + #7 注释修正 | R/composables/panel/useMarkdownInteractions.ts、useCodeblockCopy.ts、useToolMeta.ts；R/composables/logic/markdown.ts（仅 :284 注释）；R/__tests__/composables/useMarkdownInteractions-fallback.test.ts；R/shell/sessions-entry.ts；R/shell/index.ts；R/workspace/index.ts；R/__tests__/shell/sessions-entry.test.ts；R/composables/features/sidebar/useSidebar.ts（+1 行意图注释） | 无 | plain | 同 u01 验收方式 |
-| u03 | 清理点#1 批次a：settings/oauth/import/toast 域零引用导出收窄 | ToastOptions、SPINNER_STATUSES、NEUTRAL_ENGINE_ICON、ProviderOAuth* 四类型、AuthedModelOption、ImportState、IMPORT_* 三常量的定义文件（执行时 grep 定位，预计 ≤5 文件） | 无 | plain | typecheck 绿（含 typecheck:test）；每符号 grep 生产引用 0 |
+| u03 | 清理点#1 批次a：settings/oauth/import/toast 域零引用导出收窄 | ToastOptions、SPINNER_STATUSES、NEUTRAL_ENGINE_ICON、ProviderOAuth* 四类型、AuthedModelOption、ImportState、IMPORT_* 四常量（执行时核实均有活引用，不收窄）的定义文件（执行时 grep 定位，预计 ≤5 文件） | 无 | plain | typecheck 绿（含 typecheck:test）；每符号 grep 生产引用 0 |
 | u04 | 清理点#1 批次b：chat/stream 域零引用导出收窄 | TraceJumpResult、AttachedContextItem、NEW_SUBAGENT_ITEM_ID、SymbolCandidate、SlashCandidateInput、SkillCandidate*、SlashCommandSource、LineStats、LoadStatus、MAX_ENTRIES 定义文件（≤5 文件，超则上报切批） | 无 | plain | 同 u03 |
 | u05 | 清理点#1 批次c：panel 域零引用导出收窄 | DetailPaneState、PreviewStatus、ROOT_PANEL_ID、SubagentBucket、EmptyResultStrikeGuard、PartitionedRecords、ResolvePreviewPathResult、DetectedPlatform 定义文件（≤5 文件） | 无 | plain | 同 u03 |
 | u06 | 清理点#3+#4：useAccordionGuard 三态收敛 + useBackgroundTasks 删防御分支 | R/composables/features/settings/useAccordionGuard.ts；R/composables/features/sidebar/useBackgroundTasks.ts | 无 | plain | 既有测试绿；typecheck 绿 |
@@ -106,12 +106,53 @@ graph TD
 | D2 | #1 符号清单以执行时 grep 实际命中为准；发现真实引用的符号保留并登记 | 审计快照时点偏差（审计过程曾有 2 条断言被推翻的先例） | 预登记 |
 | D3 | u15 合并后模块名/形态由 dev 按参数化最小面定（`useListSync(store, {tab, load})` 或收内联），允许偏离「单参数化模块」字面 | 两个变体仅 2 处，若内联更简则内联（Rule of Three 未达，不强留抽象） | 预登记 |
 | D4 | u20 合并后文件若超 300 行，以 split-justified 登记放行 | 组 G 设计的组成部分（规则层豁免通道） | 预登记 |
+| D5 | usage 域 u10（类型面）与 u11/u12（消费面）同批 commit——全包 typecheck 门禁要求类型与消费点同编译单元落地，独立 commit 必红；u15 已核验待 commit，排在 u10 域自洽后 | 单元独立 commit 让位于可编译性门禁；域内批 commit 不改变领地互斥与逐单元核验 | 2026-09-11 登记 |
+| D6 | 阶段 3 审查确认的合理偏差（3 区报告聚合去重，共 20 条并入本表） | 见下方「阶段 3 合理偏差聚合」小节 | 2026-09-11 登记 |
+
+### 阶段 3 合理偏差聚合（3 区报告去重后）
+
+**A. 删除类完整性（u01-u05，分区 1 R1-R7）**：领地内文件全部删净（u01 11 文件 -1985 行、u02 7 文件 -430 行）；候选 1 双轨消除实证（UnifiedCommand/isAppCommand/mapCommandsToItems 归一为 core 单份，`features/search/useSearch` 等路径全仓代码级零命中）；D2 偏差机制三次兑现且经审查方全量复验（IMPORT_* 四常量 / ROOT_PANEL_ID 19 个测试文件引用 / SubagentBucket 专测 / buildSkillCandidates 被 CommandPopover 消费）；25 个 un-export 符号采用「定义保留、仅去 keyword」最小 diff，全仓零外部 import；u02 局部优于设计（markdown.ts:284 注释比设计更可操作、useSidebar docblock 4 行信息量更足）；AppCommandActionsPort 观察项表述精确（限定词「core 内」准确，跨包消费仍活于 renderer useSearchModalDeps.ts:80 与 core/ui 测试）。
+
+**B. 状态收敛等价性（u06/u08/u09/u15/u16，分区 2 R1-R5）**：u06 四态矩阵与存在性哨兵逐点等价、Array.isArray 删除有协议 SSOT 双重佐证（api domain 全形返回注释 + protocol.ts:1722）；u08 void 化唯一调用方恒丢弃返回值属实、保留 2 字段均有真实测试消费；u09 判别字段删除消费链完整（含测试零残留）、core api-port 零 diff 正确（opaque 返回类型）、panels 注释从假差异（PR #100 merge 兼容）改为真实消费方引用；u15 双 watch 逐点等价且裁决 5 双重成立（触发场景生产不可达——activeTab 不持久化恒 'sessions' 起步 + 假想可达时被 watch1 immediate 覆盖）；u16 ADR-0049 例外语义保住（文件头论证 + W24-EX-A 豁免 + ADR 登记表同步）、'waiting' 死分支/多播 Set/4 镜像桥删除全部 grep 确证、V7 4 用例走真实链路。红线复验：4 个关键测试文件 49/49 绿。
+
+**C. 接缝与门禁（u17-u20，分区 4 R1-R8）**：u19 豁免通道正反 12 场景实测全过（含 501/520 拦截、空域/窗口外/非注释语境/跨行未闭合拦截、无标记 301 文案与基线逐字一致）；u18 接缝登记与 9 个新增转发函数签名 1:1（与 lib/ipc.ts:247-283 逐字对照）；V9 达成（useAppUpdate 10 IPC 函数全经本层，@/lib/ipc 零残留）；#2 挪移只改暴露面不改运行时路径；u20 五个合并点逐字对照等价、五语义域红线未碰（command-popover 三文件改动系 u04 授权的 export 收窄）、D4 判断正确（script 267 行 ≤300）；u17 缺失被计划层如实登记（非静默丢失）。
+
+**D. 补充登记（分区 1 U2 / 分区 4 U2）**：u04 实改 8 文件超 5 文件预算（11 符号分布 8 个定义文件、每处 1 行 export 改动，未切批）；u18 实改 5 个测试文件超预估 4（机械 mock 目标迁移）。两条均低风险、无行为影响，按 D2 精神补录本表。
+
+### 阶段 3 unreasonable 修复清单（待配额恢复后派发）
+
+| 组 | 条目 | 领地 | 严重度 |
+|----|------|------|--------|
+| 修-1 | 悬空注释 3 处：useAppCommands.ts:5（指向已删 renderer useCommandRegistry/useSearchJump）、api/index.ts:60-61（指向已删 renderer useSearch）、useFileSearchStore.ts:6（同上）——补 core 包归属或改写指向现执行者 | R/composables/features/command/useAppCommands.ts；R/api/index.ts；R/composables/features/search/useFileSearchStore.ts | Low |
+| 修-2 | u15 V6-a 测试守卫盲区：测试注释自认 activeTab 非目标 tab 时「即使 tab watch 带 immediate 也不命中」——补一条 tab 已激活场景的「恰一次」断言钉死裁决 5 的核心场景 | R/__tests__/composables/useListSync.test.ts | Low |
+| 修-3 | u06 useAccordionGuard 改造类无测试化证据（「6 场景等价」仅存 commit message）——补最小行为断言（4 态矩阵 + dirty 守卫开合） | R/composables/features/settings/useAccordionGuard.ts 或其新测试文件 | Low |
+| 记-1 | u16 commit message 行数误差（490→388 实为 489→390）、u06 message 引 protocol.ts:1720 实为 :1722 | 已 commit，不做历史改写；本条登记为已知不精确 | Info |
+| 记-2 | 存量残留（非本批引入）：useAppUpdate.pending.test.ts:59 mock 工厂无效键 performUpdate + 缺 getLaunchResult；UpdateCheckCard.vue:236 直取 @/lib/ipc（不在设计 10 函数清单内） | 留待后续触碰时清理 | Info |
 
 ## 6 状态表
 
 | Unit | 状态 | 轮次 | 证据指针 |
 |------|------|------|---------|
-| u01-u20 | pending | 0 | — |
+| u01 | committed | 1 | 987697d34（双包 typecheck 绿 + core 261 tests；2 项偏差见变更历史） |
+| u02 | committed | 1 | f3fd77063（typecheck 绿 + markdown/shell 77 tests） |
+| u03 | committed | 1 | e790ceac0（typecheck 绿 + 8 suites 78 tests；IMPORT_* 4 符号有活引用跳过=D2，ImportState 转批 b） |
+| u04 | committed | 1 | d1ed46251（局部 suites 76 tests 绿；实改 8 文件超 5 文件预算——执行时 11 符号分布于 8 个定义文件、每处 1 行 export 改动，未切批，§5 补录；buildSkillCandidates 有真实引用保留=CommandPopover.vue:155,360 按 D2 跳过） |
+| u05 | committed | 1 | f4ad994d7（typecheck:test 绿 + 8 suites 39 tests；ROOT_PANEL_ID/SubagentBucket 有测试引用跳过=D2） |
+| u06 | committed | 2 | e65f893e8（两阶段验证 18/18；#3 undefined 哨兵偏差、#4 协议对齐循环打破） |
+| u07 | committed | 1 | d5f35c82a（rename 检测 91%；typecheck 绿 + panel/shell 633 tests） |
+| u08 | committed | 2 | 874f89068（void 化 + __testing 2 字段快照；18/18 tests） |
+| u09 | committed | 2 | 2e7bccd4e（独占 4 文件；shared 335 + core session 68 tests；交叠文件随 u15 落地） |
+| u10 | committed | 2 | 74b31c928（D5 同批：usage 域 11 文件；typecheck 0 error + 67 tests） |
+| u11 | committed | 1 | 74b31c928（同上） |
+| u12 | committed | 1 | 74b31c928（同上；新建 UsageProjectRank.test.ts 2 用例已登记） |
+| u13 | committed | 1 | 57945a4ff（form 7 文件整删 + 直连改写 7 tests 绿；a11y 正向修正 3 处） |
+| u14 | committed | 1 | 53f875e5c（table 7 文件 + popover 2 副本 + index re-export 同步 + 3 依赖删除；build 级 V5 验证 + sidebar 181 tests；lock 聚焦 2+/34-） |
+| u15 | committed | 1 | 39e3a212f（16 文件含与 u09 交叠 4 测试文件全量；9 用例参数化 + V6 断言） |
+| u16 | committed | 2 | 8824c7076（490→388 行、概念数 -5；V7 真实链路 4 tests + 12 套件 118 tests；data-owner 拦截按 feedMap W24-EX-A 前例补豁免后过闸） |
+| u17 | done(待commit) | 1 | 核验通过：adapter import 源切至 @/api 门面三元 + V8 自动化断言（stubEnv + 防回退 spy）+ core mock 补 listModels（追认领地外）；阻塞于 hooks 环境错位，见 §7 |
+| u19 | committed | 1 | 32211e76e（7 场景正反验证 + 3 文件回归 diff 空；500 上限纠偏已登记） |
+| u18 | committed | 2 | 830048962（settings.ts 接缝登记 + 10 个 IPC fn 统一回本层 + restore* 挪 __testing；67+153 tests 绿；9 个 update 家族 fn 按设计「统一回本层」并入转发层=settings 域豁免条款，5 测试文件超预估 4 未登记——阶段 3 补录） |
+| u20 | committed | 1 | 22bb84649（5 合并点落地、3 文件+1 直测删除；panel 625/625 绿 + typecheck 0；D4 未触发 script 267 行） |
 
 ## 7 残留风险与变更历史
 
@@ -120,3 +161,8 @@ graph TD
 - u20 合并行数与门禁的交互需实测；若豁免通道粒度不够（如正则误伤），回 u19 修规则本体
 - 变更历史：
   - 2026-09-11 计划建立（裁决 1-5 见设计文档 §4）
+  - 2026-09-11 阶段 3 一致性审查第 1 轮：4 分区派出，分区 1/2/4 完成（分区 3 两度因限流/配额中断，待重派）。结论：3 区无阻塞项；doc_errors 4 条已由主 agent 修订（审计 IMPORT_* 断言、设计裁决 4 的 9 文件注记、impl-plan u03 常量数、impl-plan u04 状态行）；reasonable 20 条已聚合登记（§5 D6）；unreasonable 5 条列修复清单（3 条需编码：悬空注释 3 处、V6-a 断言补强、u06 accordion 测试化；2 条 Info 登记）。
+  - 2026-09-11 环境阻塞①（hooks 错位）：共享 `.bare/hooks/pre-commit` 于 14:50 被 `feat-optimize-extensions-over-engineering` worktree 用其 install-hooks.sh（14:49 版，含 C-pi-14 数据布局字面量守卫段）覆盖安装。本分支 hooks 源（12:35 版）无该段，且守卫交付物 `scripts/check-layout-literals.mjs` 与 208 处存量清理均在 dev-0.9.17 分支（e7740ca39）而非本分支——守卫在本分支必红且全为基线存量（非本次改动引入）。u17 commit 因此被拦（其余 19 单元已在 hooks 更新前落地）。处置待裁决：A 本分支重装自有 hooks（覆盖共享、其他 worktree 失去该段直到再装）；B 从 dev-0.9.17 搬入守卫交付物（范围大幅越界）；C 其他。
+  - 2026-09-11 环境阻塞②（配额）：账户 5h 限额耗尽（1308，2026-09-11 17:40:40 重置），subagent 派发不可用。修复清单（修-1/2/3）、分区 3 审查、阶段 5 验收、阶段 6 同步均排队待恢复。主 agent 已在此期间完成全部非编码项（doc_errors 修订、偏差登记、状态表校准）。
+  - 2026-09-11 u17 状态：dev 已完成并核验通过（renderer typecheck 0 + 21 tests + core mock 105 tests），含 1 处追认的领地外改动（core mock model 域补 listModel——被 adapter 原直连 real WS 掩盖的缺口）；改动在工作区待 commit（被环境阻塞①拦截）。
+  - 2026-09-11 u01 完成：① 偏差登记——useCommandRegistry.test.ts 超领地整删（计划快照遗漏该死代码自测文件，:15 import 被删文件必挂，与已列 3 个配套测试同构，接受）；section-kind.test.ts 整删（任务预留分支，core search.test.ts 有等价覆盖）。② 观察项登记——core AppCommandActionsPort（search-ports.ts）随 app-commands 删除后在 core 内零消费方，属 #1 收窄语义域，待后续批次/阶段 3 裁决。③ u03 观察项兑现——IMPORT_* 四常量有真实引用（ImportSessionDialog + 2 测试文件），审计「三常量零引用」与实况不符，D2 偏差按预期兜住

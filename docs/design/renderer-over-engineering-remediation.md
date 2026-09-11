@@ -78,7 +78,7 @@ Gate A = 全量测试（`cd packages/renderer && pnpm test` + 受影响包测试
 ## 4 裁决记录（2026-09-11 用户拍板）
 
 1. **组 G 门禁豁免**：加豁免通道，组 G 完整做（`vue_rules_checker.py` 增加 `split-justified` 登记）
-2. **候选 7**：B 留作测试接缝——`api/domains/settings.ts` 文件头登记「测试 mock 接缝」，useAppUpdate 路径统一回本层（9 个测试文件 mock 目标不动）
+2. **候选 7**：B 留作测试接缝——`api/domains/settings.ts` 文件头登记「测试 mock 接缝」，useAppUpdate 路径统一回本层（[修正 2026-09-11 阶段 3] 原注「9 个测试文件 mock 目标不动」与实况不符：仓库任一时点均无「9 个 mock 本层」的集合（基线仅 3 个 vi.mock 本层），且路径统一必然要求 useAppUpdate 的测试 mock 目标随 import 源从 `@/lib/ipc` 迁至本层——实际同步 5 个测试文件，落地见 u18 commit 830048962；另 9 个 update 家族 IPC 函数按本节「统一 10 个 IPC 函数回本层」一并并入转发层）
 3. **候选 4 mock 旁路**：接回门面三元——mock 模式下 settings 域走 mock。前置可行性已核实：`api/index.ts:47` 已有 `settings` 三元且 `mockApi.settings` 实现存在（门面注释「两套实现签名一致」）
 4. **组 A 二选一**（主 agent 机械判定，非用户裁决）：renderer `useAppCommands.ts` 被 `useSidebar.ts:295` 真实调用（活）；core `app-commands.ts` 生产引用 0、测试引用 0（仅 `domain/new-task-search/index.ts:24` re-export）——**删 core 版**。若未来 search 域彻底绞杀归 core，届时按需重迁（YAGNI）
 5. **immediate 漂移裁决**（主 agent git 考古判定）：`useWorkflowListSync` tab watch 的 `{ immediate: true }` 创建即带（commit 704013b52）且有注释论证，但其触发场景（挂载时 tab=workflows 且 sid 存在）被首个 watch 的 immediate 完全覆盖——判定为冗余而非有意行为差异。对齐方向：删 workflow 版冗余 immediate（subagent 版无 immediate 的行为是完备的），归一后合并
