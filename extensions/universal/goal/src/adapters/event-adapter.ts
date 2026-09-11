@@ -10,7 +10,6 @@
 
 export { handleAgentEnd } from "./event-handlers/agent-end";
 export { handleBeforeAgentStart } from "./event-handlers/before-agent-start";
-export type { MessageEndLikeEvent } from "./event-handlers/message-end";
 export { handleMessageEnd } from "./event-handlers/message-end";
 export { handleSessionShutdown } from "./event-handlers/session-shutdown";
 export { handleSessionStart } from "./event-handlers/session-start";
