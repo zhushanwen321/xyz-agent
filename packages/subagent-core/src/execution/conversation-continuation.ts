@@ -24,6 +24,7 @@
 import type { AgentOutcome, ResumeAnchor } from "@zhushanwen/subagent-engine-sdk";
 
 import { toErrorMessage } from "../core/error-message.ts";
+import { getLogger } from "../core/logger.ts";
 
 import { resurrectClosed } from "./execution-record.ts";
 // 轮终 outcome 入参（权威定义在 finalize-record.ts，本文件 re-export 供 host 契约引用；
@@ -40,6 +41,8 @@ import {
 } from "./settled-watchdog.ts";
 import { isReconnectableFinalReason } from "./types.ts";
 import type { ExecutionRecord } from "./types.ts";
+
+const logger = getLogger("subagents");
 
 /** 失败通知的恢复指引尾段（[T2-③/LC-1] 可达性语义——失败原因 + 恢复指引必须可达宿主）。 */
 const FAILURE_RECOVERY_TAIL =
@@ -423,7 +426,20 @@ export class ConversationContinuation {
     this.drain();
   }
 
-  /** 队列 drain：abort 收敛（单写者前置满足）后按序派发；多条聚合为一轮输入。 */
+  /**
+   * 队列 drain：abort 收敛（单写者前置满足）后按序派发；多条聚合为一轮输入。
+   *
+   * [A2] 内部续派路径的守卫 throw 必须就地转错误面：本方法运行在 settle 后续派
+   *（settleRoundSuccess/settleRoundFailed 尾部，async 函数体内的同步调用）与
+   * onRoundAbandoned 的 fire-and-forget 链上，dispatchRoundGuarded 的同步守卫 throw
+   *（锚点缺失 / worktree 绑定丢失 / controller 缺失）若逃逸即成 unhandled rejection
+   *（Node ≥15 默认崩宿主）且队列消息静默丢失。可达触发例：首轮在途时 message 打断
+   * 入队 → 首轮崩溃（合成 outcome 无 sessionFile）→ 失败 settle → drain 以
+   * firstRound=false 走锚点守卫 → throw。转换语义：失败通知（独立载荷过 notifyGate
+   * 门，与 settleRoundFailed 失败单发同构——record 保持 running-resumable，载荷
+   * closed+failed 仅是文案载体）+ 队列丢弃留痕（warn）。onMessage 同步入口的守卫
+   * throw 保留（设计 §3.1 失败路径表的工具错误面，不经本方法）。
+   */
   private drain(): void {
     if (this.record.status !== "running") {
       this.queue.length = 0;
@@ -431,7 +447,32 @@ export class ConversationContinuation {
     }
     if (this.queue.length === 0) return;
     const next = this.queue.splice(0);
-    this.dispatchRoundGuarded(next, false);
+    try {
+      this.dispatchRoundGuarded(next, false);
+    } catch (err) {
+      const reason = toErrorMessage(err);
+      logger.warn(
+        `[subagent] queued message dispatch rejected for ${this.record.id}: ${reason} — ` +
+        `${next.length} queued message(s) dropped`,
+      );
+      if (notifyGateAllowsDelivery(this.record.closedReason)) {
+        this.host.notifyRecord({
+          id: this.record.id,
+          // status:"closed" + outcome:"failed" 载荷 = 失败文案形态（settleRoundFailed
+          // 同构）——载荷只是通知文案载体，record 实态保持 running-resumable。
+          status: "closed",
+          closedReason: "gc",
+          outcome: "failed",
+          agent: this.record.agent,
+          ...(this.record.model !== undefined ? { model: this.record.model } : {}),
+          error: `queued message could not be dispatched: ${reason}`,
+          startedAt: this.record.startedAt,
+          endedAt: Date.now(),
+          round: this.record.round,
+          ...(this.record.sessionFile !== undefined ? { sessionFile: this.record.sessionFile } : {}),
+        });
+      }
+    }
   }
 
   private clearActiveRound(): void {

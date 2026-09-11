@@ -377,7 +377,7 @@ describe("chat 工具域引擎路由分叉（U0：D4/D5/D10）", () => {
       .execute(baseOpts(agentDir, { engine: "zcode", conversation: true }))
       .catch((e: unknown) => e);
     expect(err).toBeInstanceOf(Error);
-    expect((err as Error).message).toContain("不支持 conversation");
+    expect((err as Error).message).toContain("不支持 resume 续聊");
     // 恢复指引（EngineError.recovery）：W3 协议化口径——调参数 / 修 manifest / 升级
     // 引擎包（引擎包是能力声明载体；「改用 engine: pi」内置兜底指引已随协议化删除）
     expect((err as { recovery?: string }).recovery).toContain("去掉 conversation 参数");

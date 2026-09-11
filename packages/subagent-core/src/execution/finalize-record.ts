@@ -303,7 +303,8 @@ export type RoundSettlementOutcome =
  *
  * 状态：record.status = "running"（覆盖 closed 回滚——机制本体，配套前置 = 调用方
  * 已做终态守卫；H1 U2 起唯一活调用面 = Continuation 轮末分流与 SP-5 one-shot 成功，
- * 全部以 status==="running" 入口，构造性保证不会回滚 close 终态化）。
+ * 两面均构造性保证不会回滚「终态簿记已冻结」的 close——[A3] 该保证由入口硬断言
+ * 显式化，见方法体内断言注释）。
  * record.round += 1（成功失败同计——round = attempt 计数，失败轮不递增会让失败通知
  * 与上一轮成功通知同 dedup key，60s 窗内被吞，设计 D7）。各步骤 best-effort 互不阻断。
  *
@@ -315,12 +316,39 @@ export type RoundSettlementOutcome =
  *   "round did not complete: <reason>"——GUI record 视图不被失败污染、renderer
  *   hasRunning 判据 result !== undefined 仍成立），record.lastError 写失败原因；
  *   [T2-③/LC-1] 可达性从 result 字段迁移到通知 outcome（失败通知由调用方承载）。
+ * @throws Error record 终态簿记已冻结（completeRecord 已跑）仍被调用（复活终态的
+ *   调用即 bug——fail-fast）。
  */
 export async function doFinalizeRoundToIdle(
   deps: FinalizeDeps,
   record: ExecutionRecord,
   outcome: RoundSettlementOutcome,
 ): Promise<void> {
+  // [A3 硬断言] 本方法会把 closed 回滚为 running（下方状态机段）——对「终态簿记已
+  // 冻结」record 的调用会复活终态（S7 破坏：close 抢先后迟到轮末回滚 + 追加通知 +
+  // 二次 unregister）。冻结的权威判据 = record.endedAt 已设（completeRecord 是唯一
+  // 生产写点——execution-record.ts；tryTransition 只置 status/closedReason 刻意不触
+  // endedAt，其 CAS 乐观置位与本方法的回滚是设计配套）。两个构造性调用面均满足：
+  //   - Continuation 轮末分流：onRunSettled 终态守卫整体 early-return 后同步进入
+  //    （守卫与断言间无 await 窗），record 从未终态化 → endedAt undefined；
+  //   - settleOneShotOutcome SP-5 共享调用点：CAS 抢锁成功后的锁内回滚，tryTransition
+  //     置 closed 不设 endedAt。
+  //   [A3 偏差登记] 实施计划 §5 U2 偏差行承诺的「U6 删死代码后补 status==='running'
+  //   硬断言」字面形态不可达：SP-5 面与被删旧 chat 载体（watchdog/spawnFailure/
+  //   roundFailed）同构——均 tryTransition(closed) 后以 closed 进入，running-only
+  //   断言即 SP-5 生产回归（one-shot 成功轮 throw，违背 G3 零变化）+ 既有单测族
+  //   （finalize-record.test.ts roundToIdle 17 例）锁定该形态。收窄为「endedAt 未冻结」
+  //   断言：比字面形态更贴合 S7 防御目标（closed+user-close 的 closeChatIdle 危险
+  //   形态——completeRecord 已跑——恰被本断言拦截，而字面 running-only 反而拦不住它）。
+  if (record.endedAt !== undefined) {
+    throw new Error(
+      `doFinalizeRoundToIdle(${record.id}): terminal bookkeeping already frozen ` +
+      `(status: ${record.status}${record.closedReason !== undefined ? `/${record.closedReason}` : ""}, ` +
+      `endedAt: ${record.endedAt}) — round-idle finalization would resurrect a finalized record. ` +
+      `Recovery: caller must gate on record.status === "running" (Continuation terminal-state guard) ` +
+      `or enter via the settleOneShotOutcome CAS winner path only.`,
+    );
+  }
   // [D7 写入规则] 轮终 result 写入按 outcome.kind 分流（MF-2 承诺不变：record.result
   // 供 notifier idle 回复正文，恒写非空——renderer hasRunning 判据依赖）。
   let nextResult: string | undefined;

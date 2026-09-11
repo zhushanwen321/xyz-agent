@@ -480,6 +480,25 @@ describe("doFinalizeRoundToIdle — chatMode 轮次完成进 idle (M2-A)", () =>
     expect(fs.existsSync(`${sessionFile}.alive`)).toBe(false);
   });
 
+  it("[A3] 终态簿记已冻结（endedAt 已设 = completeRecord 已跑）→ 入口硬断言 throw（S7：禁复活已终态化 record）", async () => {
+    const deps = makeDeps();
+    const record = makeMinimalRecord({ id: "rec-frozen", chatMode: true });
+    // closeChatIdle / disposeAllRecords 等完整终态化路径的产物：completeRecord 已跑
+    //（endedAt 冻结）+ status=closed。迟到的轮末分流调用必须被入口断言拒绝。
+    record.status = "closed";
+    record.closedReason = "user-close";
+    record.endedAt = 12345;
+
+    await expect(doFinalizeRoundToIdle(deps, record, { kind: "success", content: "late" })).rejects.toThrow(
+      /terminal bookkeeping already frozen/,
+    );
+    // 断言先于任何簿记副作用：round 不推进、状态不回滚、无迁移上报
+    expect(record.round).toBeUndefined();
+    expect(record.status).toBe("closed");
+    expect(deps.store.reportRecordTransition).not.toHaveBeenCalled();
+    expect(deps.emitUnregister).not.toHaveBeenCalled();
+  });
+
   it("W16: 轮终上报 reportRecordTransition（record-store 类外恢复写点迁移落 entry）", async () => {
     const deps = makeDeps();
     const record = makeMinimalRecord({ id: "rec-report", chatMode: true, round: 2 });

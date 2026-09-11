@@ -64,7 +64,7 @@ import {
   withCrossEngineHint,
 } from "./engine/model-validation.ts";
 import { type EngineRouteResult, routeEngineForHost } from "./engine/routing.ts";
-import type { AgentOutcome, EngineHandle } from "./engine/types.ts";
+import type { AgentOutcome } from "./engine/types.ts";
 import { ManifestStore } from "./manifest-store.ts";
 import type { ModelConfigService } from "./model-config-service.ts";
 import type { AgentConfig, ModelInfo, ResolvedModel } from "./model-resolver.ts";
@@ -2458,12 +2458,20 @@ export class SubagentService {
         //（Continuation onRunSettled 内 noteRoundSettledFromProtocol；[H1 U6] 旧
         // settled 相位帧消费面已退役）。轮终 disarmRoundFromProtocol 两段一并清。
         // arm 置于 acquire 之后：排队窗口不计入 no-progress 静默（窗语义 = 轮开跑后）。
-        // Continuation 轮 fire → kill + abort 轮 signal，run 收敛后经失败分支统一收口
-        //（单写者单路）；one-shot 轮不挂 fire 处置（回收层 dispose/kill 路径承接）。
+        // fire 处置按轮形态分流：Continuation 轮 → kill + abort 轮 signal，run 收敛后
+        // 经失败分支统一收口（单写者单路）；one-shot 轮 → onOneShotSettledWatchdogTimeout
+        //（[A1/G3 回归修复] H1 重构曾误删本形态 arm 点——one-shot 轮 run 无协议超时
+        //（engine-client request 不传 timeoutMs = 任务级无超时），无 arm 则楔死 run 永
+        // 卡 running + 池槽泄漏 + 无失败通知，违背 G3「one-shot 行为零变化」）。
         if (continuation !== undefined) {
           armMidRoundNoProgress(record.id, {
             onMidTimeout: (fire) => continuation.onWatchdogFire(fire),
             onSettleTimeout: (fire) => continuation.onWatchdogFire(fire),
+          });
+        } else {
+          armMidRoundNoProgress(record.id, {
+            onMidTimeout: (fire) => this.onOneShotSettledWatchdogTimeout(record, fire),
+            onSettleTimeout: (fire) => this.onOneShotSettledWatchdogTimeout(record, fire),
           });
         }
         // 协议 run：record.chatMode = 会话形态（resume.recordId = 关联键；锚点存在 =
@@ -2544,6 +2552,75 @@ export class SubagentService {
         this.roundSupervisor.noteRunEnded(record.id);
       }
     })();
+  }
+
+  /**
+   * [A1 / G3 回归修复] one-shot（非 chatMode）pi background 轮的 settled-watchdog fire
+   * 处置（语义对齐 987346fc5 的 onHotPathSettledWatchdogTimeout 非 chatMode 分支——
+   * H1 重构误删 arm 点的整链恢复，one-shot 行为零变化）。
+   *
+   * 与 Continuation 轮（onWatchdogFire → run 收敛后失败分支统一收口）不同：one-shot
+   * 轮在本回调内直接收口——kill 子进程 + abort 轮 signal（旧 terminateChatSession
+   * cancel 的 H1 后等价杀链）→ CAS（tryTransition closed+gc，防与 cancel/dispose 双
+   * 收尾，抢锁失败即跳过）→ finalizeRecord 终态化 → 失败通知。
+   *
+   * 失败通知按 H1 后失败单发机制接线（Continuation settleRoundFailed 同构）：独立构造
+   * BgNotifyRecord 载荷过 notifyGate 门 → notifyHost.notify，不经 route(record)——
+   * 失败正文直接取本回调的失败文案，不以 record.result 旧正文冒充（可达性
+   * [T2-③/LC-1]：失败原因 + 恢复指引必须可达宿主）。
+   *
+   * 回调在 timer 触发的同步上下文执行：同步段只做 kill + abort + CAS（不抛），异步
+   * 收尾 fire-and-forget 且 catch 归 bestEffort——错误逃出回调 = uncaughtException 崩宿主。
+   */
+  private onOneShotSettledWatchdogTimeout(record: ExecutionRecord, fire: SettledWatchdogFireInfo): void {
+    const windowDesc =
+      fire.phase === "mid-round"
+        ? `no valid protocol event for ${fire.waitedMs / MS_PER_SECOND / SECONDS_PER_MINUTE} min after prompt (mid-round no-progress)`
+        : `no agent_settled within ${fire.waitedMs / MS_PER_SECOND}s after agent_end (settled phase)`;
+    logger.warn(
+      `[subagents] settled watchdog (${fire.phase}) fired for ${record.id}: ${windowDesc}, ` +
+        `terminating (LC-1 wedge recovery)`,
+    );
+    killRecordChildWithEscalation(record.id, "settled watchdog (one-shot)");
+    // abort 轮 signal（ctx.signal 接 record controller——引擎侧杀链驱动）；在途 run 收敛
+    // 后走 kickOffChatRound 既有吞错面（CAS 已终态化，其 finalizeFailed 抢锁失败 no-op）。
+    record.controller?.abort();
+    // fire = 本轮等待窗口终结（timer 回调已自删 entry，此处幂等清防御收尾段残留）。
+    disarmRoundFromProtocol(record.id);
+    if (!tryTransition(record, "closed", "gc")) {
+      return; // 已被 cancel/dispose 抢先终态化——不重复收尾（watchdog disarm 由对方承接）
+    }
+    const failedResult: AgentResult = {
+      text: "",
+      turns: record.turnCount,
+      durationMs: Date.now() - record.startedAt,
+      success: false,
+      error:
+        `subagent did not reach agent_settled (${windowDesc}; settled watchdog); ` +
+        `the process was terminated to bound the wait. ` +
+        `Recovery: check state with subagents action:'list', then re-send your message to continue.`,
+      sessionId: record.id,
+      toolCalls: [],
+    };
+    void this.finalizeRecord(record, failedResult, "closed", "gc")
+      .then(() => {
+        // 失败通知（独立载荷过 notifyGate 门——门拦 cancelled/编排性关闭竞态窗）。
+        if (!notifyGateAllowsDelivery(record.closedReason)) return;
+        // 载荷形态对齐 Continuation settleRoundFailed（closed+failed 文案载体）；
+        // sessionFile 不透传（G4：one-shot 通知逐字节——指针行仅 chatMode 语义）。
+        this.notifyHost.notify({
+          id: record.id,
+          status: "closed",
+          closedReason: "gc",
+          outcome: "failed",
+          agent: record.agent,
+          ...(record.model !== undefined ? { model: record.model } : {}),
+          error: failedResult.error,
+          startedAt: record.startedAt,
+          endedAt: record.endedAt ?? Date.now(),
+        });
+      })
+      .catch((err: unknown) => bestEffort(err, "settled watchdog one-shot finalize", "error"));
   }
 
   // [H1 U6] chat 域相位机整族已随旧协议轮次相位通道退役删除（语义迁移归属）：

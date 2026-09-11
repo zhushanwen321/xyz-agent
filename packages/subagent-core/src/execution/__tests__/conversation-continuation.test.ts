@@ -35,7 +35,7 @@ import type { RoundSettlementOutcome } from "../finalize-record.ts";
 import type { BgNotifyRecord } from "../notifier.ts";
 import type { AgentOutcome } from "../engine/types.ts";
 import { registerFakePiEngine, type FakePiEnginePort } from "./helpers/fake-engine-port.ts";
-import { clearEngines } from "../engine/registry.ts";
+import { clearEngines, registerEngine } from "../engine/registry.ts";
 import { createRecord } from "../execution-record.ts";
 import { ModelConfigService } from "../model-config-service.ts";
 import type { RecordStore } from "../record-store.ts";
@@ -46,6 +46,7 @@ import {
   getSettledWatchdogPhase,
   hasSettledWatchdog,
   _resetSettledWatchdogsForTest,
+  _setMidRoundNoProgressWindowMsForTest,
 } from "../settled-watchdog.ts";
 import { _resetLifecycleState } from "../lifecycle-manager.ts";
 import {
@@ -476,6 +477,57 @@ describe("ConversationContinuation — 轮末分流（D7）与通知面", () => 
     expect(record.result).toBeUndefined();
     expect(record.resumable).toBeUndefined();
     expect(calls.transitions).toEqual([record.id]);
+  });
+
+  it("[A2] drain 守卫失败 → 不 throw（无 unhandled rejection）+ 队列丢弃失败通知 + queue 清空（锚点缺失触发链）", async () => {
+    // 可达触发链：首轮在途 message 打断入队 → 首轮崩溃（合成 outcome 无 sessionFile
+    // ——mock host 不回填锚点）→ 失败 settle → drain 以 firstRound=false 走锚点守卫
+    // → throw。修复前 throw 逃逸 settleRoundFailed 的 void promise = unhandled
+    // rejection（Node ≥15 默认崩宿主）且队列消息静默丢失。
+    const record = makeRecord({ id: "sa-drain-guard" }); // sessionFile undefined（首轮未回填）
+    const { host, calls } = makeHost(record);
+    const cont = new ConversationContinuation(record, host);
+    cont.startFirstRound("round 1"); // firstRound=true，无锚点守卫
+    await vi.waitFor(() => expect(calls.dispatched.length).toBe(1));
+    cont.onMessage("queued while running");
+    expect(cont.pendingCount).toBe(1);
+
+    // 首轮失败收敛 → settleRoundFailed 尾部 drain 触发锚点守卫 throw（修复后就地转错误面）
+    cont.onRunSettled(makeOutcome({ content: "", error: "engine_crashed: child died" }));
+
+    // 第一条 = 失败单发（既有语义）；第二条 = drain 守卫失败的队列丢弃通知
+    await vi.waitFor(() => expect(calls.notified.length).toBe(2));
+    const dropped = calls.notified[1]!;
+    expect(dropped.status).toBe("closed");
+    expect(dropped.outcome).toBe("failed");
+    expect(dropped.error).toContain("queued message could not be dispatched");
+    expect(dropped.error).toContain("no transcript anchor");
+    // 队列清空 + record 保持 running-resumable + 无僵尸轮派发
+    expect(cont.pendingCount).toBe(0);
+    expect(record.status).toBe("running");
+    expect(calls.dispatched.length).toBe(1);
+    // 队列丢弃留痕（warn）
+    expect(loggerMock.warn).toHaveBeenCalledWith(
+      expect.stringContaining("queued message dispatch rejected"),
+    );
+  });
+
+  it("[A2] drain 守卫失败 + notifyGate 门拦（cancelled 竞态窗）→ 通知不发（防双发语义一致）", async () => {
+    const record = makeRecord({ id: "sa-drain-gate" });
+    record.closedReason = "cancelled"; // 门拦竞态窗构造（与既有门用例同形态）
+    const { host, calls } = makeHost(record);
+    const cont = new ConversationContinuation(record, host);
+    cont.startFirstRound("round 1");
+    await vi.waitFor(() => expect(calls.dispatched.length).toBe(1));
+    cont.onMessage("queued while running");
+    cont.onRunSettled(makeOutcome({ content: "", error: "boom" }));
+
+    // 失败单发被门拦（既有语义）→ drain 守卫失败的通知同被门拦：notified 恒 0
+    await vi.waitFor(() => expect(calls.finalized.length).toBe(1));
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(calls.notified.length).toBe(0);
+    expect(cont.pendingCount).toBe(0);
+    expect(calls.dispatched.length).toBe(1);
   });
 });
 
@@ -908,5 +960,108 @@ describe("集成：stale-child 派发前兜底（红线②）", () => {
 
     expect(killChildSpy).not.toHaveBeenCalledWith(record.id, "stale-child guard (dispatch)");
     await vi.waitFor(() => expect(fake.runs.length).toBe(1));
+  });
+});
+
+describe("集成：[A1] one-shot（非 chatMode）pi background 轮楔死熔断回归（G3 行为零变化恢复）", () => {
+  let agentDir: string;
+  let service: SubagentService;
+  let store: RecordStore;
+  let pi: PiLike;
+  let fake: FakePiEnginePort;
+
+  beforeEach(() => {
+    vi.restoreAllMocks();
+    killChildSpy.mockClear();
+    ({ agentDir, service, store, pi, fake } = makeService());
+  });
+
+  afterEach(() => {
+    service.dispose();
+    clearEngines();
+    _resetLifecycleState();
+    _resetSettledWatchdogsForTest();
+    _resetCoreSpawnedChildrenMirrorForTest();
+    fs.rmSync(agentDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
+  });
+
+  it("one-shot 轮 arm 恢复（轮开跑即挂中段守护）+ fire → kill + abort + 终态化 closed/gc + 失败通知单发", async () => {
+    // 测试注入秒级窗（M6 seam）——fire 走真实 timer 全链（arm → mid-round 到期 → 处置）。
+    // 窗值须大于 vi.waitFor 轮询间隔（50ms），保证 arm 断言先于 fire 到期。
+    _setMidRoundNoProgressWindowMsForTest(120);
+    const handle = await service.execute({ task: "wedged task", slug: "oneshot-wedge" });
+    const record = store.getMutable(handle.subagentId);
+    expect(record).toBeDefined();
+    await vi.waitFor(() => expect(fake.runs.length).toBe(1));
+
+    // arm 恢复断言（回归锚点：H1 重构曾误删——修复前本断言红，楔死 run 无恢复计时）
+    await vi.waitFor(() => expect(hasSettledWatchdog(record!.id)).toBe(true));
+    expect(getSettledWatchdogPhase(record!.id)).toBe("mid-round");
+
+    // fire（在途 run 永悬 = 楔死形态）→ 处置：kill + abort 轮 signal + CAS 终态化
+    await vi.waitFor(() => expect(record!.status).toBe("closed"));
+    expect(record!.closedReason).toBe("gc");
+    expect(killChildSpy).toHaveBeenCalledWith(record!.id, "settled watchdog (one-shot)");
+    expect(record!.controller?.signal.aborted).toBe(true);
+    // 终态失败文案（旧 onHotPathSettledWatchdogTimeout 非 chatMode 分支同文——含恢复指引）
+    expect(record!.error).toContain("subagent did not reach agent_settled");
+    expect(record!.error).toContain("settled watchdog");
+    expect(record!.error).toContain("Recovery");
+    // 失败通知发出（独立载荷过 notifyGate 门 → notifyHost.notify）
+    await vi.waitFor(() => expect(pi.sendMessage).toHaveBeenCalledTimes(1));
+    const calls = (pi.sendMessage as unknown as ReturnType<typeof vi.fn>).mock.calls as Array<
+      [{ content?: string; details?: { notifyId?: string; outcome?: string } }]
+    >;
+    expect(calls[0]?.[0]?.content).toContain(`Subagent "general-purpose" (${record!.id}) failed`);
+    expect(calls[0]?.[0]?.content).toContain("settled watchdog");
+    expect(calls[0]?.[0]?.content).toContain("Recovery");
+    expect(calls[0]?.[0]?.details?.outcome).toBe("failed");
+  });
+
+  it("chat 轮路径零变化：continuation 轮 arm 仍走 onWatchdogFire（fire 不触发 one-shot 处置）", async () => {
+    _setMidRoundNoProgressWindowMsForTest(300);
+    const record = makeChatRecord("sa-chat-wedge", agentDir);
+    store.register(record);
+    await service.chatActions.deliverChatMessage(record, "long round");
+    await vi.waitFor(() => expect(fake.runs.length).toBe(1));
+    await vi.waitFor(() => expect(hasSettledWatchdog(record.id)).toBe(true));
+
+    // fire → Continuation.onWatchdogFire（kill + abort，收口归 run 应答）——record 不终态化
+    await vi.waitFor(() => expect(killChildSpy).toHaveBeenCalledWith(record.id, "settled watchdog (mid-round)"));
+    // abort 的是轮级 signal（run ctx.signal——引擎侧杀链驱动），非 record 级 controller
+    expect(fake.runs[0]!.ctx.signal?.aborted).toBe(true);
+    expect(record.status).toBe("running");
+    expect(pi.sendMessage).not.toHaveBeenCalled();
+  });
+});
+
+describe("集成：[A5] D5 gate 判定本体直测（canUpgradeToConversation——此前仅被 mock）", () => {
+  let agentDir: string;
+  let service: SubagentService;
+
+  beforeEach(() => {
+    ({ agentDir, service } = makeService());
+  });
+
+  afterEach(() => {
+    service.dispose();
+    clearEngines();
+    _resetLifecycleState();
+    _resetSettledWatchdogsForTest();
+    _resetCoreSpawnedChildrenMirrorForTest();
+    fs.rmSync(agentDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
+  });
+
+  it("registry 注册 engine capabilities.conversation='unsupported' 的 stub → false", () => {
+    const fake = registerFakePiEngine();
+    const caps = { ...fake.capabilities(), conversation: "unsupported" as const };
+    registerEngine("stub-unsupported", () => ({ id: "stub-unsupported", capabilities: () => caps }) as never);
+
+    expect(service.canUpgradeToConversation({ engine: "stub-unsupported" })).toBe(false);
+  });
+
+  it("引擎未注册 → fail-closed false（catch 分支）；engine 缺省 → 默认引擎（pi conversation=native）放行", () => {
+    expect(service.canUpgradeToConversation({ engine: "no-such-engine" })).toBe(false);
+    expect(service.canUpgradeToConversation({})).toBe(true);
   });
 });

@@ -534,8 +534,9 @@ export async function cancelHandler(
  *
  * [H1 U6] 状态分流面收敛：running → Continuation 派发新轮（新 run + resume 锚点）；
  * 在途轮存在 → D2 打断（abort + 入队）；终态 → throw ended（正常路径不命中——终态
- * record 已 archive，getRecordForAction 先 throw not found）。interrupt 输入保留解析
- * 但不参与分派（D2 统一打断语义）。
+ * record 已 archive，getRecordForAction 先 throw not found）。interrupt 输入字段保留
+ *（[A4] 工具 schema 兼容面——extensions subagent-tool-schema 仍声明该字段）但不参与
+ * 分派（D2 统一打断语义）。
  *
  * 归属守卫：getRecordForAction 内部校验 rootSessionId。
  *
@@ -552,7 +553,6 @@ export async function messageHandler(
     "messageParam.text is required for action:'message' (must not be whitespace-only). " +
     'Correct: {"action":"message","messageParam":{"subagentId":"sa-...","text":"your follow-up"}}',
   );
-  const interrupt = input?.interrupt === true;
 
   // 归属守卫：getRecordForAction 内部校验 rootSessionId。
   // 拒绝时经 endedMessageGuard 分流：找不到 → 原错误；user-close/cancelled
