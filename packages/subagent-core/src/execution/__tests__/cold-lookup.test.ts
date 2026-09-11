@@ -11,7 +11,8 @@
 //   - 恢复失败：worktree 绑定丢失 / 异进程活实例（closed 与 running 候选）→
 //     ResurrectDeniedError 且内存无残留（register 不被调用）；
 //   - 部分恢复：closed 可重连记录 → resurrectClosed 回边翻回 running + 磁盘终态位
-//     同步翻转（.finalized 删除 + .alive 刷新当前进程）+ register/transition 上报；
+//     同步翻转（.state（L4 现行终态载体）与 legacy .finalized 删除 + .alive 刷新当前
+//     进程）+ register/transition 上报；
 //   - 恢复源缺失：sessionFile 缺失 / sidecar 翻转失败（目录不存在）均不阻断重生
 //     （best-effort 语义）。
 //
@@ -87,10 +88,16 @@ describe("[D4-③] coldLookupForAction 冷查/复活链", () => {
     fs.rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
   });
 
-  /** tmpdir 下建 session 文件 + 可选 .finalized sidecar，返回 sessionFile 路径。 */
-  function writeSessionFixture(opts: { finalized?: string; aliveMarker?: string } = {}): string {
+  /** tmpdir 下建 session 文件 + 可选终态 sidecar（.state / legacy .finalized）+ 可选
+   *  .alive sidecar，返回 sessionFile 路径。 */
+  function writeSessionFixture(
+    opts: { state?: string; finalized?: string; aliveMarker?: string } = {},
+  ): string {
     const sessionFile = path.join(dir, "20260901T000000-000_sa-cold-1.jsonl");
     fs.writeFileSync(sessionFile, "{}\n", "utf-8");
+    if (opts.state !== undefined) {
+      fs.writeFileSync(`${sessionFile}.state`, opts.state, "utf-8");
+    }
     if (opts.finalized !== undefined) {
       fs.writeFileSync(`${sessionFile}.finalized`, opts.finalized, "utf-8");
     }
@@ -131,6 +138,42 @@ describe("[D4-③] coldLookupForAction 冷查/复活链", () => {
     expect(readAliveMarker(sessionFile)).toMatchObject({ pid: process.pid, id: "sa-cold-1" });
     // 冷查扫描契约：全目录兜底按 COLD_LOOKUP_SCAN_LIMIT 上限扫全量（无 root 过滤）
     expect(vi.mocked(deps.collectRecords)).toHaveBeenCalledWith(COLD_LOOKUP_SCAN_LIMIT, "all", undefined);
+  });
+
+  it("[L4] 磁盘 .state（现行终态载体）+ legacy .finalized 残留 → 重生回边两者同步删除（否则磁盘扫描翻回 closed）", () => {
+    // [review MF-8] 残留任一终态 sidecar 都会让 record-store buildRecord 终态分支
+    // （分支 1，.state 优先 / 旧名兼容归一）压过 .alive 活态分支——reload / 异进程 /
+    // session-reader 全部把 running record 报成 closed，并为跨进程二次 resurrect 开门。
+    const sessionFile = writeSessionFixture({
+      state: JSON.stringify({ status: "finalized", reason: "parent-shutdown" }),
+      finalized: JSON.stringify({ reason: "parent-shutdown" }),
+    });
+    const deps = makeDeps({ disk: [makeFound({ sessionFile, closedReason: "parent-shutdown" })] });
+
+    const record = coldLookupForAction(deps, "sa-cold-1", true)!;
+
+    expect(record.status).toBe("running");
+    expect(record.closedReason).toBeUndefined();
+    // 终态 sidecar 双双清除（现行 .state + legacy .finalized），磁盘扫描不再翻回 closed
+    expect(fs.existsSync(`${sessionFile}.state`)).toBe(false);
+    expect(fs.existsSync(`${sessionFile}.finalized`)).toBe(false);
+    expect(vi.mocked(deps.register)).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(deps.reportRecordTransition)).toHaveBeenCalledTimes(1);
+  });
+
+  it("负向对照：重生被守卫拒绝（worktree 绑定丢失）→ 终态 sidecar 不被误删", () => {
+    // 守卫先于任何状态突变与副作用（[v8.5 D] / [review MF-9]）：拒绝路径不得触碰磁盘
+    const sessionFile = writeSessionFixture({
+      state: JSON.stringify({ status: "finalized", reason: "parent-shutdown" }),
+      finalized: JSON.stringify({ reason: "parent-shutdown" }),
+    });
+    const deps = makeDeps({ disk: [makeFound({ sessionFile, worktree: true })] });
+
+    expect(() => coldLookupForAction(deps, "sa-cold-1", true)).toThrow(ResurrectDeniedError);
+
+    expect(fs.existsSync(`${sessionFile}.state`)).toBe(true);
+    expect(fs.existsSync(`${sessionFile}.finalized`)).toBe(true);
+    expect(vi.mocked(deps.register)).not.toHaveBeenCalled();
   });
 
   it("idToFile 索引直查返回非 running 态 → 回退磁盘全扫兜底定位（closed 候选仍可重连）", () => {

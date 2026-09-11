@@ -14,6 +14,7 @@ import * as fs from "node:fs";
 import { findForeignLiveInstance, writeAliveMarker } from "./alive-store.ts";
 import { createRecord, resurrectClosed } from "./execution-record.ts";
 import type { StatusFilter } from "./record-store.ts";
+import { STATE_SIDECAR_EXT } from "./state-marker.ts";
 import type { ExecutionRecord, SubagentRecord } from "./types.ts";
 import { isReconnectableFinalReason, ResurrectDeniedError } from "./types.ts";
 
@@ -146,13 +147,16 @@ function resurrectColdRecord(
   // 翻回 running（等价性由 applyEntry reducer 保证，对齐 SP-2 重建即报告先例）。
   const wasClosed = found.status !== "running";
   if (wasClosed) {
-    // [review MF-8] 磁盘终态位同步翻转：record-store buildRecord 分支 2（.finalized
-    // 存在 → closed）优先级高于 .alive 活态分支 3，重生若不删 sidecar，任何磁盘扫描
+    // [review MF-8] 磁盘终态位同步翻转：record-store buildRecord 分支 1（终态 sidecar
+    // 存在 → closed）优先级高于 .alive 活态分支，重生若不删 sidecar，任何磁盘扫描
     // （异进程 / reload / session-reader）都会把本进程内存里 running 的 record 报成
     // closed/disconnected——破坏 live ≡ reload，且为跨进程二次 resurrect 开门。
-    // best-effort 对齐 BC-4 语义；.alive 刷新为当前进程（后续 resume spawn 会覆盖写）。
+    // [L4 合并] `.state` 是现行终态载体（读侧权威）；`.finalized` 为 legacy 兼容删除
+    // （读侧旧名回退仍在，存量残留不清理则同样翻回 closed）。两者同取 best-effort
+    // 对齐 BC-4 语义；.alive 刷新为当前进程（后续 resume spawn 会覆盖写）。
     if (record.sessionFile) {
       try {
+        fs.rmSync(`${record.sessionFile}${STATE_SIDECAR_EXT}`, { force: true });
         fs.rmSync(`${record.sessionFile}.finalized`, { force: true });
         writeAliveMarker(record.sessionFile, { pid: process.pid, id, startedAt: Date.now() });
       } catch (_e) {
