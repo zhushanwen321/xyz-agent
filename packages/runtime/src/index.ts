@@ -74,6 +74,8 @@ import { WorkspaceDetector } from './services/worktree/workspace-detector.js'
 // autoUpgrade 顺序」可 spy 断言（06 §5 门禁），组合根只负责构造与注入。
 // resolveReclaimConfig（u3b，idle-pi-reclamation D4）：reaper 三旋钮 env 解析。
 import { runStartupBackgroundInit, resolveReclaimConfig } from './services/startup-background-init.js'
+// u5（crash-forensics-and-watchdog D3）：reattach 编排 + 孤儿收殓完成 promise 交付回调。
+import { runStartupReattach } from './services/startup-reattach.js'
 // A1-2（provider-config-quota 架构）：models.json 寄生字段 → config/providers.json 迁移。
 // 挂载薄包装在独立小模块 run-extras-migration.ts（失败语义 + 返回值契约可单测，
 // 组合根 import 即执行 main() 不可直测）；此处 readExtrasWithFallback 供 QuotaService 双读。
@@ -980,6 +982,10 @@ async function main(): Promise<void> {
   // 序列与顺序约束见 startup-background-init.ts 文件头注释（migrateProviderConfig →
   // migrateBuiltinExtensions → checkAndAutoUpgrade → getPiVersion → skill → plugins）。
   // fire-and-forget：每步自带 catch，无 rejection 逃逸；失败不阻塞其余步骤。
+  //
+  // u5（crash-forensics D3）：孤儿收殓完成 promise 经交付回调同步捕获（调度即交付——
+  // 回调在本调用同步段内触发，早于 reattach 编排的首个 await），供下方编排等待收割。
+  let orphanReapChain: Promise<void> = Promise.resolve()
   void runStartupBackgroundInit({
     configStore,
     authStorage,
@@ -994,6 +1000,23 @@ async function main(): Promise<void> {
     // u3b（idle-pi-reclamation D4）：reaper 启动闭包（装配在上方 wiring 段）——经后台
     // 序列 ⑩ 触发一次，fire-and-forget 形态由该序列保证。
     startIdleReaper,
+    // u5（crash-forensics D3）：收割完成 promise 交付（reattach 编排的唯一消费方）。
+    onOrphanReapChainScheduled: (completion) => {
+      orphanReapChain = completion
+    },
+  })
+
+  // ── u5（crash-forensics-and-watchdog D3）：reattach 编排 ─────────────────────
+  // WS listen 后独立并行任务（D3 编排挂点：与 startup-background-init 串行链解耦，不违背
+  // 「端口先就绪」原则，也不阻塞链尾 reaper 启动——收割等待经 Promise.race 有界消费）。
+  // 冷启动无 checkpoint（clean exit 已删 / 首次启动）→ read() 返回 undefined → 编排零动作
+  // （A3b 冷启动维持 lazy）。restore 走 lifecycle registerSession 汇聚点（onSessionRegistered
+  // 挂点随附触发）。内部全容错不抛；外层 .catch 是防御兜底（对齐上方 fire-and-forget 形态）。
+  void runStartupReattach({
+    restore: (sessionId) => sessionService.restoreSession(sessionId),
+    waitForOrphanReap: () => orphanReapChain,
+  }).catch((e) => {
+    console.error('[runtime] reattach orchestration failed unexpectedly:', e)
   })
 }
 

@@ -64,6 +64,14 @@ export interface StartupBackgroundDeps {
    * 注释）——闭包内完成 seat/豁免/reclaim 全部装配，本模块只在序列里触发一次。
    */
   startIdleReaper?: () => void
+  /**
+   * 孤儿收殓完成 promise 交付回调（crash-forensics-and-watchdog D3，u5）。定时器调度后
+   * 同步调用一次，参数 = 「5s 延迟 + 孤儿 pi 收殓 + 后台任务收殓」全链 settle 的 promise
+   * （永不 reject——既有 catch 链尾部 resolve）。消费方 = reattach 编排（live 孤儿未收割完
+   * 不 spawn，防双重进程；收割等待经 Promise.race 有界消费，promise 不是 loop handle，
+   * 不影响定时器 unref 语义）。可选成员，缺省行为与既有 fire-and-forget 完全一致。
+   */
+  onOrphanReapChainScheduled?: (completion: Promise<void>) => void
 }
 
 /** 空闲 pi 回收三旋钮（D4；默认值权威源 = shared/constants DEFAULT_PI_RECLAIM_*）。 */
@@ -123,6 +131,15 @@ export async function runStartupBackgroundInit(deps: StartupBackgroundDeps): Pro
   // 定时器 + unref 语义，链式追加改动面最小且时序由 Promise 链构造性保证。
   // pi 收殓失败（catch 兜底后）仍继续扫描——B 处置 registry 遗留，与 pi 收殓成败解耦，
   // 硬序只约束先后不约束成败传递。整体 fire-and-forget：不阻塞本启动序列。
+  //
+  // u5（crash-forensics D3）：收殓链由纯 fire-and-forget 升级为「fire-and-forget + 完成
+  // promise 交付」——链尾 settle 后 resolve（全部 catch 已兜底，resolve 无竞态）；调度后
+  // 同步交付给 onOrphanReapChainScheduled（reattach 编排 await 该 promise = 含 5s 宽限的
+  // 收割完成信号）。未传回调时零行为变化。
+  let settleReapChain: () => void = () => {}
+  const reapChainDone = new Promise<void>((resolve) => {
+    settleReapChain = resolve
+  })
   const reapTimer = setTimeout(() => {
     void reapOrphanPiProcesses({ sessionsDir: getSessionsDir(), ownPid: process.pid, trigger: 'startup-sweep' })
       .catch((e) => {
@@ -132,9 +149,13 @@ export async function runStartupBackgroundInit(deps: StartupBackgroundDeps): Pro
       .catch((e) => {
         console.warn('[runtime] background task reap-all failed unexpectedly:', e)
       })
+      .then(() => {
+        settleReapChain()
+      })
   }, ORPHAN_REAP_DELAY_MS)
   // unref：不让收殓定时器独自挂住进程生命周期（正常场景 runtime 长活，仅测试/工具受益）。
   reapTimer.unref()
+  deps.onOrphanReapChainScheduled?.(reapChainDone)
 
   // ① provider 迁移 → migrationReady gate（D8-3）：session spawn（create/restore/fork）
   // 在迁移完成前等待该 promise。gate 显式 .then(onFulfilled, onRejected) 双处理——
