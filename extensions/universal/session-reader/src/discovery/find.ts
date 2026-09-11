@@ -533,7 +533,7 @@ async function matchCandidates(
     return candidates.map((c) => ({ ...c }))
   }
   // 第一级 uuid 片段匹配（sessionId 或文件路径含 query）——cheap，已有 header。
-  // 命中排最前（归一化层在其后）。
+  // 零命中才进入第二级（互斥回退，非合并排序，§6.7 子决策 1）。
   const exactHits = candidates.filter(
     (c) => c.ref.sessionId.includes(query) || c.meta.path.includes(query),
   )

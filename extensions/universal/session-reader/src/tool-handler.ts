@@ -254,8 +254,8 @@ function expandHome(p: string): string {
  * 把 session 参数解析到唯一完整 id（design §6.1 M0 + U2/U3）。三形态各拆独立解析器：
  * resolveBySessionPath（① 绝对路径/~）→ resolveByRecordId（② sa- 前缀）→ resolveByFragment（③ 片段）。
  * 错误契约（U3）：① 文件不存在/非 .jsonl/header 读不出 → F6 风格；② sessionFile GC → ES1（manifest 元数据 + 👉）；
- * sa-id 0/>1 命中 → ES2（👉 family）。仅用于 family/outline/expand/detail/search/export/extract/result
- *（find action 自行调 findSessions，零匹配时返回空 + 提示，不抛错）。
+ * sa-id 0/>1 命中 → ES2（👉 family）。仅用于 family/outline/expand/detail/search/export/extract/workflow/result
+ *（find 自行调 findSessions，零匹配时返回空 + 提示，不抛错；doctor 为环境自检，无 session 解析）。
  *
  * liveSessionDir（§6.1 信号 1）只作用于形态③：片段匹配与 find 消费同一 roots
  *（[live] 根对片段解析可见——否则 find 能列出的 session 在 [live]≠[default] 环境

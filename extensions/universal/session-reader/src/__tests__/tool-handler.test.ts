@@ -34,7 +34,8 @@ import {
  * 测试框架 vitest（禁止 node:test/tsx）。直接调 handleSessionRead（纯逻辑，agentDir 注入），
  * 传真实 `/Users/zhushanwen/.pi/agent` 作 agentDir——用本机真实历史 session 数据，无需 mock。
  *
- * 覆盖 9 action 主路径 + F1(find 零匹配)/F4(turn 越界)/F5(缺参)/resolveSessionId 片段等价。
+ * 覆盖全 11 action 主路径 + F1(find 零匹配)/F4(turn 越界)/F5(缺参)/resolveSessionId 片段等价，
+ * 以及 u8 doctor / u9 归一化 / u10 find 分组 / u11 metadataProvider 缓存 / u12 跨会话检索（各见对应 describe）。
  *
  * 真实数据用例全部带 skipIf 守卫（CI 无本机 ~/.pi/agent → skip，不硬失败）；
  * renderExtractItems F9 截断是纯 fixture，无条件跑。
