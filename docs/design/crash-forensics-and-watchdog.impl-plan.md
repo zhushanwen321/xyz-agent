@@ -173,6 +173,7 @@ graph TD
 | 19 | 存量 supervisor 邻接风险（u1f 顺带发现，未修）：宽限超时 liveness 强杀的迟到 exit 落 crash 分类（stopping 已被 reset 清除）；onRuntimeExit 清 child 引用不分新旧进程代际 | 均为既有行为非本次引入；修复属行为变更超出台账接线单元 scope。登记残留风险待办 | 实施期登记 |
 | 20 | u7b 的 spawn 形态预置 0 生命周期接线分发：u4（session-service 钩子：新 session/respawn，fork 归属核实）/ u5（reattach/lazy restore）；u7b 只交付 mirror API + 事件适配 + 协议 | 领地互斥约束下的必要拆分；设计契约（五形态预置 0 + 对账 + errs 判别）不变，u4/u5 任务书承接（u4 本期 scope 已剔除该项，待 u7b 落地后另派） | 实施期登记 |
 | 21 | **P0 集成缺陷（u1e 交付核验发现）**：runtime 组合根 `packages/runtime/src/index.ts` 从未调用 `initCrashJournal()`——未初始化时 getCrashJournal() 返回 NOOP，真实 app 中 runtime.jsonl 永不创建，u1b/u1d1/u1d2/u1e 全部 runtime 侧事件静默丢弃（单测因显式 init(tmpdir) 掩盖），A1/A2 真实场景无法成立。同类项：HEAD 存量 lint 红（u1b crash-journal.ts 未用 import + 3 no-magic-numbers；u1d1 pi-respawn.ts 2 no-magic-numbers）挡 `pnpm lint`/Gate A | 派 u-init 接线收口任务（index.ts 启动期 init + 两文件 lint 清理 + u1e 遗留死代码 resetWatermarkDailyForTest 清理）；logger.ts max-lines 已由 u2 commit 的 eslint.config.mjs override 登记解决 | 修复中（u-init） |
+| 22 | **P0 集成缺口（u10a 交付核验发现，同类第 2 处）**：renderer 侧 `installInboundFrameGuard()` 全仓零调用（需 App.vue 装配层）+ `InboundFrameDroppedNotice.vue` 零挂载（需会话视图宿主，最小挂点 Panel.vue 的 respawnPending 区或 MessageStream.vue）——A6「第 3 次后静态提示出现」「切走切回触发一次重试订阅」在运行态不可达（仅单元级可验证） | 并入 u-init（授权改 App.vue + 会话视图宿主最小挂点）；两处集成缺口（#21/#22）同源：单元级显式构造掩盖了组合根接线缺失——**阶段 3 一致性审查以此为专项扫描面**（逐单元问「生产链路谁调用它」） | 修复中（u-init） |
 
 ## 6 状态表
 
@@ -198,7 +199,7 @@ graph TD
 | u7d | pending | — | — |
 | u8 (Gate W) | blocked-on-data（非代码门，不阻塞交付） | — | — |
 | u9 | committed | 1 | createPiStreamWriter 轮转（默认 50MB 可注入）+ `.1` 单代 + pi- 前缀 + closeLogger 等待在途轮转 + 旧裁决 [HISTORICAL] 推翻登记；vitest 4 passed（含 A5 PASS）+ typecheck 绿（编排者重跑核验） |
-| u10a | in-progress（额度中断，实现近完成） | 1 | 产物：core ws-client.ts 入站守卫 + ws-client.inbound-guard.test.ts（**11 用例全绿**）+ renderer-log-handler.ts 台账承接 + renderer 组件/composable + shared ipc-payloads（均未提交）。**遗留缺陷 1 处**：logs/__tests__/renderer-log-handler.test.ts 2 个新用例因测试助手 `readLines` 未定义而红（ReferenceError，测试代码缺陷非实现缺陷——同文件「4 次丢帧→4 条台账行」用例绿证明实现可用）。待办：补测试助手 + main 池回归 + 收口汇报 |
+| u10a | committed | 2（前任额度中断 + 接替收口修测试助手） | 六项 A6 条款单元级全绿（core 11 + main 9 + renderer 9 用例；core 全量 1996 绿）；**发现 renderer 应用级接线缺口→转 u-init（偏差 #22）** |
 | u10b | committed | 2（1 次 blocker 补登） | 守卫脚本真实绿（26 包全登记 exit 0）+ 四包排除判定源码实锚 + O3-C superseded-by 注记 + extensions:lint 前置挂接；编排者重跑 exit 0 |
 
 ## 7 残留风险与变更历史

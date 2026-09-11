@@ -27,8 +27,17 @@ export interface RendererMemorySnapshot {
  * - 'vue-error-handler'：app.config.errorHandler（组件 render/setup/生命周期错误）
  * - 'window-onerror'：window 层 error 事件（Vue 体系外的全局 JS 错误）
  * - 'unhandledrejection'：未接住的 Promise rejection
+ *
+ * 结构化标记（非三件套捕获面）[crash-forensics §3.3 D8 / u10a]：
+ * - 'inbound-frame-dropped'：ws-client 入站帧大小守卫命中（超界帧丢弃）经本通道上报——
+ *   main 侧 handler 识别该标记后额外写崩溃台账行（main.jsonl
+ *   `layer=renderer, event=inbound-frame-dropped`，D1 写入点矩阵），复用既有通道不新建。
  */
-export type RendererErrorSource = 'vue-error-handler' | 'window-onerror' | 'unhandledrejection'
+export type RendererErrorSource =
+  | 'vue-error-handler'
+  | 'window-onerror'
+  | 'unhandledrejection'
+  | 'inbound-frame-dropped'
 
 /**
  * renderer → main 错误上报 payload（RENDERER_LOG = 'renderer-log' invoke 通道）

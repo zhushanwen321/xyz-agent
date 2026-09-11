@@ -63,6 +63,20 @@ function makePayload(overrides: Record<string, unknown> = {}) {
   }
 }
 
+/**
+ * 读取某 dataDir 下当天 renderer-error 日志并按行反序列化（末尾空行剔除）。
+ * 模块级而非 describe 闭包内：两个 describe 均消费（闭包作用域外不可见 = 测试缺陷）。
+ */
+function readErrorLines(dataDir: string): ErrorLine[] {
+  const today = new Date().toISOString().slice(0, 10)
+  const file = join(dataDir, 'logs', `renderer-error-${today}.log`)
+  expect(existsSync(file), `log file should exist at ${file}`).toBe(true)
+  return readFileSync(file, 'utf-8')
+    .split('\n')
+    .filter((l) => l.length > 0)
+    .map((l) => JSON.parse(l) as ErrorLine)
+}
+
 describe('renderer-log-handler', () => {
   let tmpDir: string
   let savedDataDir: string | undefined
@@ -70,17 +84,6 @@ describe('renderer-log-handler', () => {
   /** 动态 import 拿当前模块实例（vi.resetModules 后限流 Map 为全新状态）。 */
   async function loadHandler() {
     return await import('../renderer-log-handler.js')
-  }
-
-  /** 读取当天 renderer-error 日志并按行反序列化（末尾空行剔除）。 */
-  function readLines(): ErrorLine[] {
-    const today = new Date().toISOString().slice(0, 10)
-    const file = join(tmpDir, 'logs', `renderer-error-${today}.log`)
-    expect(existsSync(file), `log file should exist at ${file}`).toBe(true)
-    return readFileSync(file, 'utf-8')
-      .split('\n')
-      .filter((l) => l.length > 0)
-      .map((l) => JSON.parse(l) as ErrorLine)
   }
 
   beforeEach(() => {
@@ -104,14 +107,14 @@ describe('renderer-log-handler', () => {
     for (let i = 0; i < 120; i++) {
       handleRendererLogReport(event, makePayload({ message: `err-${i}` }))
     }
-    let lines = readLines()
+    let lines = readErrorLines(tmpDir)
     expect(lines).toHaveLength(100) // 101-120 被限流丢弃
     expect(lines[99].message).toBe('err-99')
 
     // 推进 61s：下一条先触发上一窗口汇总行（dropped=20），随后新窗口正常落盘
     vi.useFakeTimers({ toFake: ['Date'], now: Date.now() + 61_000 })
     handleRendererLogReport(event, makePayload({ message: 'next-window' }))
-    lines = readLines()
+    lines = readErrorLines(tmpDir)
     const summary = lines.find((l) => l.kind === 'rate-limit-summary')
     expect(summary).toBeDefined()
     expect(summary?.dropped).toBe(20)
@@ -127,7 +130,7 @@ describe('renderer-log-handler', () => {
     const winB = makeEvent(2)
     for (let i = 0; i < 100; i++) handleRendererLogReport(winA, makePayload({ message: `a-${i}` }))
     handleRendererLogReport(winB, makePayload({ message: 'b-untouched' }))
-    const lines = readLines()
+    const lines = readErrorLines(tmpDir)
     expect(lines.filter((l) => l.windowId === 1)).toHaveLength(100)
     expect(lines.filter((l) => l.windowId === 2)).toHaveLength(1)
     expect(lines.some((l) => l.message === 'b-untouched')).toBe(true)
@@ -165,7 +168,7 @@ describe('renderer-log-handler', () => {
   it('memory 不可用时字段省略（P-mem-api 降级形态）；stack/sessionId 可选字段缺省不落 null', async () => {
     const { handleRendererLogReport } = await loadHandler()
     handleRendererLogReport(makeEvent(), makePayload())
-    const line = readLines()[0]
+    const line = readErrorLines(tmpDir)[0]
     expect(line.memory).toBeUndefined()
     expect(line.stack).toBeUndefined()
     expect(line.sessionId).toBeUndefined()
@@ -203,6 +206,105 @@ describe('renderer-log-handler', () => {
     const fn = handlers.get('renderer-log')
     expect(fn).toBeTypeOf('function')
     expect(() => fn?.(makeEvent(), makePayload({ message: 'via-ipc' }))).not.toThrow()
-    expect(readLines().some((l) => l.message === 'via-ipc')).toBe(true)
+    expect(readErrorLines(tmpDir).some((l) => l.message === 'via-ipc')).toBe(true)
+  })
+})
+
+// ── 结构化标记：inbound-frame-dropped → 崩溃台账（crash-forensics §3.3 D8 / u10a）──
+describe('renderer-log-handler inbound-frame-dropped 台账承接', () => {
+  let tmpDir: string
+  let savedDataDir: string | undefined
+
+  /** 动态 import（vi.resetModules 后与 initCrashJournal 同一模块注册表）。 */
+  async function loadHandler() {
+    return await import('../renderer-log-handler.js')
+  }
+
+  /** 读取 crashes/main.jsonl 台账行（main writer 经 initCrashJournal 注入本目录）。 */
+  function readJournalLines(): Array<Record<string, unknown>> {
+    const file = join(tmpDir, 'logs', 'crashes', 'main.jsonl')
+    expect(existsSync(file), `crash journal should exist at ${file}`).toBe(true)
+    return readFileSync(file, 'utf-8')
+      .split('\n')
+      .filter((l) => l.length > 0)
+      .map((l) => JSON.parse(l) as Record<string, unknown>)
+  }
+
+  beforeEach(async () => {
+    vi.resetModules()
+    handlers.clear()
+    tmpDir = mkdtempSync(join(tmpdir(), 'renderer-log-handler-guard-test-'))
+    savedDataDir = process.env.XYZ_AGENT_DATA_DIR
+    process.env.XYZ_AGENT_DATA_DIR = tmpDir
+    // 台账单例 init（与 loadHandler 同一模块注册表——vi.resetModules 后重新 import）
+    const { initCrashJournal } = await import('../crash-journal.js')
+    initCrashJournal({ dir: join(tmpDir, 'logs', 'crashes') })
+  })
+
+  afterEach(() => {
+    if (savedDataDir === undefined) delete process.env.XYZ_AGENT_DATA_DIR
+    else process.env.XYZ_AGENT_DATA_DIR = savedDataDir
+    vi.useRealTimers()
+    rmSync(tmpDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
+  })
+
+  function makeGuardPayload(overrides: Record<string, unknown> = {}) {
+    return makePayload({
+      source: 'inbound-frame-dropped',
+      message: 'inbound frame dropped: 42000001 code units exceeded size limit',
+      sessionId: 'sess-guard',
+      ...overrides,
+    })
+  }
+
+  it('结构化标记上报 → main.jsonl 台账行（layer=renderer, event=inbound-frame-dropped）+ renderer-error 行照写', async () => {
+    const { handleRendererLogReport } = await loadHandler()
+    handleRendererLogReport(makeEvent(), makeGuardPayload())
+
+    const journal = readJournalLines()
+    expect(journal).toHaveLength(1)
+    expect(journal[0]).toMatchObject({
+      layer: 'renderer',
+      event: 'inbound-frame-dropped',
+      sessionId: 'sess-guard',
+      reason: 'over-size-limit',
+    })
+    expect(String(journal[0].detailDigest)).toContain('42000001')
+    expect(typeof journal[0].ts).toBe('string')
+
+    // renderer-error 主路径不受台账分支影响（照写）
+    expect(readErrorLines(tmpDir)).toHaveLength(1)
+    expect(readErrorLines(tmpDir)[0].source).toBe('inbound-frame-dropped')
+  })
+
+  it('4 次丢帧上报 → 4 条台账行（A6 ×4 计数语义）', async () => {
+    const { handleRendererLogReport } = await loadHandler()
+    for (let i = 1; i <= 4; i++) {
+      handleRendererLogReport(makeEvent(), makeGuardPayload({ message: `dropped-${i}` }))
+    }
+    const journal = readJournalLines()
+    expect(journal).toHaveLength(4)
+    expect(journal.every((l) => l.event === 'inbound-frame-dropped' && l.layer === 'renderer')).toBe(true)
+    expect(journal.map((l) => l.detailDigest)).toEqual([
+      expect.stringContaining('dropped-1'),
+      expect.stringContaining('dropped-2'),
+      expect.stringContaining('dropped-3'),
+      expect.stringContaining('dropped-4'),
+    ])
+  })
+
+  it('限流语义保持：丢帧上报与普通错误共享同一窗口配额（100/min），超限台账同样停写', async () => {
+    const { handleRendererLogReport } = await loadHandler()
+    for (let i = 0; i < 100; i++) handleRendererLogReport(makeEvent(), makeGuardPayload({ message: `g-${i}` }))
+    handleRendererLogReport(makeEvent(), makePayload({ message: 'plain-error-over-quota' })) // 第 101 条：配额已被丢帧上报占满
+
+    expect(readJournalLines()).toHaveLength(100) // 台账与 renderer-error 同受一限流门
+    expect(readErrorLines(tmpDir)).toHaveLength(100)
+    expect(readErrorLines(tmpDir).some((l) => l.message === 'plain-error-over-quota')).toBe(false)
+
+    // 窗口翻转后恢复写入（限流语义本身不因台账分支改变）
+    vi.useFakeTimers({ toFake: ['Date'], now: Date.now() + 61_000 })
+    handleRendererLogReport(makeEvent(), makeGuardPayload({ message: 'g-next-window' }))
+    expect(readJournalLines()).toHaveLength(101)
   })
 })

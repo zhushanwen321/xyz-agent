@@ -24,6 +24,28 @@
  * - 删除 import.meta.hot HMR 块（core headless 无 HMR）
  * - ConnectionState 含 restarting/failed（IPC 驱动，7 导出签名不变）
  *
+ * 入站 parse 前置大小守卫 + 终止阀（crash-forensics §3.3 D8 / u10a）：
+ * - JSON.parse 前检查帧大小：text 帧 `string.length` > 40M code units（≈80MB UTF-16）、
+ *   binary 帧按字节 > 80MB → 整条丢弃（不 parse——UTF-16 放大 + 对象图再放大正是 E3 类
+ *   OOM 形态，响亮失败优于静默 parse 巨型字符串）。阈值论证：出站守卫（C-comm-14）下合法
+ *   帧恒 ≤32MiB UTF-8 字节，text 帧 string.length 恒 ≤32M code units，40M = 25% 余量，
+ *   只拦「守卫已失效/协议漂移」的显著超界形态（哨兵语义）。
+ * - 丢弃 → seq gap → 重订阅全量拉取 → 拉取响应同样超界 → 再丢的死循环，由**终止阀**防护：
+ *   同一 session **连续 3 次**丢帧后暂停该 session 的自动重订阅（send 层拦截
+ *   `session.subscribe`，与 WS 连接态无关）；**作用域 = 单 session**（resubscribeAll 的
+ *   全局恢复机制不受影响，其余 session 流不连坐）。
+ * - 恢复触发器 = 用户动作：`retryInboundDroppedSession(sid)`（renderer 消费者经
+ *   onInboundFrameDropped 回调感知 trip，在用户切走再切回该 session 时调用一次以解除
+ *   暂停并重试订阅）；应用重启是兜底路径。
+ * - 归因（超界帧不可 parse，无法从对象图取 sessionId）：text 帧头部有界窗口（4KB）
+ *   正则提取——① `"id"` 命中 in-flight subscribe 簿记（send 时登记的
+ *   session.subscribe 请求，subscribe reply 超界是死循环主形态）→ 归因其目标 session；
+ *   ② 否则取首个 `"sessionId"` 字段（live push 帧形态）；③ 均无 → null（只上报，
+ *   不参与阀门）。binary 帧不读内容（无 text 可扫），归因恒 null。
+ * - 每次丢弃经 onInboundFrameDropped 回调通知（单槽，对齐 onMessage 体例）——renderer
+ *   消费者经既有 renderer-log IPC 通道带结构化标记上报进崩溃台账（main.jsonl
+ *   `inbound-frame-dropped`，D1 矩阵），不新建 IPC 通道。
+ *
  * 依赖方向：platform/port（getPlatform）→ 无下游（暴露 connect/disconnect/send/getState/onMessage）
  */
 import { ref, readonly } from 'vue'
@@ -55,6 +77,19 @@ const AUTH_TIMEOUT_MS = 5_000
  * （renderer pending 层 MAX_PENDING=256 同界），超限驱逐最老并经 onQueueDrop 通知。
  */
 const MAX_PREAUTH_QUEUE = 256
+
+// ── 入站帧守卫常量（crash-forensics §3.3 D8）────────────────────────
+/** text 帧大小上限（string.length code units，≈80MB UTF-16；出站守卫 32MiB 上界 + 25% 余量）。 */
+export const INBOUND_FRAME_MAX_TEXT_CODE_UNITS = 40_000_000
+/** binary 帧大小上限（字节；与 text 上限的 80MB 语义对齐）。 */
+export const INBOUND_FRAME_MAX_BINARY_BYTES = 80_000_000
+/** 终止阀阈值：同一 session 连续丢帧达此次数 → 暂停该 session 自动重订阅。 */
+export const INBOUND_DROP_VALVE_TRIP_THRESHOLD = 3
+/** 超界帧归因扫描窗口（头部 code units）——sessionId/id 字段在 JSON envelope 前部，4KB 足够。 */
+const INBOUND_GUARD_ATTRIBUTION_WINDOW = 4096
+/** in-flight subscribe 簿记条目 TTL：超界 reply 无法 parse 删除不了簿记，按 RPC backstop
+ *  65s（pending sweep）+ 余量惰性过期，防泄漏（查询时清理，无独立定时器）。 */
+const IN_FLIGHT_SUBSCRIBE_TTL_MS = 90_000
 
 // ── 状态 ────────────────────────────────────────────────────
 // taste:allow-no-data-owner W24-EX-B（模块级单例 UI 瞬态，12 类未覆盖存量，登记草稿）：WS 连接状态单例 ref（UI 连接指示的数据源，12 类未覆盖）
@@ -93,6 +128,76 @@ export function onQueueDrop(cb: (msgs: ClientMessage[], reason: SendQueueDropRea
   return () => {
     if (queueDropHandler === cb) queueDropHandler = null
   }
+}
+
+// ── 入站帧守卫：类型 / 状态 / 公开 API（crash-forensics §3.3 D8）────
+
+/** 一次入站超界帧丢弃的通知载荷（onInboundFrameDropped 回调参数）。 */
+export interface InboundFrameDroppedInfo {
+  /** 归因 session（头部有界扫描提取；null = 无法归因——只上报，不参与阀门计数）。 */
+  sessionId: string | null
+  /** 超界帧尺寸（text 帧 = code units；binary 帧 = 字节）。 */
+  frameSize: number
+  /** 帧形态（text / binary）。 */
+  kind: 'text' | 'binary'
+  /** 本帧是否使归因 session 首次触发终止阀（第 3 次；tripped 后续丢帧为 false）。 */
+  valveTripped: boolean
+  /** 归因 session 的连续丢帧计数（含本帧；无法归因时为 0）。 */
+  sessionDropCount: number
+}
+
+/** 入站帧丢弃回调（单槽，对齐 onMessage 体例）：renderer 装配层注册，经既有
+ *  renderer-log IPC 通道带结构化标记上报崩溃台账；valveTripped=true 时同时驱动
+ *  该 session 的静态错误提示。 */
+let inboundFrameDroppedHandler: ((info: InboundFrameDroppedInfo) => void) | null = null
+
+/** 注册入站帧丢弃回调，返回取消函数。 */
+export function onInboundFrameDropped(cb: (info: InboundFrameDroppedInfo) => void): () => void {
+  inboundFrameDroppedHandler = cb
+  return () => {
+    if (inboundFrameDroppedHandler === cb) inboundFrameDroppedHandler = null
+  }
+}
+
+/** per-session 连续丢帧计数（终止阀判定依据；正常帧到达清零——「连续」语义）。 */
+// taste:allow-no-data-owner W24-EX-C（非 GUI 数据技术结构，登记草稿）：入站守卫 per-session 丢帧计数簿记（防死循环阀门依据）
+const inboundDropStreakBySession = new Map<string, number>()
+/** 终止阀生效中的 session（自动重订阅被 send 层拦截；retryInboundDroppedSession 解除）。 */
+// taste:allow-no-data-owner W24-EX-C（非 GUI 数据技术结构，登记草稿）：终止阀生效 session 集合（自动重订阅暂停的判定依据）
+const inboundValveTrippedSessions = new Set<string>()
+/**
+ * in-flight subscribe 簿记（requestId → 目标 session）：超界帧归因锚。
+ * send() 出站 `session.subscribe` 时登记；正常 reply 到达（id 命中）或 TTL 过期时清理。
+ * subscribe reply 超界是 D8 死循环主形态（拉取响应同样超界）——reply 不可 parse 拿不到 id，
+ * 反向经簿记把丢帧归因回目标 session。
+ */
+// taste:allow-no-data-owner W24-EX-C（非 GUI 数据技术结构，登记草稿）：in-flight subscribe 归因簿记（超界 reply 的反查锚）
+const inFlightSubscribes = new Map<string, { sessionId: string; at: number }>()
+
+/**
+ * 解除指定 session 的终止阀（恢复触发器入口）：移除暂停 + 清零丢帧计数，此后该 session
+ * 的 subscribe 请求恢复放行（调用方随即发起一次重试订阅）。
+ * @returns true = 该 session 曾 tripped、本次已解除；false = 未 tripped（调用方无需动作）。
+ */
+export function retryInboundDroppedSession(sessionId: string): boolean {
+  if (!inboundValveTrippedSessions.has(sessionId)) return false
+  inboundValveTrippedSessions.delete(sessionId)
+  inboundDropStreakBySession.delete(sessionId)
+  console.log(`[ws] inbound drop valve released for session ${sessionId}: one re-subscribe allowed`)
+  return true
+}
+
+/** 查询指定 session 的终止阀是否生效（renderer 静态提示态的判定源）。 */
+export function isInboundValveTripped(sessionId: string): boolean {
+  return inboundValveTrippedSessions.has(sessionId)
+}
+
+/** 测试钩子：清空入站守卫全部模块级状态（对齐 resetSubscriptionStates 模式）。 */
+export function _resetInboundGuardForTest(): void {
+  inboundDropStreakBySession.clear()
+  inboundValveTrippedSessions.clear()
+  inFlightSubscribes.clear()
+  inboundFrameDroppedHandler = null
 }
 
 /** 通知队列丢弃（清空方负责 splice，此处只广播） */
@@ -219,6 +324,14 @@ export function connect(url: string, token?: string): void {
 
   ws.onmessage = (event) => {
     if (gen !== wsGeneration) return
+    // 入站帧守卫（D8）：JSON.parse 前置大小检查——超界整条丢弃（不 parse，防 OOM 形态），
+    // 归因 + 计数 + 终止阀见 handleOversizedInboundFrame。守卫在 auth 检查之前（任何阶段
+    // 的超界帧都拦，含握手期异常帧）。
+    const measured = measureInboundFrame(event.data)
+    if (measured !== null && isInboundFrameOverLimit(measured)) {
+      handleOversizedInboundFrame(measured)
+      return
+    }
     let parsed: unknown
     try {
       parsed = JSON.parse(String(event.data))
@@ -227,6 +340,7 @@ export function connect(url: string, token?: string): void {
       console.error('[ws] parse error:', e)
       return
     }
+    noteParsedInboundFrame(parsed)
     // auth 握手期：只消费 auth.result，其余消息（握手期不应出现）丢弃
     if (!connectionAuthed) {
       const r = parsed as { type?: unknown; payload?: { ok?: unknown } | null }
@@ -297,6 +411,11 @@ export function disconnect(): void {
  * - readyState≠OPEN（CONNECTING/CLOSED）→ 不发送不入队，返回 false（调用方可立即 reject / 重试）
  */
 export function send(msg: ClientMessage): boolean {
+  // 终止阀拦截（D8）：tripped session 的自动重订阅（gap reconcile / resubscribeAll /
+  // ensureStreamSubscription 路径）在此暂停——不发送，返回 false 走 request 层 fast-fail
+  // （pending 立即 reject，subscribeSession catch 消化）。恢复经 retryInboundDroppedSession
+  // （用户切走切回触发一次），此后同型请求正常放行。其余 session 与非 subscribe 消息不受影响。
+  if (isSubscribeForValvedSession(msg)) return false
   if (ws?.readyState === WS_READY_STATE.OPEN) {
     if (!connectionAuthed) {
       if (preAuthQueue.length >= MAX_PREAUTH_QUEUE) {
@@ -306,6 +425,7 @@ export function send(msg: ClientMessage): boolean {
       preAuthQueue.push(msg)
       return true
     }
+    recordOutboundSubscribe(msg)
     ws.send(JSON.stringify(msg))
     return true
   }
@@ -313,6 +433,139 @@ export function send(msg: ClientMessage): boolean {
 }
 
 // ── 内部 ────────────────────────────────────────────────────
+
+// ── 入站帧守卫私有实现（crash-forensics §3.3 D8）──────────────────
+
+/** 超界判定前的帧度量（text 帧留原文供归因；binary 帧不读内容——大帧转字符串本身是 OOM 形态）。 */
+interface InboundFrameMeasurement {
+  kind: 'text' | 'binary'
+  size: number
+  text: string | null
+}
+
+/**
+ * 度量入站帧：text 帧（string）按 code units；binary 帧按字节（ArrayBuffer / view /
+ * Blob 类——runtime 只发 text JSON，binary 分支是形态存在性防御。core 无 DOM lib，
+ * Blob 判定走 duck-typing：带 number size 字段即按 binary 度量）。无法度量的形态
+ * （undefined 等）返回 null，不守卫，维持原 parse 错误链行为。
+ */
+function measureInboundFrame(data: unknown): InboundFrameMeasurement | null {
+  if (typeof data === 'string') return { kind: 'text', size: data.length, text: data }
+  if (data instanceof ArrayBuffer) return { kind: 'binary', size: data.byteLength, text: null }
+  if (ArrayBuffer.isView(data)) return { kind: 'binary', size: data.byteLength, text: null }
+  const size = (data as { size?: unknown } | null)?.size
+  if (typeof size === 'number') return { kind: 'binary', size, text: null }
+  return null
+}
+
+function isInboundFrameOverLimit(measured: InboundFrameMeasurement): boolean {
+  return measured.kind === 'text'
+    ? measured.size > INBOUND_FRAME_MAX_TEXT_CODE_UNITS
+    : measured.size > INBOUND_FRAME_MAX_BINARY_BYTES
+}
+
+/**
+ * 处理超界帧：响亮丢弃（console error）→ 归因 → per-session 连续计数 → 阈值触发终止阀
+ * → 丢弃回调通知（每次丢弃都通知——台账 ×4 计数由消费方逐帧上报）。
+ */
+function handleOversizedInboundFrame(measured: InboundFrameMeasurement): void {
+  const sessionId = attributeOversizedFrame(measured.text)
+  let valveTripped = false
+  let sessionDropCount = 0
+  if (sessionId !== null) {
+    sessionDropCount = (inboundDropStreakBySession.get(sessionId) ?? 0) + 1
+    inboundDropStreakBySession.set(sessionId, sessionDropCount)
+    if (sessionDropCount >= INBOUND_DROP_VALVE_TRIP_THRESHOLD && !inboundValveTrippedSessions.has(sessionId)) {
+      inboundValveTrippedSessions.add(sessionId)
+      valveTripped = true
+      console.error(
+        `[ws] inbound drop valve tripped for session ${sessionId}: ` +
+          `pausing auto re-subscribe after ${sessionDropCount} consecutive dropped frames ` +
+          `(user re-entry retries once; other sessions unaffected)`,
+      )
+    }
+  }
+  console.error(
+    `[ws] inbound frame dropped (over size limit): kind=${measured.kind} size=${measured.size} ` +
+      `session=${sessionId ?? 'unattributed'}`,
+  )
+  inboundFrameDroppedHandler?.({
+    sessionId,
+    frameSize: measured.size,
+    kind: measured.kind,
+    valveTripped,
+    sessionDropCount,
+  })
+}
+
+/**
+ * 超界帧归因（帧不可 parse，只能头部有界窗口正则提取——O(窗口) 代价，不建对象图）：
+ * ① 首个 `"id"` 命中 in-flight subscribe 簿记 → 归因其目标 session（subscribe reply
+ *    超界 = 死循环主形态，reply 顶层无 sessionId 字段，id 反查是唯一精确锚）；
+ * ② 否则首个 `"sessionId"` 字段（live push 帧形态：bus.publish 定向推送 payload 带 sessionId）；
+ * ③ 均无（含 binary 帧无 text）→ null。
+ */
+function attributeOversizedFrame(text: string | null): string | null {
+  sweepExpiredInFlightSubscribes()
+  if (text === null) return null
+  const window = text.length > INBOUND_GUARD_ATTRIBUTION_WINDOW ? text.slice(0, INBOUND_GUARD_ATTRIBUTION_WINDOW) : text
+  const idMatch = /"id":"([^"]{1,128})"/.exec(window)
+  if (idMatch) {
+    const entry = inFlightSubscribes.get(idMatch[1])
+    if (entry) return entry.sessionId
+  }
+  const sidMatch = /"sessionId":"([^"]{1,128})"/.exec(window)
+  return sidMatch ? sidMatch[1] : null
+}
+
+/** 惰性过期清理：in-flight subscribe 簿记条目超 TTL 删除（超界 reply 删不了簿记的防泄漏口）。 */
+function sweepExpiredInFlightSubscribes(): void {
+  if (inFlightSubscribes.size === 0) return
+  const now = Date.now()
+  for (const [id, entry] of inFlightSubscribes) {
+    if (now - entry.at > IN_FLIGHT_SUBSCRIBE_TTL_MS) inFlightSubscribes.delete(id)
+  }
+}
+
+/**
+ * send() 出站登记：`session.subscribe` 请求（带 id）记入 in-flight 簿记——其 reply 超界时
+ * attributeOversizedFrame 经 id 反查归因目标 session。仅在实际发送路径登记（pre-auth 入队
+ * 窗口的 subscribe 实际不存在——订阅经 auth 后的 RPC 发起）；其余 type no-op。
+ */
+function recordOutboundSubscribe(msg: ClientMessage): void {
+  if (msg.type !== 'session.subscribe') return
+  const id = (msg as { id?: unknown }).id
+  const sid = (msg.payload as { sessionId?: unknown }).sessionId
+  if (typeof id === 'string' && typeof sid === 'string') {
+    inFlightSubscribes.set(id, { sessionId: sid, at: Date.now() })
+  }
+}
+
+/** send() 终止阀判定：该出站请求是否为「被暂停 session」的订阅请求。 */
+function isSubscribeForValvedSession(msg: ClientMessage): boolean {
+  if (msg.type !== 'session.subscribe' || inboundValveTrippedSessions.size === 0) return false
+  const sid = (msg.payload as { sessionId?: unknown }).sessionId
+  return typeof sid === 'string' && inboundValveTrippedSessions.has(sid)
+}
+
+/**
+ * 可 parse 的正常入站帧到达时的守卫簿记维护：
+ * - id 命中 in-flight subscribe 簿记 → 清理（reply 正常到达 = 订阅完成，归因锚退役）；
+ * - payload.sessionId 命中丢帧计数表 → 清零该 session 计数（「连续 3 次」的连续性中断语义：
+ *   丢 2 帧 → 正常帧 → 再丢 2 帧，不触发终止阀）。空表时零开销（size 门控，常态热路径）。
+ */
+function noteParsedInboundFrame(parsed: unknown): void {
+  if (inFlightSubscribes.size > 0 && typeof parsed === 'object' && parsed !== null) {
+    const id = (parsed as { id?: unknown }).id
+    if (typeof id === 'string') inFlightSubscribes.delete(id)
+  }
+  if (inboundDropStreakBySession.size > 0 && typeof parsed === 'object' && parsed !== null) {
+    const sid = (parsed as { payload?: { sessionId?: unknown } }).payload?.sessionId
+    if (typeof sid === 'string' && inboundDropStreakBySession.has(sid)) {
+      inboundDropStreakBySession.set(sid, 0)
+    }
+  }
+}
 
 /**
  * 入站消息运行时形状守卫（MF-5：替代 `JSON.parse(...) as ServerMessage` unsafe cast）。

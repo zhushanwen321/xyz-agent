@@ -1,5 +1,6 @@
 /**
- * renderer-log IPC handler（crash-resilience §3.3 D2-② / u2-renderer-errors）。
+ * renderer-log IPC handler（crash-resilience §3.3 D2-② / u2-renderer-errors +
+ * crash-forensics §3.3 D8 结构化标记承接）。
  *
  * 接收 renderer 三件套（app.config.errorHandler / window error / unhandledrejection）
  * 经 RENDERER_LOG 通道上报的错误，落盘 `logs/renderer-error-<date>.log`：
@@ -34,6 +35,7 @@ import { RENDERER_LOG } from '@xyz-agent/shared'
 import { getDataDir } from '@xyz-agent/shared/paths'
 import { readMainLogMaxBytes } from './main-logger.js'
 import { mainLogger } from './main-logger.js'
+import { crashJournal } from './crash-journal.js'
 
 // ── 限流常量（设计 D2 原文：每窗口每分钟最多 100 条）─────────────────
 export const RENDERER_LOG_RATE_LIMIT_PER_WINDOW = 100
@@ -49,6 +51,8 @@ const RATE_LIMIT_ENTRY_IDLE_MS = RATE_LIMIT_ENTRY_IDLE_MINUTES * MS_PER_MINUTE
 const MAX_URL_LENGTH = 512
 /** ISO 日期 YYYY-MM-DD 的字符长度（对齐 main-logger 同名常量）。 */
 const ISO_DATE_LENGTH = 10
+/** 台账 detailDigest 长度帽（schema D1：≤2KB 内嵌摘要）。 */
+const DETAIL_DIGEST_MAX_LENGTH = 2048
 
 // ── 限流状态（模块级单例；测试经 vi.resetModules 取全新实例）──────────
 interface RateLimitState {
@@ -119,6 +123,19 @@ export function handleRendererLogReport(event: RendererLogEventLike | undefined,
       ...(payload.memory !== undefined ? { memory: payload.memory } : {}),
       ...(readSenderUrl(event) !== undefined ? { url: readSenderUrl(event) } : {}),
     })
+    // 结构化标记（crash-forensics §3.3 D8 / D1 写入点矩阵）：入站超界帧丢弃上报 →
+    // 崩溃台账行（main.jsonl `layer=renderer, event=inbound-frame-dropped`）。已过限流门
+    // （与 renderer-error 行共享同一窗口配额，风暴防护对台账同样生效）；写失败在 writer
+    // 内 best-effort 吞没，不影响 renderer-error 落盘主路径。
+    if (payload.source === 'inbound-frame-dropped') {
+      crashJournal.append({
+        layer: 'renderer',
+        event: 'inbound-frame-dropped',
+        sessionId: payload.sessionId ?? null,
+        reason: 'over-size-limit',
+        detailDigest: payload.message.slice(0, DETAIL_DIGEST_MAX_LENGTH),
+      })
+    }
   // eslint-disable-next-line taste/no-silent-catch -- 上报处理失败（畸形 event/fs 异常等）不得外抛成 invoke rejection；renderer 侧三件套对 invoke reject 也已静默，此处吞没是同一容错契约的 main 侧半边
   } catch {
     // no-op
@@ -178,7 +195,16 @@ function sweepIdleEntries(now: number): void {
 
 // ── payload 运行时校验（不可信输入）────────────────────────────────
 
-const VALID_SOURCES: ReadonlySet<string> = new Set(['vue-error-handler', 'window-onerror', 'unhandledrejection'])
+/**
+ * 合法捕获面（RendererErrorSource 联合）：三件套（crash-resilience D2-①）+
+ * 'inbound-frame-dropped' 结构化标记（crash-forensics D8 入站超界帧丢弃上报）。
+ */
+const VALID_SOURCES: ReadonlySet<string> = new Set([
+  'vue-error-handler',
+  'window-onerror',
+  'unhandledrejection',
+  'inbound-frame-dropped',
+])
 
 function isRendererLogPayload(v: unknown): v is RendererLogPayload {
   if (typeof v !== 'object' || v === null) return false
