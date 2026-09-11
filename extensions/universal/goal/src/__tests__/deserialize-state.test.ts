@@ -1,5 +1,5 @@
 /**
- * FR-5/FR-7.3: deserializeState — 新格式严格解析（字段缺失 throw）
+ * FR-5/FR-7.3: deserializeState — 严格解析（必填缺失 throw；旧格式容忍面见 persistence.ts 各迁移点注释）
  *
  * round-trip property 覆盖全字段 serialize→deserialize 双向一致性，替代手写还原用例。
  * 保留：throw 路径（缺必填）+ 向后兼容（缺 optional）+ 旧 tasks 字段忽略。
@@ -66,7 +66,7 @@ const FULL_DATA: Record<string, unknown> = {
 };
 
 describe("deserializeState — round-trip", () => {
-	// ⭐ serialize→deserialize 深相等：覆盖全 18 字段双向一致性（含 optional 有/无两态）
+	// ⭐ serialize→deserialize 深相等：覆盖全 21 字段双向一致性（含 optional 有/无两态）
 	it.prop([goalStateArb])("deserializeState(serializeState(s)) 深相等 s", (s) => {
 		const rt = deserializeState(serializeState(s) as unknown as Record<string, unknown>);
 		expect(rt).toEqual(s);

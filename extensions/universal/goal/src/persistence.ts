@@ -1,8 +1,9 @@
 /**
  * 持久化层 — serialize/deserialize + history entry 构造
  *
- * FR-5: 移除旧格式兼容，字段缺失直接 throw（tasks 字段例外——向后兼容忽略）。
- * 零 Pi 依赖。
+ * FR-5：必填字段缺失直接 throw；旧格式容忍面（time_limited → budget_limited 迁移、
+ * successCriteria 旧格式归一、W5 熔断计数缺省归零、slug/completedAtTurnIndex 可选解析、
+ * tasks 及未知字段白名单忽略）见 deserializeState 各迁移点注释。零 Pi 依赖。
  */
 
 import type { GoalRuntimeState, GoalStatus } from "./engine/types";
@@ -22,7 +23,7 @@ export function serializeState(state: GoalRuntimeState): GoalRuntimeState {
 	};
 }
 
-// ── deserialize（FR-5 严格解析，缺字段 throw）──────────
+// ── deserialize（FR-5 严格解析，缺必填字段 throw）──────────
 
 /**
  * 旧持久化状态归一化（唯一迁移点）。

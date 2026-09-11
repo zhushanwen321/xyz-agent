@@ -58,9 +58,9 @@ graph TD
 |---|---|---|---|---|
 | 1 | u2 | 领地扩展：event-adapter.ts:13 barrel re-export 单行删除（删 MessageEndLikeEvent 的必然联动） | 合理（协调者授权 a） | u2 轮 2 汇报；u5 整删零冲突 |
 | 2 | u4 | E7 头注惯例随 u4 顺带落地（计划原排 u5，但文件在 u4 领地） | 合理（领地错位消除） | u4 汇报 deviations |
-| 3 | u4 | goal-control-rpc.test.ts:47-49 头注（getContextUsage/signal 被 buildPorts 读取）E4 后失准，未清（不在任何单元领地） | 阶段 3 定性 = 本次清扫，修复组 A 执行中 | u4 汇报 deviations |
+| 3 | u4 | goal-control-rpc.test.ts:47-49 头注（getContextUsage/signal 被 buildPorts 读取）E4 后失准，未清（不在任何单元领地） | 已闭合（410412189） | u4 汇报 deviations |
 | 4 | u5 | prompts.test.ts 补 1 个 formatBudgetLine 空态用例（对称补齐） | 合理 | u5 汇报 deviations |
-| 5 | u5 | 领地外 9 处注释级 "event-adapter" 悬空提及未清扫（service.ts:63,158,240,243、adapters/ports.ts:4,52、ports.test.ts:49、circuit-breaker.test.ts:14、event-adapter.test.ts:2 头注——第 9 处为阶段 3 审查补充） | 阶段 3 定性 = 本次清扫（C-proc-10），修复组 A 执行中 | u5 汇报 + 03 区审查 unreasonable #3 |
+| 5 | u5 | 领地外 9 处注释级 "event-adapter" 悬空提及未清扫（service.ts:63,158,240,243、adapters/ports.ts:4,52、ports.test.ts:49、circuit-breaker.test.ts:14、event-adapter.test.ts:2 头注——第 9 处为阶段 3 审查补充） | 已闭合（410412189） | u5 汇报 + 03 区审查 unreasonable #3 |
 | 6 | u5 | dimension 生产字面量实删 4 处（任务描述 3 处），以设计「全部」权威表述为准 | 合理 | u5 汇报 deviations |
 
 ## 6 状态表
@@ -75,6 +75,9 @@ graph TD
 
 ## 7 残留风险与变更历史
 
-- 残留风险：①P-like-1 逆变摩擦全集待 typecheck 定案（降级路径已给：单点回退省略标注）；②场景 4 的 0.13.0 entry fixture 以 req 清单+serializeState 输出推导，必要时按 npm 实际产物校准；③E3 的 theme 形态自由度（SDK Theme 结构兼容可直接透传）。
+- 残留风险（已全部销账）：①P-like-1 逆变摩擦全集待 typecheck 定案（降级路径已给：单点回退省略标注）——已定案：typecheck 绿，降级路径未触发；②场景 4 的 0.13.0 entry fixture 以 req 清单+serializeState 输出推导，必要时按 npm 实际产物校准——Gate B 场景 4 实测通过（22 字段旧 entry 真实链路加载成功）；如需更强保证再对 npm 0.13.0 产物核对；③E3 的 theme 形态自由度（SDK Theme 结构兼容可直接透传）——已定案：取包装形态（adapters/ports.ts 构造 fg/bold 包装，fg 的 string→ThemeColor 断言留 adapter，未走直接透传分支）。
 - 变更历史：2026-09-12 初版（来源设计 v3，双审查 0 must-fix 证据齐）。
-- 2026-09-12 Gate B 组 1 证据（阶段 5）：场景 1/2/4/5/6 = pass（pi CLI 0.85.1 + mimo-v2.5-pro 真实链路：resume 查表无 throw、terminal 守卫文案回归、22 字段旧 entry 加载重建 + 新 entry 19 字段无两字段、token 计数单调增长）；场景 7 = blocked（环境无交互 TTY，TUI 视觉不可观测）+ 替代证据（rpc 模式 widget 渲染真实执行、ANSI 色码 accent/警告/绿色正确、六进程零异常栈）。环境事实登记：本机装有 npm 旧版 @zhushanwen/pi-goal 时与显式 --extension 加载冲突（Tool "goal_control" conflicts），CLI 验收须追加 --no-extensions（显式 -e 不受影响）。执行事件：首跑 AI 将 objective 误当真实任务在仓库执行 edit（自造 4 文件改动），执行者已 git restore 还原并经 mtime+diff 双重核实，后续场景加 --no-builtin-tools 防再发；tracked 文件零残留（协调者已复核）。
+- 2026-09-12 Gate B 组 1 证据（阶段 5）：场景 1/2/4/5/6 = pass（pi CLI 0.85.1 + mimo-v2.5-pro 真实链路：resume 查表无 throw、terminal 守卫文案回归、22 字段旧 entry 加载重建 + 新 entry 19 字段无两字段（19 = update 后 slug 已置空的 entry；新建完整 entry 为 20，设计 §4.1 口径）、token 计数单调增长）；场景 7 = blocked（环境无交互 TTY，TUI 视觉不可观测）+ 替代证据（rpc 模式 widget 渲染真实执行、ANSI 色码 accent/警告/绿色正确、六进程零异常栈）。环境事实登记：本机装有 npm 旧版 @zhushanwen/pi-goal 时与显式 --extension 加载冲突（Tool "goal_control" conflicts），CLI 验收须追加 --no-extensions（显式 -e 不受影响）。执行事件：首跑 AI 将 objective 误当真实任务在仓库执行 edit（自造 4 文件改动），执行者已 git restore 还原并经 mtime+diff 双重核实，后续场景加 --no-builtin-tools 防再发；tracked 文件零残留（协调者已复核）。
+- 2026-09-12 阶段 3/4 审查修复批：`76e76a25e`（docs: stage-3/4 review fixes for ext-simplify 03/09/14）。
+- 2026-09-12 阶段 4 修复清扫：`410412189`（chore(goal): stage-4 comment sweep + indent fix——§5 #3/#5 领地外注释清扫落地 + budget.ts 缩进修复，**含生产文件 budget.ts/service.ts/adapters/ports.ts 改动**，共 7 文件）。
+- 2026-09-12 I-5 裁决登记：event-adapter.test.ts 文件名残留——裁决不改名（头注已声明实际职责，改名 churn 与收益不成比），后续触达时顺手处理。
