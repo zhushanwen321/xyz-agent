@@ -14,7 +14,7 @@ export function isAbsolutePath(path: string): boolean {
   return path.startsWith('/') || path.startsWith('~') || /^[a-zA-Z]:[\\/]/.test(path)
 }
 
-export interface ResolvePreviewPathResult {
+interface ResolvePreviewPathResult {
   /** 用于展示和 local-file:// URL 的绝对路径（~ 路径保持原样）。 */
   absolute: string
   /**

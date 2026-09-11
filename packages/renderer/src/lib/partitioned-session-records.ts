@@ -12,7 +12,7 @@
 import { computed, shallowRef } from 'vue'
 import type { ComputedRef, Ref } from 'vue'
 
-export interface PartitionedRecords<T> {
+interface PartitionedRecords<T> {
   /** 分区表 state（ref：apply/clear 不可变替换触发响应性；全清场景直接整表替换 new Map()） */
   recordsBySession: Ref<Map<string, T[]>>
   /** 响应式视图：指定 session 分区（组件 computed 订阅用，切会话读不同分区自动重算） */
@@ -53,7 +53,7 @@ export function createPartitionedRecords<T>(): PartitionedRecords<T> {
   return { recordsBySession, recordsOf, get, apply, clear }
 }
 
-export interface EmptyResultStrikeGuard {
+interface EmptyResultStrikeGuard {
   /**
    * 空结果守卫判定：true = 疑似瞬时读失败，调用方保留旧分区直接 return（不覆盖）；
    * false = 放行覆盖（连续空命中达到 LIMIT 判真实删空，或结果非空 / 分区本就为空）。
