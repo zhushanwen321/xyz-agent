@@ -48,6 +48,9 @@ import { pipeline } from 'node:stream/promises'
 import { readLogKeepDays } from '@xyz-agent/shared'
 import { createGzip } from 'node:zlib'
 import { isPackaged } from '../utils/runtime-env.js'
+// endAndAwait 单一实现（偏差 #32①：原模块私有复刻与 crash-journal 同构，收敛共享原语；
+// 超时留痕出口 reportEndAwaitTimeout 保持本模块注入）
+import { END_AWAIT_TIMEOUT_MS, endAndAwaitStream } from './stream-end-await.js'
 import { getCrashJournal } from './crash-journal.js'
 
 // ── 级别 ────────────────────────────────────────────────────────────
@@ -102,9 +105,6 @@ const pendingLines: Array<{ line: string; bytes: number }> = []
 const MAX_PENDING_LINES = 10_000
 /** 当前轮转窗口内因超限丢弃的行数（轮转结束后合并记一次 warn，不在热路径递归记日志）。 */
 let pendingDroppedCount = 0
-
-/** endAndAwait 等待写流 'close' 的超时：fs 挂起时 close 永不触发，超时降级 resolve（防永久挂起）。 */
-const END_AWAIT_TIMEOUT_MS = 5_000
 
 // ── pi 流 size 轮转常量 ─────────────────────────────────────────────
 /** 压缩产物后缀：**单代**（下一次轮转 rename 覆盖同名文件，磁盘上恒只有 1 个压缩代）。 */
@@ -1004,48 +1004,11 @@ function existsSyncSafe(path: string): boolean {
  * end 一个写流并等待其真正关闭（'close' 事件，fd 已释放、缓冲已 flush）。
  *
  * 退出 flush（D10-1）与轮转（审查 m-6）的核心：process.exit() 立即终止进程、rename
- * 前必须有「无在途写」保证——都要求 end 后**等待落盘完成**，否则缓冲窗口内的尾部日志
- * 在退出时丢失 / 轮转边界在途写被 orphaning。
- *
- * 永不 reject（best-effort）：'error' 也 resolve，避免日志模块阻塞进程退出。
- *
- * 超时降级（审查 W30 Fix-1）：fs 挂起时 'close' 永不触发，等待 END_AWAIT_TIMEOUT_MS 后
- * resolve 并**强制销毁流**（destroy 释放 fd、丢弃在途缓冲）——轮转续体照常 rename
- * （rename 失败可容忍、数据不丢，见 rotateMain），closeLogger 不会永久挂起阻塞 SIGTERM
- * 处理器（supervisor 无需升级 SIGKILL）。代价：超时销毁丢弃在途缓冲尾部几行（与硬崩溃
- * 取证能力削弱同档，已声明可接受）。
+ * 前必须有「无在途写」保证——都要求 end 后**等待落盘完成**（形态契约与超时降级见
+ * stream-end-await.ts，偏差 #32① 收敛后的单一实现）。
  */
 function endAndAwait(stream: WriteStream | undefined, label: string): Promise<void> {
-  if (!stream) return Promise.resolve()
-  if (stream.closed) return Promise.resolve() // 已关闭（含已 error 销毁的流）
-  if (!stream.writableEnded) stream.end()
-  if (stream.closed) return Promise.resolve() // 同步关闭路径（如测试用 fake 流）
-  return new Promise<void>((resolve) => {
-    let settled = false
-    const finish = (timedOut: boolean) => {
-      if (settled) return
-      settled = true
-      clearTimeout(timer)
-      // 清理 once 链（审查 W30 Fix-9）：'close' 先触发时 'error' 监听器仍挂残留，
-      // 超时/事件到达后手动移除，避免悬挂监听器持有已关闭流的引用。
-      stream.removeListener('close', onClose)
-      stream.removeListener('error', onError)
-      if (timedOut) {
-        // 强制销毁（审查 W30 Fix-1）：不 destroy 则 fd 悬挂、「close」永不触发，
-        // 后续轮转/退出若再 end 同一流仍会挂满一个超时窗口。无参 destroy 不 emit
-        // 'error'（上面的 error 监听器也已摘除），不会产生未捕获异常。
-        stream.destroy()
-        reportEndAwaitTimeout(label)
-      }
-      resolve()
-    }
-    const onClose = () => finish(false)
-    const onError = () => finish(false)
-    const timer = setTimeout(() => finish(true), END_AWAIT_TIMEOUT_MS)
-    timer.unref?.() // 超时定时器不 holding 事件循环（fs 正常时 close 远早于超时到达）
-    stream.once('close', onClose)
-    stream.once('error', onError)
-  })
+  return endAndAwaitStream(stream, label, reportEndAwaitTimeout)
 }
 
 /**

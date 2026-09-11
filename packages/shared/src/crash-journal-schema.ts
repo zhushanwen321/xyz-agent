@@ -7,9 +7,12 @@
  * （实施计划 crash-forensics-and-watchdog.impl-plan.md u1b/u1c）。
  *
  * 枚举口径（设计 D1 schema JSON 块逐字对齐）：
- * - event：21 值闭合枚举。注意 unclean-exit 是 reason 值不是 event 值（main 自身
- *   crash 经 clean-exit marker 下次启动补记为 layer=main, event=crash,
- *   reason=unclean-exit，见 D1 写入点矩阵「main 自身 crash」行）。
+ * - event：20 值闭合枚举。孤儿值删除先例：unclean-exit（v8，是 reason 值不是 event
+ *   值——main 自身 crash 经 clean-exit marker 下次启动补记为 layer=main, event=crash,
+ *   reason=unclean-exit，见 D1 写入点矩阵「main 自身 crash」行）；oom（2026-09-12
+ *   裁决，偏差 #32②——零生产者：renderer OOM 实际形态 = reload 事件 + Electron
+ *   RenderProcessGoneDetails reason='oom' 透传（open reason 集承载），runtime/watchdog
+ *   保守记 crash / 只广播，见设计 D1 矩阵 oom 行裁决注记）。
  * - reason：开放式枚举（schema reason 行末「…」）——已知值登记在
  *   CRASH_JOURNAL_KNOWN_REASONS，未知值可携带（类型保持 string 不收窄联合，
  *   台账消费方按「值即文档」自解释），新增已知值时同步登记元组。
@@ -23,10 +26,9 @@
 /** 事件产生层（schema layer 行，5 值）。 */
 export type CrashJournalLayer = 'pi' | 'runtime' | 'renderer' | 'main' | 'plugin-worker'
 
-/** 事件名（schema event 行，21 值闭合枚举，顺序与设计文档行逐字一致）。 */
+/** 事件名（schema event 行，20 值闭合枚举，顺序与设计文档行逐字一致）。 */
 export type CrashJournalEventName =
   | 'crash'
-  | 'oom'
   | 'unresponsive'
   | 'auto-respawn'
   | 'auto-respawn-failed'
@@ -110,8 +112,13 @@ export interface CrashJournalMemPressure {
 }
 
 /**
- * 台账事件（schema JSON 块字段集，14 个顶层字段全部可缺省可 null）。
+ * 台账事件（schema JSON 块字段集，14 个顶层字段全部可缺省可 null）+ 登记的扩展字段。
  * JSONL 每行一个本对象；字段语义见设计 D1 schema JSON 块与写入点矩阵。
+ *
+ * **扩展字段开放语义（偏差 #32③ 登记面）**：14 个 schema 字段之外，具体事件可携带
+ * 下方「按事件登记的扩展字段」（全可空，与主字段同原则）——新增扩展字段必须先在
+ * 本接口登记（字段 + 产生事件 + 产生文件注释），禁止写入侧绕过本接口私自扩字段；
+ * 设计文档 D1 schema JSON 块只权威化 14 主字段，扩展字段以本接口为登记 SSOT。
  */
 export interface CrashJournalEvent {
   /** 事件时刻（ISO 8601 UTC，如 2026-09-12T02:57:03Z）。 */
@@ -142,6 +149,23 @@ export interface CrashJournalEvent {
   detailDigest?: string | null
   /** 详情文件相对路径（如 logs/pi-crash-….log）。 */
   detailPath?: string | null
+
+  // ── 扩展字段登记面（开放语义：新增须在此登记，见接口头注）─────────────
+
+  /** [reaped] 被收殓的孤儿 pi 进程 pid（reap-orphan-pi.ts 杀链命中行）。 */
+  pid?: number | null
+  /** [reaped] 收殓时刻的 ppid（恒 1 = reparent 证据，归因复核判据；reap-orphan-pi.ts）。 */
+  ppid?: number | null
+  /** [reclaimed] 回收判定时的空闲时长 now - lastActivityAt（idle-pi-reaper.ts 摘除步）。 */
+  idleMs?: number | null
+  /** [reclaimed] 最近被查看时刻（epoch ms）；null = 从未被查看（idle-pi-reaper.ts）。 */
+  lastViewedAt?: number | null
+  /** [plugin-worker-crash] 宿主池内进程标识 trusted-N / sandbox-<pluginId>（plugin-host-process.ts）。 */
+  processId?: string | null
+  /** [plugin-worker-crash] 致死信号名；exit code 路径为 null（plugin-host-process.ts）。 */
+  signal?: string | null
+  /** [plugin-worker-crash] 崩溃时挂在该进程上的插件 id 集（trusted 进程最多 10 个受影响；plugin-host-process.ts）。 */
+  pluginIds?: string[] | null
 }
 
 /** 台账文件角色：main writer 写 main.jsonl，runtime writer 写 runtime.jsonl（D1 双文件）。 */
@@ -177,7 +201,6 @@ export const CRASH_JOURNAL_LAYERS = [
 
 export const CRASH_JOURNAL_EVENTS = [
   'crash',
-  'oom',
   'unresponsive',
   'auto-respawn',
   'auto-respawn-failed',

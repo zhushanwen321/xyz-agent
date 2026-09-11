@@ -25,20 +25,11 @@ import { PluginRpcServer, type RpcIdentity } from './plugin-rpc-server.js'
 import { resolveAndValidateFile, dispatchHostRpcMessage, safeDispatchHostMessage, isRecordMessage } from './plugin-host.js'
 
 /**
- * plugin-worker crash 台账行的结构化扩展字段（crash-forensics §3.3 D1 plugin-worker
- * crash 行：fork 宿主崩溃身份与致死信号——schema 无对应结构化字段）。writer 以 spread
- * 序列化原样落盘 JSONL；exitCode 走 schema 既有字段。
+ * plugin-worker crash 台账行使用 schema 登记的扩展字段 processId/pid/signal/pluginIds
+ * （偏差 #32③：扩展字段登记 SSOT = shared crash-journal-schema.ts CrashJournalEvent，
+ * 本地不再重复声明；crash-forensics §3.3 D1 plugin-worker crash 行：fork 宿主崩溃身份
+ * 与致死信号）。writer 以 spread 序列化原样落盘 JSONL；exitCode 走 schema 既有字段。
  */
-interface PluginWorkerCrashJournalEvent extends CrashJournalEvent {
-  /** 宿主池内进程标识（trusted-N / sandbox-<pluginId>）。 */
-  processId?: string | null
-  /** OS pid（fork 时 child.pid；未给出为 -1，ProcessHandle 既有约定）。 */
-  pid?: number | null
-  /** 致死信号名（被信号终止时非空；exit code 路径为 null）。 */
-  signal?: string | null
-  /** 崩溃时挂在该进程上的插件 id 集（trusted 进程最多 10 个受影响）。 */
-  pluginIds?: string[] | null
-}
 
 const MAX_PLUGINS_PER_TRUSTED_PROCESS = 10
 const LOAD_PLUGIN_TIMEOUT_MS = 10_000
@@ -602,7 +593,7 @@ export class PluginHostProcess implements PluginHostProcessContract {
     // best-effort：writer append 自吞错不向崩溃链传播。code 0 正常退出走
     // handleProcessCleanExit，不经此处（正常退出不产生事件）。经中间变量传入
     // （扩展字段过 schema 闭接口的 excess property check）。
-    const journalEvent: PluginWorkerCrashJournalEvent = {
+    const journalEvent: CrashJournalEvent = {
       layer: 'plugin-worker',
       event: 'crash',
       processId,

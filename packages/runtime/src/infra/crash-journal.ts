@@ -37,6 +37,9 @@ import {
 } from '@xyz-agent/shared'
 import { getDataDir } from '@xyz-agent/shared/paths'
 import { logger } from './logger.js'
+// endAndAwait 单一实现（偏差 #32①：原模块私有复刻与 logger.ts 同构，收敛共享原语；
+// 超时留痕出口 reportEndAwaitTimeout 保持本模块注入）
+import { END_AWAIT_TIMEOUT_MS, endAndAwaitStream } from './stream-end-await.js'
 
 /** 字节换算基数（对齐 logger.ts 既有 BYTES_PER_KB 惯例，禁裸 1024）。 */
 const BYTES_PER_KB = 1024
@@ -52,9 +55,6 @@ const SEGMENT_SUFFIXES = ['.1', '.2'] as const
 
 /** 轮转窗口 pending 队列容量上限（fs 挂起时防无界膨胀，对齐 logger.ts 审查 W30 Fix-1）。 */
 const MAX_PENDING_LINES = 10_000
-
-/** endAndAwait 等流 'close' 的超时：fs 挂起时降级 resolve（对齐 logger.ts）。 */
-const END_AWAIT_TIMEOUT_MS = 5_000
 
 /**
  * runtime 侧台账 writer（扩展 schema 的 CrashJournalWriter 契约，附加 close 收口）。
@@ -159,7 +159,7 @@ class CrashJournalFileWriterImpl implements CrashJournalFileWriter {
     if (this.rotationInFlight) await this.rotationInFlight
     const stream = this.stream
     this.stream = undefined
-    await endAndAwait(stream, `crash-journal:${this.baseFile}`)
+    await endAndAwaitStream(stream, `crash-journal:${this.baseFile}`, reportEndAwaitTimeout)
   }
 
   /** 轮转窗口入队（容量上限防 fs 挂起时无界膨胀，超限丢弃合并报数）。 */
@@ -184,7 +184,7 @@ class CrashJournalFileWriterImpl implements CrashJournalFileWriter {
     this.stream = undefined
     this.bytesWritten = 0
     this.rotationInFlight = (async () => {
-      await endAndAwait(oldStream, `crash-journal-rotation:${this.baseFile}`)
+      await endAndAwaitStream(oldStream, `crash-journal-rotation:${this.baseFile}`, reportEndAwaitTimeout)
       this.cascadeSegments()
       this.openStream()
       // 回放轮转窗口内到达的行（续体在微任务队列原子执行，无并发写入插队）
@@ -336,35 +336,9 @@ function reportWriteFailureOnce(message: string): void {
 }
 
 /**
- * end 一个写流并等待其真正关闭（'close' = fd 释放、缓冲 flush 完成）。
- *
- * 形态复刻 logger.ts 同名私有函数（领地外不可 import，u1c 双胞胎同款复制）：rename 前
- * 必须无在途写；永不 reject；fs 挂起时超时强制销毁降级（closeLogger/轮转不永久阻塞）。
+ * endAndAwait 超时的留痕出口（注入共享原语 stream-end-await；对齐 logger 的「非静默
+ * 降级」原则——记 error 级日志，超时销毁丢弃的在途缓冲尾部行有人知道）。
  */
-function endAndAwait(stream: WriteStream | undefined, label: string): Promise<void> {
-  if (!stream) return Promise.resolve()
-  if (stream.closed) return Promise.resolve()
-  if (!stream.writableEnded) stream.end()
-  if (stream.closed) return Promise.resolve()
-  return new Promise<void>((resolve) => {
-    let settled = false
-    const finish = (timedOut: boolean) => {
-      if (settled) return
-      settled = true
-      clearTimeout(timer)
-      stream.removeListener('close', onClose)
-      stream.removeListener('error', onError)
-      if (timedOut) {
-        stream.destroy() // 强制销毁释放 fd（无参 destroy 不 emit 'error'）
-        logger.error(`[crash-journal] endAndAwait timeout after ${END_AWAIT_TIMEOUT_MS}ms (${label}); stream force-destroyed`)
-      }
-      resolve()
-    }
-    const onClose = () => finish(false)
-    const onError = () => finish(false)
-    const timer = setTimeout(() => finish(true), END_AWAIT_TIMEOUT_MS)
-    timer.unref?.() // 超时定时器不 holding 事件循环
-    stream.once('close', onClose)
-    stream.once('error', onError)
-  })
+function reportEndAwaitTimeout(label: string): void {
+  logger.error(`[crash-journal] endAndAwait timeout after ${END_AWAIT_TIMEOUT_MS}ms (${label}); stream force-destroyed`)
 }

@@ -71,17 +71,12 @@ import type { CrashJournalEvent } from '@xyz-agent/shared'
 import { getCrashJournal } from '../infra/crash-journal.js'
 
 /**
- * reaped 台账行的结构化扩展字段（schema 14 字段集之外的进程身份）。
- * 设计 D1 矩阵 reaped 行验收要求「pid + argv/ppid 判据摘要」可机器消费——pid/ppid
- * 走结构化字段（评估器计数与归因不解析文本），argv 摘要走既有 detailDigest（≤2KB
- * 内嵌，schema 无 argv 对应字段）。writer 以 spread 序列化，扩展字段原样落盘 JSONL。
+ * reaped 台账行使用 schema 登记的扩展字段 pid/ppid（偏差 #32③：扩展字段登记 SSOT =
+ * shared crash-journal-schema.ts CrashJournalEvent，本地不再重复声明）。设计 D1 矩阵
+ * reaped 行验收要求「pid + argv/ppid 判据摘要」可机器消费——pid/ppid 走结构化字段
+ * （评估器计数与归因不解析文本），argv 摘要走既有 detailDigest（≤2KB 内嵌，schema 无
+ * argv 对应字段）。writer 以 spread 序列化，扩展字段原样落盘 JSONL。
  */
-interface ReapedJournalEvent extends CrashJournalEvent {
-  /** 被收殓的孤儿 pi 进程 pid。 */
-  pid?: number | null
-  /** 收殓时刻的 ppid（恒 1 = reparent 证据；结构化留档供归因复核判据）。 */
-  ppid?: number | null
-}
 
 /** ps 枚举超时：全量进程表是毫秒级本地操作，10s 只是无 ps/假死兜底，防启动链悬挂。 */
 const PS_TIMEOUT_MS = 10_000
@@ -381,7 +376,7 @@ export async function reapOrphanPiProcesses(options: ReapOrphanOptions): Promise
       // 逐 pid 处置日志同点）。挂在 ok 分支而非发现处：事件名语义 = 已收殓，处置失败
       // 进 failed 不记 reaped（防误记）。best-effort：writer append 自吞错不向收殓链传播。
       // 经中间变量传入（扩展字段过 schema 闭接口的 excess property check）。
-      const journalEvent: ReapedJournalEvent = {
+      const journalEvent: CrashJournalEvent = {
         layer: 'pi',
         event: 'reaped',
         pid: row.pid,

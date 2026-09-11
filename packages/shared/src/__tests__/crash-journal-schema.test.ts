@@ -2,10 +2,11 @@
  * crash-journal-schema 单测（crash-forensics-and-watchdog.impl-plan.md u1a）。
  *
  * 守护三条验收线：
- * 1. 枚举与设计 §3.3 D1 schema JSON 块逐字一致——event 21 值 / layer 5 值 /
+ * 1. 枚举与设计 §3.3 D1 schema JSON 块逐字一致——event 20 值 / layer 5 值 /
  *    reason 已知值分层登记（下方 DESIGN_REASON_LINE = 设计 reason 行 6 值逐字转录，
  *    IMPLEMENTED_KNOWN_REASONS = 设计行 ∪ 实装 append 调用点静态可枚举值全集；
- *    设计改 schema 时同步改 DESIGN_*；event 枚举不得混入 reason 值 unclean-exit）；
+ *    设计改 schema 时同步改 DESIGN_*；event 枚举不得混入 reason 值 unclean-exit，
+ *    孤儿值 oom 已裁决删除——见 2026-09-12 D1 oom 行裁决注记与偏差 #32②）；
  * 2. 字段全可空——仅 {ts,layer,event} 的最小事件与全 null 事件均合法
  *    （设计「不知道 ≠ 没打点」；类型收窄导致构造不过 = 本文件编译红）；
  * 3. JSON.stringify→parse 往返不丢字段——JSONL 落盘/回读的最低保真契约
@@ -26,7 +27,6 @@ import {
 const DESIGN_LAYER_LINE = ['pi', 'runtime', 'renderer', 'main', 'plugin-worker']
 const DESIGN_EVENT_LINE = [
   'crash',
-  'oom',
   'unresponsive',
   'auto-respawn',
   'auto-respawn-failed',
@@ -111,8 +111,8 @@ const DESIGN_TOP_LEVEL_FIELDS = [
 ]
 
 describe('CRASH_JOURNAL_EVENTS（D1 schema event 行）', () => {
-  it('恰 21 值（设计 schema event 行值数）', () => {
-    expect(CRASH_JOURNAL_EVENTS).toHaveLength(21)
+  it('恰 20 值（设计 schema event 行值数）', () => {
+    expect(CRASH_JOURNAL_EVENTS).toHaveLength(20)
   })
 
   it('与设计 event 行集合完全一致（逐值对照，无多无漏）', () => {
@@ -132,6 +132,10 @@ describe('CRASH_JOURNAL_EVENTS（D1 schema event 行）', () => {
   it('unclean-exit 是 reason 值不是 event 值（设计 schema 中它只出现在 reason 行）', () => {
     expect(CRASH_JOURNAL_EVENTS).not.toContain('unclean-exit')
     expect(CRASH_JOURNAL_KNOWN_REASONS).toContain('unclean-exit')
+  })
+
+  it('oom 已裁决删除（偏差 #32②：零生产者——renderer OOM 走 reload 事件 + reason=oom 透传，runtime 保守记 crash）', () => {
+    expect(CRASH_JOURNAL_EVENTS).not.toContain('oom')
   })
 })
 
@@ -185,7 +189,7 @@ describe('CrashJournalEvent 字段全可空（设计「不知道 ≠ 没打点�
     const minimal: CrashJournalEvent = {
       ts: '2026-09-12T02:57:03Z',
       layer: 'runtime',
-      event: 'oom',
+      event: 'crash',
     }
     const parsed = JSON.parse(JSON.stringify(minimal)) as CrashJournalEvent
     expect(Object.keys(parsed).sort()).toEqual(['event', 'layer', 'ts'])
@@ -255,6 +259,28 @@ describe('JSON 往返保真（JSONL 落盘/回读不丢字段）', () => {
     const parsed = JSON.parse(JSON.stringify(full)) as CrashJournalEvent
     expect(Object.keys(parsed.memPressure ?? {}).sort()).toEqual(['freeMB', 'swapUsedMB'])
     expect(parsed.memPressure).toEqual({ swapUsedMB: 11004, freeMB: 170 })
+  })
+
+  it('扩展字段（偏差 #32③ 登记面）可携带且往返不丢（写入侧禁绕过接口私自扩字段的守卫基线）', () => {
+    const withExtensions: CrashJournalEvent = {
+      layer: 'pi',
+      event: 'reaped',
+      pid: 54528,
+      ppid: 1,
+      idleMs: 7_200_000,
+      lastViewedAt: 1_728_700_000_000,
+      processId: 'trusted-1',
+      signal: 'SIGTERM',
+      pluginIds: ['p1', 'p2'],
+    }
+    const parsed = JSON.parse(JSON.stringify(withExtensions)) as Record<string, unknown>
+    expect(parsed.pid).toBe(54528)
+    expect(parsed.ppid).toBe(1)
+    expect(parsed.idleMs).toBe(7_200_000)
+    expect(parsed.lastViewedAt).toBe(1_728_700_000_000)
+    expect(parsed.processId).toBe('trusted-1')
+    expect(parsed.signal).toBe('SIGTERM')
+    expect(parsed.pluginIds).toEqual(['p1', 'p2'])
   })
 })
 
