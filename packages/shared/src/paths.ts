@@ -1,16 +1,18 @@
 /**
  * 跨进程数据目录路径解析（main + runtime 共用，ADR-0009 隔离）。
  *
- * 单一真值源：所有 `~/.xyz-agent` / `pi/agent` 路径推导集中于此，
+ * 单一真值源：所有 `~/.xyz-agent` / `agent` 路径推导集中于此，
  * main 与 runtime 均 import 使用，禁止各自硬编码（实例隔离后路径可能是
  * `~/.xyz-agent-dev`，硬编码会导致 dev/prod 实例互相串数据）。
  *
  * ADR-0009 隔离约束：xyz-agent 数据目录（`~/.xyz-agent/`）与 pi 自身的
  * 数据目录（`~/.pi/agent/`）完全隔离。本模块只解析 xyz-agent 自己的目录，
- * getPiAgentDir 返回 `<dataDir>/pi/agent`（xyz-agent 内嵌的 pi agent 目录），
+ * getPiAgentDir 返回 `<dataDir>/agent`（xyz-agent 内嵌的 pi agent 目录），
  * 不是系统 pi 的 `~/.pi/agent`。
  *
- * 目录结构：
+ * 目录结构（方案 B：布局完整对齐 pi 0.84.x，唯一差异是根目录——pi 是 `~/.pi/`，
+ * xyz-agent 是 `<dataDir>`。旧布局（pi/ 兄弟层包 agent/ + 平铺 sessions）已由
+ * scripts/migrate-pi-layout-v2.mjs 一次性迁移，pi/ 层退役为迁移备份）：
  *   ~/.xyz-agent/                    ← xyz-agent 配置根目录（XYZ_AGENT_DATA_DIR 可覆盖）
  *     config.json                    ← xyz-agent 自身配置
  *     runtime.port                   ← runtime 监听端口文件
@@ -19,14 +21,13 @@
  *     tmp/                           ← extension 安装临时目录（crash 恢复用）
  *     skills/                        ← skill 强制目录（ADR-0021）
  *     agents/                        ← agent 强制目录（ADR-0021）
- *     pi/                            ← xyz-pi 的根目录
- *       agent/                       ← xyz-pi 的 agent 目录（PI_CODING_AGENT_DIR）
- *         models.json / settings.json / disabled-packages.json
+ *     agent/                         ← pi 的 agent 目录（PI_CODING_AGENT_DIR，≙ ~/.pi/agent）
+ *       models.json / settings.json / auth.json / disabled-packages.json
+ *       config/providers.json        ← xyz 扩展域（pi 不扫描 agent/config/ 子目录）
  *       sessions/                    ← Session jsonl 文件
+ *         <encodeCwd>/               ← pi 按 cwd 自动分子目录（默认布局）
  *
- * 注意：extensions/npm/tmp 原在 pi/agent/ 下，已迁出到 dataDir 根层（与 skills/agents 对齐）。
- * pi/agent/ 只保留 pi 原生配置文件（settings.json / models.json / disabled-packages.json 等），
- * 这些是 pi 进程直接读取的配置，不应迁出。
+ * 注意：extensions/npm/tmp 原在旧布局 agent/ 子树下，已迁出到 dataDir 根层（与 skills/agents 对齐）。
  */
 import { homedir } from 'node:os'
 import { join } from 'node:path'
@@ -43,26 +44,28 @@ export function getDataDir(env: NodeJS.ProcessEnv = process.env): string {
 
 /**
  * xyz-agent 内嵌的 pi agent 目录（PI_CODING_AGENT_DIR）。
- * 即 `<dataDir>/pi/agent`，**不是**系统 pi 的 `~/.pi/agent`（ADR-0009 隔离）。
+ * 即 `<dataDir>/agent`（方案 B 布局对齐 pi；旧布局 pi/ 兄弟层已迁移退役），
+ * **不是**系统 pi 的 `~/.pi/agent`（ADR-0009 隔离）。
  *
  * @param env 可选 env 注入（测试用）；缺省读 process.env
  */
 export function getPiAgentDir(env: NodeJS.ProcessEnv = process.env): string {
-  return join(getDataDir(env), 'pi', 'agent')
+  return join(getDataDir(env), 'agent')
 }
 
 /**
- * pi session 文件目录（`<dataDir>/pi/sessions`）——注意是 `pi/` 直下，**不在**
- * `pi/agent/` 下（真实推导锚点 = runtime pi-paths.ts getSessionsDir：join(getPiRoot(), 'sessions')；
- * 本机实测 `~/.xyz-agent/pi/sessions/`，文件名形态 `<ISO时间戳>_<uuid>.jsonl`）。
+ * pi session 文件目录（方案 B 新布局 `<dataDir>/agent/sessions`，dev-0.9.17 合并对齐；
+ * 真实推导锚点 = runtime pi-paths.ts getSessionsDir：join(getPiAgentDir(), 'sessions')）。
+ * session jsonl 落在其下的 `<encodeCwd>/` 子目录（pi 按 cwd 分目录），文件名形态
+ * `<ISO时间戳>_<uuid>.jsonl`——跨进程消费方按目录递归扫描，不假设单层。
  *
  * main 进程不能 import runtime（包边界），孤儿判据反查等跨进程消费经本 SSOT 同构推导，
- * 禁止各进程手拼层级（曾因手拼成 `<dataDir>/pi/agent/sessions` 错一层致判据恒空）。
+ * 禁止各进程手拼层级（曾因手拼多套一层 pi/ 前缀致判据恒空）。
  *
  * @param dataDir 可选数据根目录（测试注入）；缺省读 getDataDir()
  */
 export function getPiSessionsDir(dataDir?: string): string {
-  return join(dataDir ?? getDataDir(), 'pi', 'sessions')
+  return join(dataDir ?? getDataDir(), 'agent', 'sessions')
 }
 
 /**

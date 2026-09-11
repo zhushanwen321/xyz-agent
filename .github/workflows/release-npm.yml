@@ -71,6 +71,19 @@ jobs:
       - name: Build subagent-core
         run: pnpm --filter @zhushanwen/subagent-core run build && pnpm --filter @zhushanwen/subagent-core run build:bundle
 
+      # W5/W7 引擎三包构建入口（MF-4 修复，约束 C-proc-11：新增产物档须同批挂
+      # workflow 构建步骤 + files 白名单条目 + 守卫覆盖，三者缺一不可）。SDK 的
+      # dist 是两个引擎 CLI dist 的 external 依赖解析目标（npm 形态经宿主
+      # node_modules），构建顺序必须在 CLI 之前。
+      - name: Build subagent-engine-sdk
+        run: pnpm --filter @zhushanwen/subagent-engine-sdk build
+
+      - name: Build pi-subagent-cli
+        run: pnpm --filter @zhushanwen/pi-subagent-cli build
+
+      - name: Build zcode-subagent-cli
+        run: pnpm --filter @zhushanwen/zcode-subagent-cli build
+
       # MF-4 防线：发布前 typecheck gate（与 Electron 线 pre-commit validate-runtime-bundle.sh 同级）。
       # 历史教训：无 gate 时 TS 编译错误直接随源码发布成坏包（pi-ask-user@4.0.0 ESM 加载即崩）。
       - name: Typecheck extensions

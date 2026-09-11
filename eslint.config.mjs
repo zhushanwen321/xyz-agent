@@ -24,6 +24,8 @@ export default [
       'apps/electron/preload/preload.js',
       'apps/electron/resources/pi/**',
       'apps/electron/resources/extensions/**',
+      // [W11] 引擎包 staging 产物（bundle-extensions esbuild 输出，gitignored 构建产物）
+      'apps/electron/resources/engines/**',
       // .xyz-harness 是设计文档/骨架代码（spec/plan/code-skeleton），非项目源码，不参与 lint
       '.xyz-harness/**',
       // playwright 测试产物（trace/报告是工具生成的压缩 JS，非项目源码，已被 .gitignore）
@@ -95,14 +97,13 @@ export default [
     },
   },
   // [HISTORICAL·2026-09 idle-pi-reclamation] 空闲 pi 进程回收功能接入（reaper 装配 +
-  // 生命周期挂钩）：session-service 是 session 生命周期编排的历史巨石，增量接入后再越
-  // 500 阈值（曾于 session-service-deepening 六域迁出后移出本清单，本次新功能装配再次
-  // 触发）；runtime index.ts 是进程组装 barrel，main 基线 501 行即超，本次 +41。
-  // 两文件拆分归独立重构单元（见 docs/design/idle-pi-reclamation.impl-plan.md），
+  // 生命周期挂钩）：runtime index.ts 是进程组装 barrel，main 基线 501 行即超，本次 +41。
+  // 拆分归独立重构单元（见 docs/design/idle-pi-reclamation.impl-plan.md），
   // 禁止在 lint 收敛批次内拆文件重构。短期 max-lines override 避免阻塞。
+  // [merge dev-0.9.17 2026-09] session-service.ts 已从本 off 块移除——config 末尾的
+  // 软上限块（warn 650）语义更严且后位覆盖，双块并存 = 冲突；以末尾块为唯一权威。
   {
     files: [
-      'packages/runtime/src/services/session/session-service.ts',
       'packages/runtime/src/index.ts',
     ],
     rules: {
@@ -121,6 +122,13 @@ export default [
       'packages/runtime/src/transport/session-message-handler.ts',
       'packages/runtime/src/transport/settings-message-handler.ts',
       'packages/subagent-core/src/execution/session-reconstructor.ts',
+      // [HISTORICAL] message-dispatcher 是消息派发职责的唯一聚合点（从 session-service
+      // 巨石拆出：sendMessage/abort/steer/followUp/compact + sendBash 家族），2026-09-09
+      // chat-domain-v1x-liveness-governance W7 abort 超时三级阶梯（handleAbortRpcTimeout/
+      // runAbortStallLadder/probeEngineAlive）入列时净代码行越过 500。职责内聚（abort
+      // 超时处置归 abort() 所在文件），阶梯抽独立文件需引入新的模块边界与构造注入面，
+      // 属独立重构任务。短期 max-lines override 避免阻塞，长期应拆分。
+      'packages/runtime/src/services/session/message-dispatcher.ts',
     ],
     rules: {
       'max-lines': 'off',
@@ -185,9 +193,12 @@ export default [
   // 2026-09-05 落地后超限）。职责内聚（帧序分发、终态判定与 idle 刷新共享同一
   // ActiveTurn 状态），行数超 500。拆分违反该设计 §7「无新模块」约束，属独立重构任务。
   // 与 event-adapter/session-service 等 override 同型——唯一聚合中心，短期避免阻塞。
+  // [W11] session-channel.ts 随 zcode 引擎外移迁入 @zhushanwen/zcode-subagent-cli
+  // （W5 整包搬移），override 路径同步跟随——搬移前后生效规则集 diff = 0（impl-plan
+  // §2.11 eslint override 迁移验收）。
   {
     files: [
-      'packages/subagent-core/src/execution/engine/engines/zcode/session-channel.ts',
+      'packages/zcode-subagent-cli/src/session-channel.ts',
     ],
     rules: {
       'max-lines': 'off',
@@ -480,37 +491,40 @@ export default [
       'max-lines': ['warn', { max: 1000, skipBlankLines: true, skipComments: true }],
     },
   },
-  // session-runner.ts 单列：迁移后 844 行；无界等待修复（OR-3 收殓 + per-call 超时
-  // 透传 + SIGKILL 升级链）后 1266 行。拆分方向（runner 编排 / 进程收割 / 恢复扫描）
-  // 属独立重构任务，短期 override 至 1400 避免阻塞。
-  // [u-2a] 文件物理迁入 engines/pi/（rename 级搬运），本条目路径同步跟随。
-  {
-    files: ['packages/subagent-core/src/execution/engine/engines/pi/session-runner.ts'],
-    rules: {
-      'max-lines': ['warn', { max: 1400, skipBlankLines: true, skipComments: true }],
-    },
-  },
   // zcode-engine.ts：zcode app-server 常驻引擎的唯一聚合中心（连接池 + 会话生命周期 +
-  // 降级链 + 错误归类，packages 域上限 500 下 1038 行）。拆分方向（连接层 / 会话层 /
-  // 归类层）属独立重构任务，短期 override 至 1150 避免阻塞。U2 超时收口 + U3 终态
-  // status 分流（timeout-zcode-turn-and-settled-watchdog.md，2026-09-05）后 1165 行——
-  // 与 session-runner 同型提额至 1300（U4 重试扩展/U5 dispose 收割还将落在同文件）。
+  // 降级链 + 错误归类）。拆分方向（连接层 / 会话层 / 归类层）属独立重构任务，短期
+  // override 避免阻塞。U2 超时收口 + U3 终态 status 分流后与 session-runner 同型提额。
+  // [W11] 随 zcode 引擎外移迁入 @zhushanwen/zcode-subagent-cli（W5），路径同步跟随。
   {
-    files: ['packages/subagent-core/src/execution/engine/engines/zcode/zcode-engine.ts'],
+    files: ['packages/zcode-subagent-cli/src/zcode-engine.ts'],
     rules: {
       'max-lines': ['warn', { max: 1300, skipBlankLines: true, skipComments: true }],
+    },
+  },
+  // engine-client.ts：协议客户端聚合中心（spawn/握手/帧路由/崩溃重建/收割 + [W3]
+  // chat 轮次 recordId 路由面）。超限 10 行，按仓内惯例（偏差 #2 message-dispatcher
+  // 同款）登记 override，长期拆分方向：正向请求面 / 反向路由面 / 收割面。
+  {
+    files: ['packages/subagent-core/src/execution/engine/client/engine-client.ts'],
+    rules: {
+      'max-lines': ['warn', { max: 520, skipBlankLines: true, skipComments: true }],
     },
   },
   // subagent-service.ts 单列：旧位 2141 行即超 extensions 域 1000 上限（基线存量，
   // 迁移前已在告警），抽离后 1245 行；无界等待修复（OR-3 消息层超时 + 收殓下沉）
   // 后 1415 行；u-h2 engine-aware model validation（route first、按目标 engine
-  // 校验，2026-09-05）+21 行 → 1471 行。该文件是编排聚合点（与 event-adapter
-  // 同型先例），不拆文件；短期 override 至 1500 避免阻塞，长期拆分（service 门面 /
-  // record 子图 / spawn 编排三段）待独立重构。
+  // 校验，2026-09-05）+21 行 → 1471 行；chat-domain-v1x-liveness-governance W4 轮次
+  // 活性监督器接线（死亡分诊 + 在途记账 + boot 分区/sweep 挂点，2026-09-09；装配面
+  // 已抽 round-supervisor/service-binding.ts）→ 1548 行；chat-domain-v1x-liveness-
+  // governance W3 chat 域协议化（chat 轮次走协议客户端：轮次路由/生命周期相位/冷续
+  // 锚点/settle 分诊的编排承接 inproc PiEngine 消亡后的宿主半边，2026-09-09）→
+  // 1684 行。该文件是编排聚合点（与 event-adapter 同型先例），不拆文件；短期
+  // override 至 1700 避免阻塞，长期拆分（service 门面 / record 子图 / chat 轮次编排
+  // / spawn 编排）待独立重构。
   {
     files: ['packages/subagent-core/src/execution/subagent-service.ts'],
     rules: {
-      'max-lines': ['warn', { max: 1500, skipBlankLines: true, skipComments: true }],
+      'max-lines': ['warn', { max: 1700, skipBlankLines: true, skipComments: true }],
     },
   },
   // session-reader tool-handler：聚合工具处理中枢（多工具入口 + 渲染调度），
@@ -532,12 +546,16 @@ export default [
       'max-lines': ['warn', { max: 1000, skipBlankLines: true, skipComments: true }],
     },
   },
-  // provider-config-helper：provider 配置读改/清洗/凭据应用聚合中心（505 行）。
-  // sanitize* 校验组拆分是长期方向，短期 override 与 chat.ts 等聚合中心同模式。
+  // provider-config-helper：provider 配置读改/清洗/凭据应用聚合中心。
+  // 设计 catalog-provider-field-authority §3.3 D1 的写侧防线载体（applyProviderWritePolicy）
+  // 驻本文件，且后续单元（M2b 的 listProviders 迁移、M4 的 resolveCatalogDisplayFields 改造）
+  // 仍会继续追加，故上限抬到 900（先例：download-asset.ts 抬到 1000）。
+  // 沿用既有「sanitize* 校验组拆分是长期方向，短期 override 与 chat.ts 等聚合中心同模式」表述——
+  // 长期仍应拆分（防线载体可拆独立模块）。
   {
     files: ['packages/runtime/src/services/provider-config-helper.ts'],
     rules: {
-      'max-lines': ['warn', { max: 600, skipBlankLines: true, skipComments: true }],
+      'max-lines': ['warn', { max: 900, skipBlankLines: true, skipComments: true }],
     },
   },
   // runtime 组合根 main()：装配顺序带文档化时序耦合（函数内注释逐段说明构造先后
@@ -547,6 +565,26 @@ export default [
     files: ['packages/runtime/src/index.ts'],
     rules: {
       'max-lines-per-function': 'off',
+    },
+  },
+  // [HISTORICAL] session-dead u2/u3b 转移原语+收敛环落地致超限（962→1380），拆分（原语/转移表/收敛环/UserStoppedGate 分域）登记为后续重构项，勿再增行。
+  // 提额而非 off：保留 700 软上限告警，超限即再暴露（与 session-runner/zcode-engine 提额先例同型）。
+  {
+    files: ['packages/runtime/src/services/session/event-interpreter.ts'],
+    rules: {
+      'max-lines': ['warn', { max: 700, skipBlankLines: true, skipComments: true }],
+    },
+  },
+  // [HISTORICAL] session-dead u2/u3b 语义改动致超限（512>500），拆分登记为后续重构项，勿再增行。
+  // 提额至 520 而非 off：微超即提额，保留软上限告警（与 provider-config-helper 提额先例同型）。
+  // [merge dev-0.9.17 2026-09] crash-resilience / crash-forensics-and-watchdog（respawn
+  // 编排 + 收殓 + inflight 镜像挂点）与对方 chat 域协议化（userStoppedGate / restore-abort
+  // 收敛环）并存，统计行 634 > 520 → 提额 650（微超即提额哲学不变；本块位于 config 末尾，
+  // 覆盖上方 idle-pi-reclamation 的 off 块——两块语义冲突时以本软上限为准）。
+  {
+    files: ['packages/runtime/src/services/session/session-service.ts'],
+    rules: {
+      'max-lines': ['warn', { max: 650, skipBlankLines: true, skipComments: true }],
     },
   },
 ];

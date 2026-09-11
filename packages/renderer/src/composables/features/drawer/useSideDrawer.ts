@@ -14,7 +14,7 @@
  * 2. re-export + 函数形状兼容：useSideDrawer() 返回形状与旧版逐字段一致（isOpen/activeTab/
  *    docked/selectedCommandName/detailFilePath/browserUrl/consumeBrowserUrl/open/close/
  *    toggle/setTab/toggleDock），~20 处旧调用方（SideDrawer.vue/PanelContainer.vue/
- *    useSidebar/useDetailPane/useMarkdownInteractions/chat.ts 等）import '@/composables/
+ *    useSidebar/useDetailPane/chat.ts 等）import '@/composables/
  *    features/useSideDrawer' 路径不变、零改动。
  *
  * 旧 SideDrawer 删除后本兼容层可一并移除（core/domain/drawer 已是 SSOT，新代码直接 import core）。
@@ -31,12 +31,12 @@
  * C 待 chat-w6 迁移（认知外文件，不触碰）：useChatViewDeps.ts:35 import
  *   { useSideDrawer, type SideDrawerTab }——chat-w6 迁移后改指向 core API。
  * D 可平滑迁移（改 import 指向 '@xyz-agent/core/domain/drawer' 即可，~11 生产 + ~14 测试）：
- *   生产：useMarkdownInteractions.ts / useRunInTerminal.ts / useCloseShortcut.ts
+ *   生产：useRunInTerminal.ts / useCloseShortcut.ts
  *   （isOpen/close）/ useDetailPane.ts（detailFilePath）/ useSidebar.ts（open）/ stores/chat.ts
  *   （open('tasks') + setPendingOpenForSid）/ FileTreeRow.vue / Sidebar.vue（open）/ GitPanel.vue /
  *   CommandDocPanel.vue（selectedCommandName）/ lib/search-types.ts（类型 re-export）。
  *   测试：useSideDrawer.test.ts（兼容层自身）/ useDetailPane.test.ts / useCloseShortcut.test.ts /
- *   useMarkdownInteractions-fallback.test.ts / fast-fork-e2e-journeys.test.ts /
+ *   fast-fork-e2e-journeys.test.ts /
  *   drawer-injection-entries.test.ts / command-doc-panel.test.ts / FileTreeRow.test.ts /
  *   tasks-tool-name-resolution.test.ts / fork-entry-behavior.test.ts / turn-file-badge.test.ts /
  *   panel-container-drawer-mode.test.ts（vi.mock 或 re-export 依赖，改 mock core 或随消费方迁移）。

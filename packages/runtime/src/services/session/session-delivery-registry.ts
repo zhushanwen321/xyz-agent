@@ -19,6 +19,7 @@ import type { IManagedSessionView } from './types.js'
 import { SkillInjector } from './skill-injector.js'
 import { publishSkillNotices } from './skill-notice-publisher.js'
 import type { IMessageBus } from '../message-bus/message-bus.js'
+import { applySessionOccupancyTransition, userStoppedGate } from './event-interpreter.js'
 
 /** 组合根注入的装配材料（全部窄签名，测试可 mock） */
 export interface SessionDeliveryDeps {
@@ -88,6 +89,12 @@ export function createSessionDeliveryRegistry(
     content: string,
     streamingBehavior?: 'steer' | 'followUp',
   ): Promise<void> => {
+    // [session-dead-structural-fixes D4 显式投递清标记（u3b 补线）] 经 runtime delivery 的投递
+    // （session_manager send / completion-backflow 回流 / landing 首发直投 sendDirect——三者
+    // 全部汇聚于本函数）= 新意图，投递前清 userStopped 标记放行 + 停收敛环。与 sendPrompt
+    // 同构：清标记先于 ensureActive/restore（restore-abort 读不到标记即不掐），也先于
+    // client.prompt（显式投递开 turn 的 agent_start 事件回流时环已停，不会被收敛环误掐）。
+    userStoppedGate.consumeForExplicitDelivery(sessionId)
     const client = await deps.ensureActive(sessionId)
     const injection = await injector.inject(client, content)
     await client.prompt(injection.text, undefined, streamingBehavior)
@@ -95,13 +102,15 @@ export function createSessionDeliveryRegistry(
     // throw 不发（调用方错误通路覆盖）。
     publishSkillNotices(deps.getMessageBus(), sessionId, content, injection.notices)
     // D7 保留副作用：prompt 受理成功后一并置位（侧栏 working 显示 + lastActiveAt 排序新鲜度）。
-    // isGenerating/lastActiveAt 双写形态登记（登记表 #11 修订，2026-08-24）：写方全集 =
-    // message-dispatcher（先置位后 prompt）+ 本 deliverText（受理后置位）；失效源 =
-    // message_start 事件流 / agent_settled 多播。
+    // [session-dead-structural-fixes D2 挂点迁移（u3b）] 原直写 isGenerating=true 是「只写布尔
+    // 不写 occupancy」的第三个漂移写点（设计 §2.2 问题一），改调 'dispatching' 行——原语原子
+    // 完成 isGenerating=true 派生 + turn='dispatching' 合并 + state 帧广播，与 sendPrompt 的
+    // markSessionActive（#1）同构（prompt 已受理、message_start 未到；turn-start 事件随后把
+    // 投影推进到 'generating'）。lastActiveAt 非 occupancy 维度，保持直写。
     const session = deps.getSession(sessionId)
     if (session) {
       session.lastActiveAt = Date.now()
-      session.isGenerating = true
+      applySessionOccupancyTransition(session, deps.getMessageBus(), 'dispatching')
       try {
         deps.recordWorkspace(session.cwd)
       } catch (e) {

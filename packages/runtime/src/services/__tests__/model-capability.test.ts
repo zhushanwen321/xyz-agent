@@ -120,7 +120,7 @@ describe('缓存键（D2 三维度）', () => {
 
     beforeEach(() => {
       dir = mkdtempSync(join(tmpdir(), 'model-capability-'))
-      const agentDir = join(dir, 'pi', 'agent')
+      const agentDir = join(dir, 'agent')
       mkdirSync(agentDir, { recursive: true })
       modelsJsonPath = join(agentDir, 'models.json')
       writeFileSync(modelsJsonPath, JSON.stringify({ providers: {} }))

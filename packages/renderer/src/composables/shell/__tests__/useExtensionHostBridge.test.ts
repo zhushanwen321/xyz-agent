@@ -21,7 +21,7 @@ import { createPinia, setActivePinia } from 'pinia'
 import { EXTENSION_BRIDGE_TYPES, InternalEventBus, MessageBusBridge, providePlatform, registerMountPoints, scanContributions, type ContributionRegistry } from '@xyz-agent/core'
 import type { InternalEvent } from '@xyz-agent/core'
 import { dispatchCrossSession, dispatchGlobal, dispatchSession } from '@xyz-agent/core/transport/api'
-import { createWsPluginMessageSource, initExtensionHostBridge, _resetBadgeSourceForTest } from '../useExtensionHostBridge'
+import { createWsPluginMessageSource, initExtensionHostBridge, __testing } from '../useExtensionHostBridge'
 import {
   DIALOG_REQUEST_SOURCE_KEY,
   L2_TAB_BADGE_SOURCE_KEY,
@@ -228,7 +228,9 @@ describe('initExtensionHostBridge provide CompanionBand 契约（FR2/FR7，TC10�
       },
     }
 
-    const result = initExtensionHostBridge(app as never)
+    initExtensionHostBridge(app as never)
+    const result = __testing.lastInitHandles
+    if (!result) throw new Error('initExtensionHostBridge 未写入 __testing.lastInitHandles')
     bridge = result.bridge
     void simulateBootstrapRegistration()
 
@@ -271,8 +273,10 @@ describe('MF-2 响应式桥（分区后建时序 + global scope）', () => {
         return app
       },
     }
-    const result = initExtensionHostBridge(app as never)
-    bridge = result.bridge
+    initExtensionHostBridge(app as never)
+    const handles = __testing.lastInitHandles
+    if (!handles) throw new Error('initExtensionHostBridge 未写入 __testing.lastInitHandles')
+    bridge = handles.bridge
     void simulateBootstrapRegistration()
     const viewHostSource = provided.find((p) => p.key === VIEW_HOST_SOURCE_KEY)?.value as ViewHostSource
     const statusBarSource = provided.find((p) => p.key === STATUS_BAR_SOURCE_KEY)?.value as StatusBarSource
@@ -283,7 +287,7 @@ describe('MF-2 响应式桥（分区后建时序 + global scope）', () => {
     const badgeSource = provided.find((p) => p.key === L2_TAB_BADGE_SOURCE_KEY)?.value as
       | ((sessionId: string) => Record<string, boolean>)
       | undefined
-    return { viewHostSource, statusBarSource, viewsSource, contributions: result.contributions, nativeViews, badgeSource }
+    return { viewHostSource, statusBarSource, viewsSource, contributions: handles.contributions, nativeViews, badgeSource }
   }
 
   it('case B: 分区后建时序——computed 首次求值无分区，首个 viewUpdate 到达后重算命中', async () => {
@@ -431,8 +435,10 @@ describe('L2 badge 源 + NATIVE_VIEWS 生产接线（D4②④）', () => {
         return app
       },
     }
-    const result = initExtensionHostBridge(app as never)
-    bridge = result.bridge
+    initExtensionHostBridge(app as never)
+    const handles = __testing.lastInitHandles
+    if (!handles) throw new Error('initExtensionHostBridge 未写入 __testing.lastInitHandles')
+    bridge = handles.bridge
     // badge 流转用例 mount PluginViewContainer 消费 viewsSource.getViews 的 builtin tab 清单，
     // 同样依赖 bootstrap step 4+5 注册前置（见 simulateBootstrapRegistration 注释）
     void simulateBootstrapRegistration()
@@ -482,7 +488,7 @@ describe('L2 badge 源 + NATIVE_VIEWS 生产接线（D4②④）', () => {
   afterEach(() => {
     bridge?.dispose()
     bridge = null
-    _resetBadgeSourceForTest()
+    __testing.resetBadgeSource()
   })
 
   it('NATIVE_VIEWS: provide 映射恰含 background-tasks → BackgroundTaskListView（D4②）', () => {
@@ -578,8 +584,10 @@ describe('MF-1 挂载点上报时序（mountPoints.sync 连接就绪后发送）
         return app
       },
     }
-    const result = initExtensionHostBridge(app as never)
-    bridge = result.bridge
+    initExtensionHostBridge(app as never)
+    const handles = __testing.lastInitHandles
+    if (!handles) throw new Error('initExtensionHostBridge 未写入 __testing.lastInitHandles')
+    bridge = handles.bridge
     // 装配后补 bootstrap step 4 前置（见 simulateBootstrapRegistration 注释）——本组用例
     // 焦点是「已注册挂载点在 connected 时补发」的上报时序，非注册本身。注册不发 send，
     // 不影响「未连接不发送」断言。

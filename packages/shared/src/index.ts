@@ -16,6 +16,7 @@ export type {
   RollingRestartDeferredPayload, RollingRestartCountdownPayload, RollingRestartForcedPayload,
   RollingRestartStatusPayload,
   ReattachDeferReason, ReattachDeferredPayload,
+  ConnectionTestResultRow,
 } from './protocol'
 export { isMessage, isSessionSummary, isSubagentRecord } from './protocol'
 export type {
@@ -35,7 +36,7 @@ export type {
   PiToolCallEntryForm,
 } from './pi-entry'
 export type { Segment } from './segments'
-export { segmentsToText, textToSegments, segmentsToPrompt, normalizeContent } from './segments'
+export { segmentsToText, textToSegments, segmentsToPrompt, normalizeContent, normalizeSegmentOrder, needsBoundarySpace } from './segments'
 export type { SegmentsMetadataFile, SegmentsMetadataEntry } from './message-metadata'
 export type {
   SessionStatus, SessionSummary, SessionGroup,
@@ -61,7 +62,7 @@ export { BASH_RPC_TIMEOUT_MS, COMPACT_RPC_TIMEOUT_MS, RENDERER_RPC_MARGIN_MS } f
 export * from './extension'
 export * from './git'
 export * from './plugin'
-export { BASE_PORT, DEV_PORT_OFFSET, MAX_PORT, ENV_WHITELIST_PREFIXES, AMBIENT_ENV_NAMES, SUBAGENT_TOOL_NAMES, WORKFLOW_TOOL_NAMES, SUBAGENT_RECORD_CUSTOM_TYPE, WORKFLOW_RECORD_CUSTOM_TYPE, PROVIDER_API_TYPES, KNOWN_PI_API_TYPES, SYSTEM_PROMPT_MAX_LENGTH, PRESET_SKILL_DIRS, PRESET_AGENT_DIRS, PRESET_EXTENSION_DIRS, IMAGE_LIMITS, MAX_WS_PAYLOAD_BYTES, PLUGIN_NOTIFY_LIMITS, UI_TOAST_LIMITS, XYZ_RUNTIME_PI_RECLAIM_IDLE_MS, XYZ_RUNTIME_PI_RECLAIM_TICK_MS, XYZ_RUNTIME_PI_RECLAIM_VIEWED_WINDOW_MS, DEFAULT_PI_RECLAIM_IDLE_MS, DEFAULT_PI_RECLAIM_TICK_MS, DEFAULT_PI_RECLAIM_VIEWED_WINDOW_MS } from './constants'
+export { BASE_PORT, DEV_PORT_OFFSET, MAX_PORT, ENV_WHITELIST_PREFIXES, AMBIENT_ENV_NAMES, SUBAGENT_TOOL_NAMES, WORKFLOW_TOOL_NAMES, SUBAGENT_RECORD_CUSTOM_TYPE, WORKFLOW_RECORD_CUSTOM_TYPE, PROVIDER_API_TYPES, KNOWN_PI_API_TYPES, SYSTEM_PROMPT_MAX_LENGTH, PRESET_SKILL_DIRS, PRESET_AGENT_DIRS, PRESET_EXTENSION_DIRS, IMAGE_LIMITS, MAX_WS_PAYLOAD_BYTES, PLUGIN_NOTIFY_LIMITS, UI_TOAST_LIMITS, ENGINE_LAUNCH_ENV_KEYS, XYZ_RUNTIME_PI_RECLAIM_IDLE_MS, XYZ_RUNTIME_PI_RECLAIM_TICK_MS, XYZ_RUNTIME_PI_RECLAIM_VIEWED_WINDOW_MS, DEFAULT_PI_RECLAIM_IDLE_MS, DEFAULT_PI_RECLAIM_TICK_MS, DEFAULT_PI_RECLAIM_VIEWED_WINDOW_MS } from './constants'
 export type { ProviderApiType } from './constants'
 // 崩溃韧性共享契约 SSOT（docs/design/crash-resilience.md §3.3，实施计划 u-foundation：
 // 出站帧守卫阈值 D3 / 全量读预检阈值 D5 / 历史双预算 D4 / 日志保留期 D6-⑦）。
@@ -171,8 +172,11 @@ export type {
   QuotaFetchOutcome,
   QuotaFetcherConfig,
   QuotaWorkspaceNormalizeResult,
+  // 凭证来源与 configure payload（D3/§7.1，coding-plan-quota-config-ux）
+  QuotaCredentialSource,
+  QuotaConfigurePayload,
 } from './quota-types'
-export { normalizeQuotaWorkspaceUrl } from './quota-types'
+export { normalizeQuotaWorkspaceUrl, resolveQuotaCredentialSource, supportsExclusiveCredential } from './quota-types'
 export type { QuotaPreset } from './quota-presets'
 export { QUOTA_PRESETS, matchQuotaPreset } from './quota-presets'
 // normalizeSubagentStatus 已下沉至 runtime（packages/runtime/src/services/session/subagent-status.ts，

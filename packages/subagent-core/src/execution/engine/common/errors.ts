@@ -25,6 +25,7 @@ export const ENGINE_ERROR_CODES = [
   "schema_emulation_failed",
   "engine_timeout",
   "engine_capability_unsupported",
+  "engine_capability_mismatch",
   "engine_session_not_resumable",
   "model_not_available",
   "prompt_too_large",
@@ -94,8 +95,11 @@ export const DEFAULT_RECOVERY_HINTS: Record<EngineErrorCode, string> = {
     "The engine was killed by the host timeout chain. Inspect the captured stdout tail, then re-run with a larger " +
     "timeout, a narrower task, or `engine: pi`.",
   engine_capability_unsupported:
-    "This engine declares the capability unsupported. Use a single-shot call instead of interactive steering, " +
-    "or dispatch with `engine: pi` which supports it.",
+    "This engine declares the capability unsupported. Adjust the task parameters, " +
+    "or fix the manifest capabilities / upgrade the engine package if it actually supports it.",
+  engine_capability_mismatch:
+    "The engine manifest declares a capability its initialize handshake did not confirm. " +
+    "Fix the manifest capabilities (align with actual engine behavior) or upgrade the engine package.",
   engine_session_not_resumable:
     "Idle-process reuse does not survive a main-session reload. Use a cold resume path " +
     "(engine --resume / --session with the recorded session reference), or start a new subagent.",
@@ -113,9 +117,6 @@ export const DEFAULT_RECOVERY_HINTS: Record<EngineErrorCode, string> = {
 // P2 消费的具名构造器（动态参数进 detail/recovery）
 // ============================================================
 
-/** 错误回显长度上限（截断长输出，避免错误消息爆炸——对齐 structured-output echo 上限量级）。 */
-const DETAIL_ECHO_MAX_CHARS = 200;
-
 /** truncate(text, max)：尾部截断 + 省略号标记（模板共用）。 */
 function truncate(text: string, max: number): string {
   return text.length <= max ? text : `${text.slice(0, max)}...`;
@@ -130,15 +131,6 @@ export function promptTooLargeError(actualBytes: number, limitBytes: number): En
     "prompt_too_large",
     `estimated argv size ${actualBytes} bytes exceeds the ${limitBytes}-byte budget`,
     DEFAULT_RECOVERY_HINTS.prompt_too_large,
-  );
-}
-
-/** nested_spawn_rejected（nesting-guard 消费）：文案说明防护规则 + 指向 task 内自行完成。 */
-export function nestedSpawnRejectedError(): EngineError {
-  return new EngineError(
-    "nested_spawn_rejected",
-    "this process is already a subagent (XYZ_AGENT_SUBAGENT=1)",
-    DEFAULT_RECOVERY_HINTS.nested_spawn_rejected,
   );
 }
 
@@ -170,14 +162,6 @@ export function engineRunFailedDetail(reason: string, exitCode: number | null, s
   );
 }
 
-/**
- * schema_emulation_failed 的终报文案（宿主编排层「重试一次仍失败」后消费）：
- * 与 structured-output 的重试语义对齐（重试一次 → 报错含原始输出尾部）。
- */
-export function schemaEmulationFailedDetail(error: string, tail: string): string {
-  return (
-    `structured output emulation failed after tolerant extraction and one host-side retry: ${error}. ` +
-    `Raw output tail: ${truncate(tail, DETAIL_ECHO_MAX_CHARS)}. ` +
-    `Recovery: ${DEFAULT_RECOVERY_HINTS.schema_emulation_failed}`
-  );
-}
+// schema_emulation_failed 的终报文案（schemaEmulationFailedDetail）已随 schema-emulation
+// 死镜像收口删除：活体单源 SDK error-codes.ts（emulated 引擎的宿主编排层经 SDK 消费），
+// core 侧此前仅剩自身测试引用（test-only）。

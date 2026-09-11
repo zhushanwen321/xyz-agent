@@ -10,6 +10,7 @@ import {
   extractSessionIdFromFilename,
   type RecordManifest,
 } from '../discovery/subagents.js'
+import { REAL_DATA_TIMEOUT_MS } from './real-data.js'
 
 // ---- fixture 常量（uuid 特征，满足 extractSessionIdFromFilename + 互不为子串）----
 const ROOT = '0aaaaaaa-bbbb-7ccc-dddd-000000000001'
@@ -471,7 +472,7 @@ describe.skipIf(!HAS_REAL_ROOT)('buildFamilyFromFs - 真实数据 ~/.pi/agent', 
     )
     expect(sub).toBeDefined()
     expect(sub!.sessionId.startsWith('sa-')).toBe(false)
-  }, 30000)
+  }, REAL_DATA_TIMEOUT_MS)
 })
 
 describe.skipIf(!HAS_REAL_WF)('buildFamilyFromFs - 真实 workflow 数据', () => {
@@ -500,7 +501,7 @@ describe.skipIf(!HAS_REAL_WF)('buildFamilyFromFs - 真实 workflow 数据', () =
     // stateFile 是 wf-state 文件绝对路径
     expect(rich!.stateFile.endsWith('.jsonl')).toBe(true)
     expect(rich!.runId.startsWith('wf-')).toBe(true)
-  }, 30000)
+  }, REAL_DATA_TIMEOUT_MS)
 })
 
 // ============================================================
@@ -735,5 +736,5 @@ describe.skipIf(!HAS_REAL_ROOT || !HAS_REAL_SUBAGENTS_DIR)('U4 真实数据守�
 
     // 所有 subagent 的 sessionFile 非空（manifest.sessionFile 或 alive meta.path）
     expect(family.subagents.every((s) => typeof s.sessionFile === 'string' && s.sessionFile.length > 0)).toBe(true)
-  }, 30000)
+  }, REAL_DATA_TIMEOUT_MS)
 })

@@ -62,35 +62,18 @@ import * as path from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from "vitest";
 
-const { loggerMock, runSpawnMock } = vi.hoisted(() => ({
+const { loggerMock } = vi.hoisted(() => ({
   loggerMock: { debug: vi.fn(), warn: vi.fn(), error: vi.fn(), info: vi.fn() },
-  runSpawnMock: vi.fn(async () => ({
-    text: "ok",
-    turns: 1,
-    durationMs: 10,
-    success: true,
-    sessionId: "spawned",
-    toolCalls: [],
-  })),
 }));
 // mock logger：路径从 __tests__ 出发是 ../../core/（src/core/logger.ts——subagent-service
 // 经 ../core/logger.ts 引用的同一模块）。曾写 ../core/logger.ts 指向不存在的
 // src/execution/core/，vi.mock 静默失效（D4 上限用例首次断言日志时暴露）。
 vi.mock("../../core/logger.ts", () => ({ getLogger: () => loggerMock }));
 
-// mock session-runner：execute 链经 kickOffBackground → runAndFinalize → runSpawn。
-// 路径必须命中生产 import 的真实模块——merge 后 session-runner 落位
-// src/execution/engine/engines/pi/session-runner.ts（subagent-service.ts 的 import 源），
-// 旧路径 "../session-runner.ts" 模块已不存在，拦截静默失效（U2 教训的变体：
-// 相对路径「层级」与「落位」都可能漂移，见 collect-coordinator-service.test.ts）。
-vi.mock("../engine/engines/pi/session-runner.ts", () => ({
-  runSpawn: runSpawnMock,
-  killAllSpawnedChildren: vi.fn(),
-  killRecordChildWithEscalation: vi.fn(),
-  getChildByRecord: vi.fn(() => undefined),
-  registerSpawnedChildForRecord: vi.fn(),
-  spawnedChildren: new Map(),
-}));
+// [W3 改写] mock session-runner（execute 链 runSpawn 替身）随 inproc pi 引擎目录 删除消亡——
+// execute 链改为协议 seam（registerFakePiEngine 替身 + 显式 settle 应答）。
+import { registerFakePiEngine, type FakePiEnginePort } from "./helpers/fake-engine-port.ts";
+import { clearEngines } from "../engine/registry.ts";
 
 import { SUBAGENT_RECORD_CUSTOM_TYPE } from "../record-entry.ts";
 import { ManifestStore } from "../manifest-store.ts";
@@ -275,6 +258,12 @@ describe("sync collect recovery (U5 E1/E9) — 真实文件通路", () => {
 
   /** 恢复侧 service：断言 pi（覆写不落盘，断言内存面）/ 写文件 pi（覆写真实落盘，
    *  E1 读覆写后末条——kill -9 真实链路同构）两用。 */
+  /** [W3] 协议替身注册（per-test 调用；afterEach clearEngines 统一清理）。 */
+  function makeRecoveryFake(): FakePiEnginePort {
+    clearEngines();
+    return registerFakePiEngine();
+  }
+
   function makeRecoveryService(pi: AssertPi | WritingPi): SubagentService {
     const modelService = new ModelConfigService({ agentDir, cwd: agentDir });
     const modelRegistry: ModelRegistryLike = {
@@ -564,15 +553,13 @@ describe("sync collect recovery (U5 E1/E9) — 真实文件通路", () => {
 
   it("E9 dispose：缓冲终态成员逐条转 async notify + 落标；在跑成员走现有退出路径（不通知）", async () => {
     // 复用 execute 真链：成员 1 受控终态（入缓冲后批因成员 2 在跑不闭合），成员 2 悬置 running
-    let resolve1!: (v: { text: string; turns: number; durationMs: number; success: boolean; sessionId: string; toolCalls: [] }) => void;
-    runSpawnMock.mockImplementationOnce(() => new Promise((res) => { resolve1 = res; }));
-    runSpawnMock.mockImplementationOnce(() => new Promise(() => { /* 悬置到 dispose */ }));
+    const fake = makeRecoveryFake();
     const pi = makeAssertPi();
     const service = makeRecoveryService(pi);
     const spy = spyNotifier(service);
     const h1 = await service.execute({ task: "terminal one", slug: "one", collect: "sync" });
     await service.execute({ task: "running two", slug: "two", collect: "sync" });
-    await until(() => runSpawnMock.mock.calls.length >= 2);
+    await until(() => fake.runs.length >= 2);
 
     // 成员 1 子文件就位（E9 落标 getFullRecord 冷路径数据源）
     const sessionsDir = getSubagentSessionDir(agentDir, agentDir);
@@ -599,9 +586,10 @@ describe("sync collect recovery (U5 E1/E9) — 真实文件通路", () => {
     );
 
     // 成员 1 终态：入缓冲，成员 2 在跑 → 批不闭合（零批投递）
-    resolve1({ text: "ok-terminal", turns: 1, durationMs: 10, success: true, sessionId: "spawned", toolCalls: [] });
-    await until(() => spy.notify.mock.calls.length + spy.notifyBatch.mock.calls.length > 0 || runSpawnMock.mock.calls.length >= 2);
-    await new Promise((resolve) => setTimeout(resolve, 50)); // microtask 链排空
+    fake.runs[0]!.settle({ content: "ok-terminal" });
+    // 等 settle 收尾链排空（finalize→route 入缓冲；成员 2 悬置 → 零投递）
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    expect(spy.notify.mock.calls.length + spy.notifyBatch.mock.calls.length).toBe(0);
     expect(spy.notifyBatch).not.toHaveBeenCalled();
 
     // dispose（E9）：成员 1 逐条转 async 写账 + 落标；成员 2 不通知（现有退出路径）
@@ -1071,23 +1059,20 @@ describe("sync collect recovery (U5 E1/E9) — 真实文件通路", () => {
     // 成员 1：失败终态（archive 出内存）且不写子文件 → getFullRecord 双 miss
     //（内存已出 + 子文件缺失——子文件被 GC/删除的窗口形态）；
     // 成员 2：SP-5 成功回退（留内存）→ getFullRecord 内存命中（正常落标对照）。
-    let resolve1!: (v: { text: string; turns: number; durationMs: number; success: boolean; sessionId: string; toolCalls: [] }) => void;
-    let resolve2!: (v: { text: string; turns: number; durationMs: number; success: boolean; sessionId: string; toolCalls: [] }) => void;
-    runSpawnMock.mockImplementationOnce(() => new Promise((res) => { resolve1 = res; }));
-    runSpawnMock.mockImplementationOnce(() => new Promise((res) => { resolve2 = res; }));
+    const fake = makeRecoveryFake();
     // 写文件 pi：标记 entry 真实落盘主文件，E1 扫描通路（rebuildEntryRecord）可重解析
     const pi = makeWritingPi(mainFile);
     const service = makeRecoveryService(pi);
     const spy = spyNotifier(service);
     const h1 = await service.execute({ task: "miss one", slug: "one", collect: "sync" });
     const h2 = await service.execute({ task: "full two", slug: "two", collect: "sync" });
-    await until(() => runSpawnMock.mock.calls.length >= 2);
+    await until(() => fake.runs.length >= 2);
 
     // 成员 1 子文件故意缺失（getFullRecord miss 前提）；成员 2 内存命中不依赖子文件。
     // 注：两成员的 settle 链竞态可能拆两批（[U8] 合批窗口形态）——S11 断言与批切分
     // 无关，只锁「批成员并集覆盖」与「miss 成员兜底落标」。
-    resolve1({ text: "boom-miss", turns: 1, durationMs: 10, success: false, sessionId: "spawned", toolCalls: [] });
-    resolve2({ text: "ok-full", turns: 1, durationMs: 10, success: true, sessionId: "spawned", toolCalls: [] });
+    fake.runs[0]!.settle({ content: "boom-miss", error: "boom-miss" });
+    fake.runs[1]!.settle({ content: "ok-full" });
     await until(() => spy.notifyBatch.mock.calls.length > 0);
     await new Promise((resolve) => setTimeout(resolve, 50)); // flushBatch 落标同步链排空
 

@@ -14,7 +14,8 @@
  * mock 策略（happy-dom 无 ResizeObserver / clientWidth 恒 0）：
  *   - vi.stubGlobal('ResizeObserver', no-op class)
  *   - HTMLElement.prototype.clientWidth stub 为 600（plotW=540，slot>0 才能算 hover 列）
- *   - 颜色分级走真实 assignProviderColors：先 aggregate() 一遍注册 provider 色阶
+ *   - 颜色分级走新契约：providerColors 随 aggregate() 结果返回，mount 时作为 prop 传入
+ *     （无模块级全局色阶；色阶断言用例用真实 aggregate() 管线产出映射，与 UsagePage 传参同源）
  */
 import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from 'vitest'
 import { mount } from '@vue/test-utils'
@@ -78,6 +79,14 @@ function makeAgg(rows: UsageRow[], metric: 'tokens' | 'cost' = 'tokens') {
   return aggregate(rows, { offProv: new Set(), isolate: null, range: 0, metric })
 }
 
+/** 真实 aggregate 管线产出的 providerColors（p-big→p1、p-small→p2），与 UsagePage 传参同源 */
+function realColors(): Record<string, string> {
+  return makeAgg([
+    makeRow({ provider: 'p-big' }),
+    makeRow({ provider: 'p-small', input: 10 }),
+  ]).providerColors
+}
+
 /** 手工构造单日 DayView（峰值标注等用例需要精确控制每日值）。 */
 function day(dateStr: string, provs: Record<string, Partial<ReturnType<typeof newMetrics>>>): DayView {
   const provsFull: DayView['provs'] = {}
@@ -92,12 +101,17 @@ function day(dateStr: string, provs: Record<string, Partial<ReturnType<typeof ne
   return { date: new Date(y, m - 1, d), dateStr, provs: provsFull, dTot }
 }
 
-function mountChart(perDay: DayView[], metric: 'tokens' | 'cost' = 'tokens') {
+function mountChart(
+  perDay: DayView[],
+  metric: 'tokens' | 'cost' = 'tokens',
+  providerColors: Record<string, string> = {},
+) {
   return mount(UsageDailyChart, {
     props: {
       perDay,
       perProv: {},
       metric,
+      providerColors,
     },
   })
 }
@@ -105,17 +119,14 @@ function mountChart(perDay: DayView[], metric: 'tokens' | 'cost' = 'tokens') {
 describe('UsageDailyChart SVG 结构', () => {
   beforeEach(() => {
     roCallbacks.length = 0
-    // 注册 provider 色阶（p1 最大）——与 UsagePage 真实链路一致：颜色在 aggregate 时分配
-    makeAgg([
-      makeRow({ provider: 'p-big' }),
-      makeRow({ provider: 'p-small', input: 10 }),
-    ])
   })
 
   it('同日双 provider → 4 条 gridline + 5 个 Y 轴刻度 + 底部 border + 2 段堆叠柱（色阶降序）', () => {
-    const wrapper = mountChart([
-      day('2026-08-25', { 'p-big': { input: 800 }, 'p-small': { input: 200 } }),
-    ])
+    const wrapper = mountChart(
+      [day('2026-08-25', { 'p-big': { input: 800 }, 'p-small': { input: 200 } })],
+      'tokens',
+      realColors(),
+    )
 
     const lines = wrapper.findAll('svg line')
     // 4 gridline + 1 底部 border
@@ -194,10 +205,11 @@ describe('UsageDailyChart hover tooltip', () => {
     expect(hoverCol).toBeDefined()
   })
 
-  it('cost 指标 hover → 总量按 fmtUSD 展示且 provider 行带百分比', async () => {
+  it('cost 指标 hover → 总量按 fmtUSD 展示且 provider 行带百分比（tooltip 行取色同源 V4）', async () => {
     const wrapper = mountChart(
       [day('2026-08-25', { 'p-big': { cost: 6 }, 'p-small': { cost: 3 } })],
       'cost',
+      realColors(),
     )
     await wrapper.find('svg').trigger('mousemove', { clientX: 100, clientY: 60 })
 
@@ -207,6 +219,12 @@ describe('UsageDailyChart hover tooltip', () => {
     expect(tip.text()).toContain('$9.00')
     expect(tip.text()).toContain('66.7%')
     expect(tip.text()).toContain('33.3%')
+
+    // V4：tooltip 行色块与堆叠柱同源（providerColors 降序 → p-big=p1、p-small=p2）
+    const tipDots = tip.findAll('span.w-2')
+    expect(tipDots).toHaveLength(2)
+    expect(tipDots[0].attributes('style')).toContain('background: var(--chart-p1)')
+    expect(tipDots[1].attributes('style')).toContain('background: var(--chart-p2)')
   })
 
   it('mousemove 移出数据列（x < padL）→ tooltip 不出现；mouseleave → 关闭', async () => {
@@ -252,7 +270,6 @@ describe('UsageDailyChart 峰值标注', () => {
 describe('UsageDailyChart 容器自适应与卸载', () => {
   beforeEach(() => {
     roCallbacks.length = 0
-    makeAgg([makeRow({ provider: 'p-big' })])
   })
 
   it('ResizeObserver 派发更窄宽度 → gridline 右端随 plotW 收窄', async () => {
@@ -271,7 +288,12 @@ describe('UsageDailyChart 容器自适应与卸载', () => {
     const host = document.createElement('div')
     document.body.appendChild(host)
     const wrapper = mount(UsageDailyChart, {
-      props: { perDay: [day('2026-08-25', { 'p-big': { input: 900 } })], perProv: {}, metric: 'tokens' },
+      props: {
+        perDay: [day('2026-08-25', { 'p-big': { input: 900 } })],
+        perProv: {},
+        metric: 'tokens',
+        providerColors: realColors(),
+      },
       attachTo: host,
     })
     expect(host.querySelector('svg')).not.toBeNull()

@@ -103,14 +103,6 @@ vi.mock("../manifest-store.ts", () => {
   return { ManifestStore: vi.fn(function (_recordsDir: string) { return new FakeManifestStore(); }) };
 });
 
-vi.mock("../engine/engines/pi/temp-prompt.ts", () => ({
-  writePromptToTempFile: vi.fn(async (agent: string) => {
-    const safeName = agent.replace(/[^\w.-]+/g, "_");
-    return { dir: `/tmp/fake-${safeName}`, filePath: `/tmp/fake-${safeName}/prompt-${safeName}.md` };
-  }),
-  cleanupTempPrompt: vi.fn(async () => {}),
-}));
-
 import { spawn } from "node:child_process";
 
 import { ModelConfigService } from "../model-config-service.ts";
@@ -233,6 +225,11 @@ describe("退役步骤 2 判定层：createBackgroundStream", () => {
 });
 
 // ── 接线层：service → 工厂的参数透传（mode 传错 = 判定失效）──
+// [W3 改写] 驱动方式从 inproc spawn（FakeChild close）改为协议 seam
+//（registerFakePiEngine 替身）——kickOffChatRound 的 stream 创建先于 pool acquire，
+// 替身 run 挂起即可观察工厂入参。
+import { registerFakePiEngine } from "./helpers/fake-engine-port.ts";
+import { clearEngines } from "../engine/registry.ts";
 
 describe("退役步骤 2 接线层：kickOffChatRound 透传 mode/sink 给工厂", () => {
   beforeEach(() => {
@@ -242,6 +239,7 @@ describe("退役步骤 2 接线层：kickOffChatRound 透传 mode/sink 给工厂
 
   afterEach(() => {
     for (const key of RELAY_ENV_KEYS) delete process.env[key];
+    clearEngines();
     vi.restoreAllMocks();
   });
 
@@ -250,9 +248,11 @@ describe("退役步骤 2 接线层：kickOffChatRound 透传 mode/sink 给工厂
     ["tui", "tui"],
     ["undefined（headless）", undefined],
   ])("mode=%s：工厂收到 initSession 注入的 mode 与 streamSink", async (_label, mode) => {
+    clearEngines();
+    registerFakePiEngine();
     const service = setupService(mode);
-    await executeBackground(service);
-    expect(mockCreateStream).toHaveBeenCalledTimes(1);
+    await service.execute({ task: "retire test", slug: "test", ctxModel, conversation: true });
+    await vi.waitFor(() => expect(mockCreateStream).toHaveBeenCalledTimes(1));
     const [recordId, sinkArg, modeArg] = mockCreateStream.mock.calls[0]!;
     expect(typeof recordId).toBe("string");
     expect(sinkArg).toHaveProperty("setWidget");

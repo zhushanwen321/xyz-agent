@@ -23,8 +23,9 @@ get_current_branch() {
 # 清理 worktree + 可选删除分支
 # Usage: remove_worktree <workspace_root> <branch_name> [delete_branch=false] [force=false]
 #   delete_branch: 是否删除本地分支
-#   force: 强制删除——跳过 dirty 拦截，删除前打印 git status --short 清单（让将销毁的内容可见），
-#          并用 git worktree remove --force 删除；非 force 路径行为不变
+#   force: 强制删除——跳过 dirty 拦截，删除前打印 git status --short 清单（让将销毁的内容可见）；
+#          删除本身恒为显式 rm -rf + worktree prune（先删目录后清登记，避免半删态）；
+#          非 force 路径行为不变（脏 worktree 仍拦下）
 remove_worktree() {
     local workspace_root="$1"
     local branch_name="$2"
@@ -60,13 +61,21 @@ remove_worktree() {
         git -C "$worktree_path" status --short
     fi
 
-    # 删除 worktree（git -C 确保在正确目录操作）
-    echo "删除 worktree '$dir_name'..."
-    if [[ "$force" == "true" ]]; then
-        git -C "$workspace_root/.bare" worktree remove --force "$worktree_path"
-    else
-        git -C "$workspace_root/.bare" worktree remove "$worktree_path"
+    # 删除 worktree：显式两步 rm -rf + worktree prune（先删目录、后清登记）。
+    # [HISTORICAL] 旧版用 git worktree remove —— 其内部先删登记、后删目录，目录删除失败
+    # （未跟踪产物 / 文件锁）时留下「登记已失、目录仍在、目录内 git 全废」的半删态
+    # （2026-09-10 v0.9.16 发布实测 Directory not empty）。本顺序下任一步中途失败，登记与
+    # 分支都未动，状态永远可从兄弟 worktree 诊断重试；脏检查闸门在上方（rm -rf 无内建拒删，
+    # 该闸门是拿掉 git 内建检查的交换条件）。与 dev-merge skill 同结构（ca6091f7e）。
+    echo "删除 worktree '$dir_name'（rm -rf + prune）..."
+    if ! rm -rf "$worktree_path"; then
+        echo "Error: 目录删除失败：$worktree_path（rm stderr 见上）。git 登记与分支均未动。"
+        echo "       排查根因（文件锁 / 权限 / 外部挂载）后重跑本脚本，或执行单命令："
+        echo "       rm -rf '$worktree_path' && git -C '$workspace_root/.bare' worktree prune"
+        return 1
     fi
+    # prune 幂等：只清「目录已丢失」的登记，不碰活跃 worktree
+    git -C "$workspace_root/.bare" worktree prune
 
     # 可选删除分支
     if $delete_branch; then

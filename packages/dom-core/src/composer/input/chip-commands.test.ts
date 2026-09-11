@@ -11,6 +11,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { ref } from 'vue'
 import { useComposerChipCommands } from './chip-commands'
+import { useContenteditableInput } from './contenteditable'
 import { getSegmentsFromEl } from './input-dom'
 import type { ChipCallbacks } from './types'
 
@@ -57,29 +58,44 @@ describe('useComposerChipCommands insertSlashChip', () => {
     cleanup?.()
   })
 
-  it('skill 命令 (/skill:name)：dataset.chipType=skill + chipName=name + label=name + contentEditable=false', () => {
-    const c = setup()
-    c.insertSlashChip('/skill:cw-cli', 'terminal')
-    const chip = c.el.querySelector('.slash-chip') as HTMLElement
-    expect(chip).not.toBeNull()
-    expect(chip.dataset.chipType).toBe('skill')
-    expect(chip.dataset.chipName).toBe('cw-cli')
-    expect(chip.contentEditable).toBe('false')
-    expect(chip.querySelector('.chip-label')?.textContent).toBe('cw-cli')
-    // 图标注入（renderIcon 返回 true → .chip-icon 已挂载）
-    expect(chip.querySelector('.chip-icon')).not.toBeNull()
+  it('skill 命令 (/skill:name)：委托 insertSkillChip —— chipType=skill + 就地插入 + 不删已有 chip（S-4）', () => {
+    const c = setup(
+      '<span class="slash-chip" data-chip-type="slash" data-chip-name="compact"><span class="chip-label">/compact</span></span>' +
+        '正文' +
+        '<span class="slash-chip" data-chip-type="skill" data-chip-name="cw-cli"><span class="chip-label">cw-cli</span></span>',
+    )
+    const textNode = c.el.childNodes[1] as Text
+    setCursor(textNode, 2) // 光标在「正文」末尾
+    c.insertSlashChip('/skill:cw-new', 'terminal')
+    const chips = Array.from(c.el.querySelectorAll<HTMLElement>('.slash-chip'))
+    const newChip = chips.find((n) => n.dataset.chipName === 'cw-new') as HTMLElement
+    // chip 形态：skill 类型 + 剥前缀名 + contentEditable=false（与 insertSkillChip 单点一致）
+    expect(newChip).not.toBeNull()
+    expect(newChip.dataset.chipType).toBe('skill')
+    expect(newChip.dataset.chipName).toBe('cw-new')
+    expect(newChip.contentEditable).toBe('false')
+    expect(newChip.querySelector('.chip-label')?.textContent).toBe('cw-new')
+    // '/skill:' 前缀串不携带 SKILL.md 路径 → 不写 dataset.chipLocation
+    expect(newChip.dataset.chipLocation).toBeUndefined()
+    // 图标经 renderIcon 透传（第三参 icon 原样传给 insertSkillChip）
     expect(c.callbacks.renderIcon).toHaveBeenCalledWith(expect.any(HTMLElement), 'terminal')
     // × 删除按钮（aria-label 经 t 注入）
-    const xBtn = chip.querySelector('.chip-x') as HTMLElement
+    const xBtn = newChip.querySelector('.chip-x') as HTMLElement
     expect(xBtn).not.toBeNull()
     expect(xBtn.getAttribute('role')).toBe('button')
     expect(xBtn.getAttribute('aria-label')).toBe('composable.removeLabel')
     expect(xBtn.textContent).toBe('×')
-    // chip 插在最前 + 后跟 ZWSP spacer
-    expect(c.el.firstChild).toBe(chip)
-    expect(c.el.lastChild?.nodeType).toBe(Node.TEXT_NODE)
-    expect(c.el.lastChild?.textContent).toBe('\u200B')
-    expect(c.callbacks.onChanged).toHaveBeenCalled()
+    // 旧破坏性行为已消除：不删光全部 .slash-chip —— 已有命令 chip 与已有 skill chip 均原样保留
+    expect(chips.filter((n) => n.dataset.chipType === 'slash')).toHaveLength(1)
+    expect(chips.find((n) => n.dataset.chipName === 'cw-cli')).toBeTruthy()
+    // 就地插入光标处（旧行为是 insertBefore(firstChild) 强制最前），chip 后跟 ZWSP spacer
+    expect(newChip.previousSibling).toBe(textNode)
+    expect(newChip.nextSibling?.textContent).toBe('\u200B')
+    // 与 insertSkillChip 单点形态一致（含 C5 tooltip）
+    expect(newChip.title).toBe('composable.skillChipTitle')
+    // 委托链路 restoreSelection/onChanged 各恰好一次（不因委托而重复调用）
+    expect(c.callbacks.restoreSelection).toHaveBeenCalledTimes(1)
+    expect(c.callbacks.onChanged).toHaveBeenCalledTimes(1)
     cleanup = c.cleanup
   })
 
@@ -116,6 +132,69 @@ describe('useComposerChipCommands insertSlashChip', () => {
     const chip = c.el.querySelector('.slash-chip') as HTMLElement
     expect(c.callbacks.renderIcon).toHaveBeenCalledWith(expect.any(HTMLElement), 'wrench')
     expect(chip.querySelector('.chip-icon')).toBeNull()
+    cleanup = c.cleanup
+  })
+
+  it('命令 chip 就地插入（D4-a）：草稿文本中部光标 → chip 落光标处不强制最前（真实 restoreSelection 链路）', () => {
+    const el = document.createElement('div')
+    el.contentEditable = 'true'
+    el.innerHTML = '任务描述<br>清理一下'
+    document.body.appendChild(el)
+    const elRef = ref(el)
+    const inputCallbacks = {
+      onInput: vi.fn(),
+      onSlashTrigger: vi.fn(),
+      onFileTrigger: vi.fn(),
+      onEnterKeydown: vi.fn(),
+      onKeydown: vi.fn(),
+      handleBackspaceOnChip: vi.fn(() => false),
+      insertImageBadge: vi.fn(),
+      getSessionId: vi.fn(() => 's1'),
+      pasteImage: vi.fn(),
+    } as unknown as Parameters<typeof useContenteditableInput>[1]
+    const input = useContenteditableInput(elRef, inputCallbacks)
+    const chipCommands = useComposerChipCommands(elRef, {
+      onChanged: vi.fn(),
+      restoreSelection: input.restoreSelection, // 真实 restoreSelection，非 mock
+      renderIcon: () => false,
+      t: (key: string) => key,
+    })
+    // 键盘路径：焦点从未离开，活光标在第二行文本末尾（呼出位置）
+    const secondLine = el.childNodes[2] as Text
+    setCursor(secondLine, 4)
+    chipCommands.insertSlashChip('/compact')
+    const chip = el.querySelector('.slash-chip') as HTMLElement
+    expect(chip).not.toBeNull()
+    expect(chip.dataset.chipType).toBe('slash')
+    // 不强制跳到全文最前（失败模式 D 的错误产物是 chip 成为 firstChild）
+    expect(el.firstChild?.nodeType).toBe(Node.TEXT_NODE)
+    expect(chip.previousSibling).toBe(secondLine)
+    // chip 后跟 ZWSP spacer（insertChipAtSelection 落位产物）
+    expect(chip.nextSibling?.textContent).toBe('\u200B')
+    document.body.removeChild(el)
+  })
+
+  it('仅替换命令 chip（D4-a）：已有命令 chip + skill chip → 插新命令后旧命令消失、skill chip 原样', () => {
+    const c = setup(
+      '<span class="slash-chip" data-chip-type="slash" data-chip-name="old"><span class="chip-label">/old</span></span>' +
+        '正文' +
+        '<span class="slash-chip" data-chip-type="skill" data-chip-name="cw-cli" data-chip-location="/sk.md"><span class="chip-label">cw-cli</span></span>',
+    )
+    const textNode = c.el.childNodes[1] as Text
+    setCursor(textNode, 2) // 光标在「正文」末尾
+    c.insertSlashChip('/new')
+    const chips = Array.from(c.el.querySelectorAll<HTMLElement>('.slash-chip'))
+    // 单命令不变量：只剩一个命令 chip（新），旧命令 chip 被替换
+    const cmdChips = chips.filter((n) => n.dataset.chipType === 'slash')
+    expect(cmdChips).toHaveLength(1)
+    expect(cmdChips[0].dataset.chipName).toBe('new')
+    // skill chip 不被误删（失败模式 C 的错误产物是 skill chip 一并删光）
+    const skillChip = c.el.querySelector<HTMLElement>('.slash-chip[data-chip-type="skill"]')
+    expect(skillChip).not.toBeNull()
+    expect(skillChip?.dataset.chipName).toBe('cw-cli')
+    expect(skillChip?.dataset.chipLocation).toBe('/sk.md')
+    // 新命令 chip 在光标处（「正文」之后），不在最前
+    expect(cmdChips[0].previousSibling).toBe(textNode)
     cleanup = c.cleanup
   })
 
@@ -246,6 +325,108 @@ describe('useComposerChipCommands insertMentionChip', () => {
     expect(fileChip.dataset.chipPath).toBe('/path/file.ts')
     // 不产 mention-at chip
     expect(c.el.querySelector('.mention-at')).toBeNull()
+    cleanup = c.cleanup
+  })
+})
+
+// ── 插入位置权威源（设计 D1）：真实 restoreSelection 链路，禁 mock ──
+// bug 存活根因之一是测试 mock restoreSelection 掩盖真实选区语义，这里用真实
+// useContenteditableInput 的 restoreSelection 走完整链路。
+
+describe('useComposerChipCommands 插入位置（真实 restoreSelection 链路，设计 D1）', () => {
+  let cleanup: () => void
+  beforeEach(() => {
+    window.getSelection()?.removeAllRanges()
+  })
+  afterEach(() => {
+    cleanup?.()
+  })
+
+  /** 真实链路 setup：useContenteditableInput（真实 saveSelection/restoreSelection）+ useComposerChipCommands */
+  function setupRealSelection(initialHtml: string) {
+    const el = document.createElement('div')
+    el.contentEditable = 'true'
+    el.innerHTML = initialHtml
+    document.body.appendChild(el)
+    const elRef = ref(el)
+    const inputCallbacks = {
+      onInput: vi.fn(),
+      onSlashTrigger: vi.fn(),
+      onFileTrigger: vi.fn(),
+      onEnterKeydown: vi.fn(),
+      onKeydown: vi.fn(),
+      handleBackspaceOnChip: vi.fn(() => false),
+      insertImageBadge: vi.fn(),
+      getSessionId: vi.fn(() => 's1'),
+      pasteImage: vi.fn(),
+    } as unknown as Parameters<typeof useContenteditableInput>[1]
+    const input = useContenteditableInput(elRef, inputCallbacks)
+    const chipCommands = useComposerChipCommands(elRef, {
+      onChanged: vi.fn(),
+      restoreSelection: input.restoreSelection, // 真实 restoreSelection，非 mock
+      renderIcon: () => false,
+      t: (key: string) => key,
+    })
+    return { el, input, chipCommands, cleanup: () => document.body.removeChild(el) }
+  }
+
+  it('失败模式 A 回归：点击框（savedRange=头部）→ 打字推进活光标 → 插 chip → chip 在活光标处不在头部', () => {
+    const c = setupRealSelection('AAA BBB CCC')
+    const textNode = c.el.firstChild as Text
+    // ① 点击空框：savedRange 快照 = 头部 offset 0
+    setCursor(textNode, 0)
+    c.input.saveSelection()
+    // ② 打字推进活光标到末尾（savedRange 不随打字更新——现状 bug 根因）
+    setCursor(textNode, 11)
+    // ③ 键盘选中候选 → insertSessionChip（内部 restoreSelection + insertChipAtSelection）
+    c.chipCommands.insertSessionChip('s1', '会话 A')
+    const chip = c.el.querySelector('.mention-session') as HTMLElement
+    expect(chip).not.toBeNull()
+    // chip 不在头部（失败模式 A 的错误产物是 chip 成为 firstChild）
+    expect(c.el.firstChild).not.toBe(chip)
+    expect(c.el.firstChild).toBe(textNode)
+    // chip 紧跟活光标位置（文本末尾）之后
+    expect(chip.previousSibling).toBe(textNode)
+    cleanup = c.cleanup
+  })
+
+  it('键盘选中 chip 落呼出位置：草稿中部光标 → chip 插在光标处（前邻文本 = 光标前片段）', () => {
+    const c = setupRealSelection('AB CDE')
+    const textNode = c.el.firstChild as Text
+    // 光标在 'AB| CDE'（呼出位置），savedRange 是别处旧快照（头部）
+    setCursor(textNode, 0)
+    c.input.saveSelection()
+    setCursor(textNode, 2)
+    c.chipCommands.insertFileChip('/mid.ts')
+    const chip = c.el.querySelector('.mention-file') as HTMLElement
+    expect(chip).not.toBeNull()
+    // chip 在光标处（前邻文本以光标前片段 'AB' 开头），不在头部也不在尾部文本之后
+    expect(c.el.firstChild).toBe(textNode)
+    expect(chip.previousSibling).toBe(textNode)
+    expect((chip.previousSibling as Text).textContent?.startsWith('AB')).toBe(true)
+    // chip 后紧跟 insertChipAtSelection 的 ZWSP spacer
+    expect(chip.nextSibling?.nodeType).toBe(Node.TEXT_NODE)
+    expect(chip.nextSibling?.textContent).toBe('\u200B')
+    cleanup = c.cleanup
+  })
+
+  it('blur 回退（活选区移出编辑器）→ chip 落 savedRange 位置（点击浮层路径行为保留）', () => {
+    const c = setupRealSelection('AAA BBB')
+    const textNode = c.el.firstChild as Text
+    setCursor(textNode, 4)
+    c.input.saveSelection()
+    // 点击浮层文本：活选区移出编辑器
+    const external = document.createElement('div')
+    external.textContent = 'popover item'
+    document.body.appendChild(external)
+    setCursor(external.firstChild as Text, 0)
+    c.chipCommands.insertFileChip('/blur.ts')
+    const chip = c.el.querySelector('.mention-file') as HTMLElement
+    expect(chip).not.toBeNull()
+    // chip 在 savedRange 位置（offset 4 = 'AAA ' 之后），前邻文本 = 光标前片段
+    expect(chip.previousSibling).toBe(textNode)
+    expect((chip.previousSibling as Text).textContent).toBe('AAA ')
+    external.remove()
     cleanup = c.cleanup
   })
 })

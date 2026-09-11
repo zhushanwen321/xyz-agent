@@ -231,12 +231,12 @@ pi 的自动压缩有两个触发点，占用组合不同、路由不同（「tu
 | 5 | compaction-start（interpreter，现 onCompactingStateChange 挂点 :669） | compacting=true | 成功 |
 | 6 | compaction-end（interpreter :733，**成功/失败/aborted 三路均复位**——沿用现有语义） | compacting=false | 成功 |
 | 7 | sendBash 置位 / bashResult 复位（dispatcher 现有管理点） | bash=true/false | 成功 |
-| 8 | sendPrompt catch（pi prompt 抛非 busy 错：auth / 无模型等，[message-dispatcher.ts:141](../../packages/runtime/src/services/session/message-dispatcher.ts) 现复位 isGenerating 处） | turn: dispatching→idle | **失败** |
+| 8 | sendPrompt catch（[message-dispatcher.ts](../../packages/runtime/src/services/session/message-dispatcher.ts) handlePromptFailure）——**分型**（session-dead 2026-09-10 修订）：非 busy 真错（auth / 无模型等）与 compacting 拒绝 → `turn: dispatching→idle`；**processing 拒绝（pi 报 already processing）→ `turn: dispathing→generating`**（语义 = pi 有 runtime 不知情的 turn 在跑，不得伪造空闲） | 失败 / 转译 |
 | 9 | abort（成功路径 [message-dispatcher.ts:219-229](../../packages/runtime/src/services/session/message-dispatcher.ts) 现复位点；RPC 失败 / RpcTimeout 兜底路径 :186-208 同） | turn: *→idle | **失败** |
 | 10 | session.exited / forceQuit / respawn（onSessionExit 收敛链；pi 死亡时 agent_settled 永不到达，靠此复位） | turn→idle, compacting=false, bash=false（全复位） | **失败** |
 | 11 | abortBash / bash RPC 失败（dispatcher 现兜底广播 cancelled bashResult 处） | bash=false | **失败** |
 
-  转移实现为**幂等写**（非增量状态机）：每个挂点直接写目标值并广播 occupancy，值未变化不重复广播（三维全等去重，消除 abort 兜底与 agent_settled 撞出双 idle 等无变化帧），乱序 / 重复事件不产生错误状态。表中箭头是**期望前置态**（正常时序注释）而非守卫——retry / followUp 继续跑场景（settling 态收到下一 segment 的 assistant `message_start` → turn-start）由幂等写天然覆盖（settling→generating 直接写入）。两处实现期补强（一致性审查确认，2026-09-05）：#8 的复位范围含**转译拒绝两路**（#1 先于 client.prompt 置 dispatching，转译拒绝不复位则窗口 1 的拒绝令 turn 永卡 dispatching、flush 永不触发，破坏 G2）；#3 挂 handler 抛错兜底（turn-end 事件早段帧抛错时经 interpret 兜底分支同样写入 settling，镜像 #6 的兜底体例，防 turn 卡 generating）。全部 11 个挂点在现状代码中都有对应的 flag 写点（occupancy 与现有三个 flag 同源同点写入，P3 实施时把「写 flag」升级为「写 flag + 广播 occupancy」）。
+  转移实现为**幂等写**（非增量状态机）：每个挂点直接写目标值并广播 occupancy，值未变化不重复广播（三维全等去重，消除 abort 兜底与 agent_settled 撞出双 idle 等无变化帧），乱序 / 重复事件不产生错误状态。表中箭头是**期望前置态**（正常时序注释）而非守卫——retry / followUp 继续跑场景（settling 态收到下一 segment 的 assistant `message_start` → turn-start）由幂等写天然覆盖（settling→generating 直接写入）。两处实现期补强（一致性审查确认，2026-09-05）：#8 的复位范围含**转译拒绝两路**（#1 先于 client.prompt 置 dispatching，转译拒绝不复位则窗口 1 的拒绝令 turn 永卡 dispatching、flush 永不触发，破坏 G2）；#3 挂 handler 抛错兜底（turn-end 事件早段帧抛错时经 interpret 兜底分支同样写入 settling，镜像 #6 的兜底体例，防 turn 卡 generating）。全部 11 个挂点在现状代码中都有对应的 flag 写点（occupancy 与现有三个 flag 同源同点写入，P3 实施时把「写 flag」升级为「写 flag + 广播 occupancy」）。**修订（2026-09-10，session-dead 事故收口）——#8 分型化**：原表述「#8 的复位范围含转译拒绝两路」只对 compacting / 非 busy 成立；`processing` 类拒绝的语义是「pi 侧有 runtime 不知情的 turn 在跑」，无条件写 idle 会让前端 D1 占用短路失效 → defer 队列 1s 一次无限重投（事故实测 90 秒 82 次拒绝）。现实现按 `classifyPromptRejection` 分型：processing → 写 generating + `isGenerating=true`（以 pi 的拒绝为权威信号反推状态），其余 → 写 idle。连带的 isGenerating 复位点增补：原仅 agent_end，现补 agent_settled（`SessionStateProjection.handleAgentSettledSideEffects`）——pi 实装的 agent_end 每次 attempt 重发、且 post-run 尾段直接 settle 的收尾路径不含 agent_end，只靠 agent_end 会让 processing 分支置的 true 残留（幽灵忙碌）。
 
 **D4：defer 队列（compactQueue 泛化）+ 入队即显 pending 气泡（选定）**
 - **采用**：compactQueue 重命名并泛化为 defer 队列，入队条件从「isCompacting」扩展为「sendRoute=defer」（见 D6 路由表）；flush 触发从 `session.compacted` 事件改为 **occupancy 广播全 idle 且队列非空**。入队即在对话流插入 pending 气泡（半透明 opacity 0.55 + Clock icon + hover 标注），hover 提供 × 撤销（`remove` API 已存在，补 UI）。条目携带 clientUuid 作为气泡 id。**撤销边界**：× 仅对**未提交**条目开放（in-flight 已提交进 pi 队列的条目无法从 pi 侧撤回——撤销入口禁用，tooltip「已提交，等待投递」；滞留条目同理，pi 队列残余未来仍会投递）。**API 层设防**（修复轮 B2）：`remove` 对已提交（mode 已写）条目 no-op——记账不变量下沉，防调用方绕过 UI 移除已提交条目致 inflight 占位悬空、确认帧匹配作废。
@@ -318,6 +318,7 @@ ServerMessageMap += {
 | flush 时 WS 断连（RPC reject） | toast「发送失败: {原因}」；气泡回 pending、队列保留 | 自动：重连后 occupancy 快照恢复 → idle 广播 → 重放 |
 | flush 时 pi 进程死亡 | 现有 session.exited 链路（dead 态提示） | 手动：重开 session（restore 历史完整）后队列分区仍在，idle 时续投 |
 | pi 抛非 busy 错误（模型/auth 失败等） | message.error 错误气泡 + toast（现状保留）；occupancy 经转移 #8 即时回 idle | 按错误内容处理（换模型 / 重新登录） |
+| pi 拒 `processing`（runtime 未感知的 turn / post-run 尾段） | 转译 send.rejected{reason:'processing'}（静默入队，不进行为错误气泡）；occupancy 经 #8 写 generating（**不是 idle**——见 #8 修订注） | 自动：该 turn 的 agent_settled（#4）转 idle 后 flush 续投 |
 | **占用中 pi 死亡**（occupancy 非 idle 时进程退出） | 转移 #10 全复位 + 现有 session.exited 链路（dead 态提示）；活动条消失、defer 队列分区保留 | 手动：重开 session（restore 历史完整）→ idle → 队列续投 |
 | **压缩失败 × defer 队列**（compaction_end{error} 后队列有消息） | compacting 经转移 #6 复位（三路均复位）→ occupancy 转 idle → flush 照常投递。行为变化声明：与现状「failed 不 flush」不同，新设计消息**会**投递到未压缩的近满上下文，可能触发 pi 的 pre-prompt auto-compact（[:895](../../node_modules/@earendil-works/pi-coding-agent/dist/core/agent-session.js)）由其自治处理；压缩失败本身已有 message.error 气泡提示可重试 | 消息不丢优先；用户可 /compact 重试 |
 | **defer steer 条目滞留**（提交后 turn abort/error，pi 不 drain steeringQueue） | 气泡保持 pending、defer 分区条目保留（本地态，断连不清；非错误态）；消息在 pi 内存队列不丢 | 自动：未来任一 prompt 的迭代边界 drain 投递时经 defer 分区 FIFO 匹配收口（D5.4，匹配基准不依赖 queueStates 快照） |
@@ -384,7 +385,7 @@ ServerMessageMap += {
 | **P1 发送协议闭环** | runtime 拒绝转译（双字符串 → reason 分型）+ send.rejected reason/clientUuid 扩展 + renderer 对 **reason='compacting'** 兜底入队（复用现有 compactQueue + badge；'busy'/'processing' 维持现状 toast——中间态不恶化，见 D2 分阶段） | runtime: message-dispatcher.ts（catch 转译）；shared: protocol.ts（reason 联合类型 + clientUuid 字段 + message.send RPC 透传）；renderer: core useChat.ts（send.rejected handler 改造：compacting 入队 + 乐观气泡/inflight 回滚 + clientUuid 消歧） | 窗口 1（manual 压缩竞态）的用户可见症状由此消除且不依赖 occupancy 协议；窗口 3（settling）与 bash 忙的兜底**必须等 P3 的 occupancy idle 触发**，提前全量入队会静默丢消息（D2 被否③） | V2 / V6a |
 | **P2 defer 队列 + pending 气泡** | compactQueue 改名 deferQueue + **flush 机制重写**（投递确认驱动 + per-entry 记账，D5 全量：核心 = message_end(user) 处理序三分支——defer 分区 FIFO 文本匹配优先于现有 inflight 计数与腿 2，后两者零改动）+ pending 气泡组件 + 撤销（未提交态）。**入队条件本阶段仍仅 compacting**（与 P1 一致——sendRoute 全量路由是 P3 产物，提前扩到 settling/bash 会让队列等不到 flush 触发，见 D2 被否③）；flush 触发仍为 session.compacted | renderer: useCompactQueue.ts（重构+改名，符号清扫按 C-proc-10 批量同步 docs 与测试）、useChat.ts、Message/气泡组件、i18n；core: chat/effects/registry.ts（message_end(user) 入口挂三分支处理序） | 失败 B 修复（确认驱动 + 编排器语义）独立于协议；pending 气泡让队列可见性先到位 | V1 / V3 / V7 / V3 两个回归（部分失败 + 滞留边界） |
 | **P3 occupancy 状态机 + 协议** | shared 协议 + message-bus state topic + interpreter 状态机（**十一挂点**：成功路径 #1-7 挂 interpreter，失败路径 #8/#9/#11 挂 message-dispatcher、#10 挂 lifecycle/onSessionExit 收敛链，见 D3 表）+ renderer sessionPhase 投影（替换 isActive/isCompacting 拼装，发送分发器 D6 落地；flush 触发切 occupancy idle；D2 兜底扩到全 reason） | shared: protocol.ts；runtime: event-interpreter.ts、message-bus.ts、message-dispatcher.ts（#8/#9/#11 挂点 + bash 维度 #7）、session-service / lifecycle（#10 session.exited/forceQuit/respawn 全复位）；renderer: chat store 投影、composer dispatch | 协议改动全链路一次到位；renderer 拼装模式的替换以 occupancy 可用为前提 | V4 / V5 / P-3 |
-| **P4 ActivityStrip 展示统一** | 三处指示合并 + 发送位四态 + TurnMeta 占位迁移 + CompactQueueBadge 移除 + fork notice 基线核对 | renderer: MessageStream.vue、useMessageStreamNotices.ts、ActivityStrip（新）、Composer.vue、useNoticeStack.ts | 展示层收口依赖 P3 的 sessionPhase 单一数据源 | V4 / V5 视觉断言 |
+| **P4 ActivityStrip 展示统一** | 三处指示合并 + 发送位四态 + TurnMeta 占位迁移 + CompactQueueBadge 移除 + fork notice 基线核对 | renderer: MessageStream.vue、useMessageStreamNotices.ts（2026-09-11 改名 message-stream-layout.ts）、ActivityStrip（新）、Composer.vue、useNoticeStack.ts（2026-09-09 v9 已删除） | 展示层收口依赖 P3 的 sessionPhase 单一数据源 | V4 / V5 视觉断言 |
 
 **待验证检查点**（设计阶段无法确定，诚实留给实施期）：
 - P-1 settling 时长分布（V8）——settling 展示形态的最终校准。
@@ -396,3 +397,17 @@ ServerMessageMap += {
 - `removeQueuedTextFromSnapshot` 对「快照中不存在的实例」的幂等性【已核实 2026-09-05 u4a 期】：includes→filter 模式天然幂等——无快照/无维度/idx===-1 三处早退，命中后 filter 不可变写，对不存在实例调用 no-op 不抛错；ID1-ID3 单测锁定（effects-defer-confirmation.test.ts）。
 
 **迁移期双轨收口**：P3 落地前 renderer 仍消费 session.compacting/compacted（P1/P2 兼容现状）；P3 落地时 isCompacting 判定切到 occupancy 派生、setCompacting 通路废弃；P4 清理 TurnMeta 占位与 CompactQueueBadge。全程每阶段结束跑受影响模块增量测试 + 上述对应验收场景。
+
+---
+
+## 6. 实施状态：session-dead 结构性修复的挂点收敛落地记录（2026-09-11）
+
+> 本文 D3 十一挂点的统一写原语方案，被 [session-dead-structural-fixes](session-dead-structural-fixes.md)（B1 忙碌状态写侧分叉修复）吸收为其 D2 决策的实施载体并完成收敛。本节为实施落地记录（C-proc-10），不改写上文设计内容。
+
+**挂点收敛完成**：`updateSessionOccupancy`（本文 D3 的幂等写原语）自 session-dead-structural-fixes u2 起降级为 `applySessionOccupancyTransition`（event-interpreter.ts）的内部机制；u3b 完成 14+ 挂点全量迁移（interpreter #2-#6、dispatcher #1/#7-#9/#11、deliverText 置位、agent_end/agent_settled 副作用、onSessionExit 全复位、A1 拒绝反转 → `reject-processing`/`reject-other` 行），grep 全量复核 `updateSessionOccupancy(` 直调点清零、三布尔直写点清零（实施期检查点③销账）。原语内部原子完成「合并 occupancy 三维 → 按封闭转移表派生三布尔 → 幂等比较 → state-topic 广播」，本文 §3「只写一边」的漂移写点结构上不可能再出现。
+
+**announce-idle 收编**：§5 检查点登记的 registerSession idle 宣告帧特例（Gate B V6b④——原刻意绕开 `updateSessionOccupancy` 直接 publish，因初值即 idle 会被全等去重短路）收编为转移表封闭枚举行 `announce-idle`：语义 = 强制广播当前投影、跳过全等去重（内部合并/派生均为 no-op），广播走原语既有 state-topic 通路（实时广播 + 快照写入/重订阅回放双腿保留，occupancy-runtime 测试 Part D「重订阅回放必达」断言为回归锚）。原语由此成为 occupancy 广播的唯一出口，防回潮守卫无需豁免名单。
+
+**readonly 防回潮**：三布尔 `isGenerating / isCompacting / isBashRunning` 在 `IManagedSessionView`（runtime types.ts）改 readonly 派生存储，唯一写点 = 原语（经 `SessionOccupancyStateStore` 可变写视图，types.ts 定义）——绕开原语的直写在编译期红（TS2540）。u3c 收口时测试 fixture 的 14 处运行期置位/复位直写（occupancy-runtime / message-dispatcher-bash-race / completion-backflow 及 e2e / session-service-test-env / send-queue / session-delivery-injection）全部改为经原语对应转移行，生产 src 零直写。
+
+**约束登记**：本收敛以「session 忙闲状态单写原语」登记为 [C-data-19](../constraints.md)（docs/constraints.json；scope = `packages/runtime/src/services/session/**`；权威源 = 本文档 + event-interpreter.ts；执行 = review + 编译期 readonly + grep 守卫），与同族先例 C-data-04 同一 enforcement 通路。settling 预检裁决（计忙拒绝入队）与转移表全行清单见 session-dead-structural-fixes 设计文档 §3.3 D2。

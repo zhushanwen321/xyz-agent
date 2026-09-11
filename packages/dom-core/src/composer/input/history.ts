@@ -1,5 +1,5 @@
 /**
- * composer 输入历史导航 —— core/domain/composer/input/history.ts（W2）。
+ * composer 输入历史导航 —— packages/dom-core/src/composer/input/history.ts（W2）。
  *
  * 定位：迁自 renderer useComposerHistory.ts。shell 风格 ↑/↓ 翻阅已发送消息。
  *

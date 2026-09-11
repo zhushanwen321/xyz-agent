@@ -23,13 +23,11 @@
         />
       </div>
 
-      <!-- 类型 -->
-      <div>
-        <Label class="mb-1.5 block text-[11px] font-semibold text-neutral-mid">
-          {{ t('settings.providerEdit.fieldType') }}
-          <span class="normal-case tracking-normal">{{ t('settings.providerEdit.fieldTypeHint') }}</span>
-        </Label>
-        <Select v-model="form.api">
+      <!-- 类型 + 端点（D5 派生展示，逻辑见 provider-catalog-display.ts）：catalog 类型为只读派生文案、端点为「自定义网关」可选框；custom 照旧（provider 级 api/baseUrl 是定义权威） -->
+      <div data-testid="provider-edit-type-field">
+        <Label class="mb-1.5 block text-[11px] font-semibold text-neutral-mid">{{ t('settings.providerEdit.fieldType') }}<span v-if="!isCatalog" class="normal-case tracking-normal">{{ t('settings.providerEdit.fieldTypeHint') }}</span></Label>
+        <p v-if="isCatalog" data-testid="provider-edit-api-derived" class="text-[12px] text-neutral-fg">{{ catalogApiText }}</p>
+        <Select v-else v-model="form.api">
           <SelectTrigger class="h-9">
             <SelectValue :placeholder="t('settings.providerEdit.selectTypePlaceholder')" />
           </SelectTrigger>
@@ -41,10 +39,16 @@
         </Select>
       </div>
 
-      <!-- Base URL -->
       <div>
-        <Label class="mb-1.5 block text-[11px] font-semibold text-neutral-mid">{{ t('settings.providerEdit.fieldBaseUrl') }}</Label>
-        <Input v-model="form.baseUrl" placeholder="https://api.anthropic.com" />
+        <Label class="mb-1.5 block text-[11px] font-semibold text-neutral-mid">{{ isCatalog ? t('settings.providerEdit.fieldEndpoint') : t('settings.providerEdit.fieldBaseUrl') }}</Label>
+        <template v-if="isCatalog">
+          <Input :model-value="endpointDraft" data-testid="provider-edit-endpoint" :placeholder="t('settings.providerEdit.fieldEndpointPlaceholder')" @update:model-value="onEndpointInput" />
+          <p class="mt-1 text-[10px] text-neutral-dim" data-testid="provider-edit-endpoint-hint">{{ endpointHint }}</p>
+        </template>
+        <template v-else>
+          <Input v-model="form.baseUrl" placeholder="https://api.anthropic.com" />
+          <p class="mt-1 text-[10px] text-neutral-dim">{{ t('settings.providerEdit.baseUrlKeepHint') }}</p>
+        </template>
       </div>
 
       <!-- 凭证区（B-1：按 authMethod 条件化——oauth → OAuth 状态区 + 形态切换；
@@ -201,17 +205,19 @@
         </Button>
       </div>
 
-      <!-- Coding Plan 额度查询 -->
+      <!-- Coding Plan 额度查询（契约 v2 接线：D3 凭证来源 / D1 齐备性 / D4 开关 / D2 保存并测试） -->
       <CodingPlanSection
         :fetcher-id="quotaFetcherId"
         :fetcher-options="quotaFetcherOptions"
         :enabled="quotaEnabled"
         :cookie-input="quotaCookieInput"
         :api-key-input="quotaApiKeyInput"
-        :api-key-configured="quotaApiKeyConfigured"
+        :credential-source="quotaCredentialSource"
+        :provider-credential-available="quotaProviderCredentialAvailable"
+        :provider-credential-pending-save="quotaProviderCredentialPendingSave"
         :workspace-input="quotaWorkspaceInput"
-        :workspace-configured="quotaWorkspaceConfigured"
         :needs-workspace="quotaNeedsWorkspace"
+        :readiness="quotaReadiness"
         :test-status="quotaTestStatus"
         :test-error-msg="quotaTestError"
         :quota-row="quotaData"
@@ -219,31 +225,25 @@
         :is-cookie-auth="quotaIsCookieAuth"
         :configuring="quotaConfiguring"
         :configure-error-msg="quotaConfigureError"
-        :api-key-set="!!provider?.apiKeySet || !!provider?.quota?.apiKeySet"
-        :cookie-set="!!provider?.quota?.cookieSet"
         :auth-kinds="quotaAuthKinds"
         :oauth-ready="oauthPresent"
         :test-fail-reason="quotaTestFailReason"
         :help-url="quotaHelpUrl"
         :help-text="quotaHelpText"
-        @select-fetcher="quotaSelectFetcher"
-        @toggle-enabled="quotaToggleEnabled"
-        @test-query="quotaTestQuery"
-        @save-cookie="quotaSaveCookie"
-        @save-api-key="quotaSaveApiKey"
-        @save-workspace="quotaSaveWorkspace"
+        @update:fetcher-id="quotaFetcherId = $event"
+        @update:enabled="quotaSetEnabled"
+        @update:credential-source="quotaCredentialSource = $event"
+        @save-and-test="quotaSaveAndTest"
         @update:cookie-input="quotaCookieInput = $event"
         @update:api-key-input="quotaApiKeyInput = $event"
         @update:workspace-input="quotaWorkspaceInput = $event"
       />
 
-      <!-- 测试连接 / 自动发现（纯展示块抽为 ProviderTestDiscoverSection，编排仍在 useProviderEdit） -->
+      <!-- 测试连接 / 自动发现（纯展示块抽为 ProviderTestDiscoverSection，编排仍在 useProviderEdit）。
+           props 经 useCatalogDisplay().testDiscoverProps 整体接线（含 M3b 的 providerKind /
+           testResults / testError / providerBaseUrl 4 项），派生来源见 provider-catalog-display.ts。 -->
       <ProviderTestDiscoverSection
-        :testing="testing"
-        :discovering="discovering"
-        :test-result="testResult"
-        :discover-result="discoverResult"
-        :model-count="localModels.length"
+        v-bind="testDiscoverProps"
         @test="testConnection"
         @discover="autoDiscover"
       />
@@ -359,13 +359,12 @@ import {
 import { matchQuotaPreset } from '@xyz-agent/shared'
 
 import type { ProviderInfo } from '@xyz-agent/shared'
-import {
-  useProviderEdit,
-} from '@xyz-agent/core'
+import { useProviderEdit, API_KEY_CLEAR_SENTINEL } from '@xyz-agent/core'
 import { useQuotaConfigureFactory as useQuotaConfigure } from '../injection-keys'
 import CodingPlanSection from '../coding-plan/CodingPlanSection.vue'
 import ModelListSection from '../common/ModelListSection.vue'
 import ProviderTestDiscoverSection from './ProviderTestDiscoverSection.vue'
+import { useCatalogDisplay } from './provider-catalog-display.js'
 import { useSettingsToast as useToast } from '../injection-keys'
 
 const props = defineProps<{
@@ -411,10 +410,12 @@ const {
   enabled: quotaEnabled,
   cookieInput: quotaCookieInput,
   apiKeyInput: quotaApiKeyInput,
-  apiKeyConfigured: quotaApiKeyConfigured,
+  credentialSource: quotaCredentialSource,
+  providerCredentialAvailable: quotaProviderCredentialAvailable,
+  providerCredentialPendingSave: quotaProviderCredentialPendingSave,
   workspaceInput: quotaWorkspaceInput,
-  workspaceConfigured: quotaWorkspaceConfigured,
   needsWorkspace: quotaNeedsWorkspace,
+  readiness: quotaReadiness,
   testStatus: quotaTestStatus,
   testError: quotaTestError,
   testFailReason: quotaTestFailReason,
@@ -426,25 +427,19 @@ const {
   helpText: quotaHelpText,
   configuring: quotaConfiguring,
   configureError: quotaConfigureError,
-  toggleEnabled: quotaToggleEnabled,
-  selectFetcher: quotaSelectFetcher,
-  saveCookie: quotaSaveCookie,
-  saveApiKey: quotaSaveApiKey,
-  saveWorkspace: quotaSaveWorkspace,
-  testQuery: quotaTestQuery,
+  setEnabled: quotaSetEnabled,
+  saveAndTest: quotaSaveAndTest,
 } = quotaFactory(matchedPreset, toRef(props, 'provider'))
 
-// 业务编排全在 composable
+// 业务编排全在 composable。整份返回值留作 edit：展示接线 composable 从这里读 test 状态与模型数
+// （test/discover 结果不再逐个解构到本组件——第 1 轮抽走展示逻辑后本组件行数余量已用尽）。
+const edit = useProviderEdit(toRef(props, 'provider'), { t })
 const {
   form,
   newModel,
   localModels,
   headerRows,
   showKey,
-  testing,
-  discovering,
-  testResult,
-  discoverResult,
   showAddModel,
   saving,
   actionError,
@@ -465,7 +460,24 @@ const {
   addHeader,
   removeHeader,
   syncHeadersFromRows,
-} = useProviderEdit(toRef(props, 'provider'), { t })
+} = edit
+
+// R4：providerCredentialPendingSave 是 carry-in ref（useQuotaConfigure 的输入只有 preset + providerRef，
+// 看不到 provider 表单草稿），由本组件按 §7.4 判定式写入——漏接则「已填未保存」文案区分不生效。
+// 判定式必须排除清除哨兵：用户点「清除」时 form.apiKey === API_KEY_CLEAR_SENTINEL（非空但语义是
+// 无凭据），只用 `!== ''` 会显示与事实相反的「已填写，保存后即可查询」。
+watch(
+  () => form.apiKey,
+  (v) => {
+    quotaProviderCredentialPendingSave.value = v !== '' && v !== API_KEY_CLEAR_SENTINEL
+  },
+  { immediate: true },
+)
+
+// catalog 展示字段（类型只读派生文案 + 端点自定义网关；设计 D5）+ 测试连接区 props 接线（M3b）
+// ——逻辑在同目录 composable（受本组件行数约束抽出；runtime 已下发派生值，此处只做展示转译）
+const { apiText: catalogApiText, endpointDraft, endpointHint, onEndpointInput, syncBeforeSave, testDiscoverProps } =
+  useCatalogDisplay(toRef(props, 'provider'), edit, t, isCatalog)
 
 // ── B-1 凭证区条件化（需 form 已就绪，故置于 useProviderEdit 之后） ──
 
@@ -514,7 +526,13 @@ provide('modelListDeps', {
   removeModel,
   expandedCompat,
   toggleCompatExpand,
-  providerApi: computed(() => form.api),
+  // providerApi（ModelListSection 据此选 compat 字段集，design D5 消费点表）：
+  // catalog 的 provider 级协议 = runtime 派生值（ProviderInfo.api；混合协议 → undefined），
+  // **不取 form.api**——composable 对 catalog 的回填是 `p.api ?? 'anthropic-messages'`
+  // （三值 Select 历史兜底，对 catalog 无用户语义），拿它会把混合 provider 误判成
+  // anthropic-messages 的 compat 字段集；undefined 时 ModelListSection 走通用字段集，
+  // 并由模型自身 api 回落（见 ModelListSection compat 判定）。
+  providerApi: computed(() => isCatalog.value ? props.provider?.api : form.api),
 })
 
 // dirty 上抛父组件（展开切换守卫）。immediate 让父组件初始即知当前 dirty 态
@@ -532,6 +550,9 @@ function onAddModel(): void {
 
 /** 保存成功 → toast 反馈 + 上抛 @saved（父组件收起展开行；状态经 onProviders 订阅推回） */
 async function onSave(): Promise<void> {
+  // catalog 端点按输入框归一：form.baseUrl 初值是 runtime 派生端点（展示信息，不是用户网关），
+  // 未改动直接保存会把它当网关写回并冻结成覆盖式网关——非空 = 设置网关 / 空 = 显式清除网关
+  syncBeforeSave()
   const result = await save()
   if (result.ok) {
     toastInfo(t('settings.saved'))

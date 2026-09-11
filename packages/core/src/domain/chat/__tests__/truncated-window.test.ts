@@ -58,7 +58,7 @@ function makeFixture() {
     writeSegments: vi.fn().mockResolvedValue(undefined),
     getChatStore: () => chatStore,
     getSessionStore: () => ({ applySnapshot: vi.fn(), revive: vi.fn() }),
-    toast: { error: vi.fn() },
+    toast: { error: vi.fn(), warning: vi.fn() },
     t: (k: string) => k,
     getCompactQueue: () => ({
       flush: vi.fn().mockResolvedValue(true),

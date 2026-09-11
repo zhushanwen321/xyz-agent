@@ -28,7 +28,7 @@ export interface UseGlobalShortcutsOptions {
    * （open 状态由其持有），既有调用方（测试）不注入时不注册副作用之外的破坏。
    */
   onOpenImportSession?: () => void
-  /** ⌘G 从末条 assistant 后台 fork（来自 useSidebarNew） */
+  /** ⌘G 从末条 assistant 后台 fork（来自 useSidebar） */
   forkFromLastAssistant: () => void | Promise<void>
   /** ⌘⇧G 进 composer fork 模式（来自 useSidebar） */
   enterForkModeFromLastAssistant: () => void | Promise<void>

@@ -15,21 +15,21 @@ import { onMounted, onScopeDispose, ref } from 'vue'
 import { config } from '@/api'
 
 // OAuthDialog 的 .vue 导出类型在 plain tsc 下不可用（ui 包 shim 不导出命名类型），本地定义结构兼容
-export interface ProviderOAuthDeviceInfo {
+interface ProviderOAuthDeviceInfo {
   userCode: string
   verificationUri: string
   verificationUriComplete?: string
   expiresIn?: number
 }
 
-export interface ProviderOAuthAuthUrlInfo {
+interface ProviderOAuthAuthUrlInfo {
   url: string
   callbackPort?: number
 }
 
-export type ProviderOAuthStatus = 'idle' | 'pending' | 'success' | 'error'
+type ProviderOAuthStatus = 'idle' | 'pending' | 'success' | 'error'
 
-export interface ProviderOAuthState {
+interface ProviderOAuthState {
   open: boolean
   status: ProviderOAuthStatus
   deviceInfo: ProviderOAuthDeviceInfo | null

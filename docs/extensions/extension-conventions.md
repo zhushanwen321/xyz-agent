@@ -83,7 +83,7 @@
 
 - `execute` 返回 `{ content: [...], details: {...} }` 结构
 - `details` 是 renderResult 的数据来源，不要依赖 content 文本解析
-- 错误处理分两层：内部实现函数可以 `throw`；`execute` 是 API 边界，**必须 catch 并返回 `{ isError: true }` + 错误消息**。错误消息用 `err.message`（不含堆栈），禁止把 `err.stack` 拼进 content（堆栈外泄到 LLM 上下文/持久化记录）。同时禁止 `{ content: [{ text: "错误: ..." }] }` 不带 `isError` 的**错误成功模式**（调用方无法区分成功与失败）
+- 错误处理采用 **throw 范式**（与 pi@0.84.4 实装一致：pi-agent-core `dist/agent-loop.js` `executePreparedToolCall` 对 execute 返回值只取 content/details/usage/terminate，返回值上的 `isError` 字段**被丢弃**〔`:464` 正常返回恒 `isError: false`〕；`execute` 抛出时由 pi 外层 catch 统一转 `isError: true` 的 error tool result，`:466-471`）——**内部实现函数与 `execute` 直接 `throw`，不要 catch 后在返回值里带 `isError: true`**（返回值 isError 被丢弃 = 错误被标成功）；先例：session-reader `handler-utils.ts` err() + `index.ts` execute 不 catch 原样传播。唯一纪律：错误消息用 `err.message`（不含堆栈），禁止把 `err.stack` 拼进 content（堆栈外泄到 LLM 上下文/持久化记录）；同时禁止 `{ content: [{ text: "错误: ..." }] }` 不带失败标记的**错误成功模式**（调用方无法区分成功与失败——throw 范式下由 pi 置 isError 保证）
 
 ## TUI 渲染
 

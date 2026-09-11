@@ -8,6 +8,7 @@
  *  - U15 watch 非 immediate（挂载时残留值不误注入）
  *  - U16 重复点击同命令触发（ts 变化驱动）
  *  - U18 split 双 Composer 竞争消费（仅目标 session 的 Composer 消费）
+ *  - U19/U20 SearchModal 注入按 isSkill 分流（skill 项 → insertSkillChip；缺省 → insertSlashChip）
  *
  * 策略：
  *  - 真 pinia + 真 commandStore（需观察 pendingSlash 真实值 / clearPendingSlash 真实副作用）
@@ -66,6 +67,9 @@ vi.mock('@/stores/chat', () => ({
     isCompacting: () => false,
     // [u6b] 发送位四态渲染即读 occupancy 投影（sendButtonState ← effectivePhase），mock 需提供
     sessionPhase: () => ({ turn: 'idle', compacting: false, bash: false }),
+    // [session-dead C1 方案一] Composer 挂 TurnProgressBar 读 turn 进展派生，新读口 mock 跟随
+    getMessages: () => [],
+    getOccupancy: () => ({ turn: 'idle', compacting: false, bash: false }),
   }),
 }))
 vi.mock('@/stores/session', () => ({
@@ -74,9 +78,13 @@ vi.mock('@/stores/session', () => ({
   useSessionStore: () => ({ active: undefined, list: [], applySnapshot: vi.fn() }),
 }))
 
-// ── ComposerInput mock：defineExpose 暴露 insertSlashChip 为独立 vi.fn() spy ──
+// ── ComposerInput mock：defineExpose 暴露 insertSlashChip / insertSkillChip 为独立 vi.fn() spy ──
 // 每个测试 mount 前重新生成 spy：通过 factory 读取最新 spy 引用。
-let composerInputSpies: Array<{ insertSlashChip: ReturnType<typeof vi.fn> }> = []
+// insertSkillChip 供 pendingSlash.isSkill 分流断言（搜索注入的 skill 项不走 insertSlashChip）。
+let composerInputSpies: Array<{
+  insertSlashChip: ReturnType<typeof vi.fn>
+  insertSkillChip: ReturnType<typeof vi.fn>
+}> = []
 // W4：ComposerInput 迁 ui 包（@xyz-agent/ui/features/composer），mock 目标改 ui 包路径
 vi.mock('@xyz-agent/ui/features/composer', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@xyz-agent/ui/features/composer')>()
@@ -87,9 +95,10 @@ vi.mock('@xyz-agent/ui/features/composer', async (importOriginal) => {
     emits: ['input', 'keydown', 'slash-trigger', 'file-trigger'],
     setup() {
       const insertSlashChip = vi.fn()
-      const spy = { insertSlashChip }
+      const insertSkillChip = vi.fn()
+      const spy = { insertSlashChip, insertSkillChip }
       composerInputSpies.push(spy)
-      return { insertSlashChip }
+      return { insertSlashChip, insertSkillChip }
     },
     template: '<div data-testid="composer-input" />',
     }),
@@ -122,15 +131,16 @@ const otherStubs = {
   QueueBubble: SIMPLE,
 }
 
-/** mount Composer，返回 wrapper + 最近一次 ComposerInput 的 insertSlashChip spy */
+/** mount Composer，返回 wrapper + 最近一次 ComposerInput 的 insertSlashChip / insertSkillChip spy */
 function mountComposer(props: { sessionId: string | null; variant?: 'panel' | 'landing' }) {
   const wrapper = mount(Composer, {
     props,
     global: { stubs: otherStubs },
   })
   const spy = composerInputSpies.at(-1)?.insertSlashChip
-  if (!spy) throw new Error('ComposerInput spy 未生成')
-  return { wrapper, spy }
+  const skillSpy = composerInputSpies.at(-1)?.insertSkillChip
+  if (!spy || !skillSpy) throw new Error('ComposerInput spy 未生成')
+  return { wrapper, spy, skillSpy }
 }
 
 // ───────────────────────── U12 匹配时注入 + 注入顺序 ─────────────────────────
@@ -260,5 +270,61 @@ describe('Composer slash 注入 watch（Wave C）', () => {
     expect(spy1.mock.calls.length + spy2.mock.calls.length).toBe(1)
     // pendingSlash 最终为 null（被 s1 消费方清一次）
     expect(commandStore.pendingSlash.value).toBeNull()
+  })
+})
+
+// ───────────────── U19/U20 SearchModal 注入按 isSkill 分流（第三条 skill 入口合流）─────────────────
+// pi 的 skill 命令名是裸 `skill:<name>`（无前导 /），命令通路（insertSlashChip）内 `/skill:` 前缀
+// 判定为假 ⇒ 不分流会落成命令 chip。本组锁：isSkill 真 → insertSkillChip(裸名, location, icon)；
+// 缺省 → 维持 insertSlashChip(命令通路回归锁)。
+
+describe('Composer pendingSlash 按 isSkill 分流（SearchModal ⌘K 注入）', () => {
+  it('U19 isSkill:true → insertSkillChip(裸名, location, icon)，不走 insertSlashChip，通道被清', async () => {
+    const { spy: slashSpy, skillSpy } = mountComposer({ sessionId: 's1' })
+    const commandStore = useCommandStore()
+
+    commandStore.requestSlashInjection({
+      command: 'skill:code-review',
+      icon: 'star',
+      sessionId: 's1',
+      isSkill: true,
+      location: '/skills/code-review/SKILL.md',
+    })
+    await nextTick()
+
+    // 裸名（剥 `skill:` 前缀）+ location + icon 透传
+    expect(skillSpy).toHaveBeenCalledOnce()
+    expect(skillSpy).toHaveBeenCalledWith('code-review', '/skills/code-review/SKILL.md', 'star')
+    // 命令通路未被调用（不落命令 chip）
+    expect(slashSpy).not.toHaveBeenCalled()
+    expect(commandStore.pendingSlash.value).toBeNull()
+  })
+
+  it('U20 回归锁：isSkill 缺省/false → 仍走 insertSlashChip，不调 insertSkillChip', async () => {
+    const { spy: slashSpy, skillSpy } = mountComposer({ sessionId: 's1' })
+    const commandStore = useCommandStore()
+
+    commandStore.requestSlashInjection({ command: 'goal', icon: 'goal', sessionId: 's1', isSkill: false })
+    await nextTick()
+
+    expect(slashSpy).toHaveBeenCalledOnce()
+    expect(slashSpy).toHaveBeenCalledWith('goal', 'goal')
+    expect(skillSpy).not.toHaveBeenCalled()
+    expect(commandStore.pendingSlash.value).toBeNull()
+  })
+
+  it('U19b isSkill:true 且 location 缺省 → insertSkillChip(裸名, undefined, icon)（不兜底不报错）', async () => {
+    const { skillSpy } = mountComposer({ sessionId: 's1' })
+    const commandStore = useCommandStore()
+
+    commandStore.requestSlashInjection({
+      command: 'skill:code-review',
+      icon: 'star',
+      sessionId: 's1',
+      isSkill: true,
+    })
+    await nextTick()
+
+    expect(skillSpy).toHaveBeenCalledWith('code-review', undefined, 'star')
   })
 })

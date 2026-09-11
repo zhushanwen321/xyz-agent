@@ -4,7 +4,7 @@
  * 覆盖：
  * - insertSkillChip：光标处插入（insertChipAtSelection 通用机制）、dataset 完整
  *   （chipType=skill / chipName / 可选 chipLocation）、× 删除、Backspace 整块删除
- * - 多个共存（不清已存在 chip，与 insertSlashChip「最前唯一」命令语义区分）
+ * - 多个共存（不清已存在 chip，与 insertSlashChip「唯一/替换语义」命令 chip 通道区分）
  * - D2 混排解析锁定：getSegmentsFromEl 对多个 skill chip 与正文混排解析正确（既有能力补断言）
  *
  * 运行：cd packages/dom-core && npx vitest run src/composer/input/skill-chip.test.ts
@@ -119,9 +119,9 @@ describe('useComposerChipCommands insertSkillChip（D2：光标处、多个共�
     c.insertSkillChip('code-review')
     expect(c.el.querySelectorAll('.slash-chip').length).toBe(2)
     const segments = getSegmentsFromEl(c.el)
-    // 命令 chip（chipType=slash）走文本拍平，skill chip 产 skill segment
+    // D4-b：命令 chip（chipType=slash）产 slash segment，skill chip 产 skill segment
     expect(segments).toEqual([
-      { type: 'text', text: '/commit' },
+      { type: 'slash', name: 'commit' },
       { type: 'skill', name: 'code-review' },
     ])
     cleanup = c.cleanup

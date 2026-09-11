@@ -73,8 +73,17 @@ const GLOBAL_AGENTS_CANDIDATES = ['AGENTS.md', 'AGENTS.MD', 'CLAUDE.md', 'CLAUDE
  *
  * Priority:
  *  1. `process.env.XYZ_AGENT_DATA_DIR` (explicit)
- *  2. `path.resolve(process.env.PI_CODING_AGENT_DIR ?? '', '..', '..')`
- *     (PI_CODING_AGENT_DIR == <dataDir>/pi/agent, two levels up == dataDir)
+ *  2. `path.resolve(process.env.PI_CODING_AGENT_DIR ?? '', '..')`
+ *     (PI_CODING_AGENT_DIR == <dataDir>/agent, one level up == dataDir)
+ *
+ * Layout trade-off (session-root-discovery plan B, 2026-09): only the NEW
+ * layout shape is handled — one level up. An OLD-layout value
+ * (`<dataDir>/pi/agent`, pre-migration) would resolve to `<dataDir>/pi`,
+ * accepted here on purpose: in every shipped scenario the runtime injects
+ * XYZ_AGENT_DATA_DIR (priority 1 covers it), so priority 2 only serves
+ * standalone hosts already on the new layout. session-reader's
+ * discovery/env.ts strips both shapes for its diagnostics; this resolver
+ * deliberately stays single-shape (registered divergence, not a bug).
  *
  * Re-read on every handler invocation so env changes between turns/sessions
  * take effect without reloading the extension.
@@ -83,7 +92,7 @@ function resolveDataDir(): string {
   if (process.env.XYZ_AGENT_DATA_DIR) {
     return process.env.XYZ_AGENT_DATA_DIR
   }
-  return path.resolve(process.env.PI_CODING_AGENT_DIR ?? '', '..', '..')
+  return path.resolve(process.env.PI_CODING_AGENT_DIR ?? '', '..')
 }
 
 /**

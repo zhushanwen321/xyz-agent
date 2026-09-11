@@ -251,7 +251,7 @@ import { Button } from '@/components/ui/button'
 import { HoverCard, HoverCardContent, HoverCardTrigger } from '@/components/ui/hover-card'
 import { useDetailPane, type DetailViewMode } from '@/composables/features/file-tree/useDetailPane'
 import { useCopy } from '@/composables/panel/useCopy'
-import { useComposerInjectionStore } from '@/composables/panel/composer-injection-store'
+import { composerInjectionStore } from '@/composables/panel/composer-injection-store'
 import { extToLang } from '@/composables/logic/file-type'
 import { resolvePreviewPath } from '@/lib/path-utils'
 import { MarkdownRenderer, ChatViewDepsKey } from '@xyz-agent/ui'
@@ -262,7 +262,7 @@ import { useChatViewDeps } from '@/composables/panel/useChatViewDeps'
 const { t } = useI18n()
 
 const { copied, copy } = useCopy()
-const composerInjection = useComposerInjectionStore()
+const composerInjection = composerInjectionStore
 
 /** 内容区 ref（FR-4 选区检测用） */
 const contentRef = ref<HTMLElement | null>(null)

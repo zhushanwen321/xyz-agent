@@ -25,6 +25,8 @@ import type { ServerMessage } from '@xyz-agent/shared'
 import type { WorkspaceService } from '../src/services/workspace/workspace-service.js'
 
 function makeMockSession(isGenerating: boolean): IManagedSessionView {
+  // [u3b 预检改读 occupancy] 预检输入源从三布尔改为 occupancy 投影（session-dead-structural-fixes
+  // D2）。fixture 镜像真实链路的原子同步：isGenerating=true ↔ turn='generating'。
   return {
     id: 's1',
     cwd: '/test',
@@ -38,6 +40,7 @@ function makeMockSession(isGenerating: boolean): IManagedSessionView {
     isCompacting: false,
     isBashRunning: false,
     bashRunToken: undefined,
+    occupancy: { turn: isGenerating ? 'generating' : 'idle', compacting: false, bash: false },
   }
 }
 

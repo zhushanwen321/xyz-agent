@@ -22,8 +22,10 @@ import { join } from 'node:path'
 import { closeCrashJournal, initCrashJournal } from '../infra/crash-journal.js'
 import { reapOrphanPiProcesses, ORPHAN_KILL_GRACE_MS, type PsRow, type ReapOrphanOptions } from './reap-orphan-pi.js'
 
-const SESSIONS_DIR = '/Users/tester/.xyz-agent/pi/sessions'
+const DATA_DIR = '/Users/tester/.xyz-agent'
 const OWN_PID = 100
+/** spawn 清单值（判据 v2：argv --extension 值与清单精确相等；形态对齐 reap-orphan-pi.test MARKERS）。 */
+const MARKER = '/Applications/TaiJi.app/Contents/Resources/extensions/pi-agent-ext'
 
 let dataDir: string
 const createdDirs: string[] = []
@@ -39,8 +41,9 @@ afterAll(() => {
   for (const dir of createdDirs) rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
 })
 
-function piCmd(sessionDir: string): string {
-  return `/opt/pi/pi --mode rpc --no-extensions --approve --session-dir ${sessionDir}`
+/** xyz spawn 的 pi 典型 argv（判据 v2 形态：--mode rpc + --no-extensions + --extension 注入段）。 */
+function piCmd(extensionPath: string = MARKER): string {
+  return `/opt/pi/pi --mode rpc --no-extensions --approve --extension ${extensionPath}`
 }
 
 function row(pid: number, ppid: number, command: string): PsRow {
@@ -67,8 +70,9 @@ function signalDiesOnProbe(): ReapOrphanOptions['signal'] {
 
 function makeOptions(rows: PsRow[], overrides?: Partial<ReapOrphanOptions>): ReapOrphanOptions {
   return {
-    sessionsDir: SESSIONS_DIR,
+    dataDir: DATA_DIR,
     ownPid: OWN_PID,
+    readSpawnMarkers: () => [MARKER],
     listProcesses: () => Promise.resolve(psStdout(rows)),
     signal: signalDiesOnProbe(),
     delay: () => Promise.resolve(),
@@ -90,7 +94,7 @@ describe('reap-orphan-pi → 崩溃台账 reaped 事件（D1 矩阵 reaped 行�
   it('① 判据命中且处置成功：一条 reaped 事件，含 pid/ppid 与 argv 判据摘要', async () => {
     initCrashJournal(dataDir)
     const result = await reapOrphanPiProcesses(makeOptions([
-      row(501, 1, piCmd(SESSIONS_DIR)),
+      row(501, 1, piCmd()),
     ]))
     await closeCrashJournal()
 
@@ -103,18 +107,19 @@ describe('reap-orphan-pi → 崩溃台账 reaped 事件（D1 矩阵 reaped 行�
     // 结构化进程身份（schema 外扩展字段经 writer spread 序列化落盘）
     expect(rec.pid).toBe(501)
     expect(rec.ppid).toBe(1)
-    // 判据摘要内嵌 detailDigest：ppid 判据 + session-dir 精确匹配说明 + argv 头部可辨识
+    // 判据摘要内嵌 detailDigest：ppid 判据说明（实现写死文案含 v1 遗留 --session-dir 措辞，
+    // 判据本体已 v2 marker 化）+ argv 头部可辨识
     const digest = String(rec.detailDigest)
     expect(digest).toContain('ppid=1')
     expect(digest).toContain('--session-dir')
     expect(digest).toContain('--mode rpc')
   })
 
-  it('④ 防误记：判据未命中（ppid=并存实例 pid / session-dir 不同目录）→ 零台账事件', async () => {
+  it('④ 防误记：判据未命中（ppid=并存实例 pid / marker 清单外值）→ 零台账事件', async () => {
     initCrashJournal(dataDir)
     const result = await reapOrphanPiProcesses(makeOptions([
-      row(601, 40842, piCmd(SESSIONS_DIR)), // 另一合法实例的活跃 pi（ppid=对方 runtime）
-      row(602, 1, piCmd('/Users/other/.pi/sessions')), // 其他数据目录的 pi（argv 不匹配）
+      row(601, 40842, piCmd()), // 另一合法实例的活跃 pi（ppid=对方 runtime）
+      row(602, 1, piCmd('/Users/other/other-ext')), // 其他实例清单外的 pi（argv marker 不匹配）
     ]))
     await closeCrashJournal()
 
@@ -126,8 +131,8 @@ describe('reap-orphan-pi → 崩溃台账 reaped 事件（D1 矩阵 reaped 行�
   it('④ 防误记：混合命中 + 自有子进程（ppid=ownPid 被防线②排除）→ 仅命中者产生事件', async () => {
     initCrashJournal(dataDir)
     const result = await reapOrphanPiProcesses(makeOptions([
-      row(701, OWN_PID, piCmd(SESSIONS_DIR)), // 本 runtime 活跃子代（不杀）
-      row(702, 1, piCmd(SESSIONS_DIR)), // 真孤儿
+      row(701, OWN_PID, piCmd()), // 本 runtime 活跃子代（不杀）
+      row(702, 1, piCmd()), // 真孤儿
     ]))
     await closeCrashJournal()
 
@@ -141,7 +146,7 @@ describe('reap-orphan-pi → 崩溃台账 reaped 事件（D1 矩阵 reaped 行�
     initCrashJournal(dataDir)
     const boom = new Error('operation not permitted')
     const result = await reapOrphanPiProcesses(makeOptions(
-      [row(801, 1, piCmd(SESSIONS_DIR))],
+      [row(801, 1, piCmd())],
       { signal: () => { throw boom } },
     ))
     await closeCrashJournal()
@@ -154,8 +159,8 @@ describe('reap-orphan-pi → 崩溃台账 reaped 事件（D1 矩阵 reaped 行�
   it('多孤儿逐一记事件：每 pid 一条，事件 pid 集与 reaped 结果一致', async () => {
     initCrashJournal(dataDir)
     const result = await reapOrphanPiProcesses(makeOptions([
-      row(901, 1, piCmd(SESSIONS_DIR)),
-      row(902, 1, piCmd(SESSIONS_DIR)),
+      row(901, 1, piCmd()),
+      row(902, 1, piCmd()),
     ]))
     await closeCrashJournal()
 

@@ -27,9 +27,23 @@ echo ""
 # [HISTORICAL] bare repo + worktree 模式下，git 读 hook 从 commondir（即 .bare/）的 hooks，
 # 不是 per-worktree 的 git-dir。曾用 --git-dir 导致 hook 写到 worktree 局部目录，git 根本不读，
 # 整个项目的 pre-commit 静默失效（2026-06-20 v3 重建审查发现）。改用 --git-common-dir。
+# [2026-09-11 独立 hooks 改造] 共享 commondir/hooks 的代价暴露：任一 worktree 重装 hooks
+# 即覆盖全部 worktree，版本错位的分支被不属于它的检查拦死（实测 14:50 extensions worktree
+# 的 C-pi-14 段覆盖后，renderer 分支含 packages/ 的 commit 全部被 208 处存量字面量拦下）。
+# 现改为 per-worktree 独立 hooks：extensions.worktreeConfig=true +
+# core.hooksPath(--worktree) 指向本 worktree 的 git-dir/hooks——worktree 级配置优先于
+# commondir 共享副本，各 worktree 各自安装互不覆盖。hooksPath 必须绝对路径（相对路径
+# 按 CWD 解析不可靠）。
+IS_WORKTREE=false
 if [ -f "$PROJECT_ROOT/.git" ]; then
-    # worktree 模式（.git 是文件）→ 用 commondir（bare repo 根），所有 worktree 共享 hook
-    GIT_DIR=$(git -C "$PROJECT_ROOT" rev-parse --git-common-dir)
+    # worktree 模式（.git 是文件）→ 本 worktree 独立 hooks
+    IS_WORKTREE=true
+    git -C "$PROJECT_ROOT" config extensions.worktreeConfig true
+    # [2026-09-11] 手动开启 extensions.worktreeConfig 时 git 不会代写 core.bare——
+    # worktree 会继承共享 config 的 core.bare=true，被当成 bare 仓库（status/show-toplevel
+    # 报 "must be run in a work tree"）。显式置 false，幂等。
+    git -C "$PROJECT_ROOT" config --worktree core.bare false
+    GIT_DIR=$(git -C "$PROJECT_ROOT" rev-parse --absolute-git-dir)
     GIT_HOOKS_DIR="$GIT_DIR/hooks"
 elif [ -d "$PROJECT_ROOT/.git" ]; then
     GIT_HOOKS_DIR="$PROJECT_ROOT/.git/hooks"
@@ -51,6 +65,21 @@ cat > "$GIT_HOOKS_DIR/pre-commit" << 'HOOK_EOF'
 # SKIP_* 环境变量仅为经明确批准的紧急逃生口，不应作为常规手段。
 
 set -e
+
+# ── [HISTORICAL] 自保护：先复制自身再 exec ──────────────────────────────────
+# bare repo + worktree 布局下 pre-commit 是**共享单槽**资源（<bare>/hooks/pre-commit）：
+# 任何 worktree 的 `pnpm install`（prepare → install-hooks.sh）都会按**该分支的模板**重写
+# 它。若重写恰好发生在某个正在执行的 hook 中间，bash 按字节偏移懒读脚本会读到错位内容，
+# 报出与真实代码无关的随机错误（2026-09-11 实测：`line 871: syntax error near unexpected
+# token 'then'`、`line 140: cho: command not found`；同一 commit 重试时两次命中，三个不同
+# 字节数 65100/66987/67901 对应三个 worktree 的模板，且每份单独 `bash -n` 均通过）。
+# 复制成私有副本再 exec，运行中的字节流不再受后续重写影响；副本退出时自删。
+if [ "${XYZ_PRE_COMMIT_REEXEC:-0}" != "1" ]; then
+    _xyz_self_copy="$(mktemp -t xyz-pre-commit.XXXXXX)"
+    cp "$0" "$_xyz_self_copy"
+    XYZ_PRE_COMMIT_REEXEC=1 exec bash "$_xyz_self_copy" "$@"
+fi
+trap 'rm -f "$0"' EXIT
 
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -161,6 +190,21 @@ if [ -n "$FRONTEND_FILES" ]; then
             fi
 
             echo -e "${GREEN}[OK] vue-tsc 类型检查通过${NC}"
+
+            # 测试 tsconfig（tsconfig.typecheck-test.json）：vitest 测试文件被默认 tsconfig
+            # 的 exclude 挡在门外，只有此处纳入 include——测试桩与生产契约漂移的唯一编译期
+            # 拦截点（残留风险 8：该脚本此前从未被任何 gate 执行，3 个测试文件的基线漂移
+            # 因此长期无信号）。
+            echo -e "${BLUE}[INFO] 执行测试类型检查（tsconfig.typecheck-test.json）...${NC}"
+
+            if ! (cd packages/renderer && npx vue-tsc --noEmit -p tsconfig.typecheck-test.json 2>&1); then
+                echo ""
+                echo -e "${RED}[ERROR] vue-tsc 测试类型检查失败（测试桩与生产契约漂移）${NC}"
+                echo -e "${RED}[原则] 无论是否本次改动引入的问题，都必须正面修复解决，不允许跳过。${NC}"
+                exit 1
+            fi
+
+            echo -e "${GREEN}[OK] vue-tsc 测试类型检查通过${NC}"
         else
             echo -e "${GREEN}[OK] 无 .vue/.ts 文件变更${NC}"
         fi
@@ -654,6 +698,45 @@ if [ "$SKIP_ALL_CHECKS" != "1" ]; then
     fi
 else
     echo -e "${YELLOW}[SKIP] runtime 子进程 env 出站契约检查已跳过${NC}"
+fi
+
+# ============================================================================
+# 引擎包边界检查（W9，subagent-engine-protocolization）
+#   ① check-engine-sdk-boundary（W1 守卫，随 W9 挂载进链——此前未挂载）：
+#     SDK 源码 + dist 不得 import @zhushanwen/subagent-core（不变量：SDK 不得
+#     import core，否则 core → SDK → core 成环）；
+#   ② check-engine-package-boundary（W9 新守卫）：packages/subagent-engine-* +
+#     pi/zcode-subagent-cli 不得依赖/导入 core 内部路径 + DoD#2（exports 无
+#     ./engines/ 子入口、barrel 无引擎重导出）。
+#   设计依据：docs/design/subagent-engine-protocolization.md §3.7 / impl-plan §2.9。
+#   注：不设独立跳过开关——新增 SKIP_* 逃生口须同步登记 AGENTS.md 的 SKIP_* 清单，
+#   故本段仅受既有 SKIP_ALL_CHECKS 总闸管辖。
+# ============================================================================
+
+ENGINE_SDK_BOUNDARY_CHECKER=".githooks/check-engine-sdk-boundary.mjs"
+ENGINE_PACKAGE_BOUNDARY_CHECKER="scripts/check-engine-package-boundary.mjs"
+
+if [ "$SKIP_ALL_CHECKS" != "1" ]; then
+    print_section "[引擎包边界检查]"
+    echo -e "${BLUE}[INFO] 运行引擎 SDK / 引擎包边界检查...${NC}"
+
+    if [ ! -f "$ENGINE_SDK_BOUNDARY_CHECKER" ] || [ ! -f "$ENGINE_PACKAGE_BOUNDARY_CHECKER" ]; then
+        echo -e "${YELLOW}[WARN] 找不到检查脚本（$ENGINE_SDK_BOUNDARY_CHECKER / $ENGINE_PACKAGE_BOUNDARY_CHECKER）${NC}"
+    else
+        node "$ENGINE_SDK_BOUNDARY_CHECKER" && node "$ENGINE_PACKAGE_BOUNDARY_CHECKER"
+        EXIT_CODE=$?
+
+        if [ $EXIT_CODE -ne 0 ]; then
+            echo ""
+            echo -e "${RED}[ERROR] 引擎包边界检查失败${NC}"
+            echo -e "${YELLOW}[INFO] 引擎包只依赖 @zhushanwen/subagent-engine-sdk；共享实现下沉 SDK（core → SDK 是合法方向）；修复指引见上方脚本输出${NC}"
+            echo -e "${RED}[原则] 无论是否本次改动引入的问题，都必须正面修复解决，不允许跳过。${NC}"
+            exit 1
+        fi
+        echo -e "${GREEN}[OK] 引擎包边界检查通过${NC}"
+    fi
+else
+    echo -e "${YELLOW}[SKIP] 引擎包边界检查已跳过${NC}"
 fi
 
 # ============================================================================
@@ -1290,15 +1373,15 @@ fi
 #   不设独立 SKIP_* 开关（R1 后惯例，总闸 SKIP_ALL_CHECKS 兜底）。
 # ============================================================================
 
-DOC_SYMBOL_STAGED=$(git diff --cached --name-only -- docs/design/ apps/electron/main/update/ scripts/check-doc-symbol-drift.mjs)
-if echo "$DOC_SYMBOL_STAGED" | grep -qE "^docs/design/|^apps/electron/main/update/|^scripts/check-doc-symbol-drift\.mjs$"; then
+DOC_SYMBOL_STAGED=$(git diff --cached --name-only -- docs/design/ apps/electron/main/update/ scripts/check-doc-symbol-drift.mjs TEST-STRATEGY.md docs/testing/)
+if echo "$DOC_SYMBOL_STAGED" | grep -qE "^docs/design/|^apps/electron/main/update/|^scripts/check-doc-symbol-drift\.mjs$|^TEST-STRATEGY\.md$|^docs/testing/"; then
     print_section "[文档-代码符号漂移守卫]"
     if [ ! -f "scripts/check-doc-symbol-drift.mjs" ]; then
         echo -e "${RED}[ERROR] 找不到 scripts/check-doc-symbol-drift.mjs（守卫脚本被删除）${NC}"
         exit 1
     fi
     if ! node scripts/check-doc-symbol-drift.mjs; then
-        echo -e "${RED}[ERROR] 文档符号漂移：设计文档引用了源码中不存在的符号（删除/改名未同步文档）——按上方 ✗ 明细修正文档后重试${NC}"
+        echo -e "${RED}[ERROR] 文档符号/路径漂移：文档引用了源码中不存在的符号或仓库路径（删除/改名未同步文档）——按上方 ✗ 明细修正文档后重试${NC}"
         echo -e "${RED}[原则] 无论是否本次改动引入的问题，都必须正面修复解决，不允许跳过。${NC}"
         exit 1
     fi
@@ -1375,6 +1458,69 @@ else
 fi
 
 # ============================================================================
+# Provider 凭据读取单通道守卫（C-proc-14/15，catalog-provider-field-authority §3.3 D3/D6）
+#   packages/runtime/src 有变更时触发：scripts/check-provider-credential-reads.mjs
+#   守卫 A——凭据直查禁令（getApiKeyForProvider / readAuthCredentials /
+#   getProviderConfig(...).apiKey，白名单 = resolver 唯一通道本体）；守卫 B——
+#   upsertProvider 直调清单（白名单 = 写入载体 / importer / 迁移链 / IConfigStore
+#   实现，堵防线载体被旁路的复发通道）。
+#   注：不设独立 SKIP_* 开关（R1 后惯例，总闸 SKIP_ALL_CHECKS 兜底）。
+# ============================================================================
+
+PROVIDER_CRED_READS_CHECKER="scripts/check-provider-credential-reads.mjs"
+
+if [ "$SKIP_ALL_CHECKS" != "1" ]; then
+    if echo "$STAGED_FILES" | grep -q "^$RUNTIME_SRC/"; then
+        print_section "[Provider 凭据读取单通道守卫]"
+        echo -e "${BLUE}[INFO] runtime 源码有变更，扫描凭据直查与 upsertProvider 直调...${NC}"
+
+        if [ ! -f "$PROVIDER_CRED_READS_CHECKER" ]; then
+            echo -e "${RED}[ERROR] 找不到 $PROVIDER_CRED_READS_CHECKER${NC}"
+            echo -e "${RED}[原则] 无论是否本次改动引入的问题，都必须正面修复解决，不允许跳过。${NC}"
+            exit 1
+        fi
+
+        node "$PROVIDER_CRED_READS_CHECKER"
+        EXIT_CODE=$?
+
+        if [ $EXIT_CODE -ne 0 ]; then
+            echo -e "${RED}[原则] 无论是否本次改动引入的问题，都必须正面修复解决，不允许跳过。${NC}"
+            exit 1
+        fi
+    else
+        echo -e "${GREEN}[OK] runtime 源码无变更，跳过 Provider 凭据读取守卫${NC}"
+    fi
+fi
+
+# ============================================================================
+# 数据布局字面量守卫（C-pi-14，设计 §10 U18）
+#   staged 命中守卫范围（packages/ apps/ scripts/ 源码 + AGENTS.md +
+#   docs/troubleshooting.md + 守卫脚本自身）时触发：
+#   scripts/check-layout-literals.mjs —— 旧布局 pi/ 兄弟层字面量（join 形态
+#   'pi','agent'|'sessions' 与路径形态 pi/agent|pi/sessions，显式排除 .pi 前缀）
+#   回流即拦截。合法持有（bundled 资源布局/迁移语义/历史证据）集中登记在
+#   守卫的 LAYOUT_LITERAL_EXEMPT 常量表（file 级 + 理由）。
+#   全量扫描毫秒级，无增量模式。不设独立 SKIP_* 开关（R1 后惯例，总闸兜底）。
+# ============================================================================
+
+LAYOUT_STAGED=$(git diff --cached --name-only -- packages/ apps/ scripts/ AGENTS.md docs/troubleshooting.md scripts/check-layout-literals.mjs)
+if echo "$LAYOUT_STAGED" | grep -qE "^(packages/|apps/|scripts/)|^AGENTS\.md$|^docs/troubleshooting\.md$"; then
+    print_section "[数据布局字面量守卫]"
+    if [ ! -f "scripts/check-layout-literals.mjs" ]; then
+        echo -e "${RED}[ERROR] 找不到 scripts/check-layout-literals.mjs（C-pi-14 守卫交付物缺失）${NC}"
+        exit 1
+    fi
+    if ! node scripts/check-layout-literals.mjs; then
+        echo -e "${RED}[ERROR] 数据布局字面量守卫未通过——旧布局 pi/ 兄弟层引用回流（C-pi-14），按上方 ✗ 明细与恢复动作处理${NC}"
+        echo -e "${RED}[原则] 无论是否本次改动引入的问题，都必须正面修复解决，不允许跳过。${NC}"
+        exit 1
+    fi
+    echo -e "${GREEN}[OK] 数据布局字面量守卫通过（C-pi-14）${NC}"
+else
+    echo -e "${GREEN}[OK] 无守卫范围变更，跳过数据布局字面量守卫${NC}"
+fi
+
+# ============================================================================
 # 全部通过
 # ============================================================================
 
@@ -1389,6 +1535,20 @@ exit 0
 HOOK_EOF
 
 chmod +x "$GIT_HOOKS_DIR/pre-commit"
+
+# [2026-09-11 独立 hooks 改造] worktree 模式：将本 worktree 的 hooksPath 指向独立目录并自检。
+# worktree 级 core.hooksPath 覆盖 commondir 共享副本，是本 worktree 隔离生效的开关本身——
+# 缺失即退回共享行为，必须显式校验，不能静默。
+if [ "$IS_WORKTREE" = true ]; then
+    git -C "$PROJECT_ROOT" config --worktree core.hooksPath "$GIT_HOOKS_DIR"
+    INSTALLED_HOOKS_PATH=$(git -C "$PROJECT_ROOT" config --worktree --get core.hooksPath 2>/dev/null || true)
+    if [ "$INSTALLED_HOOKS_PATH" != "$GIT_HOOKS_DIR" ]; then
+        echo -e "${RED}[ERROR] worktree 独立 hooksPath 设置失败（期望 $GIT_HOOKS_DIR，实得 ${INSTALLED_HOOKS_PATH:-<空>}）${NC}"
+        echo -e "${YELLOW}[FIX] 确认 extensions.worktreeConfig 已开启：git config extensions.worktreeConfig true；再重跑本脚本${NC}"
+        exit 1
+    fi
+    echo -e "${GREEN}[OK] worktree 独立 hooks 已生效：core.hooksPath=$GIT_HOOKS_DIR${NC}"
+fi
 
 # 安装后自检：生成的 pre-commit 必须含流写逃逸护栏段。
 # 防「源缺段/heredoc 生成失败」——本脚本源若缺护栏段或 heredoc 损坏，此处 exit 1 拦下。
@@ -1415,7 +1575,7 @@ echo -e "${BLUE}======================================${NC}"
 echo ""
 echo -e "${CYAN}已安装的检查项目:${NC}"
 echo -e "  ${GREEN}[+]${NC} 前端 ESLint 代码检查"
-echo -e "  ${GREEN}[+]${NC} vue-tsc 类型检查（全量，与 CI 等价）"
+echo -e "  ${GREEN}[+]${NC} vue-tsc 类型检查（全量 + 测试 tsconfig，与 CI 等价）"
 echo -e "  ${GREEN}[+]${NC} pi extensions ESLint + tsc 类型检查（extensions/ 目录）"
 echo -e "  ${GREEN}[+]${NC} pi extensions manifest & convention 检查（禁废弃 namespace / 禁 console.log / pi manifest 字段）"
 echo -e "  ${GREEN}[+]${NC} extension 结构一致性检查（分组/role/依赖台账/一层路径残留）"
@@ -1443,6 +1603,8 @@ echo -e "  ${GREEN}[+]${NC} subagent-core 依赖闭包守卫（D9-① 闭包 + �
 echo -e "  ${GREEN}[+]${NC} 文档-代码符号漂移守卫（C-proc-10：设计文档引用已删除/改名符号即拦截）"
 echo -e "  ${GREEN}[+]${NC} 消息流滚动跟随链路守卫（C-state-11：滚动到底唯一原语 + 禁 findItemIndex(scrollSize) 模式）"
 echo -e "  ${GREEN}[+]${NC} 测试 flake 卫生检查（F5 scripts.test --no-bail + F3 recursive 删除 maxRetries）"
+echo -e "  ${GREEN}[+]${NC} Provider 凭据读取单通道守卫（runtime 变更时触发：凭据直查禁令 + upsertProvider 直调清单，C-proc-14/15）"
+echo -e "  ${GREEN}[+]${NC} 数据布局字面量守卫（C-pi-14：pi/ 兄弟布局引用回流拦截，豁免集中 LAYOUT_LITERAL_EXEMPT）"
 echo ""
 echo -e "${CYAN}Hook 脚本位置:${NC} .githooks/"
 echo ""

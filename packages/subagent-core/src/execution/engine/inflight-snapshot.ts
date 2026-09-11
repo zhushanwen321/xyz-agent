@@ -26,7 +26,9 @@ import { hasLiveProcessHandle } from "../lifecycle-predicates.ts";
 // lifecycle-predicates → session-runner.getChildByRecord 读句柄记账 + 直接取
 // spawnedChildren 键集——双向仅函数体内取值（ESM 活绑定，调用期解析），模块求值序
 // 无依赖，环安全；esbuild bundle（builtin 打包）同规则成立。
-import { spawnedChildren } from "./engines/pi/session-runner.ts";
+// W3 合并改写：inproc 引擎已删，句柄记账唯一源 = engine/host/spawned-children 镜像
+//（coreSpawnedChildrenMirror().snapshot() 返回 [{recordId, ...}]，键集等价旧 Map.keys()）。
+import { coreSpawnedChildrenMirror } from "./host/spawned-children.ts";
 
 /** 在途快照（与 EnginePort.inFlightSnapshot? 返回形状一致——runtime 侧统一消费形状）。 */
 export interface InFlightSnapshot {
@@ -82,7 +84,8 @@ export function notifyInFlightChanged(): void {
 /** 双谓词过滤的绝对计数（getInFlightSnapshot 与 notifyInFlightChanged 共用）。 */
 function countInFlight(): number {
   let count = 0;
-  for (const recordId of spawnedChildren.keys()) {
+  for (const entry of coreSpawnedChildrenMirror().snapshot()) {
+    const recordId = entry.recordId;
     if (hasLiveProcessHandle(recordId) && !hasIdleTimer(recordId)) count++;
   }
   return count;

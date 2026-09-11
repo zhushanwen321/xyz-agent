@@ -24,6 +24,14 @@ import { deleteProvider } from '../provider-config-helper.js'
 import { setModelsPath } from '../../infra/pi/pi-provider-store.js'
 import { setSettingsPath, invalidateSettingsCache } from '../../infra/pi/pi-settings-store.js'
 import { PiConfigStore } from '../../infra/pi/pi-config-store.js'
+import type { IProviderCredentialResolver } from '../ports/provider-credential-resolver.js'
+
+/** 恒注入形态的 resolver 替身（D3 收口：removeProviderByKind 经 resolver() 访问器守卫；删除链场景不消费凭据，形态对齐 provider-write-side-switch.test.ts）。 */
+const stubResolver: IProviderCredentialResolver = {
+  hasProviderCredential: () => false,
+  listCredentialBackedProviderIds: () => new Set<string>(),
+  resolveProviderCredential: async () => undefined,
+}
 
 let dir: string
 let agentDir: string
@@ -46,12 +54,12 @@ function readExtrasRaw(): Record<string, unknown> {
 }
 
 function makeSvc(): ConfigService {
-  return new ConfigService('/tmp/project', configStore, undefined, extrasStore)
+  return new ConfigService('/tmp/project', configStore, undefined, extrasStore, undefined, stubResolver)
 }
 
 beforeEach(() => {
   dir = mkdtempSync(join(tmpdir(), 'provider-extras-cleanup-'))
-  agentDir = join(dir, 'pi', 'agent')
+  agentDir = join(dir, 'agent')
   mkdirSync(join(agentDir, 'config'), { recursive: true })
   process.env.XYZ_AGENT_DATA_DIR = dir
   setModelsPath(join(agentDir, 'models.json'))

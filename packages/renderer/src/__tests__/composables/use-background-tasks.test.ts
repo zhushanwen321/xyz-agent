@@ -48,9 +48,16 @@ vi.mock('@xyz-agent/core/transport/ws-client', async (importOriginal) => {
 
 // ── 共享测试基建 ─────────────────────────────────────────────
 
+/** list reply 协议形态（shared protocol.ts 'backgroundTask.tasks' 契约；corrupted 缺省 = 正常拍）。 */
+interface ListReplyShape {
+  sessionId: string
+  tasks: BackgroundTaskEntry[]
+  corrupted?: boolean
+}
+
 interface Deferred {
   sid: string
-  resolve: (tasks: BackgroundTaskEntry[]) => void
+  resolve: (reply: ListReplyShape) => void
   reject: (err: unknown) => void
 }
 
@@ -104,17 +111,17 @@ async function settle(): Promise<void> {
 
 /** listMock 发起时登记 deferred（手动控制 resolve/reject 时序）。 */
 listMock.mockImplementation((sid: string) => {
-  return new Promise<BackgroundTaskEntry[]>((resolve, reject) => {
+  return new Promise<ListReplyShape>((resolve, reject) => {
     pendingLists.push({ sid, resolve, reject })
   })
 })
 
-/** resolve 指定 sid 的最早已登记在途 list。 */
+/** resolve 指定 sid 的最早已登记在途 list（协议对象形态，对齐 backgroundTask.tasks 契约）。 */
 function resolveList(sid: string, tasks: BackgroundTaskEntry[]): void {
   const idx = pendingLists.findIndex((e) => e.sid === sid)
   if (idx < 0) throw new Error(`测试编排错误：sid ${sid} 无在途 list`)
   const [entry] = pendingLists.splice(idx, 1)
-  entry.resolve(tasks)
+  entry.resolve({ sessionId: sid, tasks })
 }
 
 /** 广播 backgroundTask:updated（真实 session 通道分发）；corrupted 缺省 = 协议 optional 缺省拍。 */

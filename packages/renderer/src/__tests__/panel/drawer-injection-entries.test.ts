@@ -97,7 +97,7 @@ vi.mock('@/stores/session', () => ({
 import DetailPane from '@/components/panel/DetailPane.vue'
 import DiffView from '@/components/panel/detail-renderers/DiffView.vue'
 import GitPanel from '@/components/panel/GitPanel.vue'
-import { useComposerInjectionStore } from '@/composables/panel/composer-injection-store'
+import { composerInjectionStore } from '@/composables/panel/composer-injection-store'
 
 beforeEach(() => {
   setActivePinia(createPinia())
@@ -116,7 +116,7 @@ describe('W3: drawer 写入入口', () => {
         },
       },
     })
-    const store = useComposerInjectionStore()
+    const store = composerInjectionStore
     const btn = wrapper.find('[data-testid="detail-inject-file"]')
     expect(btn.exists()).toBe(true)
     await btn.trigger('click')
@@ -132,7 +132,7 @@ describe('W3: drawer 写入入口', () => {
     // 简单 patch：一个 hunk 含带 newNo 的行
     const patch = '@@ -1,3 +1,4 @@\n context\n-old\n+new line\n+added\n'
     const wrapper = mount(DiffView, { props: { patch, path: 'src/foo.ts' } })
-    const store = useComposerInjectionStore()
+    const store = composerInjectionStore
 
     // 找所有有 newNo 的行号 span（cursor-pointer 的）
     const newNoSpans = wrapper.findAll('span.cursor-pointer')
@@ -147,7 +147,7 @@ describe('W3: drawer 写入入口', () => {
 
   it('U12: GitPanel 文件名注入按钮注入 path-only（target=current）', async () => {
     const wrapper = mount(GitPanel, { global: { stubs: { Input: SIMPLE } } })
-    const store = useComposerInjectionStore()
+    const store = composerInjectionStore
     const btn = wrapper.find('[data-testid="git-inject-file"]')
     expect(btn.exists()).toBe(true)
     await btn.trigger('click')

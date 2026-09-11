@@ -14,6 +14,12 @@ import { buildOutboundChildEnv } from '../spawn-env.js'
 import { findPiExecutable } from './find-pi-executable.js'
 import { getRelaySpawnEnv } from '../relay/relay-env.js'
 import { getCrashJournal } from '../crash-journal.js'
+// W9（设计 §3.7 Electron 打包态）：staged 引擎根推导 + pi 子进程注入（ROOTS +
+// 打包态执行器两键）；构造期补齐 runtime 自身发现面的 L1 env（打包态无 node_modules）
+import {
+  ensureRuntimeEngineRootsEnv,
+  getEngineRootsSpawnEnv,
+} from '../../services/session/engine-roots.js'
 
 interface ManagedProcess {
   client: RpcClient
@@ -60,6 +66,11 @@ export class ProcessManager implements IProcessManager {
   constructor(private readonly projectRoot: string) {
     // 懒初始化：不在构造函数中执行同步 I/O，避免阻塞事件循环
     // piPath 在首次 createSession 时才解析
+    // W9：runtime 自身发现面 env 补齐（幂等；staged 引擎根存在才写）——打包态无
+    // node_modules（L2 空），不补齐则 runtime ①级读引擎零命中。唯一的构造期 I/O =
+    // existsSync 一次 stat（engine-roots 推导），量级远低于「懒初始化」要规避的
+    // pi 路径扫描，且必须早于任何引擎发现调用点。
+    ensureRuntimeEngineRootsEnv(projectRoot)
   }
 
   /** 获取或解析 pi 可执行文件路径（只执行一次） */
@@ -128,6 +139,11 @@ export class ProcessManager implements IProcessManager {
     // relay server 未激活 / staged 脚本缺失 / 执行器探针失败 → 空对象（spread 无副作用，
     // 行为与现状逐字节一致）；首次调用含探针 spawn（之后 Promise 缓存，无重复开销）。
     const relayEnv = await getRelaySpawnEnv(this.projectRoot)
+    // W9 引擎 env（设计 §3.7 路径传递）：staged 引擎根绝对路径显式注入（不 cwd 探测）
+    // + 打包态执行器 XYZ_AGENT_ENGINE_NODE/ELECTRON_RUN_AS_NODE（pi 扩展宿主的
+    // process.execPath 是 pi binary，矩阵① 必须用注入执行器）。键序在 DATA_DIR 之后、
+    // options.env 之前（调用方显式配置仍可覆盖）。
+    const engineRootsEnv = getEngineRootsSpawnEnv(this.projectRoot)
     // B3 出站注入组（docs/design/env-propagation-boundary.md §5-U3）：本对象经
     // RpcClientOptions.env 传入，由 rpc-client start() 的 buildOutboundChildEnv 作为
     // extras 在过滤基座之上整体覆盖；下方 spread 键序即覆盖优先级
@@ -137,6 +153,7 @@ export class ProcessManager implements IProcessManager {
       XYZ_AGENT_DATA_DIR: getConfigDir(),
       ...pathEnv,
       ...relayEnv,
+      ...engineRootsEnv,
     }
     const client = new RpcClient({ cwd, sessionId, ...options, env: { ...injectionEnv, ...options?.env }, piCommand: piPath !== 'pi' ? piPath : undefined })
     try {
@@ -171,7 +188,10 @@ export class ProcessManager implements IProcessManager {
       const currentId = this.clientToId.get(client)
       // clientToId 无条目 = 已被 destroySession 清理（intentional destroy），跳过通知
       if (currentId === undefined) return
-      console.warn(`[process-manager] session ${currentId} process exited unexpectedly (code: ${code})`)
+      // D5①（session-dead-structural-fixes）：kill 路径全量日志 K8——异常退出收敛的观测点：
+      // 走到此处 = pi 进程自发退出（intentional destroy 已被上方 clientToId 无条目守卫拦截），
+      // 记录退出码与收敛链，供事后从 exit 143 类死亡回溯发起方。
+      console.warn(`[process-manager] session ${currentId} process exited unexpectedly (code: ${code}) (kill_source=exit_converge | who: pi exited on its own (crash / external kill), not an intentional destroy | chain: exit event -> exitCallbacks -> upper onSessionExit convergence (persist stopped + occupancy reset + session.exited))`)
       this.processes.delete(currentId)
       this.clientToId.delete(client)
       // 命名消歧：this.exitCallbacks 是 ProcessManager 的 Set<(sessionId, code, stderr) => void>
@@ -285,6 +305,11 @@ export class ProcessManager implements IProcessManager {
    */
   async destroyAll(): Promise<void> {
     const ids = Array.from(this.processes.keys())
+    // D5①（session-dead-structural-fixes）：kill 路径全量日志 K6——批量销毁含调用源与信号链
+    //（仅实际有进程时打，空表 shutdown 空转零信息量不打）。
+    if (ids.length > 0) {
+      console.warn(`[process-manager] destroyAll killing ${ids.length} session(s) [${ids.join(', ')}] (kill_source=destroy_all | who: runtime shutdown / sessionService.destroyAll | chain: fan-out per-session SIGTERM destroy)`)
+    }
     await Promise.allSettled(ids.map(id => this.destroySession(id)))
   }
 

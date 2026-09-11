@@ -1,6 +1,8 @@
 # Markdown 文件路径识别重构设计
 
 > 状态：Draft · 2026-07-20
+>
+> **历史快照（2026-09-11 补注）**：文中文件路径（如 `useMarkdownInteractions.ts`）以 2026-07-20 HEAD 为准；相关实现已于 2026-09-11 迁移或删除，指针仅作当时设计追溯。
 > 关联代码：`packages/renderer/src/composables/logic/markdown.ts`
 > 关联事故：emphasis 失效（`**折中**` 不加粗，实测同段所有 emphasis 全部失效）
 

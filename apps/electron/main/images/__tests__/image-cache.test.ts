@@ -14,8 +14,9 @@
  * - 孤儿扫描：mtime 超 30 天 + sessions 目录无对应 session 文件 → 判死删目录；
  *   活 session 目录（有文件）与新鲜孤儿目录保留；判据按文件名末段 `_` 后 uuid 段比对
  *   （U2，文件名形态 = 生产同构 `<ISO时间戳>_<uuid>.jsonl`，实测取样固化见 FIXTURE 常量）
- * - 缺省 sessionsDir 推导 = `<dataDir>/pi/sessions`（U1：不传 sessionsDir 时走真实层级，
- *   pi/agent/sessions 旧错误层级诱饵不得误活）
+ * - 缺省 sessionsDir 推导 = `<dataDir>/agent/sessions`（U1，方案 B 新布局：不传
+ *   sessionsDir 时走真实层级，pi/sessions 旧布局诱饵不得误活——见「缺省 sessionsDir
+ *   推导」describe 的负向诱饵用例）
  * - 全局软上限：超帽只清孤儿判死目录（活 session 目录豁免），mtime 老→新
  * - session 删除级联：目录删除幂等 + 端到端（U3：`<ts>_<uuid>.jsonl` 文件名 → 派生
  *   uuid → cache 目录消失）
@@ -219,17 +220,17 @@ describe('孤儿扫描（启动清扫通道②）', () => {
   })
 })
 
-describe('缺省 sessionsDir 推导 = <dataDir>/pi/sessions（U1）', () => {
-  it('不传 sessionsDir：走 <dataDir>/pi/sessions 真实层级；pi/agent/sessions 旧错误层级诱饵不得误活', () => {
+describe('缺省 sessionsDir 推导 = <dataDir>/agent/sessions（U1，方案 B 新布局）', () => {
+  it('不传 sessionsDir：走 <dataDir>/agent/sessions 真实层级；pi/sessions 旧布局诱饵不得误活', () => {
     const dd = mkdtempSync(join(tmpdir(), 'xyz-image-cache-dd-'))
     try {
-      // 真实层级（pi 直下）：含一个无关 session 文件（目录可列举、孤儿目标 id 不在其中）
-      const realSessions = join(dd, 'pi', 'sessions')
+      // 真实层级（方案 B：agent 直下）：含一个无关 session 文件（目录可列举、孤儿目标 id 不在其中）
+      const realSessions = join(dd, 'agent', 'sessions')
       mkdirSync(realSessions, { recursive: true })
       writeFileSync(join(realSessions, OTHER_FILE), '{}\n')
-      // 旧错误层级诱饵（U1 锁向）：孤儿目标的同构文件名放在 pi/agent/sessions——推导若
-      // 错查此层会误判活而不删，removed 断言即红
-      const baitDir = join(dd, 'pi', 'agent', 'sessions')
+      // 旧布局诱饵（U1 锁向，dev-0.9.17 布局改版后反转）：孤儿目标的同构文件名放在
+      // pi/sessions——推导若错查旧层会误判活而不删，removed 断言即红
+      const baitDir = join(dd, 'pi', 'sessions')
       mkdirSync(baitDir, { recursive: true })
       writeFileSync(join(baitDir, ORPHAN_FILE), '{}\n')
       // 孤儿目标：真实 sessions 无对应文件 + cache 目录 mtime 40 天

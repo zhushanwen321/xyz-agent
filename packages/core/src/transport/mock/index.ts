@@ -26,6 +26,7 @@ import type {
   ProviderSource, ProviderImportPreview, ProviderImportResult, ProviderImportedItem,
   SkillCacheInvalidatedPayload,
   ProviderId,
+  QuotaConfigurePayload,
 } from '@xyz-agent/shared'
 import { recommendedExtensions } from '@xyz-agent/shared'
 import { createSession, fixtureMessages, fixtureSessions, e2eTestSession } from './data'
@@ -1113,6 +1114,11 @@ const modelsSub = makeMockSubscription(() =>
 
 export const model = {
   onModels: (h: (models: ModelInfo[]) => void) => modelsSub.subscribe(h),
+  // 主动拉取（与 onModels 同源快照，对齐 real 侧「订阅首推 + 按需拉取」双通路契约；
+  // settings-lifecycle init 的 listModels 兜底拉取在 mock 模式依赖本方法——u17 mock 接回）
+  async listModels(): Promise<ModelInfo[]> {
+    return modelsSub.snapshot()
+  },
   async switchModel(sessionId: string, provider: ProviderId, modelId: string) {
     await sleep(TIMING.ack)
     // 回执契约与真实 api 对齐（C-pi-13）：mock 无 pi，生效值 = 请求值回显
@@ -1308,7 +1314,9 @@ export const quota = {
   async refreshQuota(_providerId: string) {
     return { data: null, lastFetchAt: null }
   },
-  async configure(_providerId: string, _enabled: boolean, _cookie?: string, _fetcher?: string, _apiKey?: string, _workspace?: string) {
+  // 签名与 real 轨（api/domains/quota.ts）同构：M2 契约收敛后为单一 payload（项目约定，
+  // 非编译强制——门面三元只在有人经门面调 configure 时生效；同构由 mock-domains.test.ts 头注释守）
+  async configure(_payload: QuotaConfigurePayload) {
     return { ok: true }
   },
 }

@@ -18,14 +18,27 @@ import type {
   SystemPromptConfig,
   TerminalConfig,
   SetProviderData,
+  ConnectionTestResultRow,
 } from '@xyz-agent/shared'
 
-/** discoverModels 的请求载荷（与 api/domains/config.ts 的 discoverModels 签名对齐）。 */
+/**
+ * discoverModels 的请求载荷（与 api/domains/config.ts 的 discoverModels 签名 + shared 协议
+ * `config.discoverModels` 字段对齐）。
+ */
 export interface DiscoverModelsRequest {
-  baseUrl?: string
+  /**
+   * 请求端点。协议形状必填（shared/protocol.ts）：discover 模式必填；
+   * test 模式由 runtime 忽略（端点回落链归 runtime），传 '' 占位。
+   */
+  baseUrl: string
   apiKey?: string
-  providerType: string
+  providerType?: string
   providerId?: string
+  /**
+   * 模式分流（缺省 'discover'，向后兼容——runtime CLI 等旧调用方零改动）：
+   * 'test' 只需 providerId（代表模型选择归 runtime，前端零推导，对齐 view-ready 原则）。
+   */
+  mode?: 'test' | 'discover'
 }
 
 /** discoverModels 的响应载荷（config.discoveredModels reply 形状）。 */
@@ -33,6 +46,12 @@ export interface DiscoverModelsResponse {
   success: boolean
   error?: string
   models?: Array<{ id: string; name?: string; contextWindow?: number }>
+  /**
+   * test 模式填：按协议分组的真实连接测试结果（每协议一条：代表模型 + 成败 + 失败原因）。
+   * 旧 runtime 不下发该字段时保持 undefined——消费方降级为整体反馈行（无逐协议行）。
+   * 行形状 SSOT = shared ConnectionTestResultRow。
+   */
+  results?: ConnectionTestResultRow[]
 }
 
 /**

@@ -67,7 +67,7 @@ vi.mock('@/components/panel/detail-renderers/CodeBlock.vue', () => ({
 }))
 
 import DetailPane from '@/components/panel/DetailPane.vue'
-import { useComposerInjectionStore } from '@/composables/panel/composer-injection-store'
+import { composerInjectionStore } from '@/composables/panel/composer-injection-store'
 
 beforeEach(() => {
   setActivePinia(createPinia())
@@ -95,7 +95,7 @@ describe('W4: DetailPane 选区 bubble（FR-4）', () => {
 
   it('U13b: bubble "引用当前" 按钮注入 path+行范围 target=current（不含 text）', async () => {
     const wrapper = mountDetailPane()
-    const store = useComposerInjectionStore()
+    const store = composerInjectionStore
     // mock window.getSelection 返回模拟选区（content 第 2-3 行）。
     // fakeRange 必须含 startContainer/endContainer —— onContentMouseup 直接访问这俩字段，
     // 缺失会让 findCodeLineIndex(node=undefined) 在 node.nodeType 抛 TypeError。
@@ -129,7 +129,7 @@ describe('W4: DetailPane 选区 bubble（FR-4）', () => {
 
   it('U13c: bubble "新对话" 按钮走 target=new', async () => {
     const wrapper = mountDetailPane()
-    const store = useComposerInjectionStore()
+    const store = composerInjectionStore
     // fakeRange 需含 startContainer/endContainer（详见 U13b 注释）
     const contentEl = wrapper.find('[data-testid="detail-content"]').element
     const fakeRange = { commonAncestorContainer: contentEl, startContainer: contentEl, endContainer: contentEl }
@@ -171,7 +171,7 @@ describe('W4: DetailPane 选区 bubble（FR-4）', () => {
       },
     })
     await wrapper.vm.$nextTick()
-    const store = useComposerInjectionStore()
+    const store = composerInjectionStore
 
     // 找 DiffView 渲染的行 div（带 data-line）。patch 有 newNo 的行：context=1, new line=2, added=3
     const lineEls = wrapper.findAll('[data-line]').filter((w) => w.attributes('data-line') !== '')

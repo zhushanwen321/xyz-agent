@@ -16,6 +16,7 @@
 
 import { shallowRef, type ShallowRef } from 'vue'
 import type { Message } from '@xyz-agent/shared'
+import { readUsage } from './readers'
 
 /** messages ref 的结构类型（兼容 Vue Ref 与裸 { value } 结构）。 */
 export type MessagesRef = { value: Map<string, ShallowRef<Message[]>> }
@@ -69,6 +70,46 @@ export function truncateMessagesFrom(
 
 /**
  * W4 H4：历史去重合并到列表头部（模块级，从 chat.ts 移入控制行数）。
+ * 终态消息 patch（message.complete 双通道单源，S4-A6 收口）。
+ *
+ * 为什么在此导出：message.complete 的两条消费链——registry 的 streaming 收口分支与
+ * complete-recovery 的 premature-timeout 恢复分支——对同一气泡应用同一组终态字段
+ * （status / usage / error / content 条件展开），此前靠注释「finalizeMessages 双通道同语义」
+ * 人肉同步。本函数把该不变量结构化：任一分支的终态字段演化只需改这一处。
+ *
+ * 只做字段 patch，不含通道各自的命中守卫（streaming 收口 vs timeoutIds 打标实体）与
+ * prematureTimeout 清标（仅恢复分支需要，调用方 spread 后追加）。外层守卫留在调用方。
+ */
+export interface TerminalMessagePatchOptions {
+  /** 末位 assistant 索引（usage 回填 / content 覆盖 / error 写入只作用于末位，turn 级聚合） */
+  lastAssistantIdx: number
+  /** stopReason === 'error'（终态取向 error vs complete） */
+  isErrorStop: boolean
+  /** pi turn 失败错误文案（追加形态：仅末位 assistant 写 Message.error） */
+  errorMessage: string | undefined
+  /** 权威最终 content（runtime 从 pi agent_end 提取；非空才覆盖客户端累积值） */
+  finalContent: string | undefined
+  /** complete 原始 payload（usage 回填读值） */
+  payload: Record<string, unknown>
+}
+
+/** 单条消息的终态 patch（纯函数；status/usage/error/content 条件展开，语义见 {@link TerminalMessagePatchOptions}）。 */
+export function terminalMessagePatch(m: Message, i: number, opts: TerminalMessagePatchOptions): Message {
+  const { lastAssistantIdx, isErrorStop, errorMessage, finalContent, payload } = opts
+  // 仅最后一条 assistant 回填 usage + content（turn 级聚合，回填到非末 assistant 语义错位）
+  const usage = i === lastAssistantIdx ? readUsage(payload) : undefined
+  const shouldOverrideContent = i === lastAssistantIdx && finalContent !== undefined && finalContent.length > 0
+  return {
+    ...m,
+    status: isErrorStop ? 'error' : 'complete',
+    ...(usage ? { usage } : {}),
+    ...(i === lastAssistantIdx && isErrorStop && errorMessage ? { error: errorMessage } : {}),
+    ...(shouldOverrideContent ? { content: finalContent } : {}),
+  }
+}
+
+/**
+ * W4 H4：全量历史去重合并到列表头部（模块级，从 chat.ts 移入控制行数）。
  *
  * [u6] 「加载更早」改走 session.history 游标翻页（crash-resilience §3.3 D4 中期）：
  * runtime 按游标返回「锚点之前的最近窗口」，页内容天然不在分区中（锚点之前的段），

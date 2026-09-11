@@ -87,6 +87,7 @@ import {
   SNAPSHOT_VERSION,
   fromRunSnapshot,
   toRunSnapshot,
+  pruneStateFilesBeyondCap,
   type RunSnapshot,
 } from "@zhushanwen/subagent-core";
 import { toErrorMessage } from "@zhushanwen/pi-ext-guards";
@@ -217,56 +218,11 @@ async function loadRunFromStateFile(filePath: string): Promise<WorkflowRun | nul
 }
 
 // ── State file retention (OR-5 ⑥b, default-on) ───────────────
-
-/** run state 文件名 glob：runId 形如 `wf-<ts>-<rand>`（lifecycle.ts 生成），只删命中者。
- *  同目录可能存在的非 state 文件（及 session JSONL——在父目录，本就不在扫描范围）永不碰。 */
-const STATE_FILE_GLOB = /^wf-.*\.jsonl$/;
-
-/**
- * 把 workflow-state 目录裁剪到 maxRuns 个最新 state 文件（mtime 升序，删最旧）。
- *
- * 只删本目录内命中 {@link STATE_FILE_GLOB} 的文件；任何失败都不抛（清理是旁路
- * 维护，不能拖垮持久化主链路）：readdir/stat 失败静默放弃本轮，单个 unlink 失败
- * （非 ENOENT）logger.warn 留证后继续删其余——ENOENT 视为并发删除竞态下的已达成
- * 目标，不告警。
- */
-async function pruneStateFilesBeyondCap(stateDir: string, maxRuns: number): Promise<void> {
-  let names: string[];
-  try {
-    names = await fs.promises.readdir(stateDir);
-  } catch (err) {
-    if (!isEnoentError(err)) {
-      const reason = toErrorMessage(err);
-      logger.warn(`[subagent-workflow] state retention: readdir ${stateDir} failed: ${reason}`);
-    }
-    return;
-  }
-  const stateFiles = names.filter((n) => STATE_FILE_GLOB.test(n)).sort();
-  if (stateFiles.length <= maxRuns) return;
-
-  // stat 全集取 mtime；allSettled 部分降级——单文件 stat 失败（并发删除 ENOENT 等）
-  // 静默跳过该文件，不阻断本轮裁剪
-  const settled = await Promise.allSettled(
-    stateFiles.map(async (name) => {
-      const full = path.join(stateDir, name);
-      return { full, mtimeMs: (await fs.promises.stat(full)).mtimeMs };
-    }),
-  );
-  const byMtimeAsc = settled
-    .flatMap((r) => (r.status === "fulfilled" ? [r.value] : []))
-    .sort((a, b) => a.mtimeMs - b.mtimeMs);
-  const victims = byMtimeAsc.slice(0, byMtimeAsc.length - maxRuns);
-  for (const victim of victims) {
-    try {
-      await fs.promises.unlink(victim.full);
-      logger.debug(`[subagent-workflow] state retention: pruned ${victim.full}`);
-    } catch (err) {
-      if (isEnoentError(err)) continue; // 并发删除已达成目标
-      const reason = toErrorMessage(err);
-      logger.warn(`[subagent-workflow] state retention: failed to delete ${victim.full}: ${reason}`);
-    }
-  }
-}
+//
+// 裁剪主体单源消费 core pruneStateFilesBeyondCap（S4-A7 收口：本地曾有一份逐段
+// 同构的私有实现，retention 语义双份各自演化是漂移隐患）；日志注入本模块
+// logger + [subagent-workflow] tag，错误字符串化用 ext-guards toErrorMessage——
+// 行为与收口前一致（差异仅经 core 单源演化时两宿主同步）。
 
 // ── JsonlRunStore ────────────────────────────────────────────
 
@@ -580,7 +536,13 @@ export class JsonlRunStore {
       if (rollbackFirstWrite) {
         const maxRuns = getEnvStateMaxRuns();
         if (maxRuns !== undefined) {
-          await pruneStateFilesBeyondCap(this.stateDir, maxRuns);
+          // 单源裁剪（core pruneStateFilesBeyondCap），注入本扩展 logger tag 与
+          // toErrorMessage（行为与本地实现收口前一致）
+          await pruneStateFilesBeyondCap(this.stateDir, maxRuns, {
+            warn: (msg) => logger.warn(`[subagent-workflow] ${msg}`),
+            debug: (msg) => logger.debug(`[subagent-workflow] ${msg}`),
+            toMsg: toErrorMessage,
+          });
         }
       }
       for (const s of settlers) s.resolve();

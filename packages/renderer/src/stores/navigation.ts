@@ -13,7 +13,7 @@ import { computed, ref } from 'vue'
 import type { NavEntry } from '@/types'
 
 /** 历史栈容量上限（D1） */
-export const MAX_ENTRIES = 50
+const MAX_ENTRIES = 50
 
 export const useNavigationStore = defineStore('navigation', () => {
   const entries = ref<NavEntry[]>([])

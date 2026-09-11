@@ -233,7 +233,7 @@ import {
 import { Collapsible, CollapsibleTrigger, CollapsibleContent } from '@/components/ui/collapsible'
 import { useAppUpdate } from '@/composables/features/settings/useAppUpdate'
 import { useToast } from '@/composables/useToast'
-import { getDataDir, openUpdateManualDir } from '@/lib/ipc'
+import { getDataDir, openUpdateManualDir } from '@/api/domains/settings'
 
 const { t } = useI18n()
 const { state, checkForUpdate, performDownload, performInstall, openFallbackUrl } = useAppUpdate()

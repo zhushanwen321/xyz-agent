@@ -27,9 +27,14 @@ import {
   type InFlightSnapshot,
 } from "../inflight-snapshot.ts";
 import type { EnginePort } from "../port.ts";
-import { registerSpawnedChildForRecord, spawnedChildren } from "../engines/pi/session-runner.ts";
-import { PiEngine } from "../engines/pi/pi-engine.ts";
-import { ZcodeEngine } from "../engines/zcode/zcode-engine.ts";
+// W3 合并改写：inproc 引擎已删——句柄记账走 host/spawned-children 镜像（register +
+// reset 测试面）；「引擎无 inFlightSnapshot 可选成员」断言改桩（EnginePort 缺席形态）。
+import {
+  killRecordChildWithEscalation,
+  registerSpawnedChildForRecord,
+  _resetCoreSpawnedChildrenMirrorForTest,
+} from "../host/spawned-children.ts";
+import { createHostBridge } from "../host/host-bridge.ts";
 
 /** 最小 fake 子进程（EventEmitter + killed/pid 字段——hasLiveProcessHandle 消费面）。 */
 function makeFakeChild(): ChildProcess & EventEmitter {
@@ -45,11 +50,9 @@ beforeEach(() => {
 });
 
 afterEach(() => {
-  // 清理本测试注册的句柄（走 close 事件路径，顺带覆盖摘除迁移点），防跨用例泄漏。
-  for (const [id, child] of [...spawnedChildren]) {
-    spawnedChildren.delete(id);
-    (child as unknown as EventEmitter).emit("close");
-  }
+  // 清理本测试注册的句柄镜像（W3 后记账在 host/spawned-children，reset 即清；close 事件
+  // 摘除路径已由「close 摘除自动触发通知」用例覆盖），防跨用例泄漏。
+  _resetCoreSpawnedChildrenMirrorForTest();
   _resetLifecycleState();
   setInFlightListener(null);
 });
@@ -75,7 +78,9 @@ describe("getInFlightSnapshot：双谓词绝对计数（D5 求值位置 = 状态
     const id = "sa-inflight-killed";
     const child = makeFakeChild();
     registerSpawnedChildForRecord(id, child);
-    (child as { killed: boolean }).killed = true;
+    // W3 镜像形态：killed 判据由镜像置死位承载（注册后改 child 引用字段不进镜像——
+    // 生产置死路径 = killRecordChildWithEscalation 杀链记账面 / 引擎反向通道）。
+    killRecordChildWithEscalation(id, "test");
     expect(getInFlightSnapshot().inFlight).toBe(0);
   });
 
@@ -124,38 +129,49 @@ describe("notifyInFlightChanged：迁移点 → 壳层监听者（同步 fire-an
     expect(second).toEqual([{ inFlight: 0 }]);
   });
 
-  it("registerSpawnedChildForRecord / close 摘除自动触发通知（迁移点接线证据）", () => {
+  it("host-bridge armIdleTimer / disarmIdleTimer 委托点自动触发通知（迁移点接线证据）", () => {
+    // W3 镜像形态：register 本身不再通知（子进程终止经引擎反向通道），core 侧唯一挂
+    // notifyInFlightChanged 的委托面 = host-bridge 的 arm/disarm（u7a 迁移点新宿主）。
     const seen: InFlightSnapshot[] = [];
     setInFlightListener((s) => seen.push(s));
+    registerSpawnedChildForRecord("sa-inflight-auto", makeFakeChild());
 
-    const child = makeFakeChild();
-    registerSpawnedChildForRecord("sa-inflight-auto", child);
-    expect(seen.at(-1)).toEqual({ inFlight: 1 });
-
-    child.emit("close");
+    const bridge = createHostBridge({
+      service: {} as Parameters<typeof createHostBridge>[0]["service"],
+      onIdleTimeout: () => undefined,
+    });
+    bridge.armIdleTimer("sa-inflight-auto", 60_000);
     expect(seen.at(-1)).toEqual({ inFlight: 0 });
+
+    bridge.disarmIdleTimer("sa-inflight-auto");
+    expect(seen.at(-1)).toEqual({ inFlight: 1 });
   });
 });
 
 describe("EnginePort.inFlightSnapshot? 可选成员缺省语义（D5：pi 不实现，zcode 实现）", () => {
-  it("pi 引擎不实现 → undefined（= 无引擎侧在途面，pi 形态由 extension 聚合上报覆盖）", () => {
-    // 经 EnginePort 接口面访问（可选成员缺席的正当形态）；具体类 PiEngine 无此声明，
-    // 消费方必须走 port 类型——本身就是「pi 不实现」契约的一部分。
-    const pi: EnginePort = new PiEngine({ getService: () => null });
+  it("未实现该成员的引擎桩 → undefined（= 无引擎侧在途面，pi 形态由 extension 聚合上报覆盖）", () => {
+    // 经 EnginePort 接口面访问（可选成员缺席的正当形态）；裸桩无此声明（W3 后 inproc
+    // pi 引擎已删，缺席形态以桩承载——zcode 真实现的断言移 zcode-subagent-cli 测试），
+    // 消费方必须走 port 类型——本身就是「缺席正当」契约的一部分。
+    const pi: EnginePort = { capabilities: () => ({ id: "pi-stub" }) } as unknown as EnginePort;
     expect(pi.inFlightSnapshot).toBeUndefined();
   });
 
-  it("zcode 引擎实现 → 同步快照；运行时未初始化（从未 run / 已 dispose）恒 0（空闲常驻≠在途）", () => {
-    const engine: EnginePort = new ZcodeEngine({ engineDataDir: () => "/tmp/zcode-inflight-test" });
+  it("实现该成员的引擎桩 → 同步快照；未初始化恒 0（空闲常驻≠在途——真实现断言在 zcode-subagent-cli 的 zcode-engine-inflight.test）", () => {
+    const engine: EnginePort = {
+      capabilities: () => ({ id: "zcode-stub" }),
+      inFlightSnapshot: () => ({ inFlight: 0 }),
+    } as unknown as EnginePort;
     expect(typeof engine.inFlightSnapshot).toBe("function");
     expect(engine.inFlightSnapshot?.()).toEqual({ inFlight: 0 });
   });
 
   it("未实现该成员的引擎对象仍满足 EnginePort（向后兼容，可选成员不强制）", () => {
     // 结构化证据：EnginePort 的既有可选成员扩展先例（listModels/validateModel/dispose）
-    // 同款——缺席成员不破坏实现关系。以 pi 引擎为真实样本断言（它只实现到 dispose 为止）。
-    const pi: EnginePort = new PiEngine({ getService: () => null });
-    expect(pi.id).toBe("pi");
+    // 同款——缺席成员不破坏实现关系（裸桩承载缺席形态）。W3 后 inproc pi 引擎已删，
+    // id 不再由引擎身份推导断言（桩无 id 字面量），能力面 id 经 capabilities() 取。
+    const pi: EnginePort = { capabilities: () => ({ id: "pi-stub" }) } as unknown as EnginePort;
+    expect(pi.capabilities().id).toBe("pi-stub");
     expect(typeof pi.capabilities).toBe("function");
     expect(pi.inFlightSnapshot).toBeUndefined();
   });

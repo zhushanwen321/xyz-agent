@@ -56,7 +56,7 @@
  * 歧义文件选择浮层。
  *
  * 触发：markdown 裸 basename（如 design.md）点击时，若 fileSearchStore 反查到多个匹配，
- * useMarkdownInteractions 的 onAmbiguous 回调设 ambiguousState → 渲染本组件。
+ * 同包 MarkdownRenderer.vue 的路径点击分支（onClick ③）设 ambiguousState → 渲染本组件。
  *
  * 交互：↑↓ 切换高亮、⏎/Tab 选中、Esc 关闭（window capture 键盘导航，与 CommandPopover 同模式）。
  * 选中后 emit('select', path)，调用方负责 selectFile + drawer.open + 清 ambiguousState。
@@ -96,6 +96,10 @@ const controlledOpen = computed({
 
 const activeIndex = ref(0)
 
+/** IME 组合态（window capture compositionstart/end 维护，对齐 contenteditable.ts composing 范式）：
+ * 与 CommandPopover 同款双保险——事件属性 e.isComposing 在部分引擎存在乱序面，需 boolean 兜底。 */
+const composingRef = ref(false)
+
 /** 取文件路径的父目录（供第二行展示，区分同名文件位置） */
 function dirPathOf(path: string): string {
   const slashIdx = path.lastIndexOf('/')
@@ -127,7 +131,13 @@ function handleKeydown(e: KeyboardEvent): boolean {
     return true
   }
   if (e.key === 'Enter' || e.key === 'Tab') {
+    // 时序契约（composer-chip-insertion-semantics 设计 D2 同款模式）：本分支多经 window
+    // capture 进入，消费 Enter/Tab 后必须 stopPropagation 截断事件向 target 的传播——
+    // 否则 capture 选中 + target 阶段 Enter 双触发。选中链路仅 emit('select')（调用方
+    // selectFile + drawer.open，无 composer 参与），截断安全。勿删。
+    if (composingRef.value || e.isComposing) return false // IME 双保险：组合中 Enter 是确认候选词，放行
     e.preventDefault()
+    e.stopPropagation()
     onSelect(list[activeIndex.value])
     return true
   }
@@ -147,7 +157,16 @@ function onWindowKeydown(e: KeyboardEvent): void {
 
 if (typeof window !== 'undefined') {
   window.addEventListener('keydown', onWindowKeydown, true)
-  onBeforeUnmount(() => window.removeEventListener('keydown', onWindowKeydown, true))
+  // composingRef 维护：组合发生在消息区外的输入面，window capture 感知组合起止
+  const onCompositionStart = (): void => { composingRef.value = true }
+  const onCompositionEnd = (): void => { composingRef.value = false }
+  window.addEventListener('compositionstart', onCompositionStart, true)
+  window.addEventListener('compositionend', onCompositionEnd, true)
+  onBeforeUnmount(() => {
+    window.removeEventListener('keydown', onWindowKeydown, true)
+    window.removeEventListener('compositionstart', onCompositionStart, true)
+    window.removeEventListener('compositionend', onCompositionEnd, true)
+  })
 }
 
 // 浮层打开/候选变化时重置高亮到第一项

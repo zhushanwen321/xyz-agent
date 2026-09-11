@@ -189,6 +189,6 @@ export interface IConfigStore {
 
   // ── 配置目录 ──
   getConfigDir(): string
-  /** pi agent 配置目录（~/.xyz-agent/pi/agent，settings.json/agents/extensions 所在地）。 */
+  /** pi agent 配置目录（<dataDir>/agent，settings.json/agents 所在地；extensions/npm 已迁 dataDir 根层）。 */
   getPiAgentDir(): string
 }

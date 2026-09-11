@@ -26,6 +26,10 @@
  *
  * 命名收尾（2026-09-03 dev-merge dev-0.9.14）：本文件由 useSidebar.ts 重命名接管原名——
  * main 侧 2026-08-31 已独立完成同一 strangler 收尾（af96fa94c），两侧合并时采纳其终态命名。
+ *
+ * 未来替换挂载实现：P4 挂载实际以 core bootstrap.ts 的 registerMountPoints 四挂载点注册表
+ * 落地（sidebar.tab / panel.header / composer.toolbar / statusbar，无 'sessions' 挂载点）；
+ * 如需替换挂载实现，走该注册表（packages/core/src/bootstrap.ts），勿另起壳侧入口。
  */
 import type { ComputedRef } from 'vue'
 import type { SessionSummary } from '@xyz-agent/shared'
@@ -44,7 +48,7 @@ import type {
   SessionEntryPort,
 } from '@xyz-agent/core'
 import { chat as chatApi, session as sessionApi, extension as extensionApi } from '@/api'
-import * as events from '@xyz-agent/core/transport/api'
+import { buildSessionApiPort } from '@/api/session-api-port'
 import { useChatStore } from '@/stores/chat'
 import { useNavigationStore } from '@/stores/navigation'
 import { usePanelStore } from '@/stores/panel'
@@ -74,24 +78,6 @@ export function resetAppBootstrap(): void {
   appBootstrapped = false
   hasConnectedBefore = false
   resetSessionListSubForTest()
-}
-
-/**
- * 构建 SessionApiPort 适配（壳把现 api/domains/session + events 适配注入 core）。
- * core 定义端口接口、壳注入实现（与 PlatformPort 同模式，D4 单一归位）。
- */
-function buildSessionApiPort(): SessionApiPort {
-  return {
-    list: () => sessionApi.list(),
-    switchSession: (id) => sessionApi.switchSession(id),
-    create: (cwd, label, presetId) => sessionApi.create(cwd, label, presetId),
-    rename: (id, label) => sessionApi.rename(id, label),
-    remove: (id) => sessionApi.remove(id),
-    removeByCwd: (cwd) => sessionApi.removeByCwd(cwd),
-    migrateImage: (p) => sessionApi.migrateImage(p),
-    onConfigSessions: (handler) =>
-      events.onGlobalType('config.sessions', (msg) => handler(msg.payload.groups)),
-  }
 }
 
 export function useSidebar() {

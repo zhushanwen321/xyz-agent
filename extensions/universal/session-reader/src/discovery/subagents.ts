@@ -4,7 +4,7 @@ import { join, basename } from 'node:path'
 import type { Entry } from '../core/parser.js'
 import type { Family, SessionRef, SubagentRef } from '../core/family.js'
 import { buildFamilyIndex, resolveFamily } from '../core/family.js'
-import { listMainSessions, listSubagentSessions, type SessionFileMeta } from './roots.js'
+import { listMainSessions, listSubagentSessions, resolveSessionRoots, type SessionFileMeta } from './roots.js'
 import { resolveWorkflows } from './workflows.js'
 
 /**
@@ -51,11 +51,7 @@ export async function buildFamilyFromFs(sessionId: string, agentDir: string): Pr
 
   // ---- 4-5. build index + resolve（sessionId 不在 byId → resolveFamily 抛 Error）----
   if (!scan.sessionIdToPath.has(sessionId)) {
-    throw new Error(
-      `session "${sessionId}" not found under ${agentDir}/sessions — ` +
-        `no main session file whose first-line header id matches. ` +
-        `Verify the sessionId or agentDir; for partial uuid, use findSessions first.`,
-    )
+    throw new Error(await formatSessionNotFound(sessionId, agentDir))
   }
   const index = buildFamilyIndex(scan.headers, scan.identities, scan.fileStats)
   const family = resolveFamily(sessionId, index)
@@ -70,6 +66,28 @@ export async function buildFamilyFromFs(sessionId: string, agentDir: string): Pr
 // ============================================================
 // buildFamilyFromFs 扫描阶段 helpers（各阶段显式传入累积器，插入顺序 = 原实现顺序）
 // ============================================================
+
+/**
+ * not-found 错误文案：列出实际扫描过的 main 候选根（U1 并入部分，design §6.1 自证能力
+ * ——「没有这条 session」与「根配错了」必须可区分，错误信息携带发现层内部状态）。
+ * 仅失败路径调用，额外一次 resolveSessionRoots 的扫描成本可接受；根过滤条件与
+ * collectMainSessions 实扫集合一致（listMainSessions = agentDir 信号包下未去重的 main 根）。
+ */
+async function formatSessionNotFound(sessionId: string, agentDir: string): Promise<string> {
+  const mainRoots = (await resolveSessionRoots({ agentDir })).filter(
+    (r) => r.source === 'main' && r.dedupedInto === undefined,
+  )
+  const lines = mainRoots.map((r) => {
+    const state = r.exists ? `${r.fileCount} file(s)` : 'not exists'
+    return `  - ${r.path} [${r.kind}] ${state}`
+  })
+  return (
+    `session "${sessionId}" not found. Scanned ${mainRoots.length} main candidate root(s):\n` +
+    `${lines.join('\n')}\n` +
+    `No main session file whose first-line header id matches. ` +
+    `Verify the sessionId or agentDir; for partial uuid, use findSessions first.`
+  )
+}
 
 /** buildFamilyFromFs 各扫描阶段的共享累积器（主函数创建，各阶段 helper 显式传入并写入） */
 interface FamilyFsScan {

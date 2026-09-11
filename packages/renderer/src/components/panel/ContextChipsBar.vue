@@ -33,7 +33,7 @@ import { FileText, Image as ImageIcon, X } from '@lucide/vue'
 import { Button } from '@/components/ui/button'
 
 /** 单条已附上下文（由父组件从 segments 派生：image → {id:path,name,type:'image'}） */
-export interface AttachedContextItem {
+interface AttachedContextItem {
   id: string
   name: string
   type: '@' | '#' | 'image'

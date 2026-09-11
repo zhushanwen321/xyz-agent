@@ -173,6 +173,79 @@ describe('dispatchMessageEvent 流式 contentBlocks 填充', () => {
     expect(lastAssistant(ctx).toolCalls![0].detail).toBe('running 3/10')
   })
 
+  // ── [bash-running-stream-output U2] output/outputRaw 条件写入 ──
+  it('tool_call_update：output/outputRaw 条件写入；字段缺省不触碰既有值', () => {
+    const ctx = makeCtx()
+    dispatchMessageEvent(ctx, SID, msg('message.message_start', { messageId: 'a1' }))
+    dispatchMessageEvent(ctx, SID, msg('message.tool_call_start', { entry: toolCallEntry({ toolCallId: 'tc1', toolName: 'bash', arguments: { command: 'npm test' } }) }))
+
+    dispatchMessageEvent(ctx, SID, msg('message.tool_call_update', { toolCallId: 'tc1', detail: 'running', output: 'step-1\n', outputRaw: '\x1b[32mstep-1\x1b[0m\n' }))
+    const tc = lastAssistant(ctx).toolCalls![0]
+    expect(tc.output).toBe('step-1\n')
+    expect(tc.outputRaw).toBe('\x1b[32mstep-1\x1b[0m\n')
+
+    // 缺 output/outputRaw 的帧（mock string detail）：条件写入不触发，既有值保留
+    dispatchMessageEvent(ctx, SID, msg('message.tool_call_update', { toolCallId: 'tc1', detail: 'running 3/10' }))
+    const tc2 = lastAssistant(ctx).toolCalls![0]
+    expect(tc2.output).toBe('step-1\n')
+    expect(tc2.outputRaw).toBe('\x1b[32mstep-1\x1b[0m\n')
+    expect(tc2.detail).toBe('running 3/10')
+
+    // 畸形 payload（output 非字符串）：readString 降级 undefined → 不写
+    dispatchMessageEvent(ctx, SID, msg('message.tool_call_update', { toolCallId: 'tc1', output: 123, outputRaw: { bad: true } }))
+    const tc3 = lastAssistant(ctx).toolCalls![0]
+    expect(tc3.output).toBe('step-1\n')
+    expect(tc3.outputRaw).toBe('\x1b[32mstep-1\x1b[0m\n')
+  })
+
+  it('tool_call_update：detail 保持现状无条件覆盖语义（缺 detail 帧清空旧值）', () => {
+    const ctx = makeCtx()
+    dispatchMessageEvent(ctx, SID, msg('message.message_start', { messageId: 'a1' }))
+    dispatchMessageEvent(ctx, SID, msg('message.tool_call_start', { entry: toolCallEntry({ toolCallId: 'tc1', toolName: 'bash', arguments: { command: 'ls' } }) }))
+    dispatchMessageEvent(ctx, SID, msg('message.tool_call_update', { toolCallId: 'tc1', detail: 'old detail' }))
+    expect(lastAssistant(ctx).toolCalls![0].detail).toBe('old detail')
+    // 缺 detail 的帧：无条件 spread 写 undefined（清空），与改动前现状一致
+    dispatchMessageEvent(ctx, SID, msg('message.tool_call_update', { toolCallId: 'tc1', output: 'x' }))
+    const tc = lastAssistant(ctx).toolCalls![0]
+    expect(tc.detail).toBeUndefined()
+    expect(tc.output).toBe('x')
+  })
+
+  it('tool_call_update → tool_call_end：end 无条件覆盖 output（running output 不影响终态）', () => {
+    const ctx = makeCtx()
+    dispatchMessageEvent(ctx, SID, msg('message.message_start', { messageId: 'a1' }))
+    dispatchMessageEvent(ctx, SID, msg('message.tool_call_start', { entry: toolCallEntry({ toolCallId: 'tc1', toolName: 'bash', arguments: { command: 'npm test' } }) }))
+    dispatchMessageEvent(ctx, SID, msg('message.tool_call_update', { toolCallId: 'tc1', detail: 'running', output: 'partial output', outputRaw: 'partial raw' }))
+    dispatchMessageEvent(ctx, SID, msg('message.tool_call_end', { entry: toolResultEntry({ toolCallId: 'tc1', toolName: 'bash', content: 'final full output', isError: false }) }))
+    const tc = lastAssistant(ctx).toolCalls![0]
+    expect(tc.status).toBe('completed')
+    expect(tc.output).toBe('final full output')
+  })
+
+  // [bash-running-stream-output U2 fix] end 无 ANSI 时清空 running outputRaw
+  it('tool_call_update → tool_call_end：end 无 ANSI 清空 running outputRaw（live ≡ reload）', () => {
+    const ctx = makeCtx()
+    dispatchMessageEvent(ctx, SID, msg('message.message_start', { messageId: 'a1' }))
+    dispatchMessageEvent(ctx, SID, msg('message.tool_call_start', { entry: toolCallEntry({ toolCallId: 'tc1', toolName: 'bash', arguments: { command: 'npm test' } }) }))
+    dispatchMessageEvent(ctx, SID, msg('message.tool_call_update', { toolCallId: 'tc1', detail: 'running', output: 'partial\n', outputRaw: '\x1b[31mred\x1b[0m\n' }))
+    // end 文本无 ANSI：normalizePiToolResult 不产出 outputRaw，但 end 有 content 须显式清空残留
+    dispatchMessageEvent(ctx, SID, msg('message.tool_call_end', { entry: toolResultEntry({ toolCallId: 'tc1', toolName: 'bash', content: 'Error: command failed', isError: true }) }))
+    const tc = lastAssistant(ctx).toolCalls![0]
+    expect(tc.outputRaw).toBeUndefined()
+    expect(tc.output).toBe('Error: command failed')
+  })
+
+  it('tool_call_update → tool_call_end：end 带 ANSI 时 outputRaw 正常写入', () => {
+    const ctx = makeCtx()
+    dispatchMessageEvent(ctx, SID, msg('message.message_start', { messageId: 'a1' }))
+    dispatchMessageEvent(ctx, SID, msg('message.tool_call_start', { entry: toolCallEntry({ toolCallId: 'tc1', toolName: 'bash', arguments: { command: 'npm test' } }) }))
+    dispatchMessageEvent(ctx, SID, msg('message.tool_call_update', { toolCallId: 'tc1', detail: 'running', output: 'partial\n', outputRaw: '\x1b[31mred\x1b[0m\n' }))
+    dispatchMessageEvent(ctx, SID, msg('message.tool_call_end', { entry: toolResultEntry({ toolCallId: 'tc1', toolName: 'bash', content: '\x1b[32mok done\x1b[0m\n', isError: false }) }))
+    const tc = lastAssistant(ctx).toolCalls![0]
+    expect(tc.outputRaw).toBe('\x1b[32mok done\x1b[0m\n')
+    expect(tc.output).toBe('ok done\n')
+  })
+
   it('sealed guard：finalizeSession 收口后 text_delta 幂等丢弃（D-010）', () => {
     const ctx = makeCtx()
     dispatchMessageEvent(ctx, SID, msg('message.message_start', { messageId: 'a1' }))

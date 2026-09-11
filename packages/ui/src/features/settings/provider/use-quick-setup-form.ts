@@ -168,20 +168,21 @@ export function useQuickSetupForm(
     return name ? (envCheck.value[name] ?? false) : undefined
   })
 
-  /** 保存：构造 SetProviderData（I6 填 authMethod；oauth 不塞 apiKey——凭据在 auth.json） */
+  /** 保存：构造 SetProviderData（I6 填 authMethod；oauth 不塞 apiKey——凭据在 auth.json）。
+   *  防线⑥（设计 D1）：只写凭据相关字段——模板 baseUrl 是快照 artifact（pi 内置定义已自带
+   *  baseUrl/api），回传会在「非空放行」语义下写入 override、再被启动清洗剥除，形成写-剥循环；
+   *  原 `api` 键与 SetProviderData.type 字段名不匹配，是从未生效的死键，一并去掉。 */
   function onSave(): void {
     const data: SetProviderData = {
       name: template.value.name,
-      ...(template.value.api ? { api: template.value.api } : {}),
-      ...(template.value.baseUrl ? { baseUrl: template.value.baseUrl } : {}),
     }
     if (authMethod.value === 'plaintext') {
       data.apiKey = apiKeyInput.value
       data.authMethod = 'api_key'
     } else if (authMethod.value === 'env') {
-      // MF-1：空自定义变量不上送 apiKey——apiKey:'' 会触发 config-service I9 清理①
-      // （`!== undefined` 成立）静默删除 auth.json OAuth 凭据。空变量名已被 saveDisabled 挡住，
-      // 此处再守卫一层（防未来调用方绕过 disabled 直调 onSave）。
+      // MF-1：空自定义变量不上送 apiKey——apiKey 空串是「清除 models.json apiKey 键」的
+      // 哨兵信号（runtime 侧有清除语义），QuickSetup 路径不应发送。空变量名已被 saveDisabled
+      // 挡住，此处再守卫一层（防未来调用方绕过 disabled 直调 onSave）。
       if (resolvedEnvVar.value) {
         data.apiKey = `$${resolvedEnvVar.value}`
       }

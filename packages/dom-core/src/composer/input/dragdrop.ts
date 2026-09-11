@@ -1,5 +1,5 @@
 /**
- * composer composer-box 拖拽落位处理 —— core/domain/composer/input/dragdrop.ts（W2）。
+ * composer composer-box 拖拽落位处理 —— packages/dom-core/src/composer/input/dragdrop.ts（W2）。
  *
  * 定位：迁自 renderer useComposerDragDrop.ts。把拖入 composer-box 的图片文件转成 image segment
  * （复用 pasteImage 链路），非图片文件忽略。

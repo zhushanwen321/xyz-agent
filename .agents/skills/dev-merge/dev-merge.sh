@@ -13,7 +13,9 @@
 # 设计约束（SKILL.md 为编排权威，本脚本只做机械步骤）：
 # - 不自动提交未提交改动（提交是 AI 决策行为：message / 粒度 / 认知外改动检查）
 # - 不 push（push 必须用户明确授权）
-# - cleanup 拒绝删除未合并分支 / 脏 worktree，不内置 --force（force 是破坏性操作，须用户显式确认）
+# - cleanup 拒绝删除未合并分支 / 脏 worktree（脏检查在删除前由脚本 status --short 预检，rm -rf 无内建拒删）
+# - 删除用显式两步 rm -rf + worktree prune（先删目录后清登记，顺序与 git worktree remove 内部相反，
+#   后者先删登记，目录删除失败时留下登记已失、目录内 git 全废的半删态且曾被误诊，2026-09 事故后改此）
 
 set -euo pipefail
 
@@ -93,16 +95,31 @@ case "$SUBCMD" in
     is_merged || die "$CUR_BRANCH 尚未合并进 ${DEV_BRANCH}，拒绝清理。先跑 merge 子命令（或处理完冲突后 git commit 完成 merge）"
     check_clean "$DEV_DIR" "$DEV_BRANCH"
 
-    echo ">> git worktree remove $CUR_DIR"
-    # 先 cd 出待删目录（macOS 删除 cwd 所在目录后 shell cwd 悬空）
-    cd "$DEV_DIR"
-    if ! git worktree remove "$CUR_DIR" 2>/dev/null; then
-      # 不自动 clean -fd：删 untracked 是破坏性操作，须用户检视确认（脚本不内置 force，见 SKILL.md 安全语义）
-      UNTRACKED="$(git -C "$CUR_DIR" status --short || true)"
-      die "worktree 删除被 $CUR_DIR 内的文件阻止（通常为 untracked / 未 ignore 文件）。git status --short 清单：
+    # 闸 3：源 worktree 脏检查前移（tracked + untracked 一并拦，git 完好时采集、结果可信）。
+    # 删除动作是显式 rm -rf，没有 git worktree remove 的内建拒删兜底，此闸是拿掉内建检查的交换条件
+    UNTRACKED="$(git -C "$CUR_DIR" status --short)" \
+      || die "读取源 worktree 状态失败（见上方 git 报错）。尚未删除任何东西，先排查 git 状态后重跑：bash $0 cleanup $DEV_BRANCH"
+    if [[ -n "$UNTRACKED" ]]; then
+      # 不自动 clean：删未提交/未跟踪文件是破坏性操作，须用户检视确认（脚本不内置强删，见 SKILL.md 安全语义）
+      die "源 worktree 有未提交/未跟踪文件，rm -rf 会无条件删除它们，脚本拒绝继续。git status --short 清单：
 $UNTRACKED
-先检视上述文件：认知外的询问用户；确认可丢弃后执行 git -C $CUR_DIR clean -fd，再重跑 cleanup：bash $0 cleanup $DEV_BRANCH"
+先检视上述文件：本次会话产生的按提交策略处理；认知外的询问用户；确认全部可丢弃后执行 git -C $CUR_DIR clean -fd，再重跑：bash $0 cleanup $DEV_BRANCH"
     fi
+
+    # 先 cd 出待删目录（macOS 删除 cwd 所在目录后 shell cwd 悬空，后续命令无法执行）
+    cd "$DEV_DIR"
+    # 显式两步删除：先删目录、后清登记。git worktree remove 内部顺序相反（先删登记后删目录），
+    # 目录删除失败时留下半删态；本顺序下任何一步中途失败，登记与分支都未动，状态永远可从 dev 侧诊断重试
+    echo ">> rm -rf $CUR_DIR && git worktree prune（显式两步，登记不先于目录消失）"
+    if ! rm -rf "$CUR_DIR"; then
+      die "目录删除失败（见上方 rm 报错，rm 的 stderr 原样透传）。git 登记与分支均未动、dev 侧状态完好。
+排查根因（文件锁 / 权限 / 外部挂载等）并解除后，一条命令完成清理：
+rm -rf $CUR_DIR && git -C $DEV_DIR worktree prune && git -C $DEV_DIR branch -D $CUR_BRANCH
+（agent 会话注意：该命令删除会话默认 cwd 所在目录，执行后本会话 bash 报废，应作为最后一条 bash 命令）"
+    fi
+    # prune 幂等，只清"目录已丢失"的登记，不碰活跃 worktree
+    git worktree prune \
+      || die "worktree 登记 prune 失败（无破坏性：目录已删、分支未动）。恢复命令：git -C $DEV_DIR worktree prune"
     # is_merged 闸门已证明合入 dev；-D 避免依赖 upstream/HEAD 校验的不确定性，已合并与否由 is_merged 闸门保证
     git branch -D "$CUR_BRANCH" \
       || die "分支 $CUR_BRANCH 删除失败。恢复命令：git -C $DEV_DIR branch -D $CUR_BRANCH"

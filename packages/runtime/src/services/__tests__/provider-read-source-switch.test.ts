@@ -14,6 +14,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { ConfigService } from '../config-service.js'
+import { ProviderCredentialResolver } from '../auth/provider-credential-resolver.js'
 import { XyzProviderStore, type ProviderExtrasFile } from '../provider-extras-store.js'
 import { setModelsPath } from '../../infra/pi/pi-provider-store.js'
 import { setSettingsPath, invalidateSettingsCache } from '../../infra/pi/pi-settings-store.js'
@@ -37,9 +38,15 @@ function makeSvc(authIds: string[] = []): ConfigService {
   // catalog 源候选 = (auth.json keys ∪ models.json catalog keys) ∩ builtinData——
   // builtin 副本路径测试需注入 authStorage 让凭据型 catalog provider 进入聚合
   const auth = authIds.length > 0
-    ? { listCredentialIds: () => authIds } as never
+    ? { listCredentialIds: () => authIds, hasCredentialSync: () => true } as never
     : undefined
-  return new ConfigService('/tmp/project', configStore, auth, extrasStore)
+  // M2fg 恒注入形态：凭据判定经 resolver 批量 sync 版（真 PiConfigStore 读同一 models.json）
+  const resolver = new ProviderCredentialResolver({
+    authService: { getCredential: async () => undefined },
+    authStorage: auth ?? { listCredentialIds: () => [] as string[], hasCredentialSync: () => false },
+    configStore,
+  })
+  return new ConfigService('/tmp/project', configStore, auth, extrasStore, undefined, resolver)
 }
 
 function byId(svc: ConfigService): Record<string, ReturnType<ConfigService['listProviders']>[number]> {
@@ -48,7 +55,7 @@ function byId(svc: ConfigService): Record<string, ReturnType<ConfigService['list
 
 beforeEach(() => {
   dir = mkdtempSync(join(tmpdir(), 'provider-read-source-switch-'))
-  agentDir = join(dir, 'pi', 'agent')
+  agentDir = join(dir, 'agent')
   mkdirSync(join(agentDir, 'config'), { recursive: true })
   process.env.XYZ_AGENT_DATA_DIR = dir
   setModelsPath(join(agentDir, 'models.json'))

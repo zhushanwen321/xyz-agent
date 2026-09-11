@@ -17,7 +17,7 @@
 import { computed } from 'vue'
 import { getSettingsStore } from '@xyz-agent/core'
 
-export interface AuthedModelOption {
+interface AuthedModelOption {
   value: string
   label: string
 }

@@ -14,7 +14,6 @@
 // warn 一次 + 置 failed，后续 append 丢弃、close 立即返回（不静默：warn 有留痕）。
 
 import { appendFile, mkdir, open } from "node:fs/promises";
-import { readFileSync } from "node:fs";
 import { dirname } from "node:path";
 
 import { getLogger } from "../../../core/logger.ts";
@@ -203,52 +202,7 @@ function defaultWarn(msg: string): void {
 // 重放
 // ============================================================
 
-/**
- * 重放 journal：读取路径下全部事件，重放即得 AgentEvent 流（read 第②级）。
- *
- * - 文件不存在 → []（降级链语义：②级不可达不算错误，调用方落 ③级）；
- * - 损坏行跳过（追加写产物末行可能截断；跳过优于整体失败——设计 C5「三级都不 throw」）；
- * - 按 seq 稳定排序后返回（重放顺序权威是 seq，不依赖文件行序的隐式保证，§3.3.6）。
- */
-export function replayJournal(path: string): AgentEvent[] {
-  let raw: string;
-  try {
-    raw = readFileSync(path, "utf8");
-  } catch {
-    return [];
-  }
-  const lines: JournalLine[] = [];
-  for (const row of raw.split("\n")) {
-    const trimmed = row.trim();
-    if (trimmed === "") continue;
-    const parsed = parseLine(trimmed);
-    if (parsed !== undefined) lines.push(parsed);
-  }
-  lines.sort((a, b) => a.seq - b.seq);
-  return lines.map((l) => l.event);
-}
-
-/** 单行 parse + 结构 guard（v=1 + event 形状最小判别：object 且 type 为 string）。 */
-function parseLine(trimmed: string): JournalLine | undefined {
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(trimmed);
-  } catch {
-    return undefined;
-  }
-  if (typeof parsed !== "object" || parsed === null) return undefined;
-  const rec = parsed as Record<string, unknown>;
-  const event = rec.event;
-  if (rec.v !== 1 || typeof rec.ts !== "number" || typeof rec.seq !== "number") return undefined;
-  if (typeof event !== "object" || event === null || typeof (event as Record<string, unknown>).type !== "string") {
-    return undefined;
-  }
-  return {
-    v: 1,
-    ts: rec.ts,
-    taskId: typeof rec.taskId === "string" ? rec.taskId : "",
-    engineId: typeof rec.engineId === "string" ? rec.engineId : "",
-    seq: rec.seq,
-    event: event as AgentEvent,
-  };
-}
+// replayJournal/parseLine 已收编 SDK journal-io（S4 簇 6：zcode 引擎包不能 import
+// core，双包逐字等价副本单源落 SDK；此处 re-export 保 journal-replay.ts /
+// session-view-service.ts 消费路径零改动）。行格式权威仍 §3.3.6，行为逐字等价。
+export { replayJournal } from "@zhushanwen/subagent-engine-sdk";

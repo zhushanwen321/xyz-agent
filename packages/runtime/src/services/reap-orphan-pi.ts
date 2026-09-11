@@ -1,5 +1,6 @@
 /**
- * 孤儿 pi 进程收殓（docs/architecture/integrity-hardening.md §3.4 D4a/D4b，修 M6 / G4）。
+ * 孤儿 pi 进程收殓（docs/architecture/integrity-hardening.md §3.4 D4a/D4b，修 M6 / G4；
+ * 判据 v2：方案 B 布局对齐后的 spawn 清单四条合取，设计 2026-09-10 §6.12 / 实施计划 U17）。
  *
  * 背景：runtime 被 SIGKILL/OOM 后，它 spawn 的 pi 子进程与 supervisor 拉起的新 runtime
  * 不再是父子关系，无人回收——挂住的 pi 持有 API key、长 turn 继续烧 token（失败模式 F）。
@@ -8,30 +9,58 @@
  * 父进程存活的自救兜底：新 runtime 启动后延迟数秒（调用方控制，见
  * startup-background-init.ts 的 5s 定时器）扫描并回收残留 pi。
  *
- * 孤儿判据（argv，跨平台统一）——设计原文 D4a 的 env 判据（PI_CODING_AGENT_DIR）已被
- * 本机探针否决：macOS 的 `ps eww` 与 `launchctl procinfo` 均因 SIP 拿不到其他进程的
- * env（Linux 才有 /proc/<pid>/environ 可用），env 判据无法跨平台。改用 argv 判据：xyz
- * spawn 的 pi 恒为 `--mode rpc ... --session-dir <getSessionsDir()>`（argv 拼接见
- * rpc-client.ts），--session-dir 值精确等于本实例 sessions 目录——同机其他数据目录
- * （如 ~/.pi）的 pi 不匹配。
+ * 孤儿判据沿革（argv，跨平台统一）：
+ * - env 判据（PI_CODING_AGENT_DIR，D4a 原案）被本机探针在案否决：macOS 的 `ps eww` 与
+ *   `launchctl procinfo` 均因 SIP 拿不到其他进程的 env（Linux 才有 /proc/<pid>/environ
+ *   可用），env 判据无法跨平台——已死，不重开。
+ * - v1 argv 判据「--session-dir 值 ≡ getSessionsDir() 精确相等」已死：方案 B（数据布局
+ *   完整对齐 pi 0.84.x 默认布局，设计 §6.10-§6.12）删除了 --session-dir argv（pi 走
+ *   默认派生），v1 判据失去判别位。
+ * - v2（现行）= 四条合取，缺一不可（实现见 matchesOwnPiArgv / findOrphanPiRows）：
+ *   ① `--mode rpc`（防误杀用户手跑的交互式 pi）；
+ *   ② argv 含 `--no-extensions`——主判别位：xyz spawn 恒带（rpc-client buildPiArgs
+ *      首行），用户裸 pi 与 AGENTS.md 实测命令模板均不带，机器可判的硬分界；
+ *   ③ argv 中任一 `--extension`/`--skill` 值与 spawn 清单中某项精确相等。清单 =
+ *      `<dataDir>/run/pi-spawn-markers.json`（写侧 spawn-markers.ts，每次 spawn 全量
+ *      覆盖写，仅登记 xyz staged 专属路径；用户配置来源 ~/.pi/、项目 .pi/、~/.agents/
+ *      一律不进清单——登记它们 = 为误杀用户进程开门，v5 原案被活体证据否决）；
+ *   ④ ppid === 1（防线②，见下）。
+ *
+ * 原理性极限（设计 §6.12 已声明接受）：四条合取全部是 argv/ppid 可观测量的函数，等价类
+ * = 「与 xyz spawn 同形的 argv」。用户排障时从 ps 完整复制 xyz pi 的 argv 重跑并孤儿化，
+ * 与真孤儿在判据维度完全同形，原理上不可区分——接受该极限，不为此加机制。
  *
  * 误杀三重防线（D4b，缺一不可）：
- * ① --session-dir 值与本实例 getSessionsDir() 推导值【精确相等】——禁止子串/前缀
- *   匹配（防 /a/b 与 /a/bc 混淆）；dev/prod 数据目录天然不同，互不误伤；
+ * ① 判据 v2 四条合取（上）；值匹配只走 === 整 token 比较，禁止子串/前缀命中
+ *   （/a/b 不得匹配 /a/bc）；
  * ② ppid === 1（reparent 证据，跨实例保护的关键防线）。xyz 直接 spawn pi、无 wrapper，
  *   父 runtime 活着时 pi 的 ppid 恒等于该 runtime pid；父死后内核把孤儿 reparent 到
  *   init/launchd（pid 1）。因此「argv 匹配 + ppid=1」= 原父已死 = 真孤儿。为什么不用
  *   「ppid ≠ 本 runtime pid」排除法：dev 自动隔离 userData 与数据目录（main.ts dev 分支
  *   setPath，XYZ_AGENT_DATA_DIR 缺省 ~/.xyz-agent-dev），dev/prod 默认并存已天然不同
- *   目录；跨实例误杀的真实场景是 XYZ_AGENT_DATA_DIR 显式指向同一目录双开
- *   （--session-dir 同值），该场景下两实例可同时合法并存，对方的活跃 pi
- *   （ppid=对方 runtime pid）必须不杀（本机实测形态：打包版 runtime 40842 名下
- *   3 个活跃 pi，ppid=40842）。已知边界：Linux subreaper 场景
- *   （用户级 systemd 等）孤儿 reparent 到 subreaper 而非 1，此时漏收（fail-safe 方向，
- *   宁漏不误杀）。
+ *   目录；跨实例误杀的真实场景是 XYZ_AGENT_DATA_DIR 显式指向同一目录双开，该场景下
+ *   两实例可同时合法并存，对方的活跃 pi（ppid=对方 runtime pid）必须不杀（本机实测
+ *   形态：打包版 runtime 40842 名下 3 个活跃 pi，ppid=40842）。已知边界：Linux
+ *   subreaper 场景（用户级 systemd 等）孤儿 reparent 到 subreaper 而非 1，此时漏收
+ *   （fail-safe 方向，宁漏不误杀）。
  * ③ Electron 单实例锁（W0 已落地 requestSingleInstanceLock）：只排除同 userData 的
  *   第二实例；dev/prod userData 不同、并存合法，「另一合法实例的 pi」由防线②的
  *   ppid=1 判据保护，单实例锁不承担该职责。
+ *
+ * 收殓范围变化（方案 B 显式声明，设计 §6.12）：v1 判据下孤儿 subagent/relay pi 不被
+ * 收殓（其 --session-dir 指向 subagents/… ≠ 主 session 目录）；v2 下 subagent/relay pi
+ * 由 mirrorFlags 镜像主进程的 staged --extension 与 --no-extensions（session-runner.ts +
+ * argv-mirror.ts，数据源是主 pi 进程的 process.argv——subagent 由主 pi 进程内的
+ * extension spawn，其父是主 pi）→ 四条合取①②③全过，开始被收殓。方向是修复 v1 漏收
+ * （孤儿 subagent 同样烧 token），属预期改进。活跃 subagent 的 ppid = 主 pi pid（非
+ * runtime pid），不满足④，不受影响。孤儿 subagent 的收殓时序是两轮：主 pi 先被收殓/
+ * 死亡 → subagent reparent 到 ppid=1 → 下一轮 reap 收。
+ *
+ * 清单缺失 fail-safe（宁漏不误杀，方向对齐 D4b）：清单文件缺失/读不到/坏 JSON → 跳过
+ * 本轮收殓并记日志。清单读取经组合根注入（readSpawnMarkers，D6c port 纪律——清单文件
+ * io 归 infra/spawn-markers.ts 读写两侧 SSOT，services 层不 import infra），注入函数
+ * 返回 null 即触发本降级。写侧每次 spawn 全量覆盖写、mandatory 18 包恒传保证清单常态
+ * 存在且非空（§11.11）；本降级只覆盖异常态（首启前 / 磁盘故障 / 人为删除）。
  *
  * 处置：SIGTERM → 宽限（默认 2s，对齐 destroy 链 KILL_TIMEOUT_MS 惯例）→ 仍活则
  * SIGKILL；每条记日志，失败仅记日志不抛（收殓是 best-effort 兜底，不允许阻塞或击穿
@@ -93,10 +122,11 @@ export function parsePsOutput(stdout: string): PsRow[] {
  *
  * 真实 macOS/Linux ps 的 command 列不保留引号、只用空格连接，但测试与个别环境会以
  * 带引号形态呈现——分词按 POSIX 近似规则处理（引号内空格不分词，引号本身剥离）。
- * 真实 ps 不加引号时含空格的路径会被拆碎，由 matchesOwnPiArgv 的尾部精确匹配兜底。
+ * 真实 ps 不加引号时含空格的路径会被拆碎：v2 判据③要求值级精确相等，拆碎即不匹配，
+ * 该进程漏收（fail-safe 方向 = 宁漏不误杀，v1 的尾部整串兜底随 --session-dir 判据
+ * 一并退役——xyz argv 里 --extension/--skill 不处尾部，兜底无对应物）。
  *
- * 实现为单字符状态机（consumeArgvChar 转移 + flushArgvToken 截断），转移规则与原
- * 单函数逐字符循环逐一等价（行为不变拆分）。
+ * 实现为单字符状态机（consumeArgvChar 转移 + flushArgvToken 截断）。
  */
 export function tokenizeArgv(command: string): string[] {
   const st: ArgvTokenizerState = { tokens: [], cur: '', quote: null, hasToken: false }
@@ -146,57 +176,74 @@ function consumeArgvChar(st: ArgvTokenizerState, ch: string): void {
 }
 
 /**
- * 取 flag 值：支持 `--flag value` 与 `--flag=value` 两种形态，全 argv 扫描（顺序无关）。
- * 未找到或 flag 是最后一个 token（无值）返回 null。
+ * 收集 flag 的全部值（`--flag value` 与 `--flag=value` 两形态，全 argv 扫描、顺序无关）。
+ * spawn 的 argv 可重复传同一 flag（`--extension p1 --extension p2 …`，rpc-client
+ * appendSkillAndExtensionArgs 逐路径 push），判据③「任一值 ∈ 清单」必须遍历全部出现。
  */
-function flagValue(tokens: string[], flag: string): string | null {
+function collectFlagValues(tokens: string[], flag: string): string[] {
+  const values: string[] = []
   for (let i = 0; i < tokens.length; i++) {
-    if (tokens[i] === flag) return tokens[i + 1] ?? null
-    if (tokens[i].startsWith(flag + '=')) return tokens[i].slice(flag.length + 1)
+    if (tokens[i] === flag) {
+      if (tokens[i + 1] !== undefined) values.push(tokens[i + 1])
+    } else if (tokens[i].startsWith(flag + '=')) {
+      values.push(tokens[i].slice(flag.length + 1))
+    }
   }
-  return null
+  return values
 }
 
+/** 取 flag 第一个值（collectFlagValues 薄包装，单值语义消费点：--mode）。 */
+function flagValue(tokens: string[], flag: string): string | null {
+  return collectFlagValues(tokens, flag)[0] ?? null
+}
+
+/** 参与清单匹配的两个值承载 flag（rpc-client appendSkillAndExtensionArgs 的注入段）。 */
+const MARKER_FLAGS = ['--extension', '--skill'] as const
+
 /**
- * 判定 ps 行是否「本实例数据目录的 pi RPC 进程」：argv 含 `--mode rpc` 且
- * `--session-dir` 值与 expectedSessionDir 精确相等。
+ * 判定 ps 行是否「xyz spawn 的 pi RPC 进程」——判据 v2 四条合取的前三条（第四条
+ * ppid===1 在 findOrphanPiRows）：
  *
- * --mode rpc 是必要条件：用户在终端手工跑的同 session-dir 交互式 pi 不带它——
- * 没有这条判据会误杀用户自己的调试进程。
- *
- * 精确相等只走 === 与「整串尾部对齐」两条路径，均不允许值级子串/前缀命中
- * （`/a/b` 不得匹配 `/a/bc`）。尾部对齐兜底真实 ps 的引号剥离：含空格的
- * session-dir 分词后拿不回原值，但 xyz spawn 的 argv 里 `--session-dir <path>`
- * 恰为最后一对参数（rpc-client.ts 拼参顺序），尾部整串比较仍能精确恢复。
+ * ① `--mode rpc`：必要条件——用户在终端手工跑的交互式 pi 不带它，没有这条会误杀
+ *   用户自己的调试进程；
+ * ② argv 含独立 token `--no-extensions`（主判别位）：xyz spawn 恒带（buildPiArgs 首行），
+ *   用户裸 pi / AGENTS.md 实测命令模板不带。boolean flag 只判 token 存在性（精确整
+ *   token，`--no-extensions-x` 之类前缀延伸不算）；
+ * ③ 任一 `--extension`/`--skill` 值与 markerPaths 中某项【精确相等】（=== 整串，禁
+ *   子串/前缀：/a/b 不得匹配 /a/bc）。空清单恒 false（防御：调用方在清单缺失时已
+ *   跳过收殓，此处不依赖该前置）。
  */
-export function matchesOwnPiArgv(row: PsRow, expectedSessionDir: string): boolean {
+export function matchesOwnPiArgv(row: PsRow, markerPaths: readonly string[]): boolean {
   const tokens = tokenizeArgv(row.command)
   if (flagValue(tokens, '--mode') !== 'rpc') return false
-  if (flagValue(tokens, '--session-dir') === expectedSessionDir) return true
-  return (
-    row.command.endsWith(`--session-dir ${expectedSessionDir}`)
-    || row.command.endsWith(`--session-dir=${expectedSessionDir}`)
-  )
+  if (!tokens.includes('--no-extensions')) return false
+  if (markerPaths.length === 0) return false
+  const markers = new Set(markerPaths)
+  return MARKER_FLAGS.some(flag => collectFlagValues(tokens, flag).some(v => markers.has(v)))
 }
 
 /** init/launchd 的 pid——内核 reparent 孤儿的默认归宿（macOS launchd / Linux systemd）。 */
 const INIT_PID = 1
 
 /**
- * 从 ps 行集合筛出可处置孤儿：argv 匹配本数据目录（防线①）且 ppid=1（防线②，
- * reparent 证据：原父 runtime 已死）。pid/ppid 等于 ownPid 的行一并排除——正常场景
- * runtime pid ≠ 1，该检查恒被 ppid=1 蕴含，仅为 pid namespace 容器内 runtime 自身
- * 即 pid 1 的异形兜底。返回 PsRow（含 command 供日志摘要）而非裸 pid。
+ * 从 ps 行集合筛出可处置孤儿：判据 v2（防线①，matchesOwnPiArgv 四条合取前三条）且
+ * ppid=1（防线②，reparent 证据：原父 runtime 已死）。pid/ppid 等于 ownPid 的行一并
+ * 排除——正常场景 runtime pid ≠ 1，该检查恒被 ppid=1 蕴含，仅为 pid namespace 容器内
+ * runtime 自身即 pid 1 的异形兜底。返回 PsRow（含 command 供日志摘要）而非裸 pid。
  */
-export function findOrphanPiRows(rows: PsRow[], expectedSessionDir: string, ownPid: number): PsRow[] {
+export function findOrphanPiRows(rows: PsRow[], markerPaths: readonly string[], ownPid: number): PsRow[] {
   return rows.filter(
-    r => r.pid !== ownPid && r.ppid !== ownPid && r.ppid === INIT_PID && matchesOwnPiArgv(r, expectedSessionDir),
+    r => r.pid !== ownPid && r.ppid !== ownPid && r.ppid === INIT_PID && matchesOwnPiArgv(r, markerPaths),
   )
 }
 
 export interface ReapOrphanOptions {
-  /** 本实例 sessions 目录（getSessionsDir() 推导值，孤儿判据的精确等值目标）。 */
-  sessionsDir: string
+  /**
+   * 本实例数据目录（getDataDir()）——spawn 清单 <dataDir>/run/pi-spawn-markers.json 的
+   * 读取根与收殓日志标识。u17 改名自 sessionsDir：v1 判据的 --session-dir 等值目标已随
+   * 方案 B 消亡。
+   */
+  dataDir: string
   /** 本 runtime 进程 pid（排除其活跃子进程，防线②）。 */
   ownPid: number
   /** SIGTERM→SIGKILL 宽限 ms，默认 ORPHAN_KILL_GRACE_MS。 */
@@ -213,6 +260,12 @@ export interface ReapOrphanOptions {
   signal?: (pid: number, signal: 'SIGTERM' | 'SIGKILL' | 0) => void
   /** 延时注入（测试替身，避免真实等待宽限）。 */
   delay?: (ms: number) => Promise<void>
+  /**
+   * spawn 清单读取（必填，D6c port 纪律）：组合根注入 infra/spawn-markers 的
+   * readSpawnMarkerList(getDataDir()) 闭包，测试注入替身。返回 null = 清单缺失/读不到/
+   * 坏 JSON/格式坏（原因已由 infra 读侧记 warn 日志）→ 本轮跳过收殓（宁漏不误杀）。
+   */
+  readSpawnMarkers: () => string[] | null
 }
 
 export interface ReapOrphanResult {
@@ -266,11 +319,12 @@ function defaultDelay(ms: number): Promise<void> {
 }
 
 /**
- * 执行一次孤儿收殓：枚举 → 筛选 → 逐个 SIGTERM → 宽限 → 仍活则 SIGKILL。
+ * 执行一次孤儿收殓：枚举 → 读清单 → 筛选 → 逐个 SIGTERM → 宽限 → 仍活则 SIGKILL。
+ * 清单缺失/坏（readSpawnMarkers 返回 null）→ 跳过本轮（fail-safe，宁漏不误杀）。
  * 本函数不抛（全路径 catch 或降级返回），调用方可安全 fire-and-forget。
  */
 export async function reapOrphanPiProcesses(options: ReapOrphanOptions): Promise<ReapOrphanResult> {
-  const { sessionsDir, ownPid } = options
+  const { dataDir, ownPid, readSpawnMarkers } = options
   const killGraceMs = options.killGraceMs ?? ORPHAN_KILL_GRACE_MS
   const listProcesses = options.listProcesses ?? defaultListProcesses
   const signal = options.signal ?? defaultSignal
@@ -297,10 +351,17 @@ export async function reapOrphanPiProcesses(options: ReapOrphanOptions): Promise
 
   const rows = parsePsOutput(stdout)
   result.scanned = rows.length
-  const orphans = findOrphanPiRows(rows, sessionsDir, ownPid)
+  // 清单缺失/读不到/坏 JSON → 跳过本轮收殓（原因已由注入的读侧——infra readSpawnMarkerList
+  // 记 warn 日志；fail-safe 方向 = 宁漏不误杀，绝不回到无清单的宽匹配）。
+  const markerPaths = readSpawnMarkers()
+  if (markerPaths === null) return result
+  const orphans = findOrphanPiRows(rows, markerPaths, ownPid)
   if (orphans.length === 0) return result
 
-  console.log(`[orphan-reap] found ${orphans.length} orphan pi process(es) for session-dir=${sessionsDir}, reaping`)
+  // D5①（session-dead-structural-fixes）：kill 路径全量日志 K7——收殓决策点升级 warn 含
+  // 调用源与信号链（下各 pid 级明细 log 保持既有粒度不动）；u17 后判据为 spawn markers，
+  // 清单条目数与数据目录一并记入。
+  console.warn(`[orphan-reap] found ${orphans.length} orphan pi process(es) matching spawn markers (${markerPaths.length} entries, dataDir=${dataDir}), reaping (kill_source=reap_orphan | who: runtime startup delayed reap, previous runtime died leaving unparented pi | chain: ps scan -> argv + ppid=1 orphan match -> SIGTERM -> ${killGraceMs}ms grace -> SIGKILL if alive)`)
   // 杀链决策日志（crash-resilience §3.3 D6-⑥，E2 归因缺口的直接修复）：一条结构化
   // 行回答「谁触发 / 杀哪些 pid / 为什么」——动作/目标/原因字段化（console patch 的
   // meta 走 JSON.stringify 单行落盘 runtime 主日志），与下方逐 pid 处置行互为索引。

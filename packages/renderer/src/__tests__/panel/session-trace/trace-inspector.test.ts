@@ -79,7 +79,7 @@ function buildSnapshot(): ServerMessageMap['session.traceEntries'] {
   return {
     sessionId: SID,
     source: 'file',
-    filePath: `/pi/sessions/${SID}.jsonl`,
+    filePath: `/data/agent/sessions/${SID}.jsonl`,
     header: { type: 'session', version: 1, id: 'h0', cwd: '/w/demo' },
     entries: [
       { type: 'message', id: 'u1', parentId: 'h0', message: { role: 'user', content: '帮我修一下重试逻辑' } },
@@ -267,7 +267,7 @@ describe('C2 MALFORMED 行「打开所在目录」（reveal-in-folder IPC 接线
     ipcMock.revealInFolder.mockResolvedValueOnce(true)
     await revealBtn.trigger('click')
     expect(ipcMock.revealInFolder).toHaveBeenCalledTimes(1)
-    expect(ipcMock.revealInFolder).toHaveBeenCalledWith(`/pi/sessions/${SID}.jsonl`)
+    expect(ipcMock.revealInFolder).toHaveBeenCalledWith(`/data/agent/sessions/${SID}.jsonl`)
     view.unmount()
   })
 

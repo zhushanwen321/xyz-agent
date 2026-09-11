@@ -37,7 +37,7 @@ describe('D1 移交接线：MessageBus 第二参 resolveSessionFilePath', () => 
     const bus = new MessageBus(1000, {
       ...SMALL_OPTS,
       resolveSessionFilePath: (sessionId) =>
-        sessionId === 's1' ? '/data/pi/agent/sessions/x/1_s1.jsonl' : null,
+        sessionId === 's1' ? '/data/agent/sessions/x/1_s1.jsonl' : null,
     })
     const ws = makeClient()
     bus.subscribe('s1', ws)
@@ -49,7 +49,7 @@ describe('D1 移交接线：MessageBus 第二参 resolveSessionFilePath', () => 
     const received = sentMessages(ws)
     expect(received).toHaveLength(1)
     const note = (received[0].payload as { output: string }).output
-    expect(note).toContain('/data/pi/agent/sessions/x/1_s1.jsonl')
+    expect(note).toContain('/data/agent/sessions/x/1_s1.jsonl')
     expect(note).not.toContain('（见 runtime 日志）')
     expect(warnSpy).toHaveBeenCalled() // 截断 warn 哨兵照常
   })

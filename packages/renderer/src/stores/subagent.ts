@@ -23,7 +23,7 @@
  * 现有 import 路径向后兼容。
  */
 import { defineStore } from 'pinia'
-import { computed, getCurrentScope, onScopeDispose, ref } from 'vue'
+import { getCurrentScope, onScopeDispose, ref } from 'vue'
 import type { ComputedRef } from 'vue'
 import type { SubagentRecord, Message } from '@xyz-agent/shared'
 import { subagentVirtualId } from '@xyz-agent/shared'
@@ -38,7 +38,8 @@ export {
 } from '@xyz-agent/shared'
 import { session as sessionApi } from '@/api'
 import * as events from '@xyz-agent/core/transport/api'
-import { toErrorMessage } from '../lib/error-message'
+import { toErrorMessage } from '@xyz-agent/core'
+import { createEmptyResultStrikeGuard, createPartitionedRecords } from '../lib/partitioned-session-records'
 
 /**
  * fetchAndInject 的 chat 注入回调类型。
@@ -48,19 +49,20 @@ import { toErrorMessage } from '../lib/error-message'
  * finalizeSubagentStream），本 store 经回调委托，不再自己 applyStreamDelta。
  * fetchAndInject 仍用 setMessages（含 IO 的历史拉取留在本 store，chat store 保持纯状态机）。
  */
-export type SetMessagesFn = (virtualId: string, messages: Message[]) => void
+type SetMessagesFn = (virtualId: string, messages: Message[]) => void
 /** chat.applySubagentStreamDelta 注入回调（W4：streaming delta 收口进 chat store） */
-export type ApplyDeltaFn = (virtualId: string, lines: string[]) => void
+type ApplyDeltaFn = (virtualId: string, lines: string[]) => void
 /** chat.finalizeSubagentStream 注入回调（W4：streaming → complete 收口进 chat store） */
-export type FinalizeStreamFn = (virtualId: string) => void
+type FinalizeStreamFn = (virtualId: string) => void
 
 export const useSubagentStore = defineStore('subagent', () => {
   // ── state ──
   /**
-   * 按 sessionId 分区的 subagent 列表（ADR-0049 Map 分区派，同 command.ts 范式）。
+   * 按 sessionId 分区的 subagent 列表（ADR-0049 Map 分区派）。
    * 切走不清、切回直接读 Map 分区；deleteSession 经 clearSession(sid) 精确释放。
+   * 四件套实现单源在 lib/partitioned-session-records（S4 A1，行为逐字等价迁移）。
    */
-  const recordsBySession = ref<Map<string, SubagentRecord[]>>(new Map())
+  const partition = createPartitionedRecords<SubagentRecord>()
 
   /** 加载态（M1：loadSubagents 在途时 true） */
   const isLoading = ref(false)
@@ -77,11 +79,12 @@ export const useSubagentStore = defineStore('subagent', () => {
   const streamUnsub = new Map<string, () => void>()
 
   /**
-   * loadSubagents 空结果守卫的连续空命中计数（R1 business-logic S3）：达到 LIMIT 判真实删空。
-   * 非响应式簿记（不驱动 UI），clearSession 一并清除防泄漏。
+   * loadSubagents 空结果守卫（R1 business-logic S3）：达到 LIMIT 判真实删空。
+   * strike 语义单源在 createEmptyResultStrikeGuard JSDoc（lib/partitioned-session-records），
+   * 此处只声明本 store 的阈值与 log tag。
    */
-  const emptyResultStrikes = new Map<string, number>()
   const EMPTY_RESULT_STRIKE_LIMIT = 2
+  const strikeGuard = createEmptyResultStrikeGuard(EMPTY_RESULT_STRIKE_LIMIT, 'subagent-store', 'getSubagents')
 
   // 防御性清理：正常由 SubagentTab onBeforeUnmount→stopStream 清理，
   // 此处防止消费方未清的兜底。
@@ -104,12 +107,12 @@ export const useSubagentStore = defineStore('subagent', () => {
    * 切会话时读不同分区，records 变化自动重算。
    */
   function recordsOf(sessionId: string): ComputedRef<SubagentRecord[]> {
-    return computed(() => recordsBySession.value.get(sessionId) ?? [])
+    return partition.recordsOf(sessionId)
   }
 
   /** 非响应式读：指定 session 的 subagent 列表（不写 Map，无则空数组，对齐 command.ts getCommands） */
   function getRecordsBySession(sessionId: string): SubagentRecord[] {
-    return recordsBySession.value.get(sessionId) ?? []
+    return partition.get(sessionId)
   }
 
   /**
@@ -137,16 +140,13 @@ export const useSubagentStore = defineStore('subagent', () => {
    * @param list runtime 推送 / RPC 拉取的 subagent 列表
    */
   function applyRecords(sessionId: string, list: SubagentRecord[]): void {
-    recordsBySession.value = new Map(recordsBySession.value).set(sessionId, list)
+    partition.apply(sessionId, list)
   }
 
   /** 清除指定 session 的 subagent 列表分区（deleteSession 调，防泄漏，ADR-0049 AC-8） */
   function clearSession(sessionId: string): void {
-    emptyResultStrikes.delete(sessionId)
-    if (!recordsBySession.value.has(sessionId)) return
-    const next = new Map(recordsBySession.value)
-    next.delete(sessionId)
-    recordsBySession.value = next
+    strikeGuard.reset(sessionId)
+    partition.clear(sessionId)
   }
 
   /** 指定主 session 名下的 subagent 是否仍在 running（读该 sid 分区，不全扫） */
@@ -185,33 +185,20 @@ export const useSubagentStore = defineStore('subagent', () => {
     loadError.value = null
     try {
       const records = await sessionApi.getSubagents(sessionId)
-      // 空结果守卫（sidebar-sync-plan P1 + R1 business-logic S3）：runtime getSubagents 读盘
-      // 失败时 catch 降级返回 []，瞬时读失败若当空列表覆盖会清掉分区历史——RPC 成功且空 +
-      // 分区非空时先保留旧分区。但「真实删空」（idle-gc/trash 清掉全部记录，删除动作无
-      // session.subagents 推送）同样表现为空结果，单次判定无法区分二者：用连续空命中计数
-      // （strike）区分——连续 LIMIT 次空结果判定真实删空放行覆盖（瞬时读失败不会连续命中，
-      // RPC 失败走 catch 且重置计数），非空结果即清零。推送路径是权威数据，不经此守卫。
-      if (records.length === 0 && getRecordsBySession(sessionId).length > 0) {
-        const strikes = (emptyResultStrikes.get(sessionId) ?? 0) + 1
-        emptyResultStrikes.set(sessionId, strikes)
-        if (strikes < EMPTY_RESULT_STRIKE_LIMIT) {
-          console.warn(
-            `[subagent-store] getSubagents returned empty list but partition non-empty, keeping existing records (empty strike ${strikes}/${EMPTY_RESULT_STRIKE_LIMIT}):`,
-            sessionId,
-          )
-          return
-        }
-        console.warn(
-          '[subagent-store] consecutive empty results, treating as real deletion and clearing partition:',
-          sessionId,
-        )
+      // 空结果守卫（sidebar-sync-plan P1 + R1 business-logic S3）：strike 语义单源在
+      // createEmptyResultStrikeGuard JSDoc（S4 A1），此处只判定 + 覆盖前清零。推送路径
+      // 是权威数据，不经此守卫。
+      if (
+        strikeGuard.shouldKeepExisting(sessionId, records.length, getRecordsBySession(sessionId).length)
+      ) {
+        return
       }
-      emptyResultStrikes.delete(sessionId)
+      strikeGuard.reset(sessionId)
       applyRecords(sessionId, records)
     } catch (e) {
       // M1：失败不覆盖现有分区，设 loadError；strike 重置（「连续 RPC 成功且空」语义纯净，
       // 读失败与数据空不同通道，不让 RPC 故障累计出误清分区）
-      emptyResultStrikes.delete(sessionId)
+      strikeGuard.reset(sessionId)
       const msg = toErrorMessage(e)
       console.error('[subagent-store] loadSubagents failed:', e)
       loadError.value = msg
@@ -223,7 +210,7 @@ export const useSubagentStore = defineStore('subagent', () => {
   /** 清空所有 subagent 分区 + 停止所有 streaming（全局重置场景用） */
   function clearSubagents(): void {
     for (const pid of streamUnsub.keys()) stopStream(pid)
-    recordsBySession.value = new Map()
+    partition.recordsBySession.value = new Map()
   }
 
   /**
@@ -349,7 +336,7 @@ export const useSubagentStore = defineStore('subagent', () => {
 
   return {
     // state
-    recordsBySession,
+    recordsBySession: partition.recordsBySession,
     isLoading,
     loadError,
     // getters

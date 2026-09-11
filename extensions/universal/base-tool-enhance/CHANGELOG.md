@@ -1,5 +1,11 @@
 # @zhushanwen/pi-base-tool-enhance
 
+## 0.5.1
+
+### Patch Changes
+
+- 838806898: chore: refresh dependency range (triggered by @zhushanwen/pi-llm-shared@0.5.1 → @zhushanwen/pi-llm-shared@0.6.0, @zhushanwen/pi-pending-notifications@0.5.3 → @zhushanwen/pi-pending-notifications@0.6.0)
+
 ## 0.5.0
 
 ### Minor Changes

@@ -29,10 +29,11 @@ import { bestEffort } from "@zhushanwen/subagent-core";
 // ═══ execution/ 层（subagents 核心 + 运行时） ═══
 // [U7] 引擎列表状态文件（registry → engines.json，GUI 引擎选择器数据源）
 import { syncEnginesFile } from "@zhushanwen/subagent-core";
-// [P1 引擎接线] 组合根登记 'pi' 引擎进 registry（引擎获取统一经 getEngine，缺省 id 'pi'）
-import { registerPiEngine } from "@zhushanwen/subagent-core";
-// [P3 引擎接线] 组合根登记 'zcode' 引擎（spawn 单轮模式；engineDataDir 默认走
-// common/data-dir SSOT，见 engines/zcode/registration.ts）
+// [W11/DoD#5] registerPiEngine（inproc 'pi' 注册）已随内建引擎删除：registry 'pi'
+// 由下方 syncEnginesFile 的三级发现装载 cli descriptor（engines/zcode 同理由
+// registerZcodeEngine D8 薄壳承载）。
+// [P3 引擎接线] 组合根登记 'zcode' 引擎（D8 薄壳：vendored 定位 cli descriptor；
+// engineDataDir 默认走 common/data-dir SSOT）
 import { registerZcodeEngine } from "@zhushanwen/subagent-core";
 import { getModelConfigService } from "@zhushanwen/subagent-core";
 import { getBoundNotifyLedger } from "@zhushanwen/subagent-core";
@@ -135,16 +136,17 @@ export default function subagentsWorkflowExtension(pi: ExtensionAPI): void {
   // 完整；且先于任何可能消费 core 端口的初始化逻辑（引擎登记等）。缺省态若被消费，
   // dataRoot 抛 core_host_not_configured（§3.4），接线后不再可达。
   configureCore(createPiHostServices());
+  // [F1] 通知域端口无 factory 基准参数：跨 session 残留过滤基准（W4 读侧过滤②）
+  // 由 core 读侧 per-call 提供（session-pending 读「被读 entries 所属 session」）——
+  // 本装配在扩展启动时执行一次，session id 逐 session 变化，factory 定型表达不了
+  // per-call 基准（生产装配也从未传参，防御曾实际缺基准）。
   configureNotifyDomain(createPiNotifyDomainPorts());
 
-  // [P1 引擎接线] 组合根登记缺省引擎：进程级 SubagentService 单例（session_start 注入）
-  // 经 registry 以 'pi' 暴露——引擎获取从此统一走 getEngine(DEFAULT_ENGINE_ID)，上层
-  // 不再硬编码「spawn pi」。幂等（registerEngine 覆盖语义），工厂惰性解析服务单例。
-  // P4 配置路由（agent frontmatter engine 字段 + 三层优先级）在本登记之上消费。
-  registerPiEngine();
-
-  // [P3 引擎接线] 登记 'zcode'（幂等同上）。惰性工厂：不触发 CLI/凭据探测，引擎被
-  // 实际选用（P4 路由或显式 getEngine('zcode')）才解析 deps。
+  // [W11/DoD#5] 'pi' 的 inproc 注册（registerPiEngine）已删除——缺省引擎 'pi' 的
+  // registry 条目由下方 syncEnginesFile 内的三级发现装载（cli descriptor，幂等），
+  // P4 配置路由（agent frontmatter engine 字段 + 三层优先级）在其上消费；chat 域
+  // pi 引擎不经 registry（SubagentService 自持 DI，W11 主 agent 裁决的临时豁免面）。
+  // [P3 引擎接线] 登记 'zcode'（幂等同上）。D8 薄壳：vendored 定位 cli descriptor。
   registerZcodeEngine();
 
   // [u7a D5] 在途聚合上报接线：core 状态迁移（spawn/close/arm/disarm）→ 出口回调 →

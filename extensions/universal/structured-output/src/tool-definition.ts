@@ -37,9 +37,9 @@ export const ENV_SCHEMA = "PI_WORKFLOW_SCHEMA";
  *
  * 背景：PI_WORKFLOW_SCHEMA 经 spawn childEnv 注入子进程，env 块受 ARG_MAX 约束
  *（Linux E2BIG）——超大 schema 会在 spawn 调用点报难归因的失败。硬拒绝在
- * subagent-core 侧（packages/subagent-core 的 session-runner applySchemaEnvToChildEnv，
- * 同值上限 SCHEMA_ENV_MAX_BYTES = 256 * 1024，见其 src/shared/schema-env.ts
- * [跨包契约 SSOT] 注释）；本包独立 npm 不能直接 import（isObjectRootSchema 本地副本同例），常量
+ * pi 引擎侧（packages/pi-subagent-cli 的 applySchemaEnvToChildEnv，同值上限
+ * SCHEMA_ENV_MAX_BYTES = 256 * 1024，见其 src/constants.ts）；本包独立 npm
+ * 不能直接 import（isObjectRootSchema 本地副本同例），常量
  * 各自保留、跨包契约测试锁字节相等（tests/cross-package-contract.test.ts）。
  * 本侧职责仅可见性：注册时超限 logger.warn（无 logger API，stderr 直出惯例）提示
  * env 通道有上限，建议拆分 schema 或精简——不拒绝注册（子进程能收到 env 说明 SW

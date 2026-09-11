@@ -655,9 +655,15 @@ importers:
       '@zhushanwen/pi-structured-output':
         specifier: workspace:*
         version: link:../structured-output
+      '@zhushanwen/pi-subagent-cli':
+        specifier: workspace:*
+        version: link:../../../packages/pi-subagent-cli
       '@zhushanwen/subagent-core':
         specifier: workspace:*
         version: link:../../../packages/subagent-core
+      '@zhushanwen/zcode-subagent-cli':
+        specifier: workspace:*
+        version: link:../../../packages/zcode-subagent-cli
       typebox:
         specifier: '*'
         version: 1.3.7
@@ -731,6 +737,9 @@ importers:
         specifier: ^3.5
         version: 3.5.39(typescript@5.9.3)
     devDependencies:
+      '@earendil-works/pi-ai':
+        specifier: 0.84.4
+        version: 0.84.4(ws@8.21.0)(zod@3.25.76)
       '@earendil-works/pi-coding-agent':
         specifier: 0.84.4
         version: 0.84.4(ws@8.21.0)(zod@3.25.76)
@@ -829,6 +838,28 @@ importers:
         specifier: ^2
         version: 2.2.12(typescript@5.9.3)
 
+  packages/pi-subagent-cli:
+    dependencies:
+      '@zhushanwen/subagent-engine-sdk':
+        specifier: workspace:*
+        version: link:../subagent-engine-sdk
+    devDependencies:
+      '@types/node':
+        specifier: ^24.0.0
+        version: 24.13.2
+      '@vitest/coverage-v8':
+        specifier: ^4.1.9
+        version: 4.1.9(vitest@4.1.9)
+      tsup:
+        specifier: ^8.5.1
+        version: 8.5.1(jiti@2.7.0)(postcss@8.5.16)(tsx@4.23.0)(typescript@5.9.3)(yaml@2.9.0)
+      typescript:
+        specifier: ^5.7.0
+        version: 5.9.3
+      vitest:
+        specifier: ^4.1.8
+        version: 4.1.9(@opentelemetry/api@1.9.0)(@types/node@24.13.2)(@vitest/coverage-v8@4.1.9)(happy-dom@20.10.6)(jsdom@29.1.1(@noble/hashes@2.2.0))(vite@8.1.3(@types/node@24.13.2)(esbuild@0.28.1)(jiti@2.7.0)(tsx@4.23.0)(yaml@2.9.0))
+
   packages/plugin-sdk: {}
 
   packages/renderer:
@@ -842,9 +873,6 @@ importers:
       '@shikijs/themes':
         specifier: ^4.3.1
         version: 4.3.1
-      '@vee-validate/zod':
-        specifier: ^4.15.1
-        version: 4.15.1(vue@3.5.39(typescript@5.9.3))(zod@3.25.76)
       '@vueuse/core':
         specifier: ^11.3.0
         version: 11.3.0(vue@3.5.39(typescript@5.9.3))
@@ -914,9 +942,6 @@ importers:
       tailwind-merge:
         specifier: ^3
         version: 3.6.0
-      vee-validate:
-        specifier: ^4.15.1
-        version: 4.15.1(vue@3.5.39(typescript@5.9.3))
       virtua:
         specifier: ^0.50.0
         version: 0.50.0(vue@3.5.39(typescript@5.9.3))
@@ -926,9 +951,6 @@ importers:
       vue-i18n:
         specifier: ^10
         version: 10.0.8(vue@3.5.39(typescript@5.9.3))
-      zod:
-        specifier: ^3.25.76
-        version: 3.25.76
     devDependencies:
       '@vitejs/plugin-vue':
         specifier: ^6
@@ -1078,6 +1100,9 @@ importers:
       '@xyz-agent/extension-protocol':
         specifier: workspace:*
         version: link:../extension-protocol
+      '@zhushanwen/subagent-engine-sdk':
+        specifier: workspace:*
+        version: link:../subagent-engine-sdk
       ajv:
         specifier: ^8.20.0
         version: 8.20.0
@@ -1087,6 +1112,34 @@ importers:
       yaml:
         specifier: ^2.9.0
         version: 2.9.0
+    devDependencies:
+      '@types/node':
+        specifier: ^24.0.0
+        version: 24.13.2
+      '@vitest/coverage-v8':
+        specifier: ^4.1.9
+        version: 4.1.9(vitest@4.1.9)
+      '@zhushanwen/pi-subagent-cli':
+        specifier: workspace:*
+        version: link:../pi-subagent-cli
+      '@zhushanwen/zcode-subagent-cli':
+        specifier: workspace:*
+        version: link:../zcode-subagent-cli
+      tsup:
+        specifier: ^8.5.1
+        version: 8.5.1(jiti@2.7.0)(postcss@8.5.16)(tsx@4.23.0)(typescript@5.9.3)(yaml@2.9.0)
+      typescript:
+        specifier: ^5.7.0
+        version: 5.9.3
+      vitest:
+        specifier: ^4.1.8
+        version: 4.1.9(@opentelemetry/api@1.9.0)(@types/node@24.13.2)(@vitest/coverage-v8@4.1.9)(happy-dom@20.10.6)(jsdom@29.1.1(@noble/hashes@2.2.0))(vite@8.1.3(@types/node@24.13.2)(esbuild@0.28.1)(jiti@2.7.0)(tsx@4.23.0)(yaml@2.9.0))
+
+  packages/subagent-engine-sdk:
+    dependencies:
+      ajv:
+        specifier: ^8.20.0
+        version: 8.20.0
     devDependencies:
       '@types/node':
         specifier: ^24.0.0
@@ -1167,6 +1220,28 @@ importers:
       vue-tsc:
         specifier: ^2
         version: 2.2.12(typescript@5.9.3)
+
+  packages/zcode-subagent-cli:
+    dependencies:
+      '@zhushanwen/subagent-engine-sdk':
+        specifier: workspace:*
+        version: link:../subagent-engine-sdk
+    devDependencies:
+      '@types/node':
+        specifier: ^24.0.0
+        version: 24.13.2
+      '@vitest/coverage-v8':
+        specifier: ^4.1.9
+        version: 4.1.9(vitest@4.1.9)
+      tsup:
+        specifier: ^8.5.1
+        version: 8.5.1(jiti@2.7.0)(postcss@8.5.16)(tsx@4.23.0)(typescript@5.9.3)(yaml@2.9.0)
+      typescript:
+        specifier: ^5.7.0
+        version: 5.9.3
+      vitest:
+        specifier: ^4.1.8
+        version: 4.1.9(@opentelemetry/api@1.9.0)(@types/node@24.13.2)(@vitest/coverage-v8@4.1.9)(happy-dom@20.10.6)(jsdom@29.1.1(@noble/hashes@2.2.0))(vite@8.1.3(@types/node@24.13.2)(esbuild@0.28.1)(jiti@2.7.0)(tsx@4.23.0)(yaml@2.9.0))
 
 packages:
 
@@ -2700,11 +2775,6 @@ packages:
 
   '@upsetjs/venn.js@2.0.0':
     resolution: {integrity: sha512-WbBhLrooyePuQ1VZxrJjtLvTc4NVfpOyKx0sKqioq9bX1C1m7Jgykkn8gLrtwumBioXIqam8DLxp88Adbue6Hw==}
-
-  '@vee-validate/zod@4.15.1':
-    resolution: {integrity: sha512-329Z4TDBE5Vx0FdbA8S4eR9iGCFFUNGbxjpQ20ff5b5wGueScjocUIx9JHPa79LTG06RnlUR4XogQsjN4tecKA==}
-    peerDependencies:
-      zod: ^3.24.0
 
   '@vitejs/plugin-vue@6.0.7':
     resolution: {integrity: sha512-km+p+XdSz9Sxm5rqUbqcSfZYaAniKxWBj1KURl+Jr7UaPvvX7BmaWMdP69I5rrFDeQGyxAG7NXdc57vz+snhWg==}
@@ -5510,11 +5580,6 @@ packages:
     resolution: {integrity: sha512-6ZxzVpzDXDa3bJWaHilVayA+BH/1zmxCJoVgvmqJnid/gPoKHxUrS/aC/T6LGQtNHT+XHG9fXPJB4d+IrU30Ew==}
     hasBin: true
 
-  vee-validate@4.15.1:
-    resolution: {integrity: sha512-DkFsiTwEKau8VIxyZBGdO6tOudD+QoUBPuHj3e6QFqmbfCRj1ArmYWue9lEp6jLSWBIw4XPlDLjFIZNLdRAMSg==}
-    peerDependencies:
-      vue: ^3.4.26
-
   vfile-message@4.0.3:
     resolution: {integrity: sha512-QTHzsGd1EhbZs4AsQ20JX1rC3cOlt/IWJruk893DfLRr57lcnOeMaWG4K0JrRta4mIJZKth2Au3mM3u03/JWKw==}
 
@@ -7477,14 +7542,6 @@ snapshots:
     optionalDependencies:
       d3-selection: 3.0.0
       d3-transition: 3.0.1(d3-selection@3.0.0)
-
-  '@vee-validate/zod@4.15.1(vue@3.5.39(typescript@5.9.3))(zod@3.25.76)':
-    dependencies:
-      type-fest: 4.41.0
-      vee-validate: 4.15.1(vue@3.5.39(typescript@5.9.3))
-      zod: 3.25.76
-    transitivePeerDependencies:
-      - vue
 
   '@vitejs/plugin-vue@6.0.7(vite@8.1.3(@types/node@24.13.2)(esbuild@0.28.1)(jiti@1.21.7)(tsx@4.23.0)(yaml@2.9.0))(vue@3.5.39(typescript@5.9.3))':
     dependencies:
@@ -10573,12 +10630,6 @@ snapshots:
 
   uuid@14.0.1: {}
 
-  vee-validate@4.15.1(vue@3.5.39(typescript@5.9.3)):
-    dependencies:
-      '@vue/devtools-api': 7.7.10
-      type-fest: 4.41.0
-      vue: 3.5.39(typescript@5.9.3)
-
   vfile-message@4.0.3:
     dependencies:
       '@types/unist': 3.0.3
@@ -10939,6 +10990,7 @@ snapshots:
 
   yocto-queue@0.1.0: {}
 
-  zod@3.25.76: {}
+  zod@3.25.76:
+    optional: true
 
   zwitch@2.0.4: {}

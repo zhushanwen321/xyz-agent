@@ -125,14 +125,14 @@ cleanup() {
 }
 trap cleanup EXIT
 
-mkdir -p "$DATA_DIR/pi/agent" "$BUILTIN_DIR/ct-a" "$BUILTIN_DIR/ct-b" "$BUILTIN_DIR/ct-c" "$SESSION_CWD"
+mkdir -p "$DATA_DIR/agent" "$BUILTIN_DIR/ct-a" "$BUILTIN_DIR/ct-b" "$BUILTIN_DIR/ct-c" "$SESSION_CWD"
 
 # models.json 预写：session.create 前置检查 getDefaultModel()（读
-# <dataDir>/pi/agent/models.json），且 runtime 把 defaultModel 作为 --model 传给
-# pi 子进程（pi 侧 PI_CODING_AGENT_DIR=<dataDir>/pi/agent，同读此文件）。e2e 假
+# <dataDir>/agent/models.json），且 runtime 把 defaultModel 作为 --model 传给
+# pi 子进程（pi 侧 PI_CODING_AGENT_DIR=<dataDir>/agent，同读此文件）。e2e 假
 # provider 需带 api/baseUrl（pi 模型校验要求，缺 api 整个 provider 被丢弃）；
 # baseUrl 指向不可达端口——本脚本不发 LLM 请求，永不触达。
-cat > "$DATA_DIR/pi/agent/models.json" <<'EOF'
+cat > "$DATA_DIR/agent/models.json" <<'EOF'
 { "providers": { "ct-e2e": { "api": "openai", "baseUrl": "http://127.0.0.1:9/v1", "apiKey": "dummy", "models": [ { "id": "ct-e2e-model", "name": "CT E2E Model", "contextWindow": 128000, "maxTokens": 8192 } ] } } }
 EOF
 

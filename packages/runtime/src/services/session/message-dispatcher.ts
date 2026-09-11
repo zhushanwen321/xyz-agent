@@ -19,11 +19,11 @@
  */
 import type { IDispatcherSessionOps } from './session-internal.js'
 import type { IPiEngine, IProcessManager } from '../ports/pi-engine.js'
-import type { SendMessageHook, PendingBashResultData, IManagedSessionView, SessionOccupancy } from './types.js'
+import type { SendMessageHook, PendingBashResultData, IManagedSessionView, ForceQuitSource } from './types.js'
 import type { WorkspaceService } from '../workspace/workspace-service.js'
 import type { IMessageBus } from '../message-bus/message-bus.js'
 import { toErrorMessage, RpcTimeoutError } from '../../utils/errors.js'
-import { updateSessionOccupancy } from './event-interpreter.js'
+import { applySessionOccupancyTransition, IDLE_SESSION_OCCUPANCY, userStoppedGate } from './event-interpreter.js'
 import { SkillInjector, type SkillNotice } from './skill-injector.js'
 import { publishSkillNotices as publishSkillNoticesShared } from './skill-notice-publisher.js'
 
@@ -100,7 +100,71 @@ const PI_REJECTION_PROCESSING = 'Agent is already processing'
 const REJECT_MESSAGE_COMPACTING = '压缩进行中，消息将自动排队'
 const REJECT_MESSAGE_BUSY = 'Agent 正在处理'
 
+// ── abort RPC 超时路径的三信号判据 + 三级阶梯（chat-domain-v1x-liveness-governance W7 / D3）──
+//
+// 事故背景（设计 §2.1 环 6）：goal 循环中用户 ESC → abort RPC（CMD_TIMEOUT_MS=60s）无应答 →
+// 旧代码直接判「pi event loop frozen」强杀主 pi，连带击杀子代理——事后证实 pi 未冻结（循环中
+// 还在正常执行工具调用）。实装 pi 的 abort RPC 应答即收敛，收敛前无中间信号：60s 超时只能区分
+// 「收敛了/没收敛」，不能区分「忙/死」。误杀正常会话正是本阶梯要消除的。
+//
+// 三信号（全部为 runtime↔主 pi 面可观测）：①快超时探测（getState，RpcClient 侧已配
+// FAST_TIMEOUT_MS=10s）；②桥事件窗产出（RpcClient.lastEventAt——事件帧到达 stdout 的时刻）；
+// ③abort-RPC pending 状态（本方法入口即「仍在等收敛」，重试计数显式承载）。
+
+/**
+ * 阶梯 1（探测有响应）的有界 abort 重试次数上限。设计 D3 建议值；每级有终点、级间迁移
+ * 闭合——重试耗尽仍不收敛 → 迁移阶梯 2（用户显式强关），不存在无界重试分支。
+ */
+const ABORT_STALL_RETRY_LIMIT = 2
+
+/**
+ * 阶梯 3（真冻结直达强杀）的事件静默「超保守窗」默认值：10 分钟。
+ *
+ * 为什么是分钟级大窗：bridge 事件只在 delta / tool 调用边沿产生，LLM 请求等待期可长静默
+ * （大 prompt + 慢模型数分钟无 delta 是合法形态）——裸事件新鲜度单独使用会误杀（ADR-0047
+ * 「静默 ≠ 卡死」）。本窗只在「快超时探测无响应」已成立后才参与判定（双信号叠加），且
+ * 取保守大窗让静默方向错误率趋零。
+ *
+ * [P3 实测待定] 实施期门 P3（三类会话事件间隔分布实测：正常 turn / abort 落地 / 真冻结）
+ * 数据落地后才可收窄；实测前严禁调小。env 逃生门 XYZ_RUNTIME_ABORT_FROZEN_SILENCE_MS
+ * 可覆盖（仅限实验/诊断，读一次缓存——对齐 resolveBashRpcTimeoutMs 先例）。
+ */
+const FROZEN_EVENT_SILENCE_MS_DEFAULT = 600_000
+
+let cachedFrozenEventSilenceMs: number | null = null
+
+function resolveFrozenEventSilenceMs(): number {
+  if (cachedFrozenEventSilenceMs === null) {
+    const raw = process.env.XYZ_RUNTIME_ABORT_FROZEN_SILENCE_MS
+    const parsed = raw !== undefined ? Number(raw) : Number.NaN
+    cachedFrozenEventSilenceMs = Number.isFinite(parsed) && parsed >= 0 ? parsed : FROZEN_EVENT_SILENCE_MS_DEFAULT
+  }
+  return cachedFrozenEventSilenceMs
+}
+
+/**
+ * 读取 client 的事件活跃戳（RpcClient.lastEventAt，W7 桥事件窗信号）。
+ *
+ * IPiEngine port 未暴露该成员（W7 领地约束：不动 ports 契约面），此处结构检测 + 运行时
+ * guard 读取（全局规则「断言须有运行时 guard」）；实现无此成员（mock / 旧形态）时返回 0
+ * （= 从未观测到事件，配合探测无响应即冻结判据，见 RpcClient.lastEventAt getter 注释）。
+ */
+function readClientLastEventAt(client: IPiEngine): number {
+  const candidate = (client as { lastEventAt?: unknown }).lastEventAt
+  return typeof candidate === 'number' ? candidate : 0
+}
+
 export type PromptRejectionReason = 'compacting' | 'processing'
+
+/**
+ * abort 发起方分型（U2 修复，一致性审查）：收敛环复用 abort 完整链时用于区分「用户操作」
+ * 与「runtime 自动收敛」的终态语义。默认 'user'（全部既有调用方零改动保持用户语义）；
+ * 'convergence' 仅由 session-service 的 userStoppedGate.configure 接线传入（收敛环
+ * restore-abort 后的 re-abort 通路——收敛环掐掉的是 runtime 自动收敛的补发 turn，非用户
+ * 操作，终态与日志不得写「User aborted」语义）。export 供 session-service import；
+ * types.ts 不在本次修复领地内，故就近定义在唯一消费者旁。
+ */
+export type AbortSource = 'user' | 'convergence'
 
 /**
  * 识别 pi prompt() 的 busy 类确定性拒绝（按错误消息原文），输出转译 reason；非 busy 类返回 null。
@@ -119,8 +183,20 @@ export function classifyPromptRejection(errorMessage: string): PromptRejectionRe
   return null
 }
 
+/** 测试隔离：清空阶梯 3 事件静默窗的 env 覆盖缓存（对齐 rpc-client resetBashRpcTimeoutForTest 先例）。生产勿调。 */
+export function resetAbortLivenessForTest(): void {
+  cachedFrozenEventSilenceMs = null
+}
+
 export class MessageDispatcher {
   private sendMessageHook: SendMessageHook | null = null
+
+  /**
+   * 进行中的 abort 超时阶梯（W7，per-session 防重入）：key = sessionId，value = 阶梯
+   * promise。多个 abort() 同时超时时共享同一实例（后到者 await 先到者的终点），finally
+   * 清理——阶梯终点（收敛 / 用户处置移交 / 强杀收敛）即出表，无泄漏。
+   */
+  private readonly abortStallLadders = new Map<string, Promise<void>>()
 
   constructor(
     private readonly svc: IDispatcherSessionOps,
@@ -131,16 +207,6 @@ export class MessageDispatcher {
     // client 发送之前）；构造注入便于测试替换 spy（每入口恰好单次调用的结构化幂等）。
     private readonly injector: SkillInjector = new SkillInjector(),
   ) {}
-
-  /**
-   * occupancy 幂等写 + 变化才广播（session-occupancy-send-closure D3）——dispatcher 侧挂点
-   *（#1 dispatching / #7 bash / #8 catch idle / #9 abort idle / #11 bash=false / forceQuit
-   * 全复位 / compact finally compacting=false）的统一入口。合并、比较与广播在
-   * updateSessionOccupancy（event-interpreter 导出的写原语）内。
-   */
-  private touchOccupancy(session: IManagedSessionView, patch: Partial<SessionOccupancy>): void {
-    updateSessionOccupancy(session, this.messageBus, patch)
-  }
 
   /**
    * 后置注入 / 回填 MessageBus（SessionService.setMessageBus 同步回填调用）。
@@ -202,6 +268,14 @@ export class MessageDispatcher {
       return { blocked: true }
     }
 
+    // D4 显式投递清标记：经 runtime sendPrompt 的投递（用户新消息 / 前端队列 flush 重放）
+    // = 新意图，投递前清 userStopped 标记放行 + 停收敛环——新 turn 是显式意图，不受任何
+    // 闸门拦截。时序构造性保证：清标记先于 ensureActive/restore（restore-abort 读不到标记
+    // 即不掐），也先于 client.prompt（显式投递开 turn 的 agent_start 事件回流时环已停，
+    // 不会被收敛环误掐）。不经 runtime 的补发腿（notify-ledger）不适用本放行——区分点 =
+    // 投递路径本身。
+    userStoppedGate.consumeForExplicitDelivery(sessionId)
+
     // ── ensureActive(必要时 restore)──
     const client = await this.ensureActiveOrBroadcast(sessionId)
 
@@ -254,16 +328,21 @@ export class MessageDispatcher {
    *
    * [W3, U6] 加 isCompacting：compact 进行中时 prompt 会与压缩竞态，同样必须拒。
    * [composer-bash-execute W1] 加 isBashRunning：bash 执行中 prompt 会与 bash 竞态，双向互斥。
-   * [occupancy D2 预检分型] 按命中维度分型：isCompacting → 'compacting'（renderer 兜底入队
-   * 的触发源，与 pi 转译路径同语义）；isGenerating / isBashRunning → 'busy'（存量）。
+   * [session-dead-structural-fixes D2 预检改读 occupancy（u3b settling 预检裁决）] 预检门
+   * 改读 occupancy 投影（occupancy 为体，D1 立场）：turn !== 'idle'（dispatching/generating/
+   * **settling**）/ compacting / bash 任一命中即拒——settling 自此计为忙（与前端 D1 双门归一），
+   * 拒绝转 send.rejected{busy} → 消息入 defer 队列 → agent_settled idle 帧自动投递。这是
+   * D2 显式声明的行为变更（原 settling 窗口直发成功的消息现在延迟 ≤2s 投递，P-2 探针门
+   * P95 ≤ 2s）。occupancy 与三布尔经原语原子同步，缺省（undefined）按 idle 兜底。
    */
   private rejectBusyPrecheck(
     sessionId: string,
     activeSession: IManagedSessionView,
     clientUuid: string | undefined,
   ): boolean {
-    if (activeSession.isGenerating || activeSession.isCompacting || activeSession.isBashRunning) {
-      const reason = activeSession.isCompacting ? ('compacting' as const) : ('busy' as const)
+    const occ = activeSession.occupancy ?? IDLE_SESSION_OCCUPANCY
+    if (occ.turn !== 'idle' || occ.compacting || occ.bash) {
+      const reason = occ.compacting ? ('compacting' as const) : ('busy' as const)
       console.warn(`[message-dispatcher] preemptive reject (${reason}), sid=${sessionId}`)
       this.publishSendRejected(sessionId, reason, clientUuid)
       return true
@@ -272,17 +351,18 @@ export class MessageDispatcher {
   }
 
   /**
-   * 预检通过后的活跃标记：isGenerating 置位 + occupancy #1 dispatching + workspace record
-   * best-effort 副作用。
+   * 预检通过后的活跃标记：occupancy #1 'dispatching' 转移（原语派生 isGenerating=true）+
+   * workspace record best-effort 副作用。
    *
-   * occupancy #1（D3）：sendPrompt 预检通过 → dispatching（prompt 已发、message_start 未到）。
-   * 本挂点先于 client.prompt——pi busy 类拒绝（catch 转译）发生时 turn 已处于 dispatching，
-   * 由 #8 统一复位 idle（转译/非转译两路都复位，见 handlePromptFailure 注释）。
+   * occupancy #1（D2 迁移）：sendPrompt 预检通过 → 'dispatching'（prompt 已发、message_start
+   * 未到）。isGenerating=true 由原语 flags 原子派生（不再直写布尔）。本挂点先于 client.prompt
+   * ——pi busy 类拒绝（catch 转译）发生时 turn 已处于 dispatching，由 #8 按拒绝分型收口：
+   * processing 拒绝（pi 有 runtime 不知情的 turn 在跑）→ 'reject-processing'，compacting 拒绝
+   * 与非 busy 真失败 → 'reject-other'（见 handlePromptFailure 注释）。
    */
   private markSessionActive(activeSession: IManagedSessionView, sessionId: string): void {
     activeSession.lastActiveAt = Date.now()
-    activeSession.isGenerating = true
-    this.touchOccupancy(activeSession, { turn: 'dispatching' })
+    applySessionOccupancyTransition(activeSession, this.messageBus, 'dispatching')
     // [W6] record 是非用户阻塞的副作用（记最近工作区），不应阻断发消息主流程。
     // 当前 record 同步链路（WorkspaceService.record → store.record → cache.set/trim）几乎不抛，
     // 但作为防御：未来 store 实现变更（如引入 sync flush）或 lazy partition 加载异常都不该让
@@ -298,8 +378,16 @@ export class MessageDispatcher {
   }
 
   /**
-   * prompt 失败收口（catch 体整体，恒 blocked）：复位 isGenerating + occupancy idle →
+   * prompt 失败收口（catch 体整体，恒 blocked）：按拒绝分型收口 isGenerating + occupancy →
    * pi busy 类确定性拒绝转译 send.rejected 分型广播；其余错误广播 message.error。
+   *
+   * [occupancy D2b] 复位语义按 classifyPromptRejection 分型分叉（不再无条件回 idle）：
+   * - 'processing'：pi 明确拒绝「已有一个 turn 在跑」——该 turn 由 pi 自发起（auto-retry /
+   *   steer / followUp），runtime 此前已收 agent_end 复位 isGenerating（幽灵空闲）故预检放行。
+   *   此时以 pi 的拒绝为权威信号反转状态：置 isGenerating=true + turn:'generating'。
+   *   若仍写 idle（改动前行为）：前端 occupancy 投影为 idle → D1 占用短路失效 → defer 队列
+   *   1 秒一次无限重投（实测 90 秒 82 次 `prompt failed: ... Agent is already processing`）。
+   * - 'compacting' / 非 busy 真失败：turn 确实没跑起来 → isGenerating=false + turn:'idle'（现状）。
    */
   private handlePromptFailure(
     sessionId: string,
@@ -309,23 +397,37 @@ export class MessageDispatcher {
   ): { blocked: true; rejected?: boolean } {
     const errMsg = toErrorMessage(e)
     console.error(`[message-dispatcher] prompt failed: sessionId=${sessionId}`, errMsg)
-    // 复位对转译/非转译两路同样生效（occupancy D2：转译的拒绝也意味着 turn 没跑起来，
-    // 与预检拒绝同构——单次复位，两分支不重复不遗漏）。
-    if (activeSession) {
-      activeSession.isGenerating = false
-      // occupancy #8（D3）：prompt 抛错 → turn 复位 idle。转译拒绝两路同样复位——核实：
-      // #1 已先于 client.prompt 置 dispatching；processing 拒绝（窗口 3）pi 随后的
-      // agent_settled（#4）幂等覆盖回 idle，compacting 拒绝（窗口 1）后续仅 compaction_start/end
-      //（#5/#6 只写 compacting 维度），不复位则 turn 永卡 dispatching、occupancy 永不全 idle
-      //（P3 起 renderer flush 触发条件，G2 投递必达被破坏）。
-      this.touchOccupancy(activeSession, { turn: 'idle' })
-    }
-    // [occupancy D2 拒绝转译] pi busy 类确定性拒绝 → send.rejected 分型广播，不走
-    // message.error 错误气泡链路（busy 类不进对话流；非 busy 的 pi 错误保留现状）。
-    // 返回 rejected:true 与预检拒绝同构：handler 回 message.status{rejected} 让 renderer
-    // pending 干净 resolve（send.rejected 兜底已接管用户反馈；error envelope 会让 pending.reject
-    // 恢复草稿，与入队/回滚流程冲突）。
+    // [occupancy D2 拒绝转译] pi busy 类确定性拒绝分型：决定下方复位语义，并广播
+    // send.rejected（不走 message.error 错误气泡链路——busy 类不进对话流；非 busy 的 pi
+    // 错误保留现状）。返回 rejected:true 与预检拒绝同构：handler 回 message.status{rejected}
+    // 让 renderer pending 干净 resolve（send.rejected 兜底已接管用户反馈；error envelope
+    // 会让 pending.reject 恢复草稿，与入队/回滚流程冲突）。
     const rejectionReason = classifyPromptRejection(errMsg)
+    if (activeSession) {
+      // occupancy #8（D2 迁移）：prompt 抛错 → turn 收口。核实：#1 已先于 client.prompt 置
+      // dispatching，故两个分支都必须写终态，否则 turn 永卡 dispatching、occupancy 永不全
+      // idle（P3 起 renderer flush 触发条件，G2 投递必达被破坏）。
+      if (rejectionReason === 'processing') {
+        // pi 侧 turn 正在跑（runtime 之前误判空闲），拒绝的语义不是「turn 没跑起来」——
+        // 以 pi 的拒绝为权威信号反推状态（'reject-processing' 行：派生 isGenerating=true +
+        // turn='generating'），让前端 D1 占用短路生效、defer 队列停止重投（本挂点不再伪造空闲）。
+        // [session-dead 2026-09-10 已收口] 复位依赖该 turn 正常收尾——但**不能只靠 agent_end**：
+        // pi 实装里 agent_end 每次 attempt 都发（retry / auto-compaction 续跑会重发），真正的 run
+        // 终点是 _runAgentPrompt 的 finally 中 _emitAgentSettled()（pi dist/core/agent-session.js:772-786），
+        // 且存在「post-run 尾段直接 settle」这条不含 agent_end 的收尾路径。若 prompt 落在该窗口，
+        // 本分支置的 true 会永久残留（occupancy 已被 #4 复位 idle → 前端 flush，但 busy 预检读
+        // occupancy → 后续消息恒被拒）。故第二复位点挂在 agent_settled：组合根 onAgentSettled →
+        // SessionStateProjection.handleAgentSettledSideEffects。
+        // isGenerating 复位点全集：agent_end（handleTurnEndSideEffects）/ agent_settled（本补丁）/
+        // abort / forceQuit / session 退出。
+        applySessionOccupancyTransition(activeSession, this.messageBus, 'reject-processing')
+      } else {
+        // compacting 拒绝（窗口 1）与非 busy 真失败：turn 确实没跑起来，'reject-other' 行
+        // （派生 isGenerating=false + turn='idle'）。compacting 拒绝后续仅 compaction_start/end
+        // （#5/#6 只写 compacting 维度），同样依赖此处复位。
+        applySessionOccupancyTransition(activeSession, this.messageBus, 'reject-other')
+      }
+    }
     if (rejectionReason) {
       this.publishSendRejected(sessionId, rejectionReason, clientUuid)
       return { blocked: true, rejected: true }
@@ -388,7 +490,16 @@ export class MessageDispatcher {
     }
   }
 
-  async abort(sessionId: string): Promise<void> {
+  /**
+   * 中止 session 当前 turn（协作式 abort RPC）：成功 → occupancy #9 idle 复位 + stopped 终态
+   * 写入 + message.complete{aborted} 收口广播；失败 → 终态兜底（超时走 K2 强杀收敛）。
+   *
+   * [U2 修复] source 分型（默认 'user' 既有调用方零改动）：'convergence' 由收敛环通路传入
+   * （session-service gate.configure 接线），成功路径终态 reason 写 'Convergence abort (auto)'
+   * ——收敛环掐的是 runtime 自动收敛的补发 turn，终态/日志不得谎报用户操作语义。
+   * aborted 完成帧广播两种 source 均保持不变（前端 no-op，U2 明确不动广播逻辑）。
+   */
+  async abort(sessionId: string, source: AbortSource = 'user'): Promise<void> {
     const client = this.getClientOrThrow(sessionId, 'abort')
     try {
       await client.abort()
@@ -396,31 +507,28 @@ export class MessageDispatcher {
       // [HISTORICAL] abort 失败也必须广播终态（规则 #3）：否则前端 isStreaming / runtime
       // isGenerating 永不复位，UI 卡在「思考中」。pi 卡死时 client.abort() 无响应，靠这条兜底。
       const errMsg = toErrorMessage(e)
-      console.error(`[message-dispatcher] abort failed: sessionId=${sessionId}`, errMsg)
+      console.error(`[message-dispatcher] abort failed (source=${source}): sessionId=${sessionId}`, errMsg)
       // 先取 active 再 destroy——destroySession 会删 processes/clientToId 条目，
       // 之后再经 getSessionByClient 反查会拿 undefined。
       const active = this.svc.getSessionByClient(client)
       if (active) {
-        active.isGenerating = false
-        // occupancy #9（D3）：abort RPC 失败兜底 → idle（pi 卡死时 agent_settled 永不到达，
-        // turn 不能停留在 dispatching/generating/settling）。
-        this.touchOccupancy(active, { turn: 'idle' })
+        // occupancy #9（D2 迁移）：abort RPC 失败兜底 → 'idle' 行（pi 卡死时 agent_settled
+        // 永不到达，turn 不能停留在 dispatching/generating/settling）。isGenerating=false 由
+        // 原语 flags 派生。
+        applySessionOccupancyTransition(active, this.messageBus, 'idle')
       }
 
       if (e instanceof RpcTimeoutError) {
-        // D3a（integrity-hardening，修 M5）：abort RPC 超时 = pi 事件循环卡死（ping 3 连败
-        // 已判定进程真死，event-interpreter ADR-0047）。仅收口（旧路径）会把卡死 client 留在
-        // 进程表——用户每次发消息都命中同一 client → 60s 超时死循环，唯一恢复是删 session /
-        // 重启 app。检测即收敛（原则 2）：强杀进程并走完与进程异常退出同构的收敛，下次发消息
-        // ensureActive 自动 restore 新 pi（历史完整）。
-        //
-        // 收敛需在此手动编排而非依赖 pm.onSessionExit 回调：kill 路径的 exit 事件被双层
-        // 守卫拦截（rpc-client.kill 置 _killing 跳过 exitCallback；process-manager 的 exit
-        // 回调按 processes.has 拦截 intentional destroy），不会传播到 session-service 的
-        // onSessionExit 收敛链。编排与 lifecycle.delete / onSessionExit 回调同构（detach →
-        // session.exited → removeSessionEntry），非新发明。
-        console.warn(`[message-dispatcher] abort RPC timed out (pi event loop frozen), force-destroying session ${sessionId}`)
-        await this.forceQuitSession(sessionId, `Abort failed (pi unresponsive): ${errMsg}`, 'pi 无响应（事件循环卡死），进程已强制终止。重发消息即可恢复（自动重启进程，历史完整）')
+        // W7（chat-domain-v1x-liveness-governance D3）：abort RPC 超时 ≠ pi 冻结——实装 pi 的
+        // abort 应答即收敛，收敛前无中间信号，60s 超时只能区分「收敛了/没收敛」，不能区分
+        // 「忙/死」。旧代码直接强杀正是 2026-09-08 事故环 6 的误杀源（pi 循环中还在正常执行
+        // 工具调用却被判 frozen 连带击杀子代理）。改走三信号判据 + 三级阶梯（见
+        // runAbortStallLadder）；强杀保留为阶梯 3 的收窄形态（双信号：探测无响应 + 事件窗
+        // 静默超保守窗才触发）。检测即收敛的编排理由（exit 事件被双层守卫拦截，需手动编排
+        // 与 onSessionExit 同构的收敛链）见 forceQuitSession 方法头。
+        // [session-dead D5①/U2] abort 的 source 传入阶梯：阶梯 3 强杀的 K2 日志按调用源
+        // 区分 who——收敛环 re-abort 超时（convergence）不得在 kill 日志里冒充用户 abort。
+        await this.handleAbortRpcTimeout(sessionId, client, errMsg, source)
         return
       }
 
@@ -439,12 +547,20 @@ export class MessageDispatcher {
     // 广播流式 message.complete 让前端正常收口（与 sendPrompt 错误路径广播 message.error 对称）。
     const active = this.svc.getSessionByClient(client)
     if (active) {
-      active.isGenerating = false
-      // occupancy #9（D3）：abort 成功 → idle（与上方的 message.complete{aborted} 收口对称）。
-      this.touchOccupancy(active, { turn: 'idle' })
+      // occupancy #9（D2 迁移）：abort 成功 → 'idle' 行（与上方的 message.complete{aborted}
+      // 收口对称）。isGenerating=false 由原语 flags 派生。
+      applySessionOccupancyTransition(active, this.messageBus, 'idle')
     }
-    // W4：用户主动 abort 写 stopped 终态
-    this.svc.persistSessionOutcome(sessionId, 'stopped', 'User aborted')
+    // W4：abort 写 stopped 终态。[U2] reason 按发起方分型：收敛环 re-abort（restore-abort
+    // 收敛环掐补发 turn / 掐 idle pi）是 runtime 自动收敛而非用户操作，写区分性文案——
+    // 终态 entry 是「谁 stopped 了 session」的权威记录，语义不得谎报。
+    if (source === 'convergence') {
+      console.warn(`[message-dispatcher] convergence abort (runtime auto, userStopped convergence loop), sid=${sessionId}`)
+      this.svc.persistSessionOutcome(sessionId, 'stopped', 'Convergence abort (auto)')
+    } else {
+      console.warn(`[message-dispatcher] user abort accepted, sid=${sessionId}`)
+      this.svc.persistSessionOutcome(sessionId, 'stopped', 'User aborted')
+    }
     const completeMsg = { type: 'message.complete' as const, payload: { sessionId, stopReason: 'aborted' as const } }
     this.messageBus?.publish(sessionId, completeMsg)
   }
@@ -462,11 +578,18 @@ export class MessageDispatcher {
     if (!client) {
       // 不在活跃进程表（已退出 / 未 spawn）：无可杀对象，幂等成功。菜单入口对 dead/idle
       // 历史 session 隐藏，此分支是「菜单渲染后 session 恰好退出」的竞态兑底。
-      console.log(`[message-dispatcher] forceQuit: session ${sessionId} not active, nothing to kill`)
+      // [U3 修复] 早退也须置 userStopped 标记：用户点「强制退出」的意图与进程死活无关
+      // （与 K1 同源）——无 client 时 pi 可能已自行 spawn 恢复链（restore replay turn），
+      // 缺标记会让后续 restore 的收敛环不设防，被杀的旧执行复活。
+      console.log(`[message-dispatcher] forceQuit: session ${sessionId} not active, nothing to kill (userStopped mark still set)`)
+      userStoppedGate.markUserStopped(sessionId, 'user_force_quit')
       return
     }
-    console.warn(`[message-dispatcher] force quit requested by user, killing session ${sessionId}`)
-    await this.forceQuitSession(sessionId, 'User forced quit', '用户强制退出，进程已终止。重新打开该 session 即可恢复（历史完整）。')
+    // D5①（session-dead-structural-fixes）：kill 路径全量日志 K1——含调用源（kill_source）
+    // 与触发信号链（谁发起、为什么），exit 143 类进程死亡可从此行回溯到发起方。
+    console.warn(`[message-dispatcher] force quit requested by user, killing session ${sessionId} (kill_source=user_force_quit | who: user via session.forceQuit RPC | chain: skip abort -> SIGTERM destroy -> persist stopped -> occupancy reset -> session.exited)`)
+    // D4 置位分型 K1：用户强制退出 = 「用户要停」，置标记。
+    await this.forceQuitSession(sessionId, 'User forced quit', '用户强制退出，进程已终止。重新打开该 session 即可恢复（历史完整）。', 'user_force_quit')
   }
 
   /**
@@ -477,8 +600,14 @@ export class MessageDispatcher {
    * onSessionExit 收敛链。编排与 lifecycle.delete / onSessionExit 回调同构，非新发明。
    *
    * outcomeReason 进终态 entry（诊断）；exitReason 经 session.exited 广播给用户（可操作指引）。
+   *
+   * [D4] source 为置位分型（K1 user_force_quit / K2 abort_timeout）：「用户要停」的调用方
+   * 在编排开头置 userStopped 标记（宿主 = session-service.ts 模块级 Map，独立于
+   * ManagedSession 生命周期——尾步 removeSessionEntry 删条目后标记仍可被 restore 读到）。
+   * 标记驱动 restore-abort 收敛环：被杀的旧执行（notify replay / 补发腿）不得自动复活。
    */
-  private async forceQuitSession(sessionId: string, outcomeReason: string, exitReason: string): Promise<void> {
+  private async forceQuitSession(sessionId: string, outcomeReason: string, exitReason: string, source: ForceQuitSource): Promise<void> {
+    userStoppedGate.markUserStopped(sessionId, source)
     // 先 detach 再 destroy——destroySession 会删 processes/clientToId 条目，
     // 之后再经 getSessionByClient 反查会拿 undefined。
     this.svc.detachSession(sessionId)
@@ -486,11 +615,12 @@ export class MessageDispatcher {
     // stopped 终态须在 removeSessionEntry 前写（persistSessionOutcome 内部按 id 查
     // sessions Map，条目删除后静默跳过）。
     this.svc.persistSessionOutcome(sessionId, 'stopped', outcomeReason)
-    // occupancy #10（D3，forceQuit/abort 超时收敛腿）：进程被强杀后 agent_settled /
-    // compaction_end 永不到达，占用三维全复位——session.exited 广播前发，且必须在
-    // removeSessionEntry（内部 bus.clearSession）之前，否则帧送空集合。
+    // occupancy #10（D2 迁移，forceQuit/abort 超时收敛腿）：进程被强杀后 agent_settled /
+    // compaction_end 永不到达，'full-reset' 行三维全复位 + 三布尔派生同步复位（结构上不再有
+    // 「只复位一边」）——session.exited 广播前发，且必须在 removeSessionEntry（内部
+    // bus.clearSession）之前，否则帧送空集合。
     const exiting = this.svc.getSession(sessionId)
-    if (exiting) updateSessionOccupancy(exiting, this.messageBus, { turn: 'idle', compacting: false, bash: false })
+    if (exiting) applySessionOccupancyTransition(exiting, this.messageBus, 'full-reset')
     // session.exited 须在 removeSessionEntry 前发（其后 messageBus.clearSession 清空
     // 订阅者集合，再发等于空投，前端一条也收不到）。code=null：强杀场景退出码未知，
     // 与 shared 协议「被信号杀死无退出码」语义一致。前端 handleSessionExited 会把
@@ -498,6 +628,147 @@ export class MessageDispatcher {
     const exitedMsg = { type: 'session.exited' as const, payload: { sessionId, code: null, reason: exitReason } }
     this.messageBus?.publish(sessionId, exitedMsg)
     this.svc.removeSessionEntry(sessionId)
+  }
+
+  // ── abort RPC 超时路径：三信号判据 + 三级阶梯（W7 / 设计 §3.2 D3）──────────────
+
+  /**
+   * 阶梯状态机（每级有终点，级间迁移闭合，无无界分支）：
+   *
+   * | 级 | 触发条件（三信号组合）                                        | 动作                                   | 终点 |
+   * |----|---------------------------------------------------------------|----------------------------------------|------|
+   * | 1  | 探测有响应（无论事件窗）→ pi 活、abort 收敛中或排队              | warn 迟滞 + 有界重试 abort（≤2 次）      | A：重试收敛 → abort 成功收口 |
+   * |    |                                                               |                                        | 迁移：耗尽 → 级 2 |
+   * | 2  | pi 活但 abort 落不了地（级 1 耗尽；或探测无响应 + 事件窗有产出   | 广播「会话无法响应停止请求」+ 强制关闭    | B：决策移交用户（既有 |
+   * |    | ——RPC 层饿死的事故形态）                                       | 指引，不自动杀进程                       | session.forceQuit RPC / pi 自然收敛） |
+   * | 3  | 探测无响应 + 事件窗静默超保守窗 → 真冻结                         | 直达强杀（现状行为的收窄保留）            | C：forceQuitSession 收敛 |
+   *
+   * 入口不变量（abort-RPC pending 信号）：caller 只在 catch RpcTimeoutError 时进入——abort
+   * 发出 60s（CMD_TIMEOUT_MS）无应答、仍未收敛。三信号中探测 = getState（RpcClient 侧已配
+   * FAST_TIMEOUT_MS=10s 快超时）；事件窗 = RpcClient.lastEventAt（readClientLastEventAt）。
+   *
+   * 「record 如实 failed」的 core 侧 record 终态归 D2 裁决表（W3/W4 领地）；runtime 领地
+   * 负责的是 session outcome（阶梯 1 成功/A 阶梯 3 → stopped + 原因；阶梯 2 不 persist——
+   * abort 未落地、session 存活，persist 会谎报终态）与用户可见广播。
+   */
+  private async handleAbortRpcTimeout(sessionId: string, client: IPiEngine, errMsg: string, source: AbortSource): Promise<void> {
+    // 防重入：用户连按 ESC / renderer 重试会让多个 abort() 同时超时——后到者共享先到者的
+    // 阶梯实例（await 同一终点），避免双份重试与双份广播。
+    const ongoing = this.abortStallLadders.get(sessionId)
+    if (ongoing) return ongoing
+    const ladder = this.runAbortStallLadder(sessionId, client, errMsg, source)
+      .finally(() => this.abortStallLadders.delete(sessionId))
+    this.abortStallLadders.set(sessionId, ladder)
+    return ladder
+  }
+
+  /** 阶梯主体（handleAbortRpcTimeout 的防重入壳内执行）。 */
+  private async runAbortStallLadder(sessionId: string, client: IPiEngine, errMsg: string, source: AbortSource): Promise<void> {
+    // 阶梯判定可长达数分钟（探测 10s × N + 重试 60s × N）：期间用户可能已自行 forceQuit
+    // （进程表条目删除 / rebind）。client 不再绑定该 session 即中止——不对已被处置的
+    // session 继续重试或广播。
+    const stillOwns = (): boolean => this.pm.getClient(sessionId) === client
+
+    // ── 阶梯 1：快超时探测有响应 → pi 活、abort 迟滞 → 有界重试 ──
+    let piResponsive = await this.probeEngineAlive(client)
+    if (piResponsive) {
+      for (let attempt = 1; attempt <= ABORT_STALL_RETRY_LIMIT; attempt++) {
+        if (!stillOwns()) return
+        console.warn(`[message-dispatcher] abort stalled but pi responsive (liveness probe OK), bounded retry ${attempt}/${ABORT_STALL_RETRY_LIMIT}: sessionId=${sessionId}`)
+        try {
+          await client.abort()
+          // 终点 A：迟滞后收敛。与 abort() 成功路径同构收口（isGenerating/occupancy 已在
+          // abort() catch 入口复位，此处不重复）。
+          this.svc.persistSessionOutcome(sessionId, 'stopped', `User aborted (abort recovered on stall retry ${attempt}/${ABORT_STALL_RETRY_LIMIT})`)
+          const completeMsg = { type: 'message.complete' as const, payload: { sessionId, stopReason: 'aborted' as const } }
+          this.messageBus?.publish(sessionId, completeMsg)
+          return
+        } catch (retryErr) {
+          if (!(retryErr instanceof RpcTimeoutError)) {
+            // 非超时失败（EPIPE / 进程退出 / RPC 显式拒绝）：transport 已断，重试无意义——
+            // 落探测判定（必然无响应）→ 走事件窗判据区分阶梯 2/3。
+            piResponsive = false
+            break
+          }
+          // 又超时：复查探测——仍响应则继续重试（下一轮或耗尽迁移阶梯 2）；失联则立即
+          // 落窗判定（不再空耗剩余重试名额，pi 已无应答能力）。
+          piResponsive = await this.probeEngineAlive(client)
+          if (!piResponsive) break
+        }
+      }
+      if (!stillOwns()) return
+      if (piResponsive) {
+        // 阶梯 1 耗尽 → 迁移阶梯 2（重试名额用尽且探测仍响应 = pi 活但 abort 落不了地）。
+        this.publishAbortStalledNotice(sessionId, errMsg)
+        return
+      }
+      // 中途失联：fall through 到事件窗判据（下方阶梯 2/3 分岔）。
+    }
+
+    // ── 探测无响应：事件窗判据分岔阶梯 2（有产出）/ 阶梯 3（静默超窗）──
+    if (!stillOwns()) return
+    const silenceMs = resolveFrozenEventSilenceMs()
+    const silentForSec = Math.round((Date.now() - readClientLastEventAt(client)) / MS_PER_SECOND)
+    if (silentForSec * MS_PER_SECOND <= silenceMs) {
+      // 阶梯 2 直接入口（事故形态）：探测无响应 + 事件窗近窗有产出 → pi 活但 RPC 层饿死。
+      console.warn(`[message-dispatcher] abort stalled: pi RPC starved (probe unresponsive but event stream active ${silentForSec}s ago), leaving session alive for explicit user action: sessionId=${sessionId}`)
+      this.publishAbortStalledNotice(sessionId, errMsg)
+      return
+    }
+    // 阶梯 3 / 终点 C：真冻结（双信号同时成立：探测无响应 + 静默超保守窗）→ 直达强杀。
+    // 这是旧「abort 超时即杀」行为的收窄保留——对真冻结仍及时生效（探测 10s + 判定即杀）。
+    // D5①（session-dead-structural-fixes）：K2 结构化 kill 日志——exit 143 类进程死亡可从
+    // kill_source/who 回溯到发起方；[U2] who 按 abort 的 source 区分，收敛环 re-abort
+    // （convergence）不得在 kill 日志里冒充用户 abort。
+    const abortWho = source === 'convergence' ? 'convergence re-abort (runtime auto)' : 'user abort'
+    console.warn(`[message-dispatcher] abort RPC timed out and pi frozen (probe unresponsive + event stream silent ${silentForSec}s > window ${Math.round(silenceMs / MS_PER_SECOND)}s), force-destroying session ${sessionId} (kill_source=abort_timeout | who: ${abortWho} | chain: forceQuitSession -> detach -> SIGTERM destroy -> persist stopped -> occupancy reset -> session.exited)`)
+    // D4 置位分型 K2：abort 无响应的冻结强杀收口 = 「用户要停」链路末端，置 userStopped 标记。
+    await this.forceQuitSession(
+      sessionId,
+      `Abort failed (pi frozen: probe unresponsive + event stream silent ${silentForSec}s): ${errMsg}`,
+      'pi 无响应且事件流静默超窗（判定冻结），进程已强制终止。重发消息即可恢复（自动重启进程，历史完整）',
+      'abort_timeout',
+    )
+  }
+
+  /**
+   * 快超时活性探测（三信号之一）：getState 是毫秒级内存快照 RPC，RpcClient 侧已配
+   * FAST_TIMEOUT_MS（10s）快超时——pi 忙于 turn 时 RPC 事件循环仍应答；真冻结时超时无响应。
+   * 复用既有方法（设计 D3：该面无名为 ping 的方法，不新造）。resolve = true；任何 reject
+   * （超时 / 进程退出 / 传输错误）= false——后两者与冻结同向（无应答能力），归并处理安全。
+   */
+  private async probeEngineAlive(client: IPiEngine): Promise<boolean> {
+    try {
+      await client.getState()
+      return true
+    } catch {
+      return false
+    }
+  }
+
+  /**
+   * 阶梯 2 通知（pi 活但 abort 落不了地）：经既有 session 级广播通道发布用户可见状态 +
+   * 显式动作请求 + 后果说明。
+   *
+   * 广播消息形态（GUI 消费面本期不改——runtime 只发状态，动作出口复用既有 RPC）：
+   * - 通道：messageBus.publish(sessionId, msg)——session 级定向推送（与 session.exited 同
+   *   通道，订阅该 sid 的前端全收）。
+   * - type：复用 'message.error'（进聊天流错误气泡，renderer 既有消费面零改动）。不新造
+   *   wire type——ServerMessageType 登记在 shared（W7 领地不动 shared）；GUI 结构化消费面
+   *   落地时再登记专属 'session.abortStalled' 帧（含 probe/eventWindow/abortRetries 诊断
+   *   字段），届时本方法改发新帧即可。
+   * - payload：{ sessionId, message }——文案三要素：现象（无法响应停止请求）+ 显式动作
+   *   出口（侧边栏右键「强制退出」= 既有 session.forceQuit RPC）+ 后果（历史完整，重开可恢复）。
+   */
+  private publishAbortStalledNotice(sessionId: string, errMsg: string): void {
+    const stallMsg = {
+      type: 'message.error' as const,
+      payload: {
+        sessionId,
+        message: `会话无法响应停止请求（${errMsg}）：pi 仍在运行，但停止请求迟迟未生效。可等待其自然结束；如需立即终止，请在侧边栏右键该会话选择「强制退出」——会话历史已保存，重新打开即可恢复。`,
+      },
+    }
+    this.messageBus?.publish(sessionId, stallMsg)
   }
 
   /**
@@ -613,9 +884,9 @@ export class MessageDispatcher {
         this.messageBus?.publish(sessionId, rejectMsg)
         return null
       }
-      activeSession.isBashRunning = true
-      // occupancy #7（D3）：sendBash 置位 → bash=true（与 turn 维度正交，streaming 中可并存）。
-      this.touchOccupancy(activeSession, { bash: true })
+      // occupancy #7（D2 迁移）：sendBash 置位 → 'bash-start' 行（派生 isBashRunning=true +
+      // 合并 bash=true；与 turn 维度正交，streaming 中可并存）。
+      applySessionOccupancyTransition(activeSession, this.messageBus, 'bash-start')
       // [W1] 生成本次 sendBash 的代次令牌：abortBash 在广播 cancelled 终态前会旋转此 token
       // （清 undefined）。await 返回后比对 token，可判定是否被 abortBash 抢先收口。
       activeSession.bashRunToken = `bash_${Date.now()}_${randomTokenSuffix()}`
@@ -752,9 +1023,9 @@ export class MessageDispatcher {
    */
   private releaseBashReservation(activeSession: IManagedSessionView | undefined, myToken: string | undefined): void {
     if (activeSession) {
-      activeSession.isBashRunning = false
-      // occupancy #7（D3）：sendBash finally（成功/失败/abort-skip 全路径）→ bash=false。
-      this.touchOccupancy(activeSession, { bash: false })
+      // occupancy #7（D2 迁移）：sendBash finally（成功/失败/abort-skip 全路径）→ 'bash-end' 行
+      // （派生 isBashRunning=false + 合并 bash=false）。
+      applySessionOccupancyTransition(activeSession, this.messageBus, 'bash-end')
       // [W1] 复位 token：仅当 token 仍是本次 sendBash 的（未被 abortBash 旋转、
       // 也未被下一次 sendBash 覆盖）时才清，避免误清 abortBash 或后续 sendBash 的标记。
       if (myToken !== undefined && activeSession.bashRunToken === myToken) {
@@ -828,10 +1099,9 @@ export class MessageDispatcher {
       sent = false
     } finally {
       if (activeSession) {
-        activeSession.isBashRunning = false
-        // occupancy #11（D3）：abortBash（成败皆兜底）→ bash=false，与下方 cancelled 哨兵帧
-        // 广播同源同点（pi 卡死时 abort_bash 无响应，靠 finally 保证维度复位）。
-        this.touchOccupancy(activeSession, { bash: false })
+        // occupancy #11（D2 迁移）：abortBash（成败皆兜底）→ 'bash-end' 行，与下方 cancelled
+        // 哨兵帧广播同源同点（pi 卡死时 abort_bash 无响应，靠 finally 保证维度复位）。
+        applySessionOccupancyTransition(activeSession, this.messageBus, 'bash-end')
         // [W1] 旋转 token：通知 sendBash「已被 abort 抢先收口」。sendBash 在 await 返回后
         // 检测到 activeSession.bashRunToken !== myToken 即静默跳过终态广播，避免双终态。
         // 用新 token 而非清 undefined：若 sendBash 尚未读 myToken（仍在 await），清 undefined
@@ -953,10 +1223,9 @@ export class MessageDispatcher {
       // interpreter 未触发 compaction_end 导致 session 卡死。置位归 interpreter（compaction_start），
       // dispatcher 不置 true，故此处只写 false（对 false 无害，幂等）。
       if (active) {
-        active.isCompacting = false
-        // occupancy #6 兜底（D3 同源同点）：transport 级失败时 compaction_end（#6）不到达，
-        // compacting 维度在此镜像复位（对未置位场景幂等无害）。
-        this.touchOccupancy(active, { compacting: false })
+        // occupancy #6 兜底（D2 迁移，'compacting-end' 行）：transport 级失败时 compaction_end
+        //（#6）不到达，compacting 维度在此镜像复位（派生 isCompacting=false；对未置位场景幂等无害）。
+        applySessionOccupancyTransition(active, this.messageBus, 'compacting-end')
       }
     }
   }

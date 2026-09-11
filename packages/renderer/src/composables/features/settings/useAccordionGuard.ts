@@ -11,24 +11,21 @@
 import { ref, computed } from 'vue'
 import type { Ref } from 'vue'
 
-/** 待执行的展开动作（confirmDiscard 后执行） */
-type PendingAction =
-  | { kind: 'collapse' }
-  | { kind: 'switch'; id: string }
-  | { kind: 'add' }
-
 export function useAccordionGuard(newId: string) {
   /** 当前展开的 provider id（null=无，newId=新建态，其它=编辑该 provider） */
   const expandedId: Ref<string | null> = ref(null)
   /** 当前展开 body 的 dirty 态（经 @dirty-change 上抛，用于切换守卫） */
   const currentBodyDirty = ref(false)
-  /** 待执行的展开动作（confirmDiscard 后执行） */
-  const pendingAction = ref<PendingAction | null>(null)
+  /**
+   * dirty 守卫的待执行目标（confirmDiscard 后直接赋给 expandedId）：undefined=无守卫在途，
+   * null=确认后收起，string=确认后切到该 provider。存在性（!== undefined）驱动守卫弹窗开合。
+   */
+  const pendingTarget = ref<string | null | undefined>(undefined)
   /** dirty 守卫确认弹窗 open 态（v-model:open 双向绑定） */
   const guardDialogOpen = computed({
-    get: () => pendingAction.value !== null,
+    get: () => pendingTarget.value !== undefined,
     set: (open: boolean) => {
-      if (!open) pendingAction.value = null
+      if (!open) pendingTarget.value = undefined
     },
   })
 
@@ -40,7 +37,7 @@ export function useAccordionGuard(newId: string) {
   function toggleExpand(id: string): void {
     if (expandedId.value === id) {
       if (currentBodyDirty.value) {
-        pendingAction.value = { kind: 'collapse' }
+        pendingTarget.value = null
         return
       }
       expandedId.value = null
@@ -48,7 +45,7 @@ export function useAccordionGuard(newId: string) {
       return
     }
     if (currentBodyDirty.value) {
-      pendingAction.value = { kind: 'switch', id }
+      pendingTarget.value = id
       return
     }
     expandedId.value = id
@@ -61,7 +58,7 @@ export function useAccordionGuard(newId: string) {
    */
   function createAndExpand(): void {
     if (expandedId.value !== null && currentBodyDirty.value) {
-      pendingAction.value = { kind: 'add' }
+      pendingTarget.value = newId
       return
     }
     expandedId.value = newId
@@ -70,17 +67,11 @@ export function useAccordionGuard(newId: string) {
 
   /** dirty 守卫确认 → 执行待定动作（展开体卸载即丢弃表单态，无需显式 reset） */
   function confirmDiscard(): void {
-    const action = pendingAction.value
-    pendingAction.value = null
-    if (!action) return
+    const target = pendingTarget.value
+    pendingTarget.value = undefined
+    if (target === undefined) return
     currentBodyDirty.value = false
-    if (action.kind === 'collapse') {
-      expandedId.value = null
-    } else if (action.kind === 'switch') {
-      expandedId.value = action.id
-    } else if (action.kind === 'add') {
-      expandedId.value = newId
-    }
+    expandedId.value = target
   }
 
   // ── ProviderEditBody 事件处理 ──

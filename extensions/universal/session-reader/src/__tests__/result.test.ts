@@ -330,12 +330,12 @@ describe('result action（U6）', () => {
     ).rejects.toThrow(/空条目/)
   })
 
-  it('10. 未知 action 报错文案含 result（10 action 全列举）', async () => {
+  it('10. 未知 action 报错文案含 result（11 action 全列举，含 doctor）', async () => {
     await expect(
       handleSessionRead(
         { action: 'bogus' } as unknown as SessionReadParams,
         dir,
       ),
-    ).rejects.toThrow(/find\/family\/outline\/expand\/detail\/search\/export\/extract\/workflow\/result/)
+    ).rejects.toThrow(/find\/family\/outline\/expand\/detail\/search\/export\/extract\/workflow\/result\/doctor/)
   })
 })

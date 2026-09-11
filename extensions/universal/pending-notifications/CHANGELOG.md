@@ -1,5 +1,11 @@
 # @zhushanwen/pi-pending-notifications
 
+## 0.6.0
+
+### Minor Changes
+
+- 838806898: Align with engine protocol v1.x: background-task (subagent/workflow) pending registrations are pinned to the process tier, and read-side consumers filter by sessionId so cross-session views no longer silently drop long-running registrations.
+
 ## 0.5.3
 
 ### Patch Changes

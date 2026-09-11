@@ -1,25 +1,26 @@
 /**
- * useForkBranchNotify —— 后台分支通知编排（FR-19，spec §4 Key States + §8.5）。
+ * useForkBranchNotify —— 后台分支通知状态（FR-19，spec §4 Key States + §8.5）。
  *
- * 职责：追踪后台分支 session 的状态变化（running→done/error/waiting），把变化路由到
- * 主线反馈行（ForkNotice 追加通知）+ 侧栏未读角标。transient 映射（运行期内存，不持久化）。
+ * 职责：追踪后台分支 session 的状态变化（running→done/error/stopped），把变化路由给
+ * 调用方（bindForkNoticeEffect → 反馈行追加）+ 维护侧栏未读角标（unreadByBranch）。
+ * transient 映射（运行期内存，不持久化）。
  *
  * 数据流：
- * - 数据源：config.sessions 全量广播（含 status/outcome），diff 对比分支 session 的 status 变化
- * - 触发条件：分支 session 从 running（status 'active'）变为 done/error/stopped/waiting（终态/需关注）
- * - 路由目标：onBranchStatusChange 回调（调用方接线 → 反馈行追加 + 角标）
+ * - 数据源：config.sessions 全量广播（含 status/outcome）→ session store groups，
+ *   由 bindForkNoticeEffect watch 后调 syncForkBranches 做分支 status diff
+ * - 触发条件：分支 session 从 running（status 'active'）变为 done/error/stopped（终态）
+ * - 路由目标：syncForkBranches 的 onChange 回调（调用方接线 → 反馈行追加）+ unreadByBranch 置位（角标）
  *
- * 生命周期：composable 实例级订阅（watch + onScopeDispose 退订），不依赖任何 store，
- * 保持纯编排（调用方注入回调决定如何展示，遵循 R2 features 层 composable 范式）。
- *
- * W4 阶段：本 composable 提供完整状态追踪骨架（diff + 路由），UI 接线（反馈行追加、
- * 角标渲染）在集成阶段由调用方挂接 onBranchStatusChange 实现。
+ * [ADR-0049 例外] 模块级单例状态，不套 useSessionScopedState：本模块是「全局 sid 协调器」——
+ * 追踪键是分支 session id（跨 session 血缘，与单一活跃 session 无关），unreadByBranch 全局
+ * 单例供侧栏角标读，与 useForkNoticeEffect 的 feedMap 同模式（无 sidRef 的显式 sid 协调器）。
+ * 非活跃 session 的角标状态因此天然保留（切会话不清）。
  */
-import { onScopeDispose, ref, shallowRef, watch, type Ref } from 'vue'
+import { shallowRef, type Ref } from 'vue'
 import type { SessionGroup, SessionStatus } from '@xyz-agent/shared'
 
 /** 分支状态变化的语义分类（spec §4 Key States） */
-export type BranchChangeKind = 'done' | 'error' | 'waiting' | 'stopped'
+export type BranchChangeKind = 'done' | 'error' | 'stopped'
 
 /** 分支状态变化事件（路由给调用方 → 反馈行追加 + 角标） */
 export interface BranchStatusChange {
@@ -27,7 +28,7 @@ export interface BranchStatusChange {
   branchId: string
   /** 源 session id（父 session，反馈行落点） */
   srcSessionId: string
-  /** 变化语义（done/error/waiting/stopped） */
+  /** 变化语义（done/error/stopped） */
   kind: BranchChangeKind
   /** 分支 label（反馈行文案用） */
   label: string
@@ -47,11 +48,11 @@ interface BranchTrack {
 const RUNNING_STATUS: SessionStatus = 'active'
 
 /**
- * status → BranchChangeKind 映射（仅 running→终态/需关注 触发通知）。
+ * status → BranchChangeKind 映射（仅 running→终态 触发通知）。
  * idle→其他不触发（idle 是默认态，非「后台跑完」语义）。
  */
 function classifyChange(from: SessionStatus, to: SessionStatus): BranchChangeKind | null {
-  // 仅 running 起源的翻转才通知（后台分支「跑完/出错/需关注」心智）
+  // 仅 running 起源的翻转才通知（后台分支「跑完/出错」心智）
   if (from !== RUNNING_STATUS) return null
   switch (to) {
     case 'done':
@@ -60,145 +61,74 @@ function classifyChange(from: SessionStatus, to: SessionStatus): BranchChangeKin
       return 'error'
     case 'stopped':
       return 'stopped'
-    // waiting（等审批/工具阻塞）在 SessionStatus 无独立值，由前端 DerivedStatus 派生；
-    // 此处保留扩展点，集成时若 runtime 提供 waiting 信号可在此分支路由。
     default:
       return null
   }
 }
 
-/**
- * 后台分支通知编排 composable。
- *
- * @param groupsRef 当前 SessionGroup[] 的 ref（来自 core use-session 监听 config.sessions 后的
- *   applySnapshot 整表应用，session store groups 分区）。
- *   每次 groups 变化触发 diff——遍历所有 session，对 parentSession 有值（即分支）的项做状态对比。
- * @returns
- *   - trackedBranches：当前追踪的分支 id 集合（响应式，供 UI 展示角标等）
- *   - unreadByBranch：分支 id → 未读标记（响应式，需关注/已完成未查看时为 true）
- *   - registerFork(srcSessionId, branchId, label)：fork 成功时注册新分支（建立追踪基线）
- *   - clearUnread(branchId)：用户查看分支后清未读角标
- *
- * 调用方接线方式（集成阶段）：
- * ```ts
- * const { trackedBranches, registerFork, clearUnread } = useForkBranchNotify(groupsRef)
- * events.onGlobalType('session.forkNotice', (msg) => {
- *   registerFork(msg.srcSessionId, msg.newSessionId, msg.preview || msg.branchName || '')
- * })
- * ```
- *
- * 状态变化通知的 UI 接线（反馈行追加）：调用方可在 groupsRef watch 之外，
- * 自行 watch trackedBranches 或通过本 composable 暴露的 onChange 回调接线（W4 预留）。
- */
-export function useForkBranchNotify(groupsRef: Ref<SessionGroup[]>): {
-  /** 追踪中的分支 id 集合（响应式 Set） */
-  trackedBranches: Ref<ReadonlySet<string>>
-  /** 分支 id → 未读标记（需关注/已完成未查看） */
-  unreadByBranch: Ref<ReadonlyMap<string, boolean>>
-  /** 注册新 fork 分支（建立追踪基线，fork 广播后调用） */
-  registerFork: (srcSessionId: string, branchId: string, label: string) => void
-  /** 清除某分支未读角标（用户查看后调） */
-  clearUnread: (branchId: string) => void
-  /** 状态变化回调注册（调用方接线反馈行追加；返回取消函数） */
-  onBranchStatusChange: (cb: (change: BranchStatusChange) => void) => () => void
-} {
-  /** 追踪表：branchId → BranchTrack（shallowRef + Map 重赋值触发响应式） */
-  const trackMap = shallowRef(new Map<string, BranchTrack>())
-  /** 未读标记：branchId → boolean（Map 重赋值触发响应式） */
-  const unreadMap = shallowRef(new Map<string, boolean>())
-  /** 状态变化回调集合（多调用方可注册） */
-  const changeCbs = new Set<(change: BranchStatusChange) => void>()
+/** 追踪表：branchId → BranchTrack（非响应式——唯一读者是 diff 自身，UI 只读 unreadByBranch） */
+// taste:allow-no-data-owner W24-EX-A（ADR-0049 全局 sid 协调器/订阅注册基建，登记草稿）：branchId→BranchTrack 非响应式追踪表（fork 通知全局 SSOT 的 diff 基线，无 sidRef 的显式 sid 协调器，上方注释已述 ADR-0049 例外）
+const trackMap = new Map<string, BranchTrack>()
 
-  /**
-   * diff groups：遍历所有 session，对 parentSession 有值（分支）的项做 status 对比。
-   * 仅追踪中的分支触发变化检测（未注册的分支无 srcSessionId 落点，不通知）。
-   */
-  function diffGroups(groups: SessionGroup[]): void {
-    const next = new Map(trackMap.value)
-    let changed = false
-    for (const g of groups) {
-      for (const s of g.sessions) {
-        if (!s.parentSession) continue
-        const tracked = next.get(s.id)
-        if (!tracked) continue // 未注册（非本 composable 追踪的分支），跳过
-        if (s.status === tracked.lastStatus) {
-          // label 可能更新（重命名），同步但不触发通知
-          if (s.label !== tracked.label) {
-            tracked.label = s.label
-            changed = true
-          }
-          continue
-        }
-        const kind = classifyChange(tracked.lastStatus, s.status)
-        // 更新基线
-        tracked.lastStatus = s.status
-        tracked.label = s.label
-        changed = true
-        if (kind) {
-          // 触发未读角标（done/error/waiting 均需用户关注）
-          unreadMap.value = new Map(unreadMap.value).set(s.id, true)
-          // 派发变化事件给调用方（反馈行追加）
-          const change: BranchStatusChange = {
-            branchId: s.id,
-            srcSessionId: tracked.srcSessionId,
-            kind,
-            label: tracked.label,
-          }
-          for (const cb of changeCbs) cb(change)
-        }
+/** 分支未读角标：branchId → true（模块级单例，侧栏 ForkGroup 经 useForkBranchBadges 读） */
+// taste:allow-no-data-owner W24-EX-A（ADR-0049 全局 sid 协调器/订阅注册基建，登记草稿）：分支未读角标全局 SSOT（无 sidRef 的显式 sid 协调器，跨 session 血缘键，侧栏角标跨组件读）
+export const unreadByBranch: Ref<ReadonlyMap<string, boolean>> = shallowRef(new Map())
+
+/**
+ * diff groups：遍历所有 session，对 parentSession 有值（分支）的项做 status 对比。
+ * 仅追踪中的分支触发变化检测（未注册的分支无 srcSessionId 落点，不通知）。
+ * 有状态翻转时置未读角标并回调 onChange（由调用方接线反馈行追加）。
+ */
+export function syncForkBranches(
+  groups: SessionGroup[],
+  onChange: (change: BranchStatusChange) => void,
+): void {
+  for (const g of groups) {
+    for (const s of g.sessions) {
+      if (!s.parentSession) continue
+      const tracked = trackMap.get(s.id)
+      if (!tracked) continue // 未注册（非本模块追踪的分支），跳过
+      if (s.status === tracked.lastStatus) {
+        // label 可能更新（重命名），同步但不触发通知
+        if (s.label !== tracked.label) tracked.label = s.label
+        continue
+      }
+      const kind = classifyChange(tracked.lastStatus, s.status)
+      // 更新基线
+      tracked.lastStatus = s.status
+      tracked.label = s.label
+      if (kind) {
+        // 触发未读角标（done/error 均需用户关注）
+        unreadByBranch.value = new Map(unreadByBranch.value).set(s.id, true)
+        // 派发变化事件给调用方（反馈行追加）
+        onChange({
+          branchId: s.id,
+          srcSessionId: tracked.srcSessionId,
+          kind,
+          label: tracked.label,
+        })
       }
     }
-    if (changed) trackMap.value = next
   }
+}
 
-  // groups 变化触发 diff（diff 仅对比已注册分支，无注册时为空操作，安全）
-  watch(groupsRef, (groups) => diffGroups(groups), { deep: true })
+/** 注册新 fork 分支：建立追踪基线（初始 status 来自下一次 groups 广播） */
+export function registerFork(srcSessionId: string, branchId: string, label: string): void {
+  // 初始 lastStatus 设为 running（fork 时分支刚创建必为 active）；
+  // 下次 groups 广播若仍 active 则无变化，若已终态则触发通知。
+  trackMap.set(branchId, { lastStatus: RUNNING_STATUS, srcSessionId, label })
+}
 
-  /** 注册新 fork 分支：建立追踪基线（初始 status 来自下一次 groups 广播） */
-  function registerFork(srcSessionId: string, branchId: string, label: string): void {
-    const next = new Map(trackMap.value)
-    // 初始 lastStatus 设为 running（fork 时分支刚创建必为 active）；
-    // 下次 groups 广播若仍 active 则无变化，若已终态则触发通知。
-    next.set(branchId, { lastStatus: RUNNING_STATUS, srcSessionId, label })
-    trackMap.value = next
-  }
+/** 清除某分支未读角标（用户 select 跳转查看后调） */
+export function clearUnread(branchId: string): void {
+  if (!unreadByBranch.value.has(branchId)) return
+  const next = new Map(unreadByBranch.value)
+  next.delete(branchId)
+  unreadByBranch.value = next
+}
 
-  /** 清除某分支未读角标（用户 select 跳转查看后调） */
-  function clearUnread(branchId: string): void {
-    if (!unreadMap.value.has(branchId)) return
-    const next = new Map(unreadMap.value)
-    next.delete(branchId)
-    unreadMap.value = next
-  }
-
-  /** 注册状态变化回调（返回取消函数） */
-  function onBranchStatusChange(cb: (change: BranchStatusChange) => void): () => void {
-    changeCbs.add(cb)
-    return () => {
-      changeCbs.delete(cb)
-    }
-  }
-
-  // trackedBranches / unreadByBranch 作为只读响应式视图（派生自 Map keys）
-  const trackedBranches = ref<ReadonlySet<string>>(new Set())
-  watch(trackMap, (m) => {
-    trackedBranches.value = new Set(m.keys())
-  }, { immediate: true })
-
-  // 退订：composable 作用域销毁时清理（避免泄漏 + 测试隔离）
-  // 当前未直接订阅 events（diff 由 groupsRef watch 驱动），预留 onScopeDispose
-  // 以便集成阶段若在此 composable 内订阅 session.forkNotice 时统一退订。
-  onScopeDispose(() => {
-    changeCbs.clear()
-    trackMap.value = new Map()
-    unreadMap.value = new Map()
-  })
-
-  return {
-    trackedBranches,
-    unreadByBranch: unreadMap,
-    registerFork,
-    clearUnread,
-    onBranchStatusChange,
-  }
+/** 重置全部分支追踪/角标态（bindForkNoticeEffect 卸载清理 + 测试隔离共用） */
+export function resetForkBranchState(): void {
+  trackMap.clear()
+  unreadByBranch.value = new Map()
 }

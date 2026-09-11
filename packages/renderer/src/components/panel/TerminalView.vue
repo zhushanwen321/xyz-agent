@@ -67,7 +67,7 @@ import { useI18n } from 'vue-i18n'
 import { Button } from '@/components/ui/button'
 import { useTerminal, replayChunksBatched, type TerminalBuffer } from '@/composables/features/terminal/useTerminal'
 import { useSessionStore } from '@/stores/session'
-import { useComposerInjectionStore } from '@/composables/panel/composer-injection-store'
+import { composerInjectionStore } from '@/composables/panel/composer-injection-store'
 import { getSettingsStore } from '@xyz-agent/core'
 import { darkTerminalTheme } from '@/composables/terminal/terminal-themes'
 
@@ -87,7 +87,7 @@ const xtermContainer = ref<HTMLDivElement | null>(null)
 
 const terminal = useTerminal(toRef(props, 'sessionId'))
 const state = terminal.current
-const composerInjection = useComposerInjectionStore()
+const composerInjection = composerInjectionStore
 const settingsStore = getSettingsStore()
 
 /** 从 settings store 的 terminalConfig 解析 xterm 渲染选项。config 未加载时用默认值。 */

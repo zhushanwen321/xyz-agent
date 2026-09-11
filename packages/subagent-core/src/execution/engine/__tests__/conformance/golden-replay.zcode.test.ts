@@ -1,6 +1,6 @@
 // golden-replay.zcode.test.ts —— zcode 引擎 golden 回放层（conformance 免 LLM 默认
 // CI 层）。语料 = app-server NDJSON 帧序列（附录 A.2 任务生命周期帧序；采集 SSOT
-// = engines/zcode/__tests__/__fixtures__/zcode-golden-appserver.json）——双副本 diff
+// = @zhushanwen/zcode-subagent-cli src/__golden__/zcode-golden-appserver.json）——双副本 diff
 // 校验（fixture 与 golden-sample.ts 内嵌副本一致，防漂移：更新样本必须同步两处，
 // 探针的干跑校验消费内嵌副本，两处不一致 = 探针在测旧契约）+ 帧形态不变量断言
 // （A8「golden 帧序列语料 diff 通过」的本仓段）。
@@ -15,13 +15,14 @@ import { fileURLToPath } from "node:url";
 
 import { describe, expect, it } from "vitest";
 
-import { ZCODE_APPSERVER_GOLDEN } from "../../engines/zcode/golden-sample.ts";
+// 基线三层②（W10）：引擎层 golden 随引擎包——内嵌副本经 zcode 包公共导出面
+// 消费，fixture SSOT = zcode 包 src/__golden__/（core 不再深路径 import 内建副本）。
+import { ZCODE_APPSERVER_GOLDEN } from "@zhushanwen/zcode-subagent-cli";
 
-// conformance 目录（engine/__tests__/conformance）→ engine 根的相对定位
+// conformance 目录（engine/__tests__/conformance）→ 引擎包 __golden__ 的相对定位
 const appserverFixturePath = join(
   dirname(fileURLToPath(import.meta.url)),
-  "..", "..", // conformance → __tests__ → engine
-  "engines", "zcode", "__tests__", "__fixtures__", "zcode-golden-appserver.json",
+  "../../../../../../zcode-subagent-cli/src/__golden__", "zcode-golden-appserver.json",
 );
 
 interface AppServerGoldenFile {

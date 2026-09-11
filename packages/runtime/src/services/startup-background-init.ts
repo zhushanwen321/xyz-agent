@@ -26,6 +26,7 @@ import { migrateProviderConfig } from './migration/legacy-provider-migration.js'
 import { setMigrationGate } from './session/session-lifecycle.js'
 import { cleanupTmpMigrateResidue } from '../infra/pi/session-file-utils.js'
 import { getSessionsDir, getPiAgentDir } from '../infra/pi/pi-paths.js'
+import { getDataDir } from '@xyz-agent/shared/paths'
 import { ensureAutoRenameDefault } from './worktree-config-helper.js'
 import { ensureDeclaredStartupConfigs } from './extension-startup-config.js'
 import { ORPHAN_REAP_DELAY_MS, reapOrphanPiProcesses } from './reap-orphan-pi.js'
@@ -72,6 +73,11 @@ export interface StartupBackgroundDeps {
    * 不影响定时器 unref 语义）。可选成员，缺省行为与既有 fire-and-forget 完全一致。
    */
   onOrphanReapChainScheduled?: (completion: Promise<void>) => void
+  /**
+   * spawn 清单读取（u17 判据 v2，D6c port 纪律）：组合根注入 infra/spawn-markers 的
+   * readSpawnMarkerList(getDataDir()) 闭包；null = 清单缺失/坏 → reap 侧 fail-safe 跳过。
+   */
+  readSpawnMarkers: () => string[] | null
 }
 
 /** 空闲 pi 回收三旋钮（D4；默认值权威源 = shared/constants DEFAULT_PI_RECLAIM_*）。 */
@@ -141,7 +147,13 @@ export async function runStartupBackgroundInit(deps: StartupBackgroundDeps): Pro
     settleReapChain = resolve
   })
   const reapTimer = setTimeout(() => {
-    void reapOrphanPiProcesses({ sessionsDir: getSessionsDir(), ownPid: process.pid, trigger: 'startup-sweep' })
+    // u17 判据 v2（设计 §6.12）：孤儿判据消费 spawn 清单，读取函数由组合根经 deps 注入
+    // （清单文件 io 在 infra/spawn-markers.ts 读写两侧 SSOT；D6c services 层不 import infra）。
+    void reapOrphanPiProcesses({
+      dataDir: getDataDir(),
+      ownPid: process.pid,
+      readSpawnMarkers: deps.readSpawnMarkers,
+    })
       .catch((e) => {
         console.warn('[runtime] orphan pi reap failed unexpectedly:', e)
       })

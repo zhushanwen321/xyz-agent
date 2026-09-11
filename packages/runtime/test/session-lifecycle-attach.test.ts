@@ -38,6 +38,7 @@ vi.mock('../src/infra/pi/pi-paths.js', async (importOriginal) => {
 })
 
 import { SessionLifecycle, setMigrationGate } from '../src/services/session/session-lifecycle.js'
+import { userStoppedGate } from '../src/services/session/event-interpreter.js'
 import { parseSessionHeader } from '../src/infra/pi/session-file-utils.js'
 import type { ILifecycleSessionOps, ISessionRegisterDeps } from '../src/services/session/session-internal.js'
 import type { IEventAdapter } from '../src/interfaces.js'
@@ -58,7 +59,13 @@ function makeSummary(id: string): SessionSummary {
  * 测试环境：mock svc/pm/configStore/sessionStore，client 记录 switchSession 收到的路径。
  * findScannedSession 用真实 parseSessionHeader 从 filePath 动态派生 target（C6 幂等语义）。
  */
-function makeEnv(opts: { switchSessionImpl?: (path: string) => Promise<void> } = {}) {
+function makeEnv(opts: {
+  switchSessionImpl?: (path: string) => Promise<void>
+  /** D4 restore-abort 失败链用例：覆盖 client.abort（默认成功 no-op） */
+  abortImpl?: () => Promise<void>
+  /** D4 restore-abort 失败链用例：注入 forceQuitFallback（构造第 7 参，组合根 = dispatcher.forceQuit） */
+  forceQuitFallback?: (sessionId: string) => Promise<void>
+} = {}) {
   const switchCalls: string[] = []
   const client = {
     getState: vi.fn(async () => ({ sessionId: 's-1' })),
@@ -67,6 +74,7 @@ function makeEnv(opts: { switchSessionImpl?: (path: string) => Promise<void> } =
       await opts.switchSessionImpl?.(sessionPath)
     }),
     setSessionName: vi.fn(async () => undefined),
+    abort: vi.fn(opts.abortImpl ?? (async () => undefined)),
   }
   const svc: ILifecycleSessionOps = {
     getExtensionPaths: vi.fn(async () => [] as string[]),
@@ -93,6 +101,9 @@ function makeEnv(opts: { switchSessionImpl?: (path: string) => Promise<void> } =
   const pm = {
     createSession: vi.fn(async () => client),
     destroySession: vi.fn(async () => undefined),
+    // D5② 短路预检读点（session-dead-structural-fixes）：restoreSession 开头查活跃 client；
+    // undefined = 无 client → 不短路 → 走全流程直附着（本组用例的目标路径）。
+    getClient: vi.fn(() => undefined),
   } as unknown as IProcessManager
   const configStore = {
     getDefaultModel: vi.fn(() => ({ provider: 'p', modelId: 'm' })),
@@ -117,7 +128,11 @@ function makeEnv(opts: { switchSessionImpl?: (path: string) => Promise<void> } =
     notifyMessageComplete: () => {},
   }
 
-  const lifecycle = new SessionLifecycle(svc, pm, configStore, sessionStore, workspaceService, registerDeps)
+  const lifecycle = new SessionLifecycle(
+    svc, pm, configStore, sessionStore, workspaceService, registerDeps,
+    // 构造参形如 { forceQuitFallback }（对象包装，非裸函数）
+    opts.forceQuitFallback ? { forceQuitFallback: opts.forceQuitFallback } : undefined,
+  )
   return { lifecycle, svc, pm, client, switchCalls, sessionStore }
 }
 
@@ -414,5 +429,71 @@ describe('S6 归一化残留清理（差距复审 suggestion 6）', () => {
     expect(readdirSync(dir)).not.toContain('2026-08-19T00-00-00-000Z_sess-s6.jsonl.tmp-migrate-2222222222222.jsonl')
     expect(readdirSync(dir)).not.toContain('2026-08-19T00-00-00-000Z_sess-s6.jsonl.meta.json')
     expect(readdirSync(dir)).toContain('2026-08-19T00-00-00-000Z_sess-other.jsonl.tmp-migrate-3333333333333.jsonl')
+  })
+})
+
+// ── D4 restore-abort 失败链（R3 S-3 补测：forceQuitFallback 也失败 → 吞错 + 标记保留 + 环不启动）──
+//
+// applyRestoreAbortConvergence 的 fallbackErr catch 此前零覆盖：abort RPC 超时 → fallback
+// 走 forceQuitSession 完整链，其自身也失败（极端）→ 标记保留 + 环不启动，restore 主体不回滚。
+describe('D4 restore-abort 失败链：fallback 也失败吞错（R3 S-3）', () => {
+  let dir: string
+  let env: ReturnType<typeof makeEnv>
+  let filePath: string
+  let warnSpy: ReturnType<typeof vi.spyOn>
+  const markStore = {
+    marks: new Map<string, { source: string }>(),
+    markUserStopped: vi.fn((id: string, source: string) => { markStore.marks.set(id, { source }) }),
+    hasUserStoppedMark: vi.fn((id: string) => markStore.marks.has(id)),
+    clearUserStoppedMark: vi.fn((id: string) => { markStore.marks.delete(id) }),
+    clearAllUserStoppedMarks: vi.fn(() => markStore.marks.clear()),
+  }
+
+  beforeEach(() => {
+    vi.clearAllMocks()
+    setMigrationGate(Promise.resolve())
+    dir = mkdtempSync(join(tmpdir(), 'w1-restore-abort-'))
+    filePath = join(dir, '2026-08-19T00-00-00-000Z_sess-w1.jsonl')
+    currentSourceFile.value = filePath
+    sessionsDirMock.value = dir
+    writeFileSync(filePath, makeLines(dir).join('\n') + '\n', 'utf-8')
+    warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    markStore.marks.clear()
+    markStore.markUserStopped('sess-w1', 'user_force_quit')
+    userStoppedGate.configure({ marks: markStore, abortSession: vi.fn(async () => undefined) })
+  })
+
+  afterEach(() => {
+    userStoppedGate.resetForTest()
+    warnSpy.mockRestore()
+    setMigrationGate(Promise.resolve())
+    rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
+  })
+
+  it('abort 抛错 → fallback 也抛错 → 两段 warn 出声、标记保留、环不启动、restore 照常返回（不向上传播）', async () => {
+    const fallback = vi.fn(async () => { throw new Error('force-quit also exploded') })
+    env = makeEnv({ abortImpl: vi.fn(async () => { throw new Error('abort rpc timeout') }), forceQuitFallback: fallback })
+
+    // 失败链吞错：restore 主体不可回滚（session 已复活进 Map），收敛细节不泄漏成 restore 失败
+    await expect(env.lifecycle.restoreSession('sess-w1')).resolves.toBeDefined()
+
+    expect(env.client.abort).toHaveBeenCalledTimes(1)
+    expect(fallback).toHaveBeenCalledWith('sess-w1')
+    const warns = warnSpy.mock.calls.map(String).join(' ')
+    expect(warns).toContain('restore-abort failed for sess-w1')
+    expect(warns).toContain('force-quit fallback also failed for sess-w1')
+    // 标记保留（不视为已消费，下次 restore 重试；环未启动 → 无清理发生）
+    expect(userStoppedGate.hasUserStoppedMark('sess-w1')).toBe(true)
+  })
+
+  it('abort 成功主路径（对照）：启动收敛环，收敛链路无 warn', async () => {
+    env = makeEnv()
+    await expect(env.lifecycle.restoreSession('sess-w1')).resolves.toBeDefined()
+    expect(env.client.abort).toHaveBeenCalledTimes(1)
+    // assertPiSessionFile 对无 sessionFile 的 mock client 会 warn（与本链路无关）——只断言收敛链路自身不出声
+    expect(warnSpy.mock.calls.map(String).join(' ')).not.toContain('restore-abort failed for')
+    // abort 成功 → 环启动、标记存活待收敛（窗满由 UserStoppedGate 状态机清理，见
+    // user-stopped-convergence.test.ts 状态机组）
+    expect(userStoppedGate.hasUserStoppedMark('sess-w1')).toBe(true)
   })
 })

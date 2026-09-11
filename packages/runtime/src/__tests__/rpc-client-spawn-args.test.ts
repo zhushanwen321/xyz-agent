@@ -68,8 +68,7 @@ vi.mock('../infra/pi/pi-paths.js', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../infra/pi/pi-paths.js')>()
   return {
     ...actual,
-    getSessionsDir: () => '/mock/home/.xyz-agent/sessions',
-    getPiAgentDir: () => '/mock/home/.xyz-agent/pi/agent',
+    getPiAgentDir: () => '/mock/home/.xyz-agent/agent',
   }
 })
 

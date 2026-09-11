@@ -20,8 +20,9 @@ import {
   finalizedMarkerModule,
   fsSyncModule,
   manifestStoreModule,
-  tempPromptModule,
 } from "./helpers/subagent-service-mocks.ts";
+import { registerFakePiEngine } from "./helpers/fake-engine-port.ts";
+import { clearEngines } from "../engine/registry.ts";
 
 // ── mock modules ──
 
@@ -30,7 +31,6 @@ vi.mock("node:fs", async (importOriginal) => fsSyncModule(await importOriginal<t
 vi.mock("../alive-store.ts", async (importOriginal) => aliveStoreModule(await importOriginal<typeof import("../alive-store.ts")>()));
 vi.mock("../finalized-marker.ts", () => finalizedMarkerModule());
 vi.mock("../manifest-store.ts", () => manifestStoreModule());
-vi.mock("../engine/engines/pi/temp-prompt.ts", () => tempPromptModule());
 
 import { spawn } from "node:child_process";
 
@@ -132,6 +132,9 @@ describe("TC-3: PI_SUBAGENT_ROOT_SESSION_ID env 贯穿正确", () => {
   });
 
   it("TC-3d: 子进程 execute 创建的 record.rootSessionId = env 贯穿的真 ROOT", async () => {
+    // [W3] 协议替身挂起（engine.run 不 settle）——record 保持 running 在 store 可观察
+    clearEngines();
+    registerFakePiEngine();
     process.env[ENV_ROOT_SESSION_ID] = "root-main-session";
     process.env[ENV_SELF_RECORD_ID] = "sa-parent";
     process.env[ENV_DEPTH] = "1";

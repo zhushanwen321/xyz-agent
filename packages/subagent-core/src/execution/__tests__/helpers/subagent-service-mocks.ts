@@ -112,7 +112,7 @@ export function manifestStoreModule() {
   return { ManifestStore: vi.fn(function (_recordsDir: string) { return new FakeManifestStore(); }) };
 }
 
-/** ../engine/engines/pi/temp-prompt.ts mock 模块（固定路径，消除 fake-timers 下 flaky 竞态）。 */
+/** temp-prompt mock 模块（固定路径，消除 fake-timers 下 flaky 竞态）。[W3] 被 mock 的 inproc temp-prompt 模块已删——本工厂仅余存量测试文件引用。 */
 export function tempPromptModule() {
   return {
     writePromptToTempFile: vi.fn(async (agent: string) => {

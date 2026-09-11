@@ -30,7 +30,9 @@ export const selectedCommandName = ref<string | null>(null)
 export const detailFilePath = ref<string | null>(null)
 /**
  * Browser tab 打开时立即加载的 URL（点击 agent 输出的链接设置）。
- * 由 useMarkdownInteractions 外链分支设置；SideDrawer/BrowserPane 据此触发导航。
+ * 由 `openDrawerTab(opts.url)` 写入；SideDrawer/BrowserPane 据此触发导航。
+ * 原 renderer 设置方 `useMarkdownInteractions` 外链分支已于 2026-09-11 随死代码删除，
+ * 当前无调用方（保留待后续接入）。
  * 用完即清空（消费后置 null），避免残留导致下次打开 browser tab 被旧值劫持。
  */
 // taste:allow-no-data-owner W24-EX-B（模块级单例 UI 瞬态，12 类未覆盖存量，登记草稿）：drawer browser tab 瞬时参数（消费后清空）

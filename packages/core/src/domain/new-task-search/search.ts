@@ -278,7 +278,18 @@ export function useSearch(
       // SessionCommand（pi 扩展命令，name 不带 / 前缀如 'goal'/'skill:code-review'）：
       // title=name，sub 优先 description 无则 kind；icon + commandKind 透传给注入侧。
       // commandKind='slash' 是 useSearchJump 区分注入分支的唯一依据（不可靠 title 前缀猜测）。
-      return { type: 'command', title: c.name, sub: c.description ?? c.kind, icon: c.icon, commandKind: 'slash' }
+      // isSkill/location：skill 命令（kind==='skill'，判据与 CommandPopover 的
+      // buildPanelSlashCandidates 同源）带出 SKILL.md 路径与类型标记，供搜索注入侧按项类型
+      // 分流到 skill 通路（裸名 + location + 多 chip 共存）；非 skill 项两者缺省。
+      return {
+        type: 'command',
+        title: c.name,
+        sub: c.description ?? c.kind,
+        icon: c.icon,
+        commandKind: 'slash',
+        isSkill: c.kind === 'skill',
+        location: c.sourceInfo?.path,
+      }
     }
     // 防御性兜底（不应到达：UnifiedCommand 二选一）
     return { type: 'command', title: String((c as { name?: unknown }).name ?? ''), sub: '' }

@@ -17,7 +17,7 @@
 
 **npm files 语义最小例子**：包 A 的 `package.json` 声明 `files: ["src/", "dist/"]`。执行 `npm pack` / `npm publish` 时只有匹配白名单的文件进 tarball。关键静默面：若磁盘上 `dist/` 目录不存在（没跑构建），npm **不报错、不警告**，直接打包一个没有 dist 的 tarball——发布者以为承诺了什么和 tarball 里实际有什么，中间隔着一层零反馈的静默。
 
-**发布面全景**（终态发布面 29 包 = pnpm workspace 内非 private 且未被 changeset ignore 的 28 包——u4/D6 将 deprecated 的 pi-unified-hooks 加入 changeset ignore 落地后的口径（此前 29 + statusline = 30）+ statusline 特例，按产物形态分三类）：
+**发布面全景**（终态发布面 32 包 = pnpm workspace 内非 private 且未被 changeset ignore 的 31 包——u4/D6 将 deprecated 的 pi-unified-hooks 加入 changeset ignore 落地后的口径（此前 29 + statusline = 30）+ statusline 特例 + W5/W7 引擎三包（subagent-engine-sdk / pi-subagent-cli / zcode-subagent-cli，MF-4 批次接入守卫面），按产物形态分三类）：
 
 | 类别 | 包 | files 声明的产物 | 构建方式 |
 |---|---|---|---|
@@ -25,6 +25,9 @@
 | dist 发布包 | `@xyz-agent/extension-protocol` | `dist`（无尾斜杠） | tsup，正式/dev 两线均有显式 build 步骤 |
 | dist 发布包 | `@xyz-agent/session-delivery` | `dist`（无尾斜杠） | tsup，**仅正式线**有显式 build 步骤 |
 | dist 发布包 | `@zhushanwen/subagent-core` | `dist/` + `dist.bundle/`（双档） | tsup 两档（`build` / `build:bundle`），发布流程无显式步骤、由 smoke 副作用承载 |
+| dist 发布包 | `@zhushanwen/subagent-engine-sdk` | `src/`（排除 `__tests__`）+ `dist/` | tsup，正式/dev 两线均有显式 build 步骤（MF-4 批次接入） |
+| dist 发布包 | `@zhushanwen/pi-subagent-cli` | `bin/` + `dist/`（CLI 包：bin 是唯一 npm 消费面，不带 src/） | tsup，正式/dev 两线均有显式 build 步骤（MF-4 批次接入） |
+| dist 发布包 | `@zhushanwen/zcode-subagent-cli` | `bin/` + `dist/`（CLI 包：bin 是唯一 npm 消费面，不带 src/） | tsup，正式/dev 两线均有显式 build 步骤（MF-4 批次接入） |
 | 非 workspace 特例 | `statusline`（resources/plugins/，v0.3.14） | 无 files 字段 | 非 pnpm workspace 成员——机制上不经 changeset 发布线（见 D6） |
 
 TS 源直发类不存在本缺口（声明的都是 git 里就有的文件）；风险集中在 dist 发布包。
@@ -44,7 +47,7 @@ TS 源直发类不存在本缺口（声明的都是 git 里就有的文件）；
 
 | 项 | 不做的原因 | 去向 |
 |---|---|---|
-| 产物契约 manifest（每包声明期望产物清单，tarball 内容双向比对） | 终态方向，当前 3 个 dist 包 + 2 类风险面下无事故支撑，先落地即过度设计 | 登记触发条件（§3.3 D8），满足再立项 |
+| 产物契约 manifest（每包声明期望产物清单，tarball 内容双向比对） | 终态方向，当前 6 个 dist 包 + 2 类风险面下无事故支撑，先落地即过度设计 | 登记触发条件（§3.3 D8），满足再立项 |
 | subagent-core 0.5.2 发布编排 | 走 merge / prerelease skill 既有流程，不是本设计的实施单元 | 仅在 §4 定义发布后验收场景 |
 | extensions 方向守卫改造 | `check-extension-files.mjs` 已覆盖漏声明方向（挂 pre-commit + preflight），现状健康 | 不动 |
 | zsw 侧 vendor 通道回归 | 外部仓（zcode-plugin-workspace）事务 | 上游 0.5.2 发布后由对方回归，本设计提供验收口径 |

@@ -1,6 +1,7 @@
 import { spawn, type ChildProcess } from 'node:child_process'
 import { StringDecoder } from 'node:string_decoder'
-import { getSessionsDir, getPiAgentDir } from './pi-paths.js'
+import { getPiAgentDir } from './pi-paths.js'
+import { recordSpawnMarkers } from './spawn-markers.js'
 import { getDefaultModel } from './pi-provider-store.js'
 import { RpcTimeoutError } from '../../utils/errors.js'
 import type { ThinkingLevel, ProviderId } from '@xyz-agent/shared'
@@ -195,7 +196,7 @@ function buildPiOutboundEnv(options: RpcClientOptions): NodeJS.ProcessEnv {
   outboundExtras.XYZ_AGENT_EXT_LOG = '1'
   const env = buildOutboundChildEnv({ parentEnv: process.env, extras: outboundExtras })
 
-  // xyz-pi agent 目录：~/.xyz-agent/pi/agent/
+  // xyz 托管 pi agent 目录：<dataDir>/agent/（方案 B 布局对齐 pi，pi-paths SSOT 推导）
   // 开发模式和打包模式统一使用此目录，不使用系统 pi 的 ~/.pi/agent/
   env.PI_CODING_AGENT_DIR = getPiAgentDir()
   return env
@@ -246,7 +247,8 @@ function appendToolArgs(args: string[], options: RpcClientOptions): void {
 }
 
 /**
- * start 的 pi CLI args 数组构建（与提取前拼接顺序逐字节一致）。
+ * start 的 pi CLI args 数组构建（B1 前与提取前拼接顺序逐字节一致；B1 起 --session-dir
+ * 移除，其余顺序不变）。
  *
  * --approve: 强制信任 cwd（trustOverride=true），让 pi 加载项目级 .pi/skills 和 .pi/extensions。
  * 短期方案：xyz-agent 的 RPC 模式无交互 UI，pi 原生信任流程在 hasUI=false 时默认拒绝，
@@ -265,7 +267,7 @@ function appendToolArgs(args: string[], options: RpcClientOptions): void {
  * TODO(follow-up): 实现 Project Trust UI，让用户逐项目确认信任，移除全局 --approve。
  * 当前为产品决策（local-first 工具，所有项目可信），非临时 hack。
  */
-function buildPiArgs(options: RpcClientOptions, model: string | undefined, sessionDir: string): string[] {
+function buildPiArgs(options: RpcClientOptions, model: string | undefined): string[] {
   const args = ['--mode', 'rpc', '--no-extensions', '--approve']
   if (model) args.push('--model', model)
   // --system-prompt: 替换 pi 核心系统提示词（身份/工具列表/指引/pi 文档路径 4 段）。
@@ -285,8 +287,8 @@ function buildPiArgs(options: RpcClientOptions, model: string | undefined, sessi
     // thinkingLevel 走 --thinking（pi 参数名，非 --thinking-level，附录 A.4）。
     args.push('--thinking', options.thinkingLevel)
   }
-  // 使用 pi 的 sessions 目录
-  args.push('--session-dir', sessionDir)
+  // B1（方案 B 布局对齐，设计 §6.11/§7A）：不再传 --session-dir——pi 走默认派生
+  // <agentDir>/sessions/<encodeCwd>（settings.sessionDir 覆盖位恒空，迁移脚本步骤 5 校验）。
   return args
 }
 
@@ -398,6 +400,16 @@ export class RpcClient implements IPiEngine {
   private stderrTruncated = false
   /** pi stdout JSONL 原始流落盘（架构约定 #4，诊断 pi 卡死的决定性证据） */
   private piSessionLog: PiSessionLog | null = null
+  /**
+   * 最近一次「事件帧」到达 stdout 的时刻（chat-domain-v1x-liveness-governance W7 桥事件窗信号）。
+   *
+   * 为什么记在 handleMessage 顶部而非 listener 广播分支：该戳度量的是「pi 是否还在发事件」
+   * （pi 侧产出证据），不是「runtime 是否消费」——bash_execution_update 等被 timedOutIds
+   * 丢弃 / 进早期帧缓冲的流事件同样是 pi 事件循环存活的证据。只记非 response 帧：RPC
+   * response 的活性由快超时探测（getState）专责，两信号职责正交（设计 §3.2 D3 三信号判据）。
+   * 消费方 = message-dispatcher abort 超时阶梯的「事件窗静默」判定（区分 RPC 饿死 vs 真冻结）。
+   */
+  private _lastEventAt: number | undefined
 
   // ── 崩溃取证上下文（crash-resilience §3.3 D6-④）：崩溃时刻 writeCrashLogIfNeeded
   // 采集进 pi-crash log 头部的 runtime 侧字段。未知保持 null（显式落盘「没采到」）。
@@ -430,7 +442,11 @@ export class RpcClient implements IPiEngine {
     const model = resolveStartModel(this.options)
     // B3 出站契约收口（docs/design/env-propagation-boundary.md §5-U3）——见 buildPiOutboundEnv。
     const env = buildPiOutboundEnv(this.options)
-    const args = buildPiArgs(this.options, model, getSessionsDir())
+    const args = buildPiArgs(this.options, model)
+    // U16（方案 B §6.12）：把本次 spawn 实际传入的 staged 专属 --extension/--skill 值
+    // 全量覆盖写进 <dataDir>/run/pi-spawn-markers.json（u17 reap 四条合取的数据源）。
+    // 写入失败不阻断 spawn（宁漏不崩——reap 侧对清单缺失本就跳过收殓，见 spawn-markers.ts）。
+    recordSpawnMarkers(this.options)
 
     const piCmd = this.options.piCommand ?? 'pi'
 
@@ -631,6 +647,8 @@ export class RpcClient implements IPiEngine {
     if (!maintenanceResponse) {
       this._lastActivityAt = Date.now()
     }
+    // W7 桥事件窗信号：事件帧到达即更新活跃戳（语义与放置理由见 _lastEventAt 字段注释）。
+    if (msg.type !== 'response') this._lastEventAt = Date.now()
     // If id matches a pending request, resolve it; otherwise emit as event.
     // resolve 只认 RPC response：pi 的 RpcResponse union 所有变体 type === 'response'
     // （pi-mono coding-agent/src/modes/rpc/rpc-types.ts:114-223），事件各有独立 type 字符串。
@@ -936,6 +954,15 @@ export class RpcClient implements IPiEngine {
    */
   touchActivity(): void {
     this._lastActivityAt = Date.now()
+  }
+
+  /**
+   * 最近一次事件帧到达时刻（W7 abort 超时阶梯的桥事件窗信号读点）。
+   * undefined = 本进程生命周期内从未观测到事件帧（对 abort 超时场景，配合探测无响应
+   * 即构成冻结证据——运行中的 session 几乎不可能从未有过事件，pi spawn 即发初始化事件）。
+   */
+  get lastEventAt(): number | undefined {
+    return this._lastEventAt
   }
 
   // ── High-level API ────────────────────────────────────────────────

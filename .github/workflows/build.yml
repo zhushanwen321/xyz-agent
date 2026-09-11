@@ -109,6 +109,15 @@ jobs:
         shell: bash
         run: bash scripts/preflight-check.sh --ci
 
+      # 引擎包边界守卫（W9，与 pre-commit / ci.yml invariants 同源直调）：引擎包
+      # （packages/subagent-engine-* + pi/zcode-subagent-cli）不得依赖/导入 core
+      # 内部路径 + DoD#2 断言——打包链上同源拦截，防本地 hook 被绕过（D7 通则）。
+      - name: Engine package boundary guards (W9)
+        shell: bash
+        run: |
+          node .githooks/check-engine-sdk-boundary.mjs
+          node scripts/check-engine-package-boundary.mjs
+
       # 缓存 pi resources（~70MB，含二进制 + assets + theme）。
       # prepare-pi-resources.sh 自身有「binary 存在则跳过下载」逻辑，cache 恢复目录后脚本自动 skip。
       # key 含 PI_VERSION（版本升级自动失效重建，binary 文件名含版本，旧 cache 不会误用）

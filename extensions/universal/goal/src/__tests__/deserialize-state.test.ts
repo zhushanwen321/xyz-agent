@@ -41,6 +41,12 @@ const goalStateArb = fc.record({
 	lastTurnTokensUsed: fc.nat(),
 	currentTurnIndex: fc.nat(),
 	completedAtTurnIndex: fc.option(fc.nat()),
+	// W5 熔断计数（chat-domain-v1x D4）：round-trip 双向一致性覆盖
+	continuationsSent: fc.nat(),
+	noProgressTurns: fc.nat(),
+	continuationCapNotified: fc.boolean(),
+	lastDeferredPendingIds: fc.array(fc.string()),
+	toolCallsSeen: fc.nat(),
 }) as unknown as fc.Arbitrary<GoalRuntimeState>;
 
 // 旧 entry 模拟（含已废弃 tasks 字段，验证向后兼容忽略）
@@ -114,6 +120,26 @@ describe("deserializeState — optional 字段向后兼容（GAP-4 旧数据）"
 	});
 	it("缺 successCriteria → undefined", () => {
 		expect(deserializeState(FULL_DATA).successCriteria).toBeUndefined();
+	});
+	// W5：旧持久化数据（熔断字段引入前）缺 5 个熔断字段 → 归零/空集/false（新周期语义）
+	it("缺 W5 熔断字段 → 计数归零 / 空集合 / flag false", () => {
+		const state = deserializeState(FULL_DATA);
+		expect(state.continuationsSent).toBe(0);
+		expect(state.noProgressTurns).toBe(0);
+		expect(state.continuationCapNotified).toBe(false);
+		expect(state.lastDeferredPendingIds).toEqual([]);
+		expect(state.toolCallsSeen).toBe(0);
+	});
+	it("W5 熔断字段为脏值（负数/非数组）→ 同样归零/空集（防御性默认）", () => {
+		const state = deserializeState({
+			...FULL_DATA,
+			continuationsSent: -3,
+			noProgressTurns: "many" as unknown as number,
+			lastDeferredPendingIds: [1, null] as unknown as string[],
+		});
+		expect(state.continuationsSent).toBe(0);
+		expect(state.noProgressTurns).toBe(0);
+		expect(state.lastDeferredPendingIds).toEqual([]);
 	});
 });
 

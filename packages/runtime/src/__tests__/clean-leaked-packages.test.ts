@@ -32,8 +32,9 @@ function readSettingsPackages(): string[] | undefined {
   }
 }
 
-// 说明：isLeakedPackage 相对 getPiAgentDir()（~/.xyz-agent/pi/agent，3 层深）解析。
-// 要落到 pi 全局目录（~/.pi/agent/）需 ../../../（向上 3 层到 home，再下 .pi/agent）。
+// 说明：isLeakedPackage 相对 getPiAgentDir()（<dataDir>/agent）解析。
+// pi 全局目录 = getPiGlobalAgentDir() = resolve(getDataDir(), '..', '.pi', 'agent')
+//（dataDir 的兄弟 .pi/agent），故需 ../../（向上 2 层到 dataDir 父目录，再下 .pi/agent）。
 describe('isLeakedPackage', () => {
   it('TC1: 合法路径不误杀', () => {
     expect(isLeakedPackage('npm:@zhushanwen/pi-todo')).toBe(false)
@@ -42,21 +43,21 @@ describe('isLeakedPackage', () => {
   })
 
   it('TC2: 泄漏路径正确识别', () => {
-    expect(isLeakedPackage('../../../.pi/agent/extensions/universal/pending-notifications')).toBe(true)
-    expect(isLeakedPackage('../../../.pi/agent/extensions/universal/goal')).toBe(true)
+    expect(isLeakedPackage('../../.pi/agent/extensions/universal/pending-notifications')).toBe(true)
+    expect(isLeakedPackage('../../.pi/agent/extensions/universal/goal')).toBe(true)
   })
 
   it('TC3: 指向非 pi 全局的相对路径不误杀', () => {
-    expect(isLeakedPackage('../../../some-other-dir/ext')).toBe(false)
+    expect(isLeakedPackage('../../some-other-dir/ext')).toBe(false)
     expect(isLeakedPackage('../sibling-project/ext')).toBe(false)
   })
 })
 
 describe('cleanLeakedPackages', () => {
   it('TC4: 有泄漏时删除并返回 removed', () => {
-    writeSettings(['npm:@a/b', '../../../.pi/agent/extensions/x', 'extensions/y', '../../../.pi/agent/extensions/z'])
+    writeSettings(['npm:@a/b', '../../.pi/agent/extensions/x', 'extensions/y', '../../.pi/agent/extensions/z'])
     const result = cleanLeakedPackages()
-    expect(result.removed).toEqual(['../../../.pi/agent/extensions/x', '../../../.pi/agent/extensions/z'])
+    expect(result.removed).toEqual(['../../.pi/agent/extensions/x', '../../.pi/agent/extensions/z'])
     expect(readSettingsPackages()).toEqual(['npm:@a/b', 'extensions/y'])
   })
 

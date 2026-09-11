@@ -35,8 +35,8 @@ describe('lib/ipc revealInFolder 封装（reveal-in-folder IPC）', () => {
     const impl = vi.fn().mockResolvedValue(true)
     ;(window as { electronAPI?: unknown }).electronAPI = { revealInFolder: impl }
     const { revealInFolder } = await import('@/lib/ipc')
-    const result = await revealInFolder('/pi/sessions/s1.jsonl')
+    const result = await revealInFolder('/data/agent/sessions/s1.jsonl')
     expect(result).toBe(true)
-    expect(impl).toHaveBeenCalledWith('/pi/sessions/s1.jsonl')
+    expect(impl).toHaveBeenCalledWith('/data/agent/sessions/s1.jsonl')
   })
 })

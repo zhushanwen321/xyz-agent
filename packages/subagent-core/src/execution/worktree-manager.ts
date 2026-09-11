@@ -23,6 +23,8 @@
 // 声称的「tmpdir + 分支对账兜底」由此成为代码。
 
 import { execFile } from "node:child_process";
+
+import { buildOutboundChildEnv } from "@zhushanwen/subagent-engine-sdk";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -713,7 +715,15 @@ export class WorktreeManager {
         execFile(
           "git",
           args,
-          { cwd: opts.cwd, timeout: opts.timeout ?? GIT_TIMEOUT_MS, encoding: "utf-8" },
+          {
+            cwd: opts.cwd,
+            timeout: opts.timeout ?? GIT_TIMEOUT_MS,
+            encoding: "utf-8",
+            // 出站卫生（R3 MF-C，impl-plan §2.12）：deny 键不进 git 子进程——
+            // git hooks 等后代不再可能消费生命周期标志 / WS 令牌。SDK 版缺省
+            // 全量继承父 env + deny 剥除，行为差异仅 deny 键剥除。
+            env: buildOutboundChildEnv({ parentEnv: process.env }),
+          },
           (err, stdout, stderr) => {
             if (err) {
               const execErr = err as Error & { code?: unknown; killed?: boolean; signal?: string };

@@ -448,7 +448,7 @@ describe('mock workspace / quota / project / preset domain', () => {
     expect(await quota.getCached('p')).toEqual({ data: null, lastFetchAt: null })
     expect(await quota.fetchQuota('p')).toEqual({ data: null, lastFetchAt: null })
     expect(await quota.refreshQuota('p')).toEqual({ data: null, lastFetchAt: null })
-    expect(await quota.configure('p', true)).toEqual({ ok: true })
+    expect(await quota.configure({ providerId: 'p', enabled: true })).toEqual({ ok: true })
   })
 
   it('project：load 空态 + save 透传', async () => {

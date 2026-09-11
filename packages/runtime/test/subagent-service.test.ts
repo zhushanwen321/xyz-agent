@@ -192,7 +192,7 @@ describe('SessionService.getSubagentHistory', () => {
 
   beforeEach(() => {
     tempDir = mkdtempSync(join(tmpdir(), 'subagent-hist-'))
-    // 隔离数据目录到 tempDir，使 getPiAgentDir() 返回 tempDir/pi/agent —— 测试文件写入真实
+    // 隔离数据目录到 tempDir，使 getPiAgentDir() 返回 tempDir/agent —— 测试文件写入真实
     // piAgentDir 下（getSubagentHistory W-R1 路径穿越校验），又不污染真实 ~/.xyz-agent。
     prevDataDir = process.env.XYZ_AGENT_DATA_DIR
     process.env.XYZ_AGENT_DATA_DIR = tempDir

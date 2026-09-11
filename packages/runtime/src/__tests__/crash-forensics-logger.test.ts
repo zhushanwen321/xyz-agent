@@ -98,7 +98,7 @@ describe('D6-④ pi-crash 上下文头', () => {
     logger = await loadLogger()
     const header = logger.formatPiCrashContextHeader({
       sessionId: 'sid-abc',
-      sessionFile: '/home/u/.xyz-agent/pi/sessions/abc.jsonl',
+      sessionFile: '/home/u/.xyz-agent/agent/sessions/abc.jsonl',
       lastRpcCommand: 'send_prompt',
       uptimeMs: 123_456,
       memory: { rss: 1, heapUsed: 2, heapTotal: 3, external: 4 },
@@ -106,7 +106,7 @@ describe('D6-④ pi-crash 上下文头', () => {
     const lines = header.split('\n')
     expect(lines).toEqual([
       '[runtime-context] sessionId=sid-abc',
-      '[runtime-context] sessionFile=/home/u/.xyz-agent/pi/sessions/abc.jsonl',
+      '[runtime-context] sessionFile=/home/u/.xyz-agent/agent/sessions/abc.jsonl',
       '[runtime-context] lastRpcCommand=send_prompt',
       '[runtime-context] uptimeMs=123456',
       '[runtime-context] memory={"rss":1,"heapUsed":2,"heapTotal":3,"external":4}',

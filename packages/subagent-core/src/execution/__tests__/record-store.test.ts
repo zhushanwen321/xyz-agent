@@ -36,7 +36,7 @@ vi.mock("../sessions-index.ts", async (importOriginal) => {
 });
 
 import { writeAliveMarker } from "../alive-store.ts";
-import { completeRecord, createRecord, tryTransition } from "../execution-record.ts";
+import { completeRecord, createRecord, projectOutcome, tryTransition } from "../execution-record.ts";
 import { writeFinalized } from "../finalized-marker.ts";
 import type { ManifestRecord } from "../manifest-store.ts";
 import { ManifestStore } from "../manifest-store.ts";
@@ -817,7 +817,7 @@ describe("RecordStore", () => {
       return { store, appended };
     }
 
-    it("末行完整 → closed 终态 entry + .finalized sidecar（防重锚）", () => {
+    it("末行完整（in-flight，无 resumable）→ closed + 重启中断 error，投影 failed（[F3] 表 3 行 2）", () => {
       const sessionFile = path.join(tmpDir, "orphan-done.jsonl");
       writeSessionJsonl(sessionFile, {
         id: "sa-orphan-1", agent: "worker", mode: "background", task: "orphan done",
@@ -831,7 +831,14 @@ describe("RecordStore", () => {
       expect(entry?.data.status).toBe("closed");
       expect(entry?.data.closedReason).toBe("gc");
       expect(entry?.data.endedAt).toEqual(expect.any(Number));
-      expect(entry?.data.error).toBeUndefined();
+      // [F3] in-flight 直断 = boot 直断 failed 语义：任务因宿主重启中断，不得投影
+      // completed（事故环 3 残留）。error 载体 → deriveOutcome("gc", error) = failed。
+      expect(entry?.data.error).toContain("host restart");
+      expect(projectOutcome({
+        status: "closed",
+        closedReason: entry?.data.closedReason as never,
+        error: entry?.data.error as string | undefined,
+      })).toBe("failed");
       expect(fs.existsSync(`${sessionFile}.finalized`)).toBe(true);
       // 防重：sidecar 使下次重建走分支 2（closed），不再进判定
       const again = [...appended];
@@ -841,7 +848,51 @@ describe("RecordStore", () => {
       expect(found?.status).toBe("closed");
     });
 
-    it("末行截断 → closed + error（保守方向）", () => {
+    it("SP-5 完成态（resumable + result 有值）→ completed 无 error（不误标重启失败，[F3] 不回归）", () => {
+      const sessionFile = path.join(tmpDir, "orphan-sp5.jsonl");
+      writeSessionJsonl(sessionFile, {
+        id: "sa-orphan-sp5", agent: "worker", mode: "background", task: "sp5 done",
+        startedAt: 6000, rootSessionId: "sess-orphan",
+      });
+      // 主 session 末条 entry（v2 D3 merge 数据源）携 resumable+result——W4 起轮终
+      // 执行态信号随 entry 保留，子文件侧重建不带该信号。data 需过 rebuildEntryRecord
+      // 形状守卫（agent/task/startedAt 必带）。
+      const mainFile = writeMainSession([
+        { id: "sa-orphan-sp5", agent: "worker", task: "sp5 done", startedAt: 6000, status: "running", resumable: true, result: "final answer text" },
+      ]);
+      const { store, appended } = makeRecoveryStore();
+      store.recoverOrphanRecords("sess-orphan", mainFile);
+
+      const entry = appended.find((c) => c.data.id === "sa-orphan-sp5");
+      expect(entry?.data.status).toBe("closed");
+      expect(entry?.data.error).toBeUndefined();
+      expect(projectOutcome({
+        status: "closed",
+        closedReason: entry?.data.closedReason as never,
+        error: entry?.data.error as string | undefined,
+      })).toBe("completed");
+    });
+
+    it("resumable 无产出 → 保持 running 落 resumable entry（W4 死亡纳管态跨重启，boot 重认领源，不直断）", () => {
+      const sessionFile = path.join(tmpDir, "orphan-resumable.jsonl");
+      writeSessionJsonl(sessionFile, {
+        id: "sa-orphan-res", agent: "worker", mode: "background", task: "resumable orphan",
+        startedAt: 7000, rootSessionId: "sess-orphan",
+      });
+      const mainFile = writeMainSession([
+        { id: "sa-orphan-res", agent: "worker", task: "resumable orphan", startedAt: 7000, status: "running", resumable: true },
+      ]);
+      const { store, appended } = makeRecoveryStore();
+      store.recoverOrphanRecords("sess-orphan", mainFile);
+
+      const entry = appended.find((c) => c.data.id === "sa-orphan-res");
+      expect(entry?.data.status).toBe("running");
+      expect(entry?.data.resumable).toBe(true);
+      // 保留分支不写终态 sidecar
+      expect(fs.existsSync(`${sessionFile}.finalized`)).toBe(false);
+    });
+
+    it("末行截断 → closed + error（保守方向；[F3] in-flight 同时携重启中断语义）", () => {
       const sessionFile = path.join(tmpDir, "orphan-truncated.jsonl");
       writeSessionJsonl(sessionFile, {
         id: "sa-orphan-2", agent: "worker", mode: "background", task: "orphan truncated",
@@ -855,10 +906,11 @@ describe("RecordStore", () => {
       const entry = appended.find((c) => c.data.id === "sa-orphan-2");
       expect(entry?.data.status).toBe("closed");
       expect(entry?.data.error).toContain("truncated");
+      expect(entry?.data.error).toContain("host restart");
       expect(fs.existsSync(`${sessionFile}.finalized`)).toBe(true);
     });
 
-    it("末行 >64KB 完整 JSON → 不误判截断，判 done（V1 探针实测回归）", () => {
+    it("末行 >64KB 完整 JSON → 不误判截断，[F3] in-flight 携重启中断 error（无 truncated）", () => {
       const sessionFile = path.join(tmpDir, "orphan-longline.jsonl");
       writeSessionJsonl(sessionFile, {
         id: "sa-orphan-5", agent: "worker", mode: "background", task: "orphan long line",
@@ -877,7 +929,9 @@ describe("RecordStore", () => {
 
       const entry = appended.find((c) => c.data.id === "sa-orphan-5");
       expect(entry?.data.status).toBe("closed");
-      expect(entry?.data.error).toBeUndefined();
+      // [F3] in-flight 重启中断 error 必有；「不误判截断」= error 不含 truncated 标记
+      expect(entry?.data.error).toContain("host restart");
+      expect(entry?.data.error).not.toContain("truncated");
       expect(fs.existsSync(`${sessionFile}.finalized`)).toBe(true);
     });
 

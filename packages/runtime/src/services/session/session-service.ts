@@ -71,7 +71,7 @@ import type { ReclaimSeat } from './idle-pi-reaper.js'
 import { RECLAIM_SEAT_WAIT_OBSERVE_MS } from './idle-pi-reaper.js'
 import { RespawnOrchestrator } from './pi-respawn.js'
 import { MessageDispatcher } from './message-dispatcher.js'
-import { updateSessionOccupancy } from './event-interpreter.js'
+import { applySessionOccupancyTransition, userStoppedGate } from './event-interpreter.js'
 import { SessionScanner } from './session-scanner.js'
 import { AttachmentStore } from './attachment-store.js'
 import { SessionStateProjection, type SessionReplicatedStates } from './session-state-projection.js'
@@ -80,6 +80,41 @@ import { PresetService, type PresetResolution } from '../preset-service.js'
 // 未注入时所有 bus 调用 no-op（this.messageBus?.publish）。type-only import 避免运行时环
 //（MessageBus 不反向依赖 SessionService）。
 import type { IMessageBus } from '../message-bus/message-bus.js'
+import type { ForceQuitSource, UserStoppedMarkStore } from './types.js'
+
+/**
+ * userStopped 标记宿主（session-dead-structural-fixes D4）：sessionId 键控的模块级独立 Map。
+ * 数据源登记 = 主表 #30（docs/architecture/data-source-registry.md，2026-09-10 u3b 补登）。
+ *
+ * 为什么是模块级、为什么独立于 ManagedSession：forceQuit 尾步 removeSessionEntry 会删
+ * sessions Map 条目、销毁 session 对象，而标记必须存活到后续 restore（用户点开 dead session
+ * 时 restoreSession 读它决定是否 restore-abort）——挂在 session 对象 / 实例字段上都会随条目
+ * 删除消亡。清理路径全列（D4）：restore 收敛消费（gate 静默窗满清，主路径）/ delete /
+ * destroyAll / 进程退出（内存态整体消亡，天然清理）；removeSessionEntry 刻意不清（forceQuit
+ * 尾步经过它，只停收敛环定时器，见 gate.disposeForEntryRemoval）。
+ *
+ * 子模块（dispatcher/lifecycle/interpreter 挂点）不直接 import 本模块（模块依赖单向性：
+ * 本 Facade 值导入全部子模块，反向 import 成环），统一经 event-interpreter.ts 的
+ * userStoppedGate 门面存取——本构造器经 gate.configure 注入下方 store 实现与 abort 能力。
+ */
+const userStoppedMarks = new Map<string, { source: ForceQuitSource; markedAt: number }>()
+
+/** 宿主 Map 的存取实现（gate.configure 注入 + 测试直断言用）。 */
+export const userStoppedMarkStore: UserStoppedMarkStore = {
+  markUserStopped(sessionId: string, source: ForceQuitSource): void {
+    userStoppedMarks.set(sessionId, { source, markedAt: Date.now() })
+    console.warn(`[session-service] userStopped mark set (sessionId=${sessionId}, source=${source})`)
+  },
+  hasUserStoppedMark(sessionId: string): boolean {
+    return userStoppedMarks.has(sessionId)
+  },
+  clearUserStoppedMark(sessionId: string): void {
+    userStoppedMarks.delete(sessionId)
+  },
+  clearAllUserStoppedMarks(): void {
+    userStoppedMarks.clear()
+  },
+}
 
 export class SessionService implements ISessionService, ILifecycleSessionOps, IDispatcherSessionOps, IScannerSessionOps {
   /**
@@ -267,7 +302,23 @@ export class SessionService implements ISessionService, ILifecycleSessionOps, ID
       broadcastGlobal: (msg) => this.broker.broadcast(msg),
       notifyMessageComplete: (sessionId) => this.onMessageComplete?.(sessionId),
     }
-    this.lifecycle = new SessionLifecycle(this, this.pm, this.configStore, this.sessionStore, this.workspaceService, registerDeps)
+    this.lifecycle = new SessionLifecycle(this, this.pm, this.configStore, this.sessionStore, this.workspaceService, registerDeps, {
+      // D4：restore-abort 失败（abort RPC 超时/断链）的强杀收敛兜底——复用 dispatcher.forceQuit
+      // （幂等：进程已死时成功返回；进程活着时走 forceQuitSession 完整收敛链 = K 语义日志 +
+      // 置标记 + 全复位广播）。闭包惰性求值：lifecycle 先于 dispatcher 构造，调用发生在
+      // restore 时（dispatcher 已就绪）。
+      forceQuitFallback: (sessionId) => this.dispatcher.forceQuit(sessionId),
+    })
+    // D4 收敛环接线：宿主 Map 存取（上方 store）+ abort 能力（dispatcher.abort 完整链——
+    // 成功收口广播 / 失败超时强杀收敛）。gate 未 configure 时全部 no-op/抛错，本构造器是
+    // 生产唯一接线点（测试可经 resetForTest + 局部 configure 替换）。
+    // [U2 修复] source='convergence'：收敛环掐的是 runtime 自动收敛的补发 turn（非用户
+    // 操作），终态 reason 写 'Convergence abort (auto)' 与用户 abort 可区分（日志/终态
+    // 不得谎报用户语义；aborted 完成帧广播保持不变——前端 no-op）。
+    userStoppedGate.configure({
+      marks: userStoppedMarkStore,
+      abortSession: (sessionId) => this.dispatcher.abort(sessionId, 'convergence'),
+    })
     // trace/system-prompt 同步域（S4 迁出至 trace-sync.ts）：deps 窄注入——session 查询经
     // lifecycle（Map 所有者）只读面，messageBus 经 getter 每次调用动态读（setter 晚期注入
     // 语义与原 Facade 字段直读逐字等价，未注入时广播 no-op）。
@@ -310,14 +361,14 @@ export class SessionService implements ISessionService, ILifecycleSessionOps, ID
     })
     // subagent/workflow 记录域（S6 迁出至 session-records.ts）：deps 窄注入——session 存在性
     // 经 lifecycle（Map 所有者）只读面，messageBus 经 getter 每次调用动态读（setter 晚期注入
-    // 语义与原 Facade 字段直读逐字等价）；extensionService 路径解析经回调闭包注入
-    // （registerDeps 同款模式，readDeclaredEnginesFallback 的安装目录定位用）。
+    // 语义与原 Facade 字段直读逐字等价）。
+    // [W8] deprecated 死键 getExtensionPaths 已删除（W4 冷启动回退源单源化为
+    // readDiscoveredEnginesFallback 后无消费方，构造点随 W8 宿主接线同批收口）。
     this.records = new SessionRecords({
       pm: this.pm,
       sessionStore: this.sessionStore,
       hasSession: (sessionId) => this.lifecycle.has(sessionId),
       getMessageBus: () => this.messageBus,
-      getExtensionPaths: () => this.extensionService.getExtensionPaths(),
     })
     // pi 崩溃自动恢复编排组装（u8，D7）：restore 复用既有惰性恢复内核（facade.restoreSession
     // → lifecycle.restoreSession，附着自动走 u4c 预算化 restore 路径——⑤档超阈值走逆序分块
@@ -430,11 +481,12 @@ export class SessionService implements ISessionService, ILifecycleSessionOps, ID
       const exitedMsg: ServerMessage = { type: 'session.exited', payload: { sessionId, code, reason } }
       this.messageBus?.publish(sessionId, exitedMsg)
 
-      // occupancy #10（session-occupancy-send-closure D3 失败路径，进程异常退出腿）：占用中
-      // pi 死亡时 agent_settled / compaction_end 永不会发出（二者只从 pi run/compact finally
-      // 触发），turn/compacting/bash 三维在此全复位兜底——否则重连 renderer 经 stateSnapshot
-      // 回放恢复的是永久的占用投影。须在 removeSessionEntry（内部 bus.clearSession）之前。
-      updateSessionOccupancy(session, this.messageBus, { turn: 'idle', compacting: false, bash: false })
+      // occupancy #10（session-dead-structural-fixes D2 挂点迁移，u3b；失败路径进程异常退出腿）：
+      // 占用中 pi 死亡时 agent_settled / compaction_end 永不会发出（二者只从 pi run/compact
+      // finally 触发），'full-reset' 行兜底——turn/compacting/bash 三维全复位 + 三布尔派生同步
+      // 复位（结构上不再有「只复位一边」），否则重连 renderer 经 stateSnapshot 回放恢复的是
+      // 永久的占用投影。须在 removeSessionEntry（内部 bus.clearSession）之前。
+      applySessionOccupancyTransition(session, this.messageBus, 'full-reset')
 
       // 注意：此处 session 是 delete 前缓存的引用，removeSessionEntry 后 Map 条目已删除
       // 统一经 removeSessionEntry（触发 onSessionDelete 清 pendingReload 等残留）
@@ -996,6 +1048,14 @@ export class SessionService implements ISessionService, ILifecycleSessionOps, ID
   }
 
   /**
+   * agent_settled 副作用（run 级联结束 → isGenerating 复位；session-dead 2026-09-10 补丁，
+   * 语义注释随实现迁 session-state-projection.ts）。组合根 index.ts onAgentSettled 经本委托消费。
+   */
+  handleAgentSettledSideEffects(sessionId: string): void {
+    this.projection.handleAgentSettledSideEffects(sessionId)
+  }
+
+  /**
    * 写 session_end 终态 entry（W4，ADR 0042）。
    * 3 个终态点复用：正常完成（handleTurnEndSideEffects）/ abort（message-dispatcher）/ 进程崩溃（onSessionExit）。
    * sessionFilePath 不存在时静默跳过（首 turn 前崩溃 / pi 延迟写入窗口）。
@@ -1024,6 +1084,9 @@ export class SessionService implements ISessionService, ILifecycleSessionOps, ID
     // shutdown 路径：只清 sessions Map（Map 所有者执行），刻意不触发 dispose/销毁通知
     // ——进程将亡，缓存随进程同灭（迁移前行为保持，设计 D2②）。
     this.lifecycle.clear()
+    // D4 清理路径：shutdown 全量清 userStopped 标记 + 停全部收敛环定时器（与 sessions Map
+    // 同因——进程将亡，内存态随进程消亡；显式清防测试环境单例跨实例残留）。
+    userStoppedGate.disposeAll()
   }
 
   /**
@@ -1154,6 +1217,11 @@ export class SessionService implements ISessionService, ILifecycleSessionOps, ID
       // best-effort 降级：旁路设施故障不得打断销毁收敛链（销毁已完成的事实不变）。
       console.error(`[session-service] mirror detach removal failed (sessionId=${sessionId}):`, e)
     }
+    // D4：收敛环定时器清理（所有删除路径汇聚点：主动删 / 进程退出 / forceQuit / restore
+    // 清场）。只停环不清标记——forceQuit（K1/K2）尾步经过本汇聚点，标记必须存活到后续
+    // restore（标记宿主独立于 ManagedSession 生命周期的原因，见模块级 Map 注释）；delete
+    // 路径的标记清理由 lifecycle.delete 显式调 gate.disposeForDelete。
+    userStoppedGate.disposeForEntryRemoval(sessionId)
     // S3-W2：删除前缓存 summary（插件 didDestroy 通知需要 SessionInfo；删除后 Map 查不到）。
     // Map 无条目（防御路径）时构造最小形状——id 之外的字段无从得知，宁发少知不发错。
     const session = this.lifecycle.get(sessionId)

@@ -81,7 +81,7 @@ import { Button } from '@/components/ui/button'
 import { LoadPaths, SETTINGS_CONFIG_API_KEY, SETTINGS_CHOOSE_DIRECTORY_KEY } from '@xyz-agent/ui/features/settings'
 import type { SkillInfo, AgentInfo, SkillDirConfig } from '@xyz-agent/shared'
 import { config } from '@/api'
-import { chooseDirectory, getDataDir } from '@/lib/ipc'
+import { chooseDirectory, getDataDir } from '@/api/domains/settings'
 
 // W3：LoadPaths（含 SourceImportSection）迁入 ui 包，其 config(@/api) 依赖经 inject 注入。
 // 此处把 renderer 的 config 作为 SettingsConfigApi provide 给 ui 组件（detectSources 等方法）。

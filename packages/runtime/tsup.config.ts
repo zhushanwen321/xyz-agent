@@ -51,7 +51,10 @@ export default defineConfig({
   // xyz-agent-plugin-sdk：插件契约 SSOT（D28 方向反转）——runtime 的 plugin-types
   // 薄壳 re-export 其类型与 PermissionConstants 常量值。纯 TS 源码包（main 直指
   // src/index.ts，零 dependencies），esbuild 直接编译，同 pi-file-lock 先例
-  noExternal: ['ws', 'semver', 'fast-glob', 'tar', '@xyz-agent/shared', '@xyz-agent/extension-protocol', '@xyz-agent/session-delivery', '@xyz-agent/core', '@zhushanwen/subagent-core', '@zhushanwen/pi-file-lock', '@earendil-works/pi-ai', 'chokidar', '@iarna/toml', 'xyz-agent-plugin-sdk'],
+  // @zhushanwen/subagent-engine-sdk [W11/A5]：runtime 经 subagent-core 协议面传递消费
+  // SDK 原语（buildEngineChildEnv / spawnEngineChild 等），workspace TS 源码包无 dist
+  // 解析面，必须内联进 bundle（否则打包态 Cannot find module）
+  noExternal: ['ws', 'semver', 'fast-glob', 'tar', '@xyz-agent/shared', '@xyz-agent/extension-protocol', '@xyz-agent/session-delivery', '@xyz-agent/core', '@zhushanwen/subagent-core', '@zhushanwen/subagent-engine-sdk', '@zhushanwen/pi-file-lock', '@earendil-works/pi-ai', 'chokidar', '@iarna/toml', 'xyz-agent-plugin-sdk'],
   // platform: 'node' 已自动处理所有 node:* 内置模块，无需手动 external
   // node-pty 是 native module（含 .node 二进制），不能打包进 JS bundle：
   // 其 JS 入口用 node-gyp-build 动态 require prebuilds/<platform>/*.node，

@@ -1,5 +1,11 @@
 # @zhushanwen/pi-plan
 
+## 0.4.3
+
+### Patch Changes
+
+- 838806898: chore: refresh dependency range (triggered by @zhushanwen/pi-goal@0.12.2 → @zhushanwen/pi-goal@0.13.0)
+
 ## 0.4.2
 
 ### Patch Changes

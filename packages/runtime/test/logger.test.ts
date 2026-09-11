@@ -207,7 +207,7 @@ describe('logger', () => {
 
   it('size 轮转：文件超 XYZ_LOG_MAX_BYTES 触发 .1 滚动', async () => {
     process.env.XYZ_LOG_MAX_BYTES = '200' // 极小阈值触发轮转
-    const { initLogger } = await import('../src/infra/logger.js')
+    const { initLogger, closeLogger } = await import('../src/infra/logger.js')
     initLogger(tmpDir)
     // 写入足够多内容触发轮转（每次 console.log 经 patch → writeLogEntry）。
     // W30 起轮转为异步（end 旧流等待 flush 完成 → rename → 开新流），写入间让出
@@ -217,13 +217,16 @@ describe('logger', () => {
       await new Promise((r) => setImmediate(r))
       await new Promise((r) => setImmediate(r))
     }
-    // 轮转是异步续体（end 旧流等 flush → rename → reopen 新流 → 回放窗口行）。等
-    // 「最终主文件包含最后一行写入」而非仅等 .1 出现：line-N 恒落最终主文件（最后一行
-    // 写入后无再轮转，触发轮转的行本身经回放进新主文件），该条件蕴含 rename、reopen、
-    // 回放全部完成——旧版只等 .1 出现，满载下轮询可停在「rename 已做、新主文件未
-    // reopen」的窗口，下方主文件存在性断言假红（Gate A 并行负载偶发）。
     const today = new Date().toISOString().slice(0, 10)
-    await waitForNamedFileContent(logsDir, `runtime-${today}.log`, 'line-29-')
+    // 轮转异步完成（end 旧流 flush → rename → 开新流 → 回放）后进稳态再断言。
+    // 此前「轮询到 .1 出现 → 立即 readdir」满载并行下 flaky：.1 从首轮轮转起持续存在，
+    // 轮询返回时刻可能正有后续轮转处于 rename 与新主文件重建（createWriteStream 异步
+    // open）之间的瞬态窗口——目录只有 .1 没有 .log，断言假红；写入结束后仍可能有末轮
+    // 轮转在途。closeLogger 是 logger 既有确定性钩子：await 在途轮转（含队列回放）→
+    // end 全部写流并等 flush 完成——返回即目录状态冻结（再无写入 → 不再触发轮转），
+    // 下方 readdir/statSync 断言无竞态，顺带消除 afterEach rmSync 与在途 flush 的
+    // ENOTEMPTY 竞争（对齐 src/__tests__/logger-rotation.test.ts 的 closeLogger 屏障先例）。
+    await closeLogger()
     const files = readdirSync(logsDir).filter((f) => f.startsWith(`runtime-${today}`))
     // 应该有主文件 + .1 滚动文件（多轮轮转 ≥1 次 rename 已随上方等待完成）
     expect(files.some((f) => f.endsWith('.log.1'))).toBe(true)

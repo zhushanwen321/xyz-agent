@@ -514,7 +514,7 @@ describe('oversize 降级视图（crash-resilience §3.3 D5④，u4c 协议扩�
   it("source='oversize' → 降级分支渲染文案（体积 + 源文件绝对路径可见），分区透传 oversizeMessage，不落空态", async () => {
     const MB = 1024 * 1024
     const bytes = 35.6 * MB
-    const filePath = `/pi/sessions/${SID}.jsonl`
+    const filePath = `/agent/sessions/${SID}.jsonl`
     // runtime formatTraceOversizeMessage 的文案形态（体积 MB + 绝对路径）
     const oversizeMessage = `Trace 过大无法渲染（${(bytes / MB).toFixed(1)} MB），源文件：${filePath}`
     apiMock.getTraceEntries.mockResolvedValue({
@@ -552,7 +552,7 @@ describe('error 态 envelope message 透出（crash-resilience §3.4 回流修�
     // envelope（code=payload_too_large），message 携带恢复指引——此前 UI 只渲染 code，
     // 指引文案被藏掉。message-broker reply envelope 生成处透传的 err.message 即原文。
     const envelopeMessage =
-      '该内容过大无法传输（37.7 MB），请用「加载更早」分页查看或查阅 session 文件：/pi/sessions/big.jsonl'
+      '该内容过大无法传输（37.7 MB），请用「加载更早」分页查看或查阅 session 文件：/agent/sessions/big.jsonl'
     apiMock.getTraceEntries.mockRejectedValue(
       Object.assign(new Error(envelopeMessage), { code: 'payload_too_large' }),
     )
@@ -571,7 +571,7 @@ describe('error 态 envelope message 透出（crash-resilience §3.4 回流修�
     expect(errBox.text()).toContain('payload_too_large')
     expect(errBox.find('[data-testid="trace-error-message"]').text()).toBe(envelopeMessage)
     expect(errBox.text()).toContain('加载更早')
-    expect(errBox.text()).toContain('/pi/sessions/big.jsonl')
+    expect(errBox.text()).toContain('/agent/sessions/big.jsonl')
     // 重试入口保留
     expect(errBox.find('[data-testid="trace-retry"]').exists()).toBe(true)
     view.unmount()

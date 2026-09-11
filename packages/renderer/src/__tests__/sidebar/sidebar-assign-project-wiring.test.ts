@@ -25,6 +25,7 @@ import {
   commandStoreModule,
   coreTransportApiModule,
   fileTreeStoreModule,
+  listSyncModule,
   navigationStoreModule,
   panelStoreModule,
   platformShortcutModule,
@@ -33,12 +34,10 @@ import {
   sidebarActionMocks,
   sidebarStoreModule,
   sidebarSubagentActionsModule,
-  subagentListSyncModule,
   subagentStoreModule,
   toastErrorMock,
   toastModule,
   useSidebarModule,
-  workflowListSyncModule,
   workflowStoreModule,
 } from '../helpers/sidebar-mount'
 
@@ -56,8 +55,7 @@ vi.mock('@/stores/navigation', () => navigationStoreModule())
 vi.mock('@/composables/features/command/useCommandStore', () => commandStoreModule())
 vi.mock('@/composables/features/chat/useChat', () => chatComposableModule())
 vi.mock('@/composables/features/chat/useSessionDerivations', () => sessionDerivationsModule())
-vi.mock('@/composables/features/chat/useSubagentListSync', () => subagentListSyncModule())
-vi.mock('@/composables/features/chat/useWorkflowListSync', () => workflowListSyncModule())
+vi.mock('@/composables/features/chat/useListSync', () => listSyncModule())
 vi.mock('@/composables/features/sidebar/useSidebarSubagentActions', () => sidebarSubagentActionsModule())
 vi.mock('@/composables/usePlatformShortcut', () => platformShortcutModule())
 vi.mock('@xyz-agent/core/transport/api', () => coreTransportApiModule())

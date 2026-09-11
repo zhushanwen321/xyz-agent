@@ -11,7 +11,8 @@
  *
  * Mock 策略（同 update-page.test.ts 结构）：
  *  - vi.mock('@/composables/features/settings/useAppUpdate') 隔离单例 state
- *  - vi.mock('@/lib/ipc') 提供 getDataDir / openUpdateManualDir（手动通道区 IPC 依赖）
+ *  - vi.mock('@/api/domains/settings') 提供 getDataDir / openUpdateManualDir（手动通道区 IPC
+ *    依赖；组件已收编走 settings 域接缝，不再直取 @/lib/ipc）
  *  - useToast 保留真实模块（模块级单例，无 provider 依赖；断言失败态 toast 入列）
  *  - i18n 走 vitest-i18n-setup 全局 mock（zh-CN 真实文案，断言用户可见文本）
  *
@@ -27,7 +28,7 @@ import type { UpdateState } from '@xyz-agent/shared'
 const getDataDirMock = vi.hoisted(() => vi.fn())
 const openUpdateManualDirMock = vi.hoisted(() => vi.fn())
 
-vi.mock('@/lib/ipc', () => ({
+vi.mock('@/api/domains/settings', () => ({
   getDataDir: getDataDirMock,
   openUpdateManualDir: openUpdateManualDirMock,
 }))

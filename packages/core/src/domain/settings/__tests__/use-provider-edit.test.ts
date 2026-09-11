@@ -3,8 +3,11 @@
  *
  * 覆盖：provider 变化重置编辑态 + 快照捕获；isDirty 全字段对比（快照 null 返 false）；
  * runDiscover test/discover 成功失败分支（discoverModels 调用参数、合并去重、文案）；
- * save 校验/成功/失败 + apiKey 哨兵语义 + headers/authHeader/models 透传；D8 过期快照
- * watch（未 dirty 刷新 + captureSnapshot，dirty 不刷新）；模型 CRUD（空名/重名抛错等）。
+ * M3b 协议分流（discover 带 mode=discover 全参 / test 带 mode=test 只带 providerId +
+ * 消费 results → testResults/testError）；save 校验/成功/失败 + apiKey 哨兵语义 +
+ * headers/authHeader/models 透传；防线① provider 级字段分体系（catalog 无 type 键 +
+ * baseUrl 恒带键含空串、custom 空串不带键）；D8 过期快照 watch（未 dirty 刷新 +
+ * captureSnapshot，dirty 不刷新）；模型 CRUD（空名/重名抛错等）。
  *
  * watch 类用例用 effectScope 包裹 + flushPromises 驱动（node 环境无组件渲染）。
  */
@@ -26,6 +29,22 @@ import {
 } from '../use-provider-edit'
 import { InMemoryStorage } from './helpers/in-memory-storage'
 import type { ProviderInfo } from '@xyz-agent/shared'
+// D9 档位断言用 pi 实装同源函数（唯一权威）——从根 node_modules 解析 pi-ai 0.84.4 dist
+import { getSupportedThinkingLevels } from '@earendil-works/pi-ai'
+
+/**
+ * 经 pi 同源 getSupportedThinkingLevels 算可用档位。
+ * 入参只需 reasoning + thinkingLevelMap 子集（pi 实装只读这两个字段，见
+ * pi-ai dist/models.js:548-558），其余 Model 必填字段经 unknown 收窄——
+ * 与 runtime model-capability.ts 的 computeSupportedLevels 同款调用方式。
+ */
+function supportedLevelsOf(
+  map: Record<string, string | null> | undefined,
+  reasoning = true,
+): string[] {
+  const model = { reasoning, ...(map ? { thinkingLevelMap: map } : {}) }
+  return getSupportedThinkingLevels(model as unknown as Parameters<typeof getSupportedThinkingLevels>[0])
+}
 
 /** i18n stub：返回 key 本身（校验调用参数而非翻译）。 */
 const tStub = vi.fn((key: string) => key)
@@ -185,7 +204,7 @@ describe('isDirty 对比', () => {
 })
 
 describe('runDiscover test 分支', () => {
-  it('成功 → testResult ok；discoverModels 调用参数正确', async () => {
+  it('成功 → testResult ok；discoverModels 调用参数带 mode=test 且只需 providerId（协议占位 baseUrl=""）', async () => {
     const providerRef = ref<ProviderInfo | null>(makeProvider())
     const edit = mount(providerRef)
     await nextTick()
@@ -193,14 +212,60 @@ describe('runDiscover test 分支', () => {
     edit.form.apiKey = 'sk-abc'
     await edit.testConnection()
     const transport = getTransport()
+    // M3b（设计 D4）：test 模式代表模型选择归 runtime——前端不发 baseUrl/apiKey/providerType
+    // （快照 artifact 不参战）；baseUrl 是协议形状必填键（shared/protocol.ts），传 '' 占位。
     expect(transport.discoverModels).toHaveBeenCalledWith({
-      baseUrl: 'https://api.example.com',
-      apiKey: 'sk-abc',
-      providerType: 'anthropic-messages',
+      mode: 'test',
+      baseUrl: '',
       providerId: 'p1',
     })
     expect(edit.testResult.value).toBe('ok')
     expect(edit.testing.value).toBe(false)
+  })
+
+  it('M3b：成功返回 results → testResults 按协议分组消费（每协议 api/modelId/ok/error）', async () => {
+    const providerRef = ref<ProviderInfo | null>(makeProvider())
+    const edit = mount(providerRef)
+    await nextTick()
+    // error 语法 = M3a runtime 实装（model-connection-tester.ts 头注「错误编码」）
+    getTransport().discoverModels = vi.fn(async () => ({
+      success: true,
+      models: [],
+      results: [
+        { api: 'anthropic-messages', modelId: 'minimax-m3', ok: true },
+        { api: 'openai-completions', modelId: 'qwen3.8-flash', ok: false, error: 'http_error|401|invalid api key' },
+      ],
+    }))
+    await edit.testConnection()
+    expect(edit.testResults.value).toEqual([
+      { api: 'anthropic-messages', modelId: 'minimax-m3', ok: true },
+      { api: 'openai-completions', modelId: 'qwen3.8-flash', ok: false, error: 'http_error|401|invalid api key' },
+    ])
+    // 行级失败不改变顶层 success（M3a 语义）——行内失败由行文案承载
+    expect(edit.testResult.value).toBe('ok')
+    expect(edit.testError.value).toBe('')
+  })
+
+  it('M3b：success=false 整体性失败 → results 空 + testError 携带原因（可展示状态，不抛全局）', async () => {
+    const providerRef = ref<ProviderInfo | null>(makeProvider())
+    const edit = mount(providerRef)
+    await nextTick()
+    getTransport().discoverModels = vi.fn(async () => ({ success: false, error: 'no_api_key', results: [] }))
+    await edit.testConnection()
+    expect(edit.testResults.value).toEqual([])
+    expect(edit.testError.value).toBe('no_api_key')
+    expect(edit.testResult.value).toBe('error')
+    expect(edit.actionError.value).toBe('no_api_key')
+  })
+
+  it('M3b：runtime 未回 results（旧 runtime）→ testResults 空数组（UI 走整体反馈兜底）', async () => {
+    const providerRef = ref<ProviderInfo | null>(makeProvider())
+    const edit = mount(providerRef)
+    await nextTick()
+    getTransport().discoverModels = vi.fn(async () => ({ success: true, models: [] }))
+    await edit.testConnection()
+    expect(edit.testResults.value).toEqual([])
+    expect(edit.testResult.value).toBe('ok')
   })
 
   it('success:false → testResult error + actionError', async () => {
@@ -225,6 +290,22 @@ describe('runDiscover test 分支', () => {
 })
 
 describe('runDiscover discover 分支', () => {
+  it('M3b：discover 调用参数带 mode=discover + baseUrl/apiKey/providerType/providerId', async () => {
+    const providerRef = ref<ProviderInfo | null>(makeProvider())
+    const edit = mount(providerRef)
+    await nextTick()
+    edit.form.baseUrl = 'https://api.example.com'
+    edit.form.apiKey = 'sk-abc'
+    await edit.autoDiscover()
+    expect(getTransport().discoverModels).toHaveBeenCalledWith({
+      mode: 'discover',
+      baseUrl: 'https://api.example.com',
+      apiKey: 'sk-abc',
+      providerType: 'anthropic-messages',
+      providerId: 'p1',
+    })
+  })
+
   it('成功：合并去重 + discoverResult 文案（newMerged）', async () => {
     const providerRef = ref<ProviderInfo | null>(makeProvider())
     const edit = mount(providerRef)
@@ -256,6 +337,21 @@ describe('runDiscover discover 分支', () => {
     await edit.autoDiscover()
     expect(edit.localModels.value).toHaveLength(1)
     expect(tStub).toHaveBeenCalledWith('composable.allExisted')
+  })
+
+  it('D9①：合并发现的模型 reasoning 显式 true（不 undefined，对齐 addModel 出厂语义）', async () => {
+    const providerRef = ref<ProviderInfo | null>(makeProvider())
+    const edit = mount(providerRef)
+    await nextTick()
+    getTransport().discoverModels = vi.fn(async () => ({
+      success: true,
+      models: [{ id: 'm2', name: 'M2', contextWindow: 128_000 }],
+    }))
+    await edit.autoDiscover()
+    const merged = edit.localModels.value.find((m) => m.id === 'm2')
+    // pi 两级门控把 reasoning 缺失判「关」——合并入口必须出厂显式 boolean
+    expect(merged?.reasoning).toBe(true)
+    expect(merged?.reasoning).not.toBeUndefined()
   })
 
   it('失败：success:false → actionError', async () => {
@@ -313,13 +409,15 @@ describe('save 校验/成功/失败 + apiKey 哨兵', () => {
   })
 
   it('apiKey 哨兵 → 发送空串（清空语义 D18），wroteApiKey=false（清除不是配置）', async () => {
-    const providerRef = ref<ProviderInfo | null>(makeProvider())
+    const providerRef = ref<ProviderInfo | null>(makeProvider({ kind: 'custom' }))
     const edit = mount(providerRef)
     await nextTick()
     edit.form.apiKey = API_KEY_CLEAR_SENTINEL
     const result = await edit.save()
     expect(result.wroteApiKey).toBe(false)
     const arg = (getTransport().setProvider as ReturnType<typeof vi.fn>).mock.calls[0][1]
+    // 显式空串带键（不是不传键）——「清除」与「不变」必须可区分
+    expect('apiKey' in arg).toBe(true)
     expect(arg.apiKey).toBe('')
   })
 
@@ -354,6 +452,58 @@ describe('save 校验/成功/失败 + apiKey 哨兵', () => {
     expect(result.wroteApiKey).toBe(false)
     expect(edit.actionError.value).toBe('save failed')
     expect(edit.saving.value).toBe(false)
+  })
+})
+
+describe('防线① provider 级字段分体系（catalog vs custom，设计 D1）', () => {
+  it('catalog：payload 无 type 键（快照 artifact 不回传）+ baseUrl 带键且为 trim 值', async () => {
+    const providerRef = ref<ProviderInfo | null>(makeProvider({ kind: 'catalog' }))
+    const edit = mount(providerRef)
+    await nextTick()
+    edit.form.baseUrl = '  https://gateway.example.com/mirror  '
+    await edit.save()
+    const arg = (getTransport().setProvider as ReturnType<typeof vi.fn>).mock.calls[0][1]
+    expect('type' in arg).toBe(false)
+    expect('baseUrl' in arg).toBe(true)
+    expect(arg.baseUrl).toBe('https://gateway.example.com/mirror')
+  })
+
+  it('catalog：输入框清空 → baseUrl 为显式空串带键（清除网关；不传键=runtime「不变」会让网关回退不可达）', async () => {
+    const providerRef = ref<ProviderInfo | null>(makeProvider({ kind: 'catalog', baseUrl: 'https://gateway.example.com' }))
+    const edit = mount(providerRef)
+    await nextTick()
+    expect(edit.form.baseUrl).toBe('https://gateway.example.com')
+    edit.form.baseUrl = ''
+    await edit.save()
+    const arg = (getTransport().setProvider as ReturnType<typeof vi.fn>).mock.calls[0][1]
+    expect('baseUrl' in arg).toBe(true)
+    expect(arg.baseUrl).toBe('')
+    expect('type' in arg).toBe(false)
+  })
+
+  it('custom：空串 baseUrl 不带键（truthy 守卫；runtime 侧空串同为「不变」语义）', async () => {
+    // kind 缺失（旧数据/新建态）= custom 分支
+    const providerRef = ref<ProviderInfo | null>(makeProvider())
+    const edit = mount(providerRef)
+    await nextTick()
+    edit.form.baseUrl = '   '
+    await edit.save()
+    const arg = (getTransport().setProvider as ReturnType<typeof vi.fn>).mock.calls[0][1]
+    expect('baseUrl' in arg).toBe(false)
+    // custom 的 provider 级协议（api）必须保留
+    expect(arg.type).toBe('anthropic-messages')
+  })
+
+  it('custom：空串 name 被 D15b 校验拦截（不调 setProvider → payload 不会带 name 键）', async () => {
+    // 空 name 在 save() 入口即被 D15b 拒绝，payload 层的 truthy 守卫是纵深防御（正常路径不可达）
+    const providerRef = ref<ProviderInfo | null>(makeProvider())
+    const edit = mount(providerRef)
+    await nextTick()
+    edit.form.name = ''
+    const result = await edit.save()
+    expect(result.ok).toBe(false)
+    expect(tStub).toHaveBeenCalledWith('composable.providerNameRequired')
+    expect(getTransport().setProvider).not.toHaveBeenCalled()
   })
 })
 
@@ -478,13 +628,16 @@ describe('模型 CRUD', () => {
     expect(m.input).toEqual(['image'])
   })
 
-  it('pickStrategy high-max → thinkingLevelMap {off,high,max:xhigh}', async () => {
+  it('pickStrategy 按预设写 map（D9③ 补显式 null 剔除项）+ all-levels 清空 map', async () => {
     const providerRef = ref<ProviderInfo | null>(null)
     const edit = mount(providerRef)
     await nextTick()
     const m: LocalModel = { id: 'm', name: 'M' }
     edit.pickStrategy(m, 'high-max')
-    expect(m.thinkingLevelMap).toEqual({ off: 'off', high: 'high', max: 'xhigh' })
+    // pi 黑名单过滤语义：不要的档显式写 null 才能剔除
+    expect(m.thinkingLevelMap).toEqual({ off: 'off', high: 'high', max: 'xhigh', minimal: null, low: null, medium: null })
+    edit.pickStrategy(m, 'on-off')
+    expect(m.thinkingLevelMap).toEqual({ off: 'off', high: 'high', minimal: null, low: null, medium: null })
     edit.pickStrategy(m, 'all-levels')
     expect(m.thinkingLevelMap).toBeUndefined()
   })
@@ -495,6 +648,68 @@ describe('模型 CRUD', () => {
     expect(edit.getStrategyFromMap(undefined)).toBe('all-levels')
     expect(edit.getStrategyFromMap({ off: 'off', high: 'high' })).toBe('on-off')
     expect(edit.getStrategyFromMap({ off: 'off', high: 'high', max: 'xhigh' })).toBe('high-max')
+  })
+})
+
+describe('D9 思考档位修复（reasoning 显式化 + 预设对齐 pi 过滤语义）', () => {
+  it('D9②：pickStrategy 对 reasoning === undefined 的模型置 true（存量「从未设策略」形态救回）', async () => {
+    const providerRef = ref<ProviderInfo | null>(null)
+    const edit = mount(providerRef)
+    await nextTick()
+    const m: LocalModel = { id: 'm', name: 'M' } // reasoning 缺失（用户数据实测形态）
+    edit.pickStrategy(m, 'high-max')
+    expect(m.reasoning).toBe(true)
+
+    // all-levels 分支同规则：存量最常见形态 = all-levels + reasoning 缺失，
+    // 救回路径必须闭合在这里（只联动非 all-levels 会让它不闭合）
+    const mAll: LocalModel = { id: 'm2', name: 'M2' }
+    edit.pickStrategy(mAll, 'all-levels')
+    expect(mAll.reasoning).toBe(true)
+    expect(mAll.thinkingLevelMap).toBeUndefined()
+  })
+
+  it('D9②：pickStrategy 永不覆盖显式 reasoning === false（high-max 分支）', async () => {
+    const providerRef = ref<ProviderInfo | null>(null)
+    const edit = mount(providerRef)
+    await nextTick()
+    const m: LocalModel = { id: 'm', name: 'M', reasoning: false }
+    edit.pickStrategy(m, 'high-max')
+    expect(m.reasoning).toBe(false)
+    // 显式选择优先于联动：pi 语义下 reasoning=false → 弹层只有「关」
+    expect(supportedLevelsOf(m.thinkingLevelMap, false)).toEqual(['off'])
+  })
+
+  it('D9②：pickStrategy 永不覆盖显式 reasoning === false（all-levels 分支）', async () => {
+    const providerRef = ref<ProviderInfo | null>(null)
+    const edit = mount(providerRef)
+    await nextTick()
+    const m: LocalModel = { id: 'm', name: 'M', reasoning: false }
+    edit.pickStrategy(m, 'all-levels')
+    expect(m.reasoning).toBe(false)
+    expect(m.thinkingLevelMap).toBeUndefined()
+  })
+
+  it('D9③：on-off 预设经 pi 同源函数输出 [off, high] 两档（v1 白名单心智下实际 5 档）', async () => {
+    const providerRef = ref<ProviderInfo | null>(null)
+    const edit = mount(providerRef)
+    await nextTick()
+    const m: LocalModel = { id: 'm', name: 'M' }
+    edit.pickStrategy(m, 'on-off')
+    expect(supportedLevelsOf(m.thinkingLevelMap)).toEqual(['off', 'high'])
+    // Select 回显 round-trip：含 null 剔除项的 map 反推策略仍是 on-off
+    expect(edit.getStrategyFromMap(m.thinkingLevelMap)).toBe('on-off')
+  })
+
+  it('D9③：high-max 预设经 pi 同源函数输出 [off, high, max] 三档（v1 实际 6 档；第三档档位名 max、map 值 xhigh）', async () => {
+    const providerRef = ref<ProviderInfo | null>(null)
+    const edit = mount(providerRef)
+    await nextTick()
+    const m: LocalModel = { id: 'm', name: 'M' }
+    edit.pickStrategy(m, 'high-max')
+    expect(supportedLevelsOf(m.thinkingLevelMap)).toEqual(['off', 'high', 'max'])
+    // 展示档位名是 max，发给 pi 的实际 level 是 xhigh
+    expect(m.thinkingLevelMap?.max).toBe('xhigh')
+    expect(edit.getStrategyFromMap(m.thinkingLevelMap)).toBe('high-max')
   })
 })
 

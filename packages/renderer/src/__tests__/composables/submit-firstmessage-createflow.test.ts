@@ -26,7 +26,7 @@ vi.mock('@xyz-agent/core', async (importActual) => {
   }
 })
 
-// session api 门面（createSessionFlow ctx.api 注入用，但壳内 buildCreateFlowApiPort 代理这些）
+// session api 门面（createSessionFlow ctx.api 注入用，但壳内 buildSessionApiPort 代理这些）
 vi.mock('@xyz-agent/core/transport/api/domains/session', () => ({
   create: vi.fn(),
   removeByCwd: vi.fn(),

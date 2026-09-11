@@ -952,6 +952,26 @@ describe('createChatStore factory', () => {
     })
   })
 
+  describe('clearQueueState（session-dead G1：forceQuit 后清 pi 快照展示态）', () => {
+    it('清指定 session 的 queueStates 快照，其他 session 不受影响', () => {
+      sut.store.applyMessageEvent('sq-1', msg('sq-1', 'message.queue_update', { steering: ['pending-steer'] }))
+      sut.store.applyMessageEvent('sq-2', msg('sq-2', 'message.queue_update', { followUp: ['pending-follow-up'] }))
+      expect(sut.store.getQueueState('sq-1')).toBeDefined()
+      expect(sut.store.getQueueState('sq-2')).toBeDefined()
+
+      sut.store.clearQueueState('sq-1')
+
+      expect(sut.store.getQueueState('sq-1')).toBeUndefined()
+      expect(sut.store.getQueueState('sq-2')).toBeDefined()
+    })
+
+    it('无快照 session 幂等 no-op（forceQuit 空队列路径）', () => {
+      expect(sut.store.getQueueState('sq-none')).toBeUndefined()
+      expect(() => sut.store.clearQueueState('sq-none')).not.toThrow()
+      expect(sut.store.getQueueState('sq-none')).toBeUndefined()
+    })
+  })
+
   describe('appendSystemNotice（追加 system 提示行）', () => {
     it('追加 role=system 消息到会话消息流（sys- 前缀 id + complete 状态）', () => {
       const sid = 's1'

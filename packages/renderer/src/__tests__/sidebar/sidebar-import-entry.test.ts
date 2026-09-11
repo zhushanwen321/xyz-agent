@@ -30,6 +30,7 @@ import {
   chatComposableModule,
   commandStoreModule,
   fileTreeStoreModule,
+  listSyncModule,
   navigationStoreModule,
   panelStoreModule,
   platformShortcutModule,
@@ -37,11 +38,9 @@ import {
   sessionStoreModule,
   sidebarStoreModule,
   sidebarSubagentActionsModule,
-  subagentListSyncModule,
   subagentStoreModule,
   toastModule,
   useSidebarModule,
-  workflowListSyncModule,
   workflowStoreModule,
 } from '../helpers/sidebar-mount'
 
@@ -57,8 +56,7 @@ vi.mock('@/stores/navigation', () => navigationStoreModule())
 vi.mock('@/composables/features/command/useCommandStore', () => commandStoreModule())
 vi.mock('@/composables/features/chat/useChat', () => chatComposableModule())
 vi.mock('@/composables/features/chat/useSessionDerivations', () => sessionDerivationsModule())
-vi.mock('@/composables/features/chat/useSubagentListSync', () => subagentListSyncModule())
-vi.mock('@/composables/features/chat/useWorkflowListSync', () => workflowListSyncModule())
+vi.mock('@/composables/features/chat/useListSync', () => listSyncModule())
 vi.mock('@/composables/features/sidebar/useSidebarSubagentActions', () => sidebarSubagentActionsModule())
 vi.mock('@/composables/usePlatformShortcut', () => platformShortcutModule())
 // 注：原版此处另有 vi.mock('@/api/events', ...)——'@/api/events' 模块不存在（Sidebar 实际

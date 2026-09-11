@@ -30,9 +30,8 @@
  * 与测试 import 路径不变即获得 core 版）。
  */
 import { session as sessionApi, git as gitApi, workspace as workspaceApi } from '@/api'
-import * as events from '@xyz-agent/core/transport/api'
 import { createSessionFlow, getSettingsStore, useNewTaskFlow as useCoreNewTaskFlow } from '@xyz-agent/core'
-import type { CreateSessionFlowCtx, LaunchConfigPort, SessionApiPort } from '@xyz-agent/core'
+import type { CreateSessionFlowCtx, LaunchConfigPort } from '@xyz-agent/core'
 import { lookup as lookupRememberedLevel, lookupLastUsedModel } from '@xyz-agent/core/domain/composer'
 import { useSessionStore } from '@/stores/session'
 import { useWorkspaceStore } from '@/stores/workspace'
@@ -47,9 +46,11 @@ import { useFileTreeStore } from '@/stores/fileTree'
 import { useToast } from '@/composables/useToast'
 import { worktreeApi } from '@xyz-agent/core/transport/api/domains/worktree'
 import { pickDirectory } from '@/lib/ipc'
+import { buildSessionApiPort } from '@/api/session-api-port'
 import i18n from '@/i18n'
-// supportedLevelsOf：显示侧（composer-shell）与 submit 侧共用的唯一实现（F5，独立模块
-// 防 composer 系列测试对 flow 模块的整体 mock 波及 composer-shell 的 import 链）
+// supportedLevelsOf：显示侧（composer-shell）与 submit 侧共用的唯一实现（F5，实现单源
+// core new-task-search/supported-levels.ts，本目录 shim re-export——独立文件形态防
+// composer 系列测试对本模块的整体 mock 波及 composer-shell 的 import 链）
 import { supportedLevelsOf } from './supported-levels'
 
 const t = i18n.global.t
@@ -57,28 +58,6 @@ const t = i18n.global.t
 // 重导出供既有 import 消费（types + reset 原从本模块导入，改从 core 获得）
 export type { NewTaskFlowState, GitInfo } from '@xyz-agent/core'
 export { resetNewTaskFlow } from '@xyz-agent/core'
-
-/**
- * 构建 SessionApiPort 适配（createSessionFlow ctx.api 注入用）。
- *
- * 与 useSidebar.buildSessionApiPort 同一套适配——createSessionFlow 运行时只调
- * create + migrateImage，但 SessionApiPort 类型要求全方法，故全量代理（零转换透传
- * 现 api/domains/session）。
- */
-function buildCreateFlowApiPort(): SessionApiPort {
-  return {
-    list: () => sessionApi.list(),
-    switchSession: (id) => sessionApi.switchSession(id),
-    create: (cwd, label, presetId, projectId, modelOverride, thinkingOverride) =>
-      sessionApi.create(cwd, label, presetId, projectId, modelOverride, thinkingOverride),
-    rename: (id, label) => sessionApi.rename(id, label),
-    remove: (id) => sessionApi.remove(id),
-    removeByCwd: (cwd) => sessionApi.removeByCwd(cwd),
-    migrateImage: (p) => sessionApi.migrateImage(p),
-    onConfigSessions: (handler) =>
-      events.onGlobalType('config.sessions', (msg) => handler(msg.payload.groups)),
-  }
-}
 
 /** 模块级单例（Landing 与 useSidebar 共享同一 core flow 实例）。 */
 let cachedFlow: ReturnType<typeof useCoreNewTaskFlow> | null = null
@@ -145,7 +124,7 @@ export function useNewTaskFlow() {
             // pinia useSessionStore cast——createSessionFlow 只调 store.appendSession
             // （方法调用，pinia proxy 方法调用正常），不碰 ref，故 cast 可行。
             store: session as unknown as CreateSessionFlowCtx['store'],
-            api: buildCreateFlowApiPort(),
+            api: buildSessionApiPort(),
             defaultCwd: workspaceStore.defaultCwd ?? '',
             // INV-7 cwd 降级比对：runtime create 内部可能降级 homedir，比对不一致 toast 通知。
             // E7（D10）两空分支：reqCwd 空串 = landing 未选目录且无 defaultCwd（create('') 落

@@ -139,7 +139,8 @@
         </div>
         <Transition name="block-expand">
           <!-- 内容区：统一 group 包裹，copy 按钮浮在左上角复制全部内容 -->
-          <div v-if="toolExpanded && (displayContent || guiComponent)" class="group/content relative mt-1">
+          <!-- bash 展开恒渲染容器（命令块必显，D2：空输出/running 无输出不再「header 摘要消失 + 内容空白」假展开） -->
+          <div v-if="toolExpanded && (displayContent || guiComponent || isBashTool)" class="group/content relative mt-1">
             <!-- copy 按钮：hover 显示，复制 copyContent（bash=命令+输出，其余=输出） -->
             <div class="absolute top-0 left-0 z-10 flex items-center gap-0.5 opacity-0 transition-opacity group-hover/content:opacity-100">
               <Button
@@ -158,7 +159,8 @@
               <div v-if="argPath" class="border-b border-hairline pl-4 py-1.5 font-mono text-[length:var(--text-sm)] text-neutral-fg">
                 {{ argPath }}
               </div>
-              <div class="tool-result font-mono text-[length:var(--text-sm)] leading-snug whitespace-pre-wrap pl-4 py-1.5 select-text text-neutral-mid">
+              <!-- 输出文本区内容守卫：均空时不渲染该 div（只剩命令块，无空白假展开） -->
+              <div v-if="displayContent || outputRaw || parsedJsonOutput" class="tool-result font-mono text-[length:var(--text-sm)] leading-snug whitespace-pre-wrap pl-4 py-1.5 select-text text-neutral-mid">
                 <AnsiText v-if="outputRaw" :content="outputRaw" />
                 <!-- JSON output（如 bash 执行 cw 命令的结构化输出）格式化缩进，限高滚动避免撑爆对话流 -->
                 <pre v-else-if="parsedJsonOutput" class="m-0 max-h-80 overflow-auto whitespace-pre">{{ parsedJsonOutput }}</pre>
@@ -364,7 +366,8 @@ const outputRaw = computed(() => props.tool?.outputRaw)
  * 无流式输出或非 running 保持静态 shortenForHeader(argPath)。 */
 const toolTailLines = computed(() => {
   if (!isRunning.value) return []
-  const raw = isBashTool.value ? outputRaw.value : displayContent.value
+  // bash：outputRaw 缺失（无 ANSI 输出）时回退 displayContent（D3 尾行取数）
+  const raw = isBashTool.value ? (outputRaw.value ?? displayContent.value) : displayContent.value
   if (!raw) return []
   return tailLines(isBashTool.value ? stripAnsi(raw) : raw, TAIL_LINE_COUNT)
 })

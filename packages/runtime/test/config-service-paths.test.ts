@@ -41,16 +41,16 @@ let savedEnv: string | undefined
 beforeEach(() => {
   // 每个用例独立临时数据目录
   tmpDataDir = mkdtempSync(join(tmpdir(), 'config-paths-test-'))
-  mkdirSync(join(tmpDataDir, 'pi', 'agent'), { recursive: true })
+  mkdirSync(join(tmpDataDir, 'agent'), { recursive: true })
 
   // 设置 XYZ_AGENT_DATA_DIR → getDataDir/getConfigDir/getPiAgentDir 全部基于此
   savedEnv = process.env.XYZ_AGENT_DATA_DIR
   process.env.XYZ_AGENT_DATA_DIR = tmpDataDir
 
   // 把 pi 各模块的单例路径指向临时目录（避免污染真实 ~/.xyz-agent）
-  setModelsPath(join(tmpDataDir, 'pi', 'agent', 'models.json'))
-  setSettingsPath(join(tmpDataDir, 'pi', 'agent', 'settings.json'))
-  setDiscoveryPath(join(tmpDataDir, 'pi', 'agent', 'discovery.json'))
+  setModelsPath(join(tmpDataDir, 'agent', 'models.json'))
+  setSettingsPath(join(tmpDataDir, 'agent', 'settings.json'))
+  setDiscoveryPath(join(tmpDataDir, 'agent', 'discovery.json'))
   refreshModels()
   invalidateDiscoveryCache()
 
@@ -87,7 +87,7 @@ describe('W1: config-service skill/agent 全局强制目录跟随 getConfigDir()
 
   // ── CP2：loadAgents 扫描 XYZ_AGENT_DATA_DIR/agents ───────────
   it('CP2: 设 XYZ_AGENT_DATA_DIR 后，loadAgents 扫描 <datadir>/agents 而非硬编码 ~/.xyz-agent/agents', () => {
-    expect(getPiAgentDir()).toBe(join(tmpDataDir, 'pi', 'agent'))
+    expect(getPiAgentDir()).toBe(join(tmpDataDir, 'agent'))
 
     // 在 <datadir>/agents/ 放 agent.md（W1 修复后此目录会被强制扫描）
     const agentsDir = join(tmpDataDir, 'agents')
@@ -116,14 +116,14 @@ describe('W2: loadSkills(cwd) relative-path projectRoot resolution', () => {
   beforeEach(() => {
     w2DataDir = mkdtempSync(join(tmpdir(), 'w2-data-'))
     w2ProjectDir = mkdtempSync(join(tmpdir(), 'w2-proj-'))
-    mkdirSync(join(w2DataDir, 'pi', 'agent'), { recursive: true })
+    mkdirSync(join(w2DataDir, 'agent'), { recursive: true })
 
     w2SavedEnv = process.env.XYZ_AGENT_DATA_DIR
     process.env.XYZ_AGENT_DATA_DIR = w2DataDir
 
-    setModelsPath(join(w2DataDir, 'pi', 'agent', 'models.json'))
-    setSettingsPath(join(w2DataDir, 'pi', 'agent', 'settings.json'))
-    setDiscoveryPath(join(w2DataDir, 'pi', 'agent', 'discovery.json'))
+    setModelsPath(join(w2DataDir, 'agent', 'models.json'))
+    setSettingsPath(join(w2DataDir, 'agent', 'settings.json'))
+    setDiscoveryPath(join(w2DataDir, 'agent', 'discovery.json'))
     refreshModels()
     invalidateDiscoveryCache()
 
@@ -139,7 +139,7 @@ describe('W2: loadSkills(cwd) relative-path projectRoot resolution', () => {
 
   it('AC-4: discovery 配 .agents/skills 相对路径 → loadSkills(projectRoot) 扫描 <projectRoot>/.agents/skills', () => {
     // discovery.json 配 .agents/skills 相对路径（用户现状）
-    writeFileSync(join(w2DataDir, 'pi', 'agent', 'discovery.json'), JSON.stringify({
+    writeFileSync(join(w2DataDir, 'agent', 'discovery.json'), JSON.stringify({
       version: 1, skillDirs: ['.agents/skills'], agentDirs: [],
     }))
     invalidateDiscoveryCache()
@@ -170,7 +170,7 @@ describe('W2: loadSkills(cwd) relative-path projectRoot resolution', () => {
   })
 
   it('相对路径在 projectRoot 下不存在时不崩（扫不到但返回空数组或仅全局）', () => {
-    writeFileSync(join(w2DataDir, 'pi', 'agent', 'discovery.json'), JSON.stringify({
+    writeFileSync(join(w2DataDir, 'agent', 'discovery.json'), JSON.stringify({
       version: 1, skillDirs: ['.agents/skills'], agentDirs: [],
     }))
     invalidateDiscoveryCache()

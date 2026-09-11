@@ -70,7 +70,7 @@ const MIME_EXTENSIONS: Record<string, string> = {
 export interface ImageCacheDirs {
   /** 数据根目录（缺省 getDataDir()） */
   dataDir?: string
-  /** pi sessions 目录（孤儿判据反查用；缺省 getPiSessionsDir = `<dataDir>/pi/sessions`，shared paths SSOT） */
+  /** pi sessions 目录（孤儿判据反查用；缺省 getPiSessionsDir = `<dataDir>/agent/sessions`（方案 B 新布局），shared paths SSOT） */
   sessionsDir?: string
 }
 
@@ -174,7 +174,8 @@ export function deleteSessionImageCache(sessionId: string, dirs: ImageCacheDirs 
 
 /**
  * session 文件名 → sessionId（**文件名形态实测锚点**：本机 `~/.xyz-agent/pi/sessions/`
- * 取样 `2026-09-02T14-40-39-107Z_01a06290-9ac3-7d46-90f6-39a86248025e.jsonl` 等——pi 以
+ * 取样 `2026-09-02T14-40-39-107Z_01a06290-9ac3-7d46-90f6-39a86248025e.jsonl` 等（取样时
+ * 旧布局 pi/sessions，现布局 agent/sessions，文件名形态两布局一致）——pi 以
  * `<ISO时间戳>_<uuid>.jsonl` 命名，uuid 段 === 首行 header 的 id 字段（纯 uuid，与
  * runtime 扫描链 scanSessionMeta / external-scan 按内容解析的 sessionId 同值）；
  * sidecar 是 `<同前缀>.jsonl.<suffix>`）。
@@ -194,9 +195,9 @@ function sessionFileIdFromName(fileName: string): string {
  * sessions 目录，天然覆盖。
  */
 function isOrphanSessionDir(sessionDirName: string, dirs: ImageCacheDirs): boolean {
-  // 缺省 `<dataDir>/pi/sessions`（shared paths getPiSessionsDir SSOT——与 runtime
-  // pi-paths.ts getSessionsDir 同构推导；main 不 import runtime，包边界。曾手拼成
-  // `<dataDir>/pi/agent/sessions` 错一层致判据恒空，U1 修正）。
+  // 缺省 `<dataDir>/agent/sessions`（方案 B 新布局，shared paths getPiSessionsDir SSOT
+  // ——与 runtime pi-paths.ts getSessionsDir 同构推导；main 不 import runtime，包边界。
+  // 曾手拼错层致判据恒空，U1 修正）。
   const sessionsDir = dirs.sessionsDir ?? getPiSessionsDir(dirs.dataDir)
   if (!existsSync(sessionsDir)) return false
   for (const f of readdirSync(sessionsDir)) {

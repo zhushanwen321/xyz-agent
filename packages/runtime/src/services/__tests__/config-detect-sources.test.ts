@@ -10,6 +10,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { SettingsMessageHandler, type SettingsHandlerContext } from '../../transport/settings-message-handler.js'
 import type { ClientMessage, SourceDetectResult } from '@xyz-agent/shared'
+import { ModelConnectionTester } from '../../infra/model-connection-tester.js'
 
 // ── mock helpers ─────────────────────────────────────────────
 
@@ -42,6 +43,7 @@ function mockContext(detectSourcesResult: SourceDetectResult[]): SettingsHandler
     broadcastSkillDirs: vi.fn(),
     broadcastAgentDirs: vi.fn(),
     broadcastExtensionDirs: vi.fn(),
+    connectionTester: new ModelConnectionTester(),
   } as unknown as SettingsHandlerContext
 }
 

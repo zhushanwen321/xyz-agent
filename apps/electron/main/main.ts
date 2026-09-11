@@ -13,8 +13,8 @@
  *    → process.stdout/stderr.on('error', EPIPE → destroy())
  *
  * 2. Dev 模式隔离：
- *    - XYZ_AGENT_DATA_DIR ?? ~/.xyz-agent-dev
- *    - XYZ_AGENT_PORT_OFFSET ?? DEV_PORT_OFFSET
+ *    - XYZ_AGENT_DATA_DIR = ~/.xyz-agent-dev（dev 无条件钉死，外部 env 不采信——2026-09-08 泄漏事故）
+ *    - XYZ_AGENT_PORT_OFFSET ?? DEV_PORT_OFFSET（无泄漏风险面，保持兜底语义）
  *    - app.setPath('userData', 隔离目录)  ← 防 Chromium LevelDB LOCK 竞争
  *
  * 3. local-file:// 协议路径白名单 = computeLocalFilePrefixes 纯函数
@@ -122,12 +122,19 @@ process.on('uncaughtException', (err) => {
 const isDev = !app.isPackaged
 
 // getDataDir（shared SSOT）：读 XYZ_AGENT_DATA_DIR，缺省 ~/.xyz-agent。
-// dev 模式下方块会把它覆盖为 ~/.xyz-agent-dev（隔离 prod 实例）。
+// dev 模式下方块会把它无条件钉死为 ~/.xyz-agent-dev（隔离 prod 实例）。
 
-// Dev 模式：自动隔离数据目录和端口，防止与 prod 实例冲突
+// Dev 模式：自动隔离数据目录和端口，防止与 prod 实例冲突。
+// XYZ_AGENT_DATA_DIR 无条件钉死——外部 env 一律不采信：防宿主环境泄漏使 dev
+// 读到 prod 数据。
+// [HISTORICAL] 2026-09-08 Gate B 真机验收事故：宿主 shell 的
+// XYZ_AGENT_DATA_DIR=/Users/<user>/.xyz-agent 泄漏进 dev Electron，旧实现
+// `env ?? ~/.xyz-agent-dev` 只在 undefined 兜底、泄漏值被采信，dev app 整个
+// 跑在用户 prod 数据目录上，与「隔离 prod 实例」语义相反。
+// 需要临时指向其他目录做实验时，直接改这一行或用 XYZ_AGENT_PORT_OFFSET 同款
+// 显式机制；PORT_OFFSET 无数据泄漏风险面，刻意保留 `??` 外部覆盖语义（不动）。
 if (isDev) {
-  process.env.XYZ_AGENT_DATA_DIR = process.env.XYZ_AGENT_DATA_DIR
-    ?? path.join(homedir(), '.xyz-agent-dev')
+  process.env.XYZ_AGENT_DATA_DIR = path.join(homedir(), '.xyz-agent-dev')
   process.env.XYZ_AGENT_PORT_OFFSET = process.env.XYZ_AGENT_PORT_OFFSET ?? String(DEV_PORT_OFFSET)
   // 隔离 Electron userData，防止与 prod 实例共享 Chromium 存储（LevelDB LOCK 竞争）。
   // 从 XYZ_AGENT_DATA_DIR 派生（而非硬编码 .xyz-agent-dev）：多 worktree 并行 dev 时

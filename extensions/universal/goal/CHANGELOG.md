@@ -1,5 +1,11 @@
 # @zhushanwen/pi-goal
 
+## 0.13.0
+
+### Minor Changes
+
+- 838806898: Add dual-dimension continuation circuit breaker: a persisted hard total-count cap (never reset by tool activity) combined with no-progress backoff that clears on resume. Defer notifications are now deduplicated by pending-set changes.
+
 ## 0.12.2
 
 ### Patch Changes

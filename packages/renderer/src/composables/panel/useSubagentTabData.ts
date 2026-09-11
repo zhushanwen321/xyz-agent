@@ -32,7 +32,7 @@ import {
 import { getAgentCallHistory } from '@xyz-agent/core/transport/api/domains/session'
 import type { Message, SubagentRecord } from '@xyz-agent/shared'
 import { DEFAULT_ENGINE_ID } from '@/constants/engine-icons'
-import { toErrorMessage } from '../../lib/error-message'
+import { toErrorMessage } from '@xyz-agent/core'
 
 export interface SubagentTabDataDeps {
   /** 当前选中 subagent 的 record（组件 computed；三段式虚拟 id 才有，agentcall 两段式为 null） */

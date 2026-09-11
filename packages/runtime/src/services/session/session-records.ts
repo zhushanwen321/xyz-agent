@@ -31,9 +31,6 @@ import { getDataDir } from '@xyz-agent/shared/paths'
 import type { IProcessManager, IPiEngine } from '../ports/pi-engine.js'
 import { getHistoryFromFilePath, type HistoryFileReadResult } from '../session-history.js'
 import { extractSubagentsFromSessionFile, scanSubagentEntries } from './subagent-extractor.js'
-// subagent-workflow 路径判定（launch-params 纯函数族 SSOT——spawn 注入判定与安装目录
-// 定位共用同一谓词，防两处口径漂移）
-import { isSubagentWorkflowExtensionPath } from './launch-params.js'
 import {
   extractRecordEngine,
   readEngineSubagentHistory,
@@ -41,6 +38,7 @@ import {
 } from './subagent-engine-history.js'
 import { extractWorkflowsFromSessionFile, scanWorkflowEntries } from './workflow-extractor.js'
 import { getPiAgentDir } from '../../infra/pi/pi-paths.js'
+import { discoverAndRegisterEngines } from '@zhushanwen/subagent-core/engine/engine-discovery-scan'
 import { isStrictlyUnder } from '../../utils/path-utils.js'
 import type { ISessionStore } from '../ports/session.js'
 import { toErrorMessage } from '../../utils/errors.js'
@@ -97,12 +95,15 @@ export interface SessionRecordsDeps {
   /** MessageBus 当前值（Facade setter 晚期注入，未注入时 null → 广播 no-op）。 */
   getMessageBus(): IMessageBus | null
   /**
-   * 扩展路径解析（readDeclaredEnginesFallback 定位 subagent-workflow 安装目录）。
-   * 组合根直连 extensionService 注入（session-service.ts 装配点，同迁移前形态）——
-   * 不经 Facade getExtensionPaths 的 resolveExtensionPaths 包装（BUILTIN_EXTENSIONS_MISSING
-   * fail-fast / 其余降级空表），错误直接冒泡。
+   * [W4] 冷启动引擎发现回退（engines.json 缺失/损坏时）。缺省 = core 发现器三级
+   * 扫描（L1 env XYZ_AGENT_ENGINE_ROOTS / 宿主根 / L2 node 解析 / L3 config.json），
+   * 与派发同源（设计 §3.4 投影面表「冷启动回退源单源化」）。测试注入 fake 隔离
+   * 宿主 node_modules 的真实引擎包（零命中断言需要确定性空环境）。
+   *
+   * [W8] deprecated 死键 getExtensionPaths 已随构造点同批删除（本文件字段 + 
+   * session-service.ts 装配点）——W4 登记的保留期结束。
    */
-  getExtensionPaths(): Promise<string[]>
+  discoverEngines?(): string[]
 }
 
 /** JSON 落盘缩进（全仓 JSON_INDENT = 2 约定）。 */
@@ -294,7 +295,7 @@ export class SessionRecords {
   }
 
   async getSubagents(sessionId: string): Promise<SubagentRecord[]> {
-    // 找主 session 文件路径（scanSessions 扫 pi/sessions/，含 cwd-encoded 子目录）。
+    // 找主 session 文件路径（scanSessions 扫 <agentDir>/sessions/，含 cwd-encoded 子目录）。
     // wave:perf-w26（plan M-3）：路径解析消费方 force 旁路 TTL（刚落盘 session 的
     // subagent 面板在窗口内不静默返回空）。
     const target = this.deps.sessionStore.scanSessions({ force: true }).find((s) => s.id === sessionId)
@@ -324,7 +325,7 @@ export class SessionRecords {
 
     if (!record.sessionFile) return { messages: [], truncated: false }
 
-    // 路径穿越校验：sessionFile 必须严格落在 piAgentDir 下（~/.xyz-agent/pi/agent/）。
+    // 路径穿越校验：sessionFile 必须严格落在 piAgentDir 下（<dataDir>/agent/）。
     // record.sessionFile 由 subagent-extractor 从 JSONL 文本提取，不可信——攻击者构造的
     // session JSONL 可塞入任意路径（如 /etc/passwd），不校验直接读会泄露任意文件内容。
     if (!isStrictlyUnder(getPiAgentDir(), record.sessionFile)) return { messages: [], truncated: false }
@@ -339,9 +340,11 @@ export class SessionRecords {
    * config.json defaultEngine（extension ModelConfigService 读同一文件）。
    * 纯磁盘读取，Settings 冷启动（无活跃 session）也可用。
    *
-   * 回退链（U7b 冷启动：app 刚打开、尚无 pi 进程 → engines.json 不存在）：
-   * subagent-workflow 安装目录 package.json 的 `xyz-agent.subagentEngines` 静态声明
-   * （守护测试防与代码注册表漂移）→ 最终兜底 ['pi']。
+   * 回退链（[W4] 冷启动回退源单源化，设计 §3.4 投影面表）：engines.json 缺失/损坏
+   * → **runtime 自身三级发现**（discoverEngines 回退，与派发同源）。不保留静态 JSON
+   * 兜底（H5 后扩展包 xyz-agent.subagentEngines 声明已废弃）：零命中返回空清单——
+   * 静态声明列出的 id 无 bin 可执行，会造成「能选不能跑」，与「不可用引擎不进清单」
+   * 投影规则冲突；GUI 按既有语义对清单外派发给 engine_not_found + 安装指引。
    */
   async getSubagentEngineConfig(): Promise<SubagentEngineConfigView> {
     const subagentsDir = join(getPiAgentDir(), 'subagents')
@@ -353,11 +356,11 @@ export class SessionRecords {
         engines = parsed.engines
       }
     } catch (e) {
-      // 缺失/损坏 → 走静态声明回退
-      console.warn(`[session-service] read engines.json failed, falling back to static declaration: ${toErrorMessage(e)}`)
+      // 缺失/损坏 → runtime 自身发现回退
+      console.warn(`[session-service] read engines.json failed, falling back to runtime discovery: ${toErrorMessage(e)}`)
     }
     if (engines === undefined) {
-      engines = await this.readDeclaredEnginesFallback()
+      engines = this.readDiscoveredEnginesFallback()
     }
     let defaultEngine = 'pi'
     try {
@@ -373,27 +376,18 @@ export class SessionRecords {
   }
 
   /**
-   * [U7b] 静态声明回退：经 getExtensionPaths 定位 subagent-workflow 安装目录（dev 源码
-   * / packaged staged / live env 三形态统一由扩展路径解析覆盖），读 package.json
-   * 的 xyz-agent.subagentEngines。任何失败返回 ['pi']（pi 恒可用）。
+   * [W4] 冷启动发现回退：runtime 自身三级发现（core 发现器），清单 = 已发现且可执行
+   * 的引擎 id（发现即装载进注册表——W8 宿主接线后 runtime 派发同源消费）。失败或
+   * 零命中返回空清单（无静态 JSON 兜底，§3.4 投影面表）。
    */
-  private async readDeclaredEnginesFallback(): Promise<string[]> {
+  private readDiscoveredEnginesFallback(): string[] {
+    const discover = this.deps.discoverEngines ?? defaultRuntimeEngineDiscovery
     try {
-      const paths = await this.deps.getExtensionPaths()
-      const swDir = paths.find(isSubagentWorkflowExtensionPath)
-      if (!swDir) return ['pi']
-      const pkg = JSON.parse(readFileSync(join(swDir, 'package.json'), 'utf8')) as {
-        'xyz-agent'?: { subagentEngines?: unknown }
-      }
-      const declared = pkg['xyz-agent']?.subagentEngines
-      if (Array.isArray(declared) && declared.every((e) => typeof e === 'string') && declared.length > 0) {
-        return declared as string[]
-      }
+      return discover()
     } catch (e) {
-      // 回退链的回退——静默到 ['pi']
-      console.warn(`[session-service] read declared engines fallback failed, defaulting to pi: ${toErrorMessage(e)}`)
+      console.warn(`[session-service] runtime engine discovery failed, returning empty engine list: ${toErrorMessage(e)}`)
+      return []
     }
-    return ['pi']
   }
 
   /**
@@ -572,4 +566,21 @@ function subagentRecordEquals(a: SubagentRecord, b: SubagentRecord): boolean {
     && a.endedAt === b.endedAt
     && a.error === b.error
     && a.closedReason === b.closedReason
+}
+
+/**
+ * [W4] runtime 侧缺省引擎发现（SessionRecordsDeps.discoverEngines 缺省实现）：
+ * core 发现器三级扫描（env 根 / 宿主根 / node 解析 / config.json engines 段），
+ * hostKind = 'runtime'（EngineClient pidfile 实例维度与 pi 壳区分）、agentDir =
+ * pi agentDir（L3 config.json 与 engines.json 同目录锚）、dataDir = runtime 数据根
+ * （XYZ_AGENT_DATA_DIR，与 pi 壳注入引擎的 L0 值同源）。发现即装载注册表（幂等
+ * 覆盖）——W8 宿主接线后 runtime 派发路径直接消费同一批 descriptor。
+ */
+function defaultRuntimeEngineDiscovery(): string[] {
+  const result = discoverAndRegisterEngines({
+    hostKind: 'runtime',
+    agentDir: getPiAgentDir(),
+    dataDir: getDataDir(),
+  })
+  return result.discovered.map((entry) => entry.id)
 }

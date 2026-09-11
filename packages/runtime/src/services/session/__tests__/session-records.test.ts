@@ -88,7 +88,6 @@ function makeRecords(depsOverrides: Partial<SessionRecordsDeps> = {}, injector?:
     sessionStore: { scanSessions: vi.fn(() => [] as Array<{ id: string; filePath: string }>) } as unknown as ISessionStore,
     hasSession: vi.fn(() => true),
     getMessageBus: () => ({ publish } as unknown as IMessageBus),
-    getExtensionPaths: vi.fn(async () => [] as string[]),
     ...depsOverrides,
   }
   const records = new SessionRecords(deps, injector)
@@ -454,17 +453,18 @@ describe('引擎配置（getPiAgentDir 重定向临时目录，锁与原子写�
     expect(await records.getSubagentEngineConfig()).toEqual({ engines: ['pi', 'codex'], defaultEngine: 'codex' })
   })
 
-  it('engines.json 缺失：经扩展路径静态声明回退（U7b）', async () => {
-    const swDir = join(piAgentDirRef.dir, 'sw', 'subagent-workflow')
-    mkdirSync(swDir, { recursive: true })
-    writeFileSync(join(swDir, 'package.json'), JSON.stringify({ name: 'sw', xyzAgent: 1, 'xyz-agent': { subagentEngines: ['pi', 'custom'] } }))
-    const { records } = makeRecords({ getExtensionPaths: vi.fn(async () => [swDir]) })
-    expect(await records.getSubagentEngineConfig()).toEqual({ engines: ['pi', 'custom'], defaultEngine: 'pi' })
+  it('[W4] engines.json 缺失：runtime 自身发现回退（回退源单源化，静态 JSON 兜底已删）', async () => {
+    const discoverEngines = vi.fn(() => ['zcode', 'custom'])
+    const { records } = makeRecords({ discoverEngines })
+    expect(await records.getSubagentEngineConfig()).toEqual({ engines: ['zcode', 'custom'], defaultEngine: 'pi' })
+    expect(discoverEngines).toHaveBeenCalledOnce()
   })
 
-  it('静态声明回退也失败：兜底 [pi]（pi 恒可用）', async () => {
-    const { records } = makeRecords({ getExtensionPaths: vi.fn(async () => { throw new Error('ext service down') }) })
-    expect(await records.getSubagentEngineConfig()).toEqual({ engines: ['pi'], defaultEngine: 'pi' })
+  it('[W4] 发现零命中/失败：空清单（不再 [pi] 兜底——静态声明列出的 id 无 bin 可执行）', async () => {
+    const zero = makeRecords({ discoverEngines: vi.fn(() => []) })
+    expect(await zero.records.getSubagentEngineConfig()).toEqual({ engines: [], defaultEngine: 'pi' })
+    const failed = makeRecords({ discoverEngines: vi.fn(() => { throw new Error('discovery down') }) })
+    expect(await failed.records.getSubagentEngineConfig()).toEqual({ engines: [], defaultEngine: 'pi' })
   })
 
   it('setSubagentDefaultEngine：未知引擎 throw（GUI 端防呆）', async () => {

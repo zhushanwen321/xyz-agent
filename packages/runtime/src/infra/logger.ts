@@ -16,12 +16,17 @@
  *   后再 rename**：rename 早于 flush 完成时，旧流在途写会落进已改名 inode，而单代 .1
  *   在下一次轮转时被新 inode 覆盖路径，在途数据随之丢失（探针实测每个轮转边界丢 ~2 行）。
  *   轮转窗口内到达的写入行暂存内存队列，新流就绪后按序回放（窗口通常 <1ms）
+ * - pi 流 size 轮转（2026-09 磁盘膨胀修复）：pi tee 与主日志**共用 MAX_FILE_BYTES 与写入字节
+ *   计数**，达阈值 → end 旧流等待 flush → zlib 流式 gzip 为 `<file>.1.gz`（**只保留 1 代**，
+ *   下一次轮转 rename 覆盖）→ 重开新流写原路径 → 回放轮转窗口内的行。磁盘上限 ≈ 当前文件
+ *   （≤ MAX_FILE_BYTES + 回放队列）+ 1 个压缩代（产物通常远小于阈值）。**逐行原样写 JSONL
+ *   的铁律不变**（禁合并 delta / 采样 / 丢弃行——tee 的定位是「pi 卡死时唯一诊断证据」，
+ *   保真优先于体积；压缩只改存储形态、不改内容形态）。gzip/IO 失败 best-effort：保留原文件
+ *   + warn 一次，写入本体不中断
  * - 保留期：启动时清理 KEEP_DAYS 天前的日志
  * - 级别：dev 默认 debug，prod 默认 info，XYZ_LOG_LEVEL 可覆盖（XYZ_ 前缀自动过白名单）
- * - pi stdout JSONL 独立落盘：pi-<sessionId>.jsonl（卡死诊断的决定性证据）
- * - pi tee size 轮转（crash-forensics §3.3 D7，推翻「tee 不轮转」旧裁决）：per-writer
- *   50MB 上限、单代 `.1` 旋段保留末 2 段；`pi-` 前缀不变量（cleanExpiredLogs 白名单只认
- *   顶层 pi-* 前缀，旋段逃出白名单 = 新的无清理写入面——架构 D6③ 原文约束）
+ * - pi stdout JSONL 独立落盘：pi-<date>-<sessionId>.jsonl（卡死诊断的决定性证据），同款 size
+ *   轮转（达阈值 gzip 归档为 <原路径>.1.gz）
  * - 退出 flush（D10-1 分档承诺的配套）：shutdown 链必须 `await closeLogger()`（主日志 +
  *   全部 pi session 写流 end 并等 flush 完成）后再 process.exit(0)；硬崩溃（SIGKILL/断电）
  *   丢缓冲窗口内尾部几行已声明为取证能力削弱
@@ -36,12 +41,12 @@
  *   sessionLog.end()
  *   await closeLogger()                     // shutdown：flush 所有写流后进程才可退出
  */
-import { createWriteStream, mkdirSync, readdirSync, renameSync, statSync, unlinkSync, type WriteStream } from 'node:fs'
+import { createReadStream, createWriteStream, mkdirSync, readdirSync, renameSync, statSync, unlinkSync, type WriteStream } from 'node:fs'
 import { join } from 'node:path'
-// [crash-resilience §3.3 D6-⑦] 保留天数两进程共读同一函数（env 覆盖 || 默认）：原进程内
-// 常量 KEEP_DAYS（logger.ts:50-55）删除，等价提升到 shared——main 每日复扫与 runtime
-// 启动清理不出现两套值域漂移。Node-only：runtime 进程恒 Node 环境，安全。
+import { pipeline } from 'node:stream/promises'
+// [crash-resilience §3.3 D6-⑦] 保留天数两进程共读同一函数（env 覆盖 || 默认）——merge 裁决保留 shared SSOT 形态
 import { readLogKeepDays } from '@xyz-agent/shared'
+import { createGzip } from 'node:zlib'
 import { isPackaged } from '../utils/runtime-env.js'
 import { getCrashJournal } from './crash-journal.js'
 
@@ -60,11 +65,11 @@ const BYTES_PER_KB = 1024
 const DEFAULT_MAX_FILE_MB = 50
 const MAX_FILE_BYTES = Number(process.env.XYZ_LOG_MAX_BYTES) || DEFAULT_MAX_FILE_MB * BYTES_PER_KB * BYTES_PER_KB
 /**
- * pi tee 单文件 size 轮转默认阈值（crash-forensics §3.3 D7：50MB 上限，收口 198MB 实证）。
- * 不挂 env 旋钮（XYZ_LOG_MAX_BYTES 是主日志的旋钮，tee 无独立旋钮需求）；测试经
- * createPiSessionLog / createPiRelayLog 的 opts.maxBytes 注入小阈值验证旋段行为。
+ * pi tee 单文件 size 轮转阈值（crash-forensics §3.3 D7：50MB 上限，收口 198MB 实证）。
+ * [dev-0.9.17 合并] pi tee 与主日志共用 MAX_FILE_BYTES（XYZ_LOG_MAX_BYTES env 单旋钮），
+ * 无独立阈值常量——u9 的 opts.maxBytes 注入面与 PI_TEE_MAX_FILE_BYTES 已随 .1.gz
+ * gzip 实现取代而删除（裁决见 crash-forensics impl-plan §7 v5）。
  */
-const PI_TEE_MAX_FILE_BYTES = DEFAULT_MAX_FILE_MB * BYTES_PER_KB * BYTES_PER_KB
 const SECONDS_PER_MINUTE = 60
 const HOURS_PER_DAY = 24
 const MS_PER_SECOND = 1000
@@ -101,6 +106,18 @@ let pendingDroppedCount = 0
 /** endAndAwait 等待写流 'close' 的超时：fs 挂起时 close 永不触发，超时降级 resolve（防永久挂起）。 */
 const END_AWAIT_TIMEOUT_MS = 5_000
 
+// ── pi 流 size 轮转常量 ─────────────────────────────────────────────
+/** 压缩产物后缀：**单代**（下一次轮转 rename 覆盖同名文件，磁盘上恒只有 1 个压缩代）。 */
+const PI_GZIP_SUFFIX = '.1.gz'
+/** 压缩中间名：pipeline 成功后才 rename 到最终名——失败路径删除它，不污染单代语义。 */
+const PI_GZIP_TMP_SUFFIX = '.1.gz.tmp'
+/**
+ * gzip 兜底超时（防挂死）：压缩对象是已关闭、大小 ≤ MAX_FILE_BYTES 的本地文件，正常 <1s；
+ * 10s = 该量级的 10 倍余量，且让 closeLogger（同批 await 在途轮转）的总兜底等待保持在
+ * supervisor SIGTERM→SIGKILL 升级线以内。超时中止压缩并走失败分支（保留原文件，不丢数据）。
+ */
+const GZIP_TIMEOUT_MS = 10_000
+
 // ── pi session 写流注册表（D10-1 退出 flush：closeLogger 统一 end + 等待）──
 interface PiStreamState {
   /** 惰性打开：首次 write 才建流。轮转窗口内为 undefined（新流由轮转续体重开）。 */
@@ -109,17 +126,14 @@ interface PiStreamState {
   ended: boolean
   /** 目标文件路径（closeLogger 端 endAndAwait 超时报告的 label 用；轮转 rename 的源）。 */
   file: string
-  // ── per-writer size 轮转（crash-forensics §3.3 D7，形态对齐 rotateMain）──
-  /** 轮转阈值（字节）。默认 PI_TEE_MAX_FILE_BYTES；测试经 opts.maxBytes 注入小值。 */
-  maxBytes: number
-  /** 自本次打开以来写入字节数（size 轮转判定，对齐 mainBytesWritten）。 */
+  /** 自本次打开以来写入该文件的字节数（size 轮转判定，与主日志 mainBytesWritten 同款计数）。 */
   bytesWritten: number
-  /** 轮转窗口内到达的写入（新流就绪后按序回放；pendingLines 同款，D7 复刻点①）。 */
+  /** 轮转进行中（end 旧流等待 flush → gzip → 重开新流）；窗口内重复触发复用同一 promise。 */
+  rotationInFlight: Promise<void> | null
+  /** 轮转窗口内到达的行（新流就绪后按序回放；窗口 = 旧流 close 等待 + gzip 压缩耗时）。 */
   pending: Array<{ data: string | Uint8Array; bytes: number }>
-  /** 本 writer 轮转窗口内超限/无目标丢弃计数（轮转结束后合并记一次 warn）。 */
-  pendingDropped: number
-  /** 异步轮转进行中（end 旧流等待 flush → rename → 开新流 → 回放）。 */
-  rotation: Promise<void> | null
+  /** 本文件轮转窗口内因队列超限 / 新流不可用丢弃的行数（轮转结束合并记一次 warn）。 */
+  dropped: number
 }
 const openPiStreams = new Set<PiStreamState>()
 
@@ -325,13 +339,15 @@ function openMainStream(today: string): WriteStream | undefined {
 /**
  * createWriteStream 的容错包装（终审 suggestion 配套）：同步抛错（非法路径 / EMFILE 等）
  * 归一为 undefined，兑现 openMainStream「失败返回 undefined」的注释承诺。不包装时异常会
- * 沿 rotateMain 的 rotationInFlight promise 传播为 unhandled rejection（writeLogEntry 的
- * `void rotateMain(...)` 不 await），且 rotateMain 的回放丢弃计数分支（stream 为 undefined）
- * 因此具备真实可达路径。
+ * 沿 rotationInFlight promise 传播为 unhandled rejection（调用点的 `void rotate...` 不 await），
+ * 且 rotateMain / rotatePiStream 的回放丢弃计数分支（stream 为 undefined）因此具备真实可达路径。
+ *
+ * flags 默认 'a'（主日志与 pi 流的常规续写语义不变）；pi 流轮转压缩成功后传 'w'——旧内容已
+ * 归档进 .1.gz，截断即去重（见 rotatePiStream）。
  */
-function createStreamSafe(file: string): WriteStream | undefined {
+function createStreamSafe(file: string, flags: 'a' | 'w' = 'a'): WriteStream | undefined {
   try {
-    return createWriteStream(file, { flags: 'a' })
+    return createWriteStream(file, { flags })
   } catch {
     // 打开失败归一 undefined 由调用方降级（回放丢弃计数）；logger 自身容错，不杀进程
     return undefined
@@ -472,24 +488,21 @@ export interface PiTeeRotationOptions {
  * 为一个 pi session 创建独立日志写入器。
  *
  * pi stdout 的 JSONL 事件流是诊断 pi 卡死的**决定性证据**（pi 发了什么 / 什么都没发）。
- * 每个独立文件，文件名含 sessionId 便于关联坏 session（与 ~/.xyz-agent-dev/pi/sessions/
+ * 每个独立文件，文件名含 sessionId 便于关联坏 session（与数据目录 agent/sessions/
  * 下的 session JSONL 对应）。
  *
- * [HISTORICAL] 轮转裁决修订（crash-forensics-and-watchdog §3.3 D7 显式推翻旧裁决）：
- * 旧裁决「不轮转：单 session 事件量可控（正常 turn <1000 事件），session 结束即 end()」
- * 的前提已被实证证伪——idle 回收只在摘除时分段长闲置 session，**持续活跃** session 在
- * 30 天长跑下单文件无界累积（本机实测单文件 198MB）。现按 D7 增加 per-writer size 轮转：
- * 默认 50MB 上限（opts.maxBytes 可注入小阈值供测试），单代 `.1` 旋段、保留末 2 段（tee
- * 核心价值是「pi 卡死时尾部现场」，末段保全即达成）。旋段命名 = 原文件名 + `.1` 后缀，
- * `pi-` 前缀不变量自动保持——cleanExpiredLogs 白名单只认顶层 pi-* 前缀，旋段逃出白名单
- * = 新的无清理写入面（架构 D6③ 原文约束）。
+ * size 轮转（2026-09 磁盘膨胀修复）：单 session 事件量并非总是可控——pi 的 message_update
+ * delta 逐条落盘（每行一个小 delta + ~870B 信封），高频长 session 实测 30 分钟写到 19.4MB
+ * 而有效内容仅 ~40KB（放大 ~500×），且旧实现无任何 size 上限（单文件实测 306MB、持续增长）。
+ * 现与主日志共用 MAX_FILE_BYTES：达阈值 → 旧文件 gzip 归档为 <file>.1.gz（单代）→ 新流续写
+ * 原路径。session 结束的 end() 与整文件体积无关；跨天/跨 session 仍由文件名 date 隔离。
  *
  * D10-2：接口形状不变（end 后 write 为 no-op），内部从 appendFileSync 换成 WriteStream
  * 缓冲写（惰性打开）。end() 只关闭本 session 写流；注册表保留条目，closeLogger 退出
  * flush 时统一等待全部写流（含已 end 未 flush 完的、含轮转后新流的）落盘——pi 静默
  * 卡死场景丢尾部几行 = 丢「pi 挂在最后哪一步」的冒烟证据（D10-1 分档承诺）。
  */
-export function createPiSessionLog(sessionId: string, opts?: PiTeeRotationOptions): PiSessionLog {
+export function createPiSessionLog(sessionId: string, _opts?: PiTeeRotationOptions): PiSessionLog {
   if (!logsDir || !currentLevel) {
     // logger 未初始化（如单元测试）：返回 no-op 写入器
     return { write: () => {}, end: () => {} }
@@ -497,7 +510,7 @@ export function createPiSessionLog(sessionId: string, opts?: PiTeeRotationOption
   const date = new Date().toISOString().slice(0, ISO_DATE_LENGTH)
   // 文件名：pi-<date>-<sessionId>.jsonl（date 防跨天 session 冲突）
   const safeSid = sessionId.replace(/[^a-zA-Z0-9-]/g, '').slice(0, SESSION_ID_MAX_LENGTH)
-  return createPiStreamWriter(join(logsDir, `pi-${date}-${safeSid}.jsonl`), opts)
+  return createPiStreamWriter(join(logsDir, `pi-${date}-${safeSid}.jsonl`))
 }
 
 /**
@@ -512,13 +525,13 @@ export function createPiSessionLog(sessionId: string, opts?: PiTeeRotationOption
  * 注入），按文件名安全字符集清洗。logger 未初始化时返回 no-op 写入器（与
  * createPiSessionLog 同契约，单元测试无副作用）。
  */
-export function createPiRelayLog(recordId: string, opts?: PiTeeRotationOptions): PiSessionLog {
+export function createPiRelayLog(recordId: string, _opts?: PiTeeRotationOptions): PiSessionLog {
   if (!logsDir || !currentLevel) {
     return { write: () => {}, end: () => {} }
   }
   const date = new Date().toISOString().slice(0, ISO_DATE_LENGTH)
   const safeRecordId = recordId.replace(/[^a-zA-Z0-9_-]/g, '').slice(0, SESSION_ID_MAX_LENGTH)
-  return createPiStreamWriter(join(logsDir, `pi-relay-${date}-${safeRecordId}.jsonl`), opts)
+  return createPiStreamWriter(join(logsDir, `pi-relay-${date}-${safeRecordId}.jsonl`))
 }
 
 // ── 崩溃取证上下文（crash-resilience §3.3 D6-④⑤ / A8）────────────────
@@ -757,65 +770,53 @@ export function writePluginCrashLog(workerId: string, content: string): void {
 
 /**
  * pi 原始流写入器的共享实现（createPiSessionLog / createPiRelayLog / writePiCrashLog 共用）：
- * WriteStream 缓冲写 + 惰性打开 + destroyed 自愈重建 + per-writer size 轮转（D7），条目
- * 注册进 openPiStreams 由 closeLogger 统一等待退出 flush。失败语义 best-effort：同步异常
- * 静默吞、异步流错误由 attachStreamErrorHandler 记一次 warn——绝不向上抛（调用方是数据
- * 转发热路径）。
+ * WriteStream 缓冲写 + 惰性打开 + destroyed 自愈重建 + **size 轮转**（达 MAX_FILE_BYTES → gzip
+ * 归档 .1.gz 单代 → 重开新流写原路径 → 回放窗口内的行）。条目注册进 openPiStreams 由
+ * closeLogger 统一等待退出 flush。失败语义 best-effort：同步异常静默吞、异步流错误由
+ * attachStreamErrorHandler 记一次 warn——绝不向上抛（调用方是数据转发热路径）。
+ *
+ * 内容形态铁律：**逐行原样写 JSONL**——不合并 delta、不采样、不丢弃行。tee 的定位是
+ * 「pi 卡死时唯一诊断证据」，保真优先于体积；轮转只改存储形态（可达性靠 .1.gz），不改内容。
  */
-function createPiStreamWriter(file: string, opts?: PiTeeRotationOptions): PiSessionLog {
+function createPiStreamWriter(file: string): PiSessionLog {
   const state: PiStreamState = {
     stream: undefined,
     ended: false,
     file,
-    maxBytes: opts?.maxBytes ?? PI_TEE_MAX_FILE_BYTES,
     bytesWritten: 0,
+    rotationInFlight: null,
     pending: [],
-    pendingDropped: 0,
-    rotation: null,
+    dropped: 0,
   }
   openPiStreams.add(state)
   return {
     write: (line) => {
       if (state.ended) return // end 后 no-op
       if (!currentLevel || !logsDir) return // closeLogger 后 no-op（与 writeLogEntry 一致，审查 W30 Fix-8）
-      const data = typeof line === 'string' ? (line.endsWith('\n') ? line : line + '\n') : line
-      const bytes = typeof data === 'string' ? Buffer.byteLength(data, 'utf8') : data.byteLength
+      const data = toPiLineData(line)
+      const bytes = Buffer.byteLength(data)
       try {
+        // 轮转窗口（旧流 close 等待 + gzip 压缩耗时）：行先入队，续体在新流就绪后按序回放
+        // ——窗口内零阻塞、零丢失。pi delta 行可达每秒数百条，而压缩窗口比主日志的纯 end
+        // 等待长（50MB 级约 1s），回放队列是保真的必要条件（不是优化；与主日志 pendingLines 同款）。
+        if (state.rotationInFlight) {
+          pushPendingPiLine(state, data, bytes)
+          return
+        }
         // 写入前守卫（审查 W30 Fix-9）：writableEnded = end() 已调、flush 未完（正常被
         // state.ended 拦截，此处防御外部直接调 stream.end() 的场景）——等同 end 语义，no-op。
         if (state.stream?.writableEnded) return
-        // 轮转窗口（D7 复刻点①）：行入队，轮转续体在新流就绪后按序回放。fs 挂起时窗口
-        // 无限拉长，容量上限防内存膨胀（pendingLines 同款，审查 W30 Fix-1）。
-        if (state.rotation) {
-          if (state.pending.length >= MAX_PENDING_LINES) {
-            state.pendingDropped++
-            return
-          }
-          state.pending.push({ data, bytes })
+        // size 轮转（写入字节计数，与主日志同款）：达阈值 → 异步轮转，本行入队。
+        // 排在自愈重建之前：轮转续体自带「end 旧流 → gzip → 重开新流」，无需先重建被销毁的流。
+        if (shouldRotatePiStream(state, bytes)) {
+          rotateAndPushPendingPiLine(state, data, bytes)
           return
         }
-        // size 轮转（写入字节计数，D7）：超阈值 → 异步「end 旧流 → rename → 开新流」，
-        // 本行入队随回放写进新段（触发行落新段，与 rotateMain 同语义）。
-        if (state.stream && !state.stream.destroyed && state.bytesWritten + bytes > state.maxBytes) {
-          void rotatePiStream(state)
-          state.pending.push({ data, bytes })
-          return
-        }
-        // 自愈（审查 W30 Fix-2）：流 error 后 autoDestroy，write 静默丢弃；pi session log
-        // 是 pi 卡死诊断的决定性证据，静默丢失后续行 = 失去冒烟证据（主日志有轮转自愈、
-        // pi 流没有）——destroyed 时重建（flags:'a' 续写同文件 + 重新挂 error 监听器）。
-        if (!state.stream || state.stream.destroyed) {
-          // 重建前摘掉旧流的 error 监听（审查 W30 Fix-9）：destroyed 流不会再 emit，
-          // 但显式移除避免悬挂监听器持有旧流引用（防监听器泄漏/重复注册）。
-          // 可选链：首次惰性打开时 stream 为 undefined（此分支为 true 的主路径）。
-          state.stream?.removeAllListeners('error')
-          openPiStreamFile(state)
-        }
-        const stream = state.stream
-        if (!stream) return // 打开失败（异常路径）→ 本行丢弃，不抛
         // write 返回 false = 背压（缓冲堆积）。日志行量级 KB、磁盘正常不触发；慢盘时
         // 内存增长与轮转窗口 pendingLines 同源，已由容量上限兜底（审查 W30 Fix-6）。
-        stream.write(data)
+        // ensurePiStream 惰性打开（首写开流）——勿在其前检查 state.stream（合并事故：
+        // 残留 u9 版「先显式打开再检查」的前置守卫会把首行全部丢弃且流永不打开）。
+        ensurePiStream(state).write(data)
         state.bytesWritten += bytes
       // eslint-disable-next-line taste/no-silent-catch -- pi stdout 落盘失败（磁盘满/权限）不影响 runtime 主流程；best-effort 容错
       } catch {
@@ -825,88 +826,168 @@ function createPiStreamWriter(file: string, opts?: PiTeeRotationOptions): PiSess
     end: () => {
       if (state.ended) return
       state.ended = true
-      // 轮转窗口内 end：旧流正被轮转续体 end，新流由续体在回放后按 state.ended 补 end
-      // （closeLogger 对注册表残留条目的 end 是第二道兜底）。
+      // 轮转进行中时 state.stream 已摘空：回放行由续体写完后再 end（见 rotatePiStream），
+      // 续体打开的新流仍留在 state.stream 上，closeLogger 才能等到它 flush 完成。
       state.stream?.end() // 缓冲数据异步 flush 后关闭 fd；closeLogger 会等待其完成
     },
   }
 }
 
 /**
- * 打开（或重建）pi tee 写流（createPiStreamWriter 的打开路径，轮转续体与自愈路径共用）。
- *
- * 打开前若磁盘既有文件已超阈值（上次运行崩溃未轮转 / 流自愈重建时文件已大），先滚动
- * 一次——进程内字节计数不覆盖历史字节，此 stat 桥接跨重启/自愈的 size 上限（对齐
- * openMainStream 同款，仅打开时一次，非热路径）。打开经 createStreamSafe 归一失败
- * （轮转续体是异步上下文，同步抛错会成为 unhandled rejection）。
+ * write 的行形态归一：string 补齐尾换行（readline 消费方契约），Uint8Array 原样透传
+ *（relay up 方向 chunk 逐字节保真，不补 \n——按 chunk 解码会截断多字节字符）。
  */
-function openPiStreamFile(state: PiStreamState): WriteStream | undefined {
-  const file = state.file
-  try {
-    if (existsSyncSafe(file) && statSync(file).size > state.maxBytes) {
-      renameSync(file, `${file}.1`)
-    }
-  // eslint-disable-next-line taste/no-silent-catch -- 预滚失败不阻塞打开；best-effort，新流仍续写原文件
-  } catch {
-    // no-op
-  }
-  const stream = createStreamSafe(file)
-  if (stream) {
-    attachStreamErrorHandler(stream, `pi:${file}`)
-    state.bytesWritten = 0
-  }
-  state.stream = stream
-  return stream
+function toPiLineData(line: string | Uint8Array): string | Uint8Array {
+  return typeof line === 'string' ? (line.endsWith('\n') ? line : line + '\n') : line
+}
+
+/** size 轮转前置判定（与主日志 writeLogEntry 同款字节计数口径）。 */
+function shouldRotatePiStream(state: PiStreamState, bytes: number): boolean {
+  return !!state.stream && state.bytesWritten + bytes > MAX_FILE_BYTES
 }
 
 /**
- * 异步轮转一个 pi tee 写流（crash-forensics §3.3 D7）：end 旧流并**等待 flush 完成** →
- * rename 单代 `.1` → 开新流 → 回放窗口行。顺序硬约束与幂等并发语义与 rotateMain 同款
- * （审查 m-6：rename 前必须等旧流 'close'——全部在途 fs.write 落盘；否则在途写落进已
- * 改名 inode，单代 .1 下次轮转被覆盖时数据丢失）。
+ * 惰性打开 / destroyed 自愈重建（自 write 抽出，行为逐字等价）。
  *
- * 旋段命名 = 原文件名 + `.1` 后缀（单代，保留末 2 段——tee 核心价值是「pi 卡死时尾部
- * 现场」，末段保全即达成，设计 D7 原文）；`pi-` 前缀随原文件名自动保持（cleanExpiredLogs
- * 白名单只认顶层 pi-* 前缀——架构 D6③ 不变量：旋段逃出白名单 = 新的无清理写入面）。
- * renameSync 对已存在的 `.1` 直接覆盖（POSIX）= 末 2 段滚动的保留语义，与主日志同款。
+ * 自愈（审查 W30 Fix-2）：流 error 后 autoDestroy，write 静默丢弃；pi session log 是 pi
+ * 卡死诊断的决定性证据，静默丢失后续行 = 失去冒烟证据（主日志有轮转自愈、pi 流没有）——
+ * destroyed 时重建（flags:'a' 续写同文件 + 重新挂 error 监听器）。
+ *
+ * 重建前摘掉旧流的 error 监听（审查 W30 Fix-9）：destroyed 流不会再 emit，但显式移除避免
+ * 悬挂监听器持有旧流引用（防监听器泄漏/重复注册）。可选链：首次惰性打开时 stream 为
+ * undefined（此分支为 true 的主路径）。
+ */
+function ensurePiStream(state: PiStreamState): WriteStream {
+  if (state.stream && !state.stream.destroyed) return state.stream
+  state.stream?.removeAllListeners('error')
+  state.stream = createWriteStream(state.file, { flags: 'a' })
+  attachStreamErrorHandler(state.stream, `pi:${state.file}`)
+  return state.stream
+}
+
+/** 轮转窗口内的行入队：队列满 → 丢弃并计数（不静默），否则按序入队。 */
+function pushPendingPiLine(state: PiStreamState, data: string | Uint8Array, bytes: number): void {
+  if (state.pending.length >= MAX_PENDING_LINES) {
+    state.dropped++
+    return
+  }
+  state.pending.push({ data, bytes })
+}
+
+/**
+ * size 轮转触发 + 本行入队（顺序硬约束，与拆分前逐字等价）：
+ * ① 队列满（fs 挂起导致窗口超长）→ 本行丢弃并计数、**不触发轮转**；
+ * ② 否则先 `rotatePiStream`（同步置 rotationInFlight + 摘空 stream）再 push——push 必落轮转
+ * 窗口队列，不会被续体的 pending.splice 漏掉。
+ */
+function rotateAndPushPendingPiLine(state: PiStreamState, data: string | Uint8Array, bytes: number): void {
+  if (state.pending.length >= MAX_PENDING_LINES) {
+    state.dropped++ // 队列满（fs 挂起导致窗口超长）：本行丢弃并计数，不静默
+    return
+  }
+  void rotatePiStream(state) // 同步置 rotationInFlight + 摘空 stream，随后的 push 必入队
+  state.pending.push({ data, bytes })
+}
+
+/**
+ * 异步轮转单个 pi 流：end 旧流并**等待 flush 完成** → gzip 归档 → 重开新流 → 回放队列。
+ *
+ * 顺序硬约束（与 rotateMain 同源，但多一个压缩阶段）：
+ * ① 先等旧流 'close' 再压缩——在途 fs.write 落进压缩段会让「同一行既进 .1.gz 又被新流重写」，
+ *   且压缩读到的内容边界不确定（同 inode 边读边写）；
+ * ② gzip **完成后才能重开新流写原路径**——若先开 append 流，新行会被进行中的 read stream
+ *   读走，同内容在 .1.gz 与新文件里各存一份（体积翻倍，与「上限有界」目标相悖）。
+ *   故压缩成功用 flags:'w' 重开（旧内容已进 .1.gz，截断即去重，也免去 unlink 失败时
+ *   追加旧内容的重复）；压缩失败/放弃用 flags:'a'（保留原文件，保真优先，磁盘上限暂时让位）。
+ *
+ * 幂等并发：轮转窗口内的重复触发复用同一 promise（写入统一走 state.pending 队列）。
+ * 永不 reject：调用点 `void rotatePiStream(...)` 不 await，reject 会变成 unhandled rejection。
  */
 function rotatePiStream(state: PiStreamState): Promise<void> {
-  if (state.rotation) return state.rotation
+  if (state.rotationInFlight) return state.rotationInFlight
   const oldStream = state.stream
-  const oldFile = state.file
-  // 状态先行清空：轮转窗口内到达的行统一入队（write 的 state.rotation 分支）
+  const file = state.file
+  // 状态先行清空：轮转窗口内到达的行统一入队（write 的 rotationInFlight 分支）
   state.stream = undefined
   state.bytesWritten = 0
-  state.rotation = (async () => {
-    if (oldStream) await endAndAwait(oldStream, `pi-rotation:${oldFile}`)
+  state.rotationInFlight = (async () => {
     try {
-      renameSync(oldFile, `${oldFile}.1`)
-    // eslint-disable-next-line taste/no-silent-catch -- 旋段滚动失败不阻塞写入；logger best-effort，新流仍写原文件，仅丢失分段
+      await endAndAwait(oldStream, `pi-rotation:${file}`)
+      const archived = await gzipRotatedFile(file)
+      // 回放轮转窗口内到达的行（续体在微任务队列原子执行，无并发写入插队）
+      const pending = state.pending.splice(0)
+      // ended 且无回放行时不必重开流（无内容可写，免得白建文件）
+      const stream = pending.length > 0 || !state.ended ? createStreamSafe(file, archived ? 'w' : 'a') : undefined
+      if (!stream) {
+        // 新流不可用（EMFILE / 目录被删 / 压缩失败后原文件也打不开）：回放行无目标可写，
+        // 丢弃但必须计数（对齐主日志出口，不静默），由下方合并 warn 报数
+        state.dropped += pending.length
+      } else {
+        attachStreamErrorHandler(stream, `pi:${file}`)
+        state.stream = stream
+        for (const p of pending) {
+          stream.write(p.data)
+          state.bytesWritten += p.bytes
+        }
+        // end() 在轮转窗口内被调：回放行是 end 前已接受的写入，必须落盘后再关流
+        if (state.ended) stream.end()
+      }
+    // eslint-disable-next-line taste/no-silent-catch -- 轮转是写入路径的旁路，任何步骤失败都降级为「丢压缩产物、不丢写入」；且调用点不 await，reject 即 unhandled rejection
+    } catch {
+      // no-op
+    } finally {
+      state.rotationInFlight = null
+      // 轮转窗口超长（fs 挂起）/ 新流不可用的丢弃：合并记一次 warn（此时 rotationInFlight
+      // 已清，writeLogEntry 走正常路径，不递归；只影响缓冲窗口内的行，降级可接受）
+      if (state.dropped > 0) {
+        const dropped = state.dropped
+        state.dropped = 0
+        writeLogEntry('warn', `[logger] dropped ${dropped} pi log lines (pending queue overflow / replay target unavailable during rotation)`)
+      }
+    }
+  })()
+  return state.rotationInFlight
+}
+
+/**
+ * 把已关闭的旧 pi 日志文件流式压缩为 `<file>.1.gz`（best-effort，返回是否成功）。
+ *
+ * 单代保留：先写 `<file>.1.gz.tmp`，成功后 rename 覆盖 `<file>.1.gz`——POSIX rename 原子替换，
+ * 磁盘上恒只有 1 个压缩代（上限 = 当前文件 + 1 代），失败路径也不删上一代（它仍是完整产物）。
+ * 不用「先删上一代再压缩」：删除与新产物落盘之间有空窗，期间中断会两代尽失。
+ *
+ * 失败语义（best-effort）：任何一步失败 → 删除临时残片、保留原文件、返回 false，由
+ * rotatePiStream 用 flags:'a' 重开（不丢数据）+ 此处 warn 一次。**绝不向上抛**（tee 写入本体
+ * 不得因压缩失败中断）。
+ *
+ * 兜底超时（防挂死）：pipeline 带 AbortSignal，超时中止走失败分支（GZIP_TIMEOUT_MS 见常量注释）。
+ * 无此兜底时 closeLogger（await 在途轮转）会被挂起的压缩永久卡住。
+ */
+async function gzipRotatedFile(file: string): Promise<boolean> {
+  // 旧文件已不存在（外部清理 / 从未创建）：无需归档，按成功处理（避免无意义的 warn 噪音）
+  if (!existsSyncSafe(file)) return true
+  const tmp = `${file}${PI_GZIP_TMP_SUFFIX}`
+  const gz = `${file}${PI_GZIP_SUFFIX}`
+  const abort = new AbortController()
+  const timer = setTimeout(() => abort.abort(), GZIP_TIMEOUT_MS)
+  timer.unref?.()
+  try {
+    // createGzip()/createWriteStream() 同步抛错也落在 try 内（整段归入失败分支）
+    await pipeline(createReadStream(file), createGzip(), createWriteStream(tmp), { signal: abort.signal })
+    renameSync(tmp, gz) // 覆盖上一个 .1.gz —— 单代保留，且不留 tmp 残骸
+    return true
+  } catch {
+    try {
+      unlinkSync(tmp) // 失败残片（0 字节 / 半截 gzip）删除：不污染「单代」语义
+    // eslint-disable-next-line taste/no-silent-catch -- 残片清理自身失败（并发删除等）无需处理
     } catch {
       // no-op
     }
-    const stream = openPiStreamFile(state)
-    // 回放轮转窗口内到达的行（续体在微任务队列原子执行，无并发写入插队）
-    const pending = state.pending.splice(0)
-    if (stream) {
-      for (const p of pending) {
-        stream.write(p.data)
-        state.bytesWritten += p.bytes
-      }
-    } else if (pending.length > 0) {
-      // 新流打开失败：回放行无目标流可写，丢弃但必须计数（对齐 rotateMain，不静默）
-      state.pendingDropped += pending.length
-    }
-    if (state.ended) stream?.end() // 窗口内 end()：新流由本续体收尾
-    state.rotation = null
-    // 轮转窗口超长（fs 挂起）导致的超限丢弃：合并记一次 warn（写主日志，不递归本 writer）
-    if (state.pendingDropped > 0) {
-      const dropped = state.pendingDropped
-      state.pendingDropped = 0
-      writeLogEntry('warn', `[logger] pi tee dropped ${dropped} lines during rotation (${oldFile})`)
-    }
-  })()
-  return state.rotation
+    writeLogEntry('warn', `[logger] pi log gzip failed (${file}); original file kept, rotation skipped`)
+    return false
+  } finally {
+    clearTimeout(timer)
+  }
 }
 
 // ── 工具 ────────────────────────────────────────────────────────────
@@ -993,16 +1074,14 @@ function reportEndAwaitTimeout(label: string): void {
  */
 export async function closeLogger(): Promise<void> {
   if (rotationInFlight) await rotationInFlight
-  // pi tee 写流（D7 复刻点②）：先等全部在途轮转完成——轮转续体会 end 旧流、开新流并
-  // 回放窗口行——再捕获流引用，保证捕获到的是轮转后的**新流**，尾部 flush 走新流不丢
-  // 尾部行（A5 通过标准）。循环兜住 await 窗口内尾部写入再触发的一轮轮转。
-  for (;;) {
-    const rotations = Array.from(openPiStreams)
-      .map((s) => s.rotation)
-      .filter((r): r is Promise<void> => r !== null)
-    if (rotations.length === 0) break
-    await Promise.allSettled(rotations)
-  }
+  // pi 流在途轮转同样必须先落定：续体会重开新流并回放 pending 行——不等的话，下面的流快照
+  // 拿到的是 undefined（轮转中 state.stream 已摘空），新流与其回放行既不被 end 也不被等待，
+  // 退出时直接丢尾部（退出 flush 契约破裂）。**取舍**：纳入等待，而非放弃压缩产物——压缩
+  // 对象是 ≤MAX_FILE_BYTES 的已关闭文件（正常 <1s），而放弃产物要么丢掉 tee 证据的唯一载体
+  // （.1.gz），要么让原文件停在半归档态（旧内容既不在 .1.gz 也没截断）；保真优先，代价是退出
+  // 最多多等一次压缩。挂死兜底：压缩自带 GZIP_TIMEOUT_MS 中止（见 gzipRotatedFile）。
+  const piRotations = [...openPiStreams].map((s) => s.rotationInFlight).filter((p): p is Promise<void> => p !== null)
+  if (piRotations.length > 0) await Promise.allSettled(piRotations)
   // 先捕获所有写流引用再清状态——await 窗口内新写入应直接 no-op，
   // 捕获的旧流照常 end + 等待（退出前最后几行不丢）。
   const streams: Array<{ stream: WriteStream | undefined; label: string }> = [

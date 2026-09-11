@@ -22,21 +22,26 @@ export interface AggMetrics {
 /** provider 颜色阶梯上限 */
 const MAX_PROVIDER_COLORS = 5
 
-/** provider 颜色 CSS 变量映射（--chart-p1..p5） */
-const PROVIDER_COLORS: Record<string, string> = {}
-
-/** 按使用量降序分配 provider 色阶梯（p1 占比最高） */
-function assignProviderColors(perProv: Record<string, AggMetrics>): void {
+/**
+ * 按使用量降序分配 provider 色阶梯（p1 占比最高），返回颜色映射。
+ *
+ * 颜色归属随 aggregate() 结果返回（审计候选 9 修复）：禁止恢复
+ * 「模块级可变 PROVIDER_COLORS + 无参 getProviderColor 全局读」的旧契约——
+ * 那会让 aggregate() 带隐藏副作用，多实例（split mode 两个 UsagePage）互相覆盖取色。
+ */
+function buildProviderColors(perProv: Record<string, AggMetrics>): Record<string, string> {
+  const colors: Record<string, string> = {}
   const sorted = Object.keys(perProv)
     .sort((a, b) => totalTokens(perProv[b]) - totalTokens(perProv[a]))
   sorted.forEach((pid, i) => {
-    PROVIDER_COLORS[pid] = `var(--chart-p${Math.min(i + 1, MAX_PROVIDER_COLORS)})`
+    colors[pid] = `var(--chart-p${Math.min(i + 1, MAX_PROVIDER_COLORS)})`
   })
+  return colors
 }
 
-/** 获取 provider 对应的 chart 色变量 */
-export function getProviderColor(pid: string): string {
-  return PROVIDER_COLORS[pid] ?? 'var(--chart-p5)'
+/** 获取 provider 对应的 chart 色变量（colors = aggregate() 结果的 providerColors 映射） */
+export function getProviderColor(colors: Record<string, string>, pid: string): string {
+  return colors[pid] ?? 'var(--chart-p5)'
 }
 
 /* ── 工具函数 ── */
@@ -180,12 +185,19 @@ export interface PerModelEntry {
 
 /* ── 聚合结果 ── */
 
-export interface AggregatedData {
+/**
+ * 聚合结果（含 provider 颜色映射）。
+ * 不导出（清理点 #11：投机导出，外部零消费方）——外部经 aggregate() 返回值推断类型，
+ * 消费组件取色用 getProviderColor(data.providerColors, pid)。
+ */
+interface AggregatedData {
   perDay: DayView[]
   perModel: Record<string, PerModelEntry>
   perProv: Record<string, AggMetrics>
   /** 全量 provider 聚合：尊重 range、忽略 offProv/isolate（图例恒显数据源，设计 D1） */
   perProvFull: Record<string, AggMetrics>
+  /** provider 颜色映射（pid -> CSS 变量），按全量 rows 用量降序分配，未命中回退 chart-p5 */
+  providerColors: Record<string, string>
   tot: AggMetrics
   msgs: number
   activeDays: number
@@ -323,8 +335,9 @@ export function aggregate(
   filter: FilterState,
 ): AggregatedData {
   const byDate = groupByDate(rows)
-  // 以全量 rows 计算 provider 色序（过滤变化不重排）
-  assignProviderColors(buildFullPerProv(rows))
+  // 以全量 rows 计算 provider 色序（过滤变化不重排）；色序派生源与 perProvFull 不同：
+  // perProvFull 只累计 range 窗口内数据，色序必须全量否则切 range 时阶梯重排
+  const providerColors = buildProviderColors(buildFullPerProv(rows))
 
   const sortedDates = [...byDate.keys()].sort()
   const { sliceDates, nDays } = buildDateRange(filter, sortedDates)
@@ -348,6 +361,7 @@ export function aggregate(
     perModel: acc.perModel,
     perProv: acc.perProv,
     perProvFull: acc.perProvFull,
+    providerColors,
     tot: acc.tot,
     msgs: acc.msgs,
     activeDays: acc.activeDays,

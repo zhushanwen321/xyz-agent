@@ -71,6 +71,21 @@ jobs:
         if: steps.check_pre.outputs.should_publish == 'true'
         run: pnpm --filter @zhushanwen/subagent-core run build && pnpm --filter @zhushanwen/subagent-core run build:bundle
 
+      # W5/W7 引擎三包构建入口（MF-4 修复，约束 C-proc-11 三者闭合）。SDK 先于
+      # 两个引擎 CLI 构建（CLI dist 的 external 依赖在 npm 形态解析到 SDK dist）。
+      # 与 Publish 同条件挂载——skip 分支不发布即不构建，维持「skip 整体绿」语义。
+      - name: Build subagent-engine-sdk
+        if: steps.check_pre.outputs.should_publish == 'true'
+        run: pnpm --filter @zhushanwen/subagent-engine-sdk build
+
+      - name: Build pi-subagent-cli
+        if: steps.check_pre.outputs.should_publish == 'true'
+        run: pnpm --filter @zhushanwen/pi-subagent-cli build
+
+      - name: Build zcode-subagent-cli
+        if: steps.check_pre.outputs.should_publish == 'true'
+        run: pnpm --filter @zhushanwen/zcode-subagent-cli build
+
       # D9-② dist 发布回归门（对齐 release-npm.yml 的 Smoke step）：正常入口
       # npm-prerelease.sh 阶段 1.5 已含 smoke，此处兜底绕过该脚本直接 push
       # dev-npm-* 分支触发的场景。与 Publish 同条件——未准备 pre.json 的分支

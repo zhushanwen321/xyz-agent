@@ -3,7 +3,7 @@
  * 实施计划 u4，借 attach-lifecycle.test.ts 真进程先例 + relay-integration.test.ts 真进程模式）。
  *
  * 装配形态（最小真实组合，pi 进程零 mock）：
- * - 真 ProcessManager（真 spawn `pi --mode rpc` 子进程，session 落盘 $XYZ_AGENT_DATA_DIR/pi/agent/sessions
+ * - 真 ProcessManager（真 spawn `pi --mode rpc` 子进程，session 落盘 $XYZ_AGENT_DATA_DIR/agent/sessions
  *   ——globalSetup 已把 XYZ_AGENT_DATA_DIR 指向 tmp，零真实数据污染）；
  * - 真 SessionLifecycle（svc/configStore/sessionStore/workspace 最小 fake，registerDeps 的
  *   adapterFactory 是真 EventAdapter + 真 EventInterpreter → send = 真 MessageBus.publish）；
@@ -29,7 +29,7 @@
  *    message.text_delta / message.complete，带 seq 帧相对回收前基线**严格 +1 递增无断裂**
  *    （分区保留 = seqCounter 连续 + 订阅者集合不断）。
  *
- * agent dir 凭证播种：真 pm 链路的 RpcClient 注入 PI_CODING_AGENT_DIR = $XYZ_AGENT_DATA_DIR/pi/agent
+ * agent dir 凭证播种：真 pm 链路的 RpcClient 注入 PI_CODING_AGENT_DIR = $XYZ_AGENT_DATA_DIR/agent
  * （tmp 空目录无凭证）——测试启动时把凭证类文件（auth.json/models.json/models-store.json，清单与
  * pi-fixture.ts copyCredentialFiles 同源）从真实 agentDir 拷入，探测（REAL_PI_READY）与 pi 实读同源。
  *
@@ -108,7 +108,7 @@ function sourceAgentDir(): string {
 }
 
 /**
- * 把凭证类文件从真实 agentDir 拷入 runtime 注入的 tmp agentDir（$XYZ_AGENT_DATA_DIR/pi/agent，
+ * 把凭证类文件从真实 agentDir 拷入 runtime 注入的 tmp agentDir（$XYZ_AGENT_DATA_DIR/agent，
  * fs-guard 白名单内）。清单与 pi-fixture.ts CREDENTIAL_FILE_NAMES 同源（缺失安全）。
  * 不拷 settings.json/extensions——与等价性基线同一隔离口径（用户全局扩展集不随子进程加载）。
  */
@@ -201,15 +201,22 @@ describe.skipIf(!REAL_PI_READY)(
           const interpreter = new EventInterpreter(sid, {
             send,
             cwd,
-            onOccupancyTransition: (patch) => {
+            onOccupancyTransition: (transition) => {
+              // 新形态（session-dead-structural-fixes D2）：transition 是字符串枚举，
+              // occupancy 三字段按 SESSION_OCCUPANCY_TRANSITIONS 表推导（对齐
+              // applySessionOccupancyTransition 的写模型；置 idle 枚举全集 =
+              // idle / full-reset / reject-other / abort-stall-converged / abort-stall-force-kill，
+              // 漏 idle 枚举会卡 settling 永不回 idle → waitOccupancyIdle 超时）。
               const rec = lifecycle?.get(sid)
-              const occ = rec?.occupancy
-              if (rec && occ) {
-                rec.occupancy = {
-                  turn: patch.turn ?? occ.turn,
-                  compacting: patch.compacting ?? occ.compacting,
-                  bash: patch.bash ?? occ.bash,
-                }
+              if (!rec) return
+              const occ = rec.occupancy ?? { turn: 'idle' as const, compacting: false, bash: false }
+              const t = transition
+              const toIdle = t === 'idle' || t === 'full-reset' || t === 'reject-other' || t === 'abort-stall-converged' || t === 'abort-stall-force-kill'
+              const resetAll = t === 'full-reset' || t === 'abort-stall-force-kill'
+              rec.occupancy = {
+                turn: t === 'dispatching' || t === 'generating' || t === 'settling' || t === 'reject-processing' ? t : (toIdle ? 'idle' : occ.turn),
+                compacting: t === 'compacting-start' ? true : t === 'compacting-end' || resetAll ? false : occ.compacting,
+                bash: t === 'bash-start' ? true : t === 'bash-end' || resetAll ? false : occ.bash,
               }
             },
           })

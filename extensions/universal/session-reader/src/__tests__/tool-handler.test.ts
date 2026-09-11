@@ -1,10 +1,23 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest'
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { existsSync } from 'node:fs'
-import { mkdtemp, mkdir, writeFile, rm } from 'node:fs/promises'
+import { mkdtemp, mkdir, writeFile, rm, utimes } from 'node:fs/promises'
 import { tmpdir, homedir } from 'node:os'
-import { join } from 'node:path'
-import { handleSessionRead, renderExtractItems, type SessionReadParams } from '../tool-handler.js'
+import { join, dirname } from 'node:path'
+import {
+  handleSessionRead,
+  levenshtein,
+  renderExtractItems,
+  DOCTOR_CACHE_TTL_MS,
+  METADATA_CACHE_TTL_MS,
+  MULTI_SEARCH_MAX_SESSIONS,
+  SEARCH_SCAN_BYTE_BUDGET,
+  searchAcrossSessions,
+  type SessionReadParams,
+  type SessionReadSignals,
+} from '../tool-handler.js'
 import { listRecordManifests } from '../discovery/subagents.js'
+import type { SessionMetadataProvider } from '../discovery/find.js'
+import type { DoctorDetails } from '../doctor.js'
 import {
   REAL_AGENT_DIR as REAL,
   E6,
@@ -22,7 +35,8 @@ import {
  * 测试框架 vitest（禁止 node:test/tsx）。直接调 handleSessionRead（纯逻辑，agentDir 注入），
  * 传真实 `/Users/zhushanwen/.pi/agent` 作 agentDir——用本机真实历史 session 数据，无需 mock。
  *
- * 覆盖 9 action 主路径 + F1(find 零匹配)/F4(turn 越界)/F5(缺参)/resolveSessionId 片段等价。
+ * 覆盖全 11 action 主路径 + F1(find 零匹配)/F4(turn 越界)/F5(缺参)/resolveSessionId 片段等价，
+ * 以及 u8 doctor / u9 归一化 / u10 find 分组 / u11 metadataProvider 缓存 / u12 跨会话检索（各见对应 describe）。
  *
  * 真实数据用例全部带 skipIf 守卫（CI 无本机 ~/.pi/agent → skip，不硬失败）；
  * renderExtractItems F9 截断是纯 fixture，无条件跑。
@@ -94,7 +108,7 @@ describe.skipIf(!HAS_REAL)('handleSessionRead', () => {
   // wave 的 subagent task 引用了它）会触发 name-keyword fallback 命中 → 零匹配断言失败。
   // w2 实现 handler source 透传后，用 source:'main' 收窄到 main 侧避开 subagent 干扰
   //（w1 test 注释原预言的修复路径），同时恢复默认 timeout（main 单侧扫描快）。
-  it('7. F1 find zero match returns empty matches + 👉 hint (no throw)', async () => {
+  it('7. F1 find zero match returns empty matches + fact-based self-check (no throw)', async () => {
     const r = await handleSessionRead(
       { action: 'find', query: 'zzz-nonexistent-session-9q8x2', source: 'main' },
       REAL,
@@ -102,7 +116,11 @@ describe.skipIf(!HAS_REAL)('handleSessionRead', () => {
     const d = r.details as { matches: unknown[]; truncated: boolean }
     expect(d.matches).toEqual([])
     expect(d.truncated).toBe(false)
-    expect(r.content[0].text).toContain('👉')
+    // u9 F1 重写（§5.2）：事实型自检 + 无归因断言 + 无「recent 看全量」误导
+    expect(r.content[0].text).toContain('无匹配 session')
+    expect(r.content[0].text).toContain('自检（发现层，只陈述事实）')
+    expect(r.content[0].text).not.toContain('真的没有')
+    expect(r.content[0].text).not.toContain('recent')
   })
 
   it('8. F4 detail turn out of range throws with 越界', async () => {
@@ -1552,5 +1570,1196 @@ describe('doFamily recursive（m3b U8 接入）', () => {
     expect(r.content[0].text).toContain('execution tree')
     expect(r.content[0].text).toContain('node(s)')
     expect(r.content[0].text).toContain('👉')
+  })
+})
+
+// ===========================================================================
+// doctor action（u8：design 2026-09-10 §6.3/§6.4/§7B 要点 2/4/5/8 + §6.11 U14b 段）
+// 全部 mkdtemp fixture 自建自删，不触碰真实数据目录。
+// ===========================================================================
+
+// doctor details 契约直用 doctor.ts 导出的 DoctorDetails（不再自建局部镜像——生产侧
+// 形状漂移由编译期捕捉，S-R2 同步）
+
+describe('doctor action（u8：环境判定 + 根表 + 告警 + 残留 glob + 缓存）', () => {
+  let tmp: string
+
+  const SLUG = '--Users-foo--'
+
+  /** 写 .jsonl fixture（父目录自建），内容合法 session header */
+  async function writeJsonl(path: string, id = 'x'): Promise<void> {
+    await mkdir(dirname(path), { recursive: true })
+    await writeFile(path, `{"type":"session","id":"${id}"}\n`)
+  }
+
+  /**
+   * xyz-agent 形态四根 fixture：dataDir 目录名带 .xyz-agent 前缀（detectEnvironment 的
+   * PI_CODING_AGENT_DIR 形态判据 `<*>/.xyz-agent*\/agent` 可命中，托管判定走正态）。
+   * live=agent/sessions 与 default 同字面路径（default 去重）、legacy 独立非空、subagent 独立。
+   */
+  async function buildFourRootFixture(): Promise<{
+    dataDir: string
+    agentDir: string
+    signals: SessionReadSignals
+  }> {
+    const dataDir = join(tmp, '.xyz-agent-fixture')
+    const agentDir = join(dataDir, 'agent')
+    await writeJsonl(join(agentDir, 'sessions', SLUG, 'a.jsonl'), 'aaaaaaaa')
+    await writeJsonl(join(agentDir, 'sessions', SLUG, 'b.jsonl'), 'bbbbbbbb')
+    await writeJsonl(join(dataDir, 'sessions', 'old.jsonl'), 'cccccccc') // legacy 非空
+    await writeJsonl(join(agentDir, 'subagents', SLUG, 'sessions', 's.jsonl'), 'dddddddd')
+    return {
+      dataDir,
+      agentDir,
+      signals: {
+        agentDir,
+        liveSessionDir: join(agentDir, 'sessions'),
+        env: {
+          XYZ_AGENT_EXT_LOG: '1',
+          PI_CODING_AGENT_DIR: agentDir,
+          XYZ_AGENT_DATA_DIR: dataDir,
+        },
+      },
+    }
+  }
+
+  beforeEach(async () => {
+    tmp = await mkdtemp(join(tmpdir(), 'tool-handler-doctor-'))
+  })
+  afterEach(async () => {
+    await rm(tmp, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
+  })
+
+  it('四根表渲染：优先级序 + 去重注记 + 文件数/耗时 + 托管判定行 + 事实型诊断（无归因断言）', async () => {
+    const { dataDir, agentDir, signals } = await buildFourRootFixture()
+    const r = await handleSessionRead({ action: 'doctor' }, signals)
+    const text = r.content[0].text
+
+    // 环境判定行：双信号合取 → xyz-agent（托管）+ 数据目录 + evidence 正态
+    expect(text).toContain('环境判定：xyz-agent（托管）')
+    expect(text).toContain(`数据目录：${dataDir}`)
+    expect(text).toContain('依据：')
+    expect(text).toContain(`PI_CODING_AGENT_DIR='${agentDir}' → 形态匹配`)
+
+    // 四根按优先级序渲染
+    const liveIdx = text.indexOf('[live]')
+    const defIdx = text.indexOf('[default]')
+    const legacyIdx = text.indexOf('[legacy]')
+    const subIdx = text.indexOf('[subagent]')
+    expect(liveIdx).toBeGreaterThan(-1)
+    expect(defIdx).toBeGreaterThan(liveIdx)
+    expect(legacyIdx).toBeGreaterThan(defIdx)
+    expect(subIdx).toBeGreaterThan(legacyIdx)
+
+    // 去重注记（§7B 要点 4）：default 与第 1 行（live）同路径，已去重
+    expect(text).toContain('与 1 同路径，已去重')
+
+    // 事实型诊断：只陈述最高优先级 main 根 N 文件；禁止归因断言（§7B 要点 5）
+    expect(text).toContain(
+      `诊断：最高优先级 main 根 [live] ${join(agentDir, 'sessions')}：2 文件。`,
+    )
+    expect(text).not.toContain('真的没有')
+
+    // details 程序化形态
+    const d = r.details as DoctorDetails
+    expect(d.roots.map((x) => x.kind)).toEqual(['live', 'default', 'legacy', 'subagent'])
+    expect(d.roots[0].fileCount).toBe(2)
+    expect(typeof d.roots[0].scanMs).toBe('number')
+    expect(d.roots[1].dedupedInto).toBe('live')
+    expect(d.roots[1].fileCount).toBeUndefined()
+    expect(d.roots[2].fileCount).toBe(1) // legacy 独立实扫
+    // subagent 默认 stat 模式：只列路径与可扫性，无计数
+    expect(d.roots[3].exists).toBe(true)
+    expect(d.roots[3].fileCount).toBeUndefined()
+    expect(d.roots[3].scanMs).toBeUndefined()
+  })
+
+  it('legacy 非空告警：独立非空 → 告警；不存在 → 无告警；与 live 同路径被去重 → 不告警（§5.1）', async () => {
+    // 正态：legacy 独立且非空
+    const { signals } = await buildFourRootFixture()
+    const positive = await handleSessionRead({ action: 'doctor' }, signals)
+    expect(positive.content[0].text).toContain(
+      `告警：[legacy] 根 ${join(tmp, '.xyz-agent-fixture', 'sessions')} 非空（1 文件）`,
+    )
+
+    // 反态：legacy 目录不存在
+    const agentDir2 = join(tmp, 'data2', 'agent')
+    await writeJsonl(join(agentDir2, 'sessions', SLUG, 'a.jsonl'))
+    const negative = await handleSessionRead({ action: 'doctor' }, { agentDir: agentDir2 })
+    expect(negative.content[0].text).not.toContain('告警：')
+
+    // 去重态：live 与 legacy 同路径（文件非空）→ 已去重不告警
+    const dataDir3 = join(tmp, 'data3')
+    const agentDir3 = join(dataDir3, 'agent')
+    await writeJsonl(join(dataDir3, 'sessions', SLUG, 'a.jsonl'))
+    const deduped = await handleSessionRead(
+      { action: 'doctor' },
+      { agentDir: agentDir3, liveSessionDir: join(dataDir3, 'sessions') },
+    )
+    expect(deduped.content[0].text).not.toContain('告警：')
+    expect(deduped.content[0].text).toContain('已去重')
+  })
+
+  it('独立 glob 残留探测：pi/ 含 agent|sessions 形态列出 + 迁移指引；pi.backup-v2-* 备份列出；基点 = dirname(agentDir)', async () => {
+    const dataDir = join(tmp, 'data')
+    const agentDir = join(dataDir, 'agent')
+    await writeJsonl(join(agentDir, 'sessions', SLUG, 'a.jsonl'))
+    // 未迁移旧布局 pi/（含 agent/ 形态）
+    await mkdir(join(dataDir, 'pi', 'agent'), { recursive: true })
+    await writeJsonl(join(dataDir, 'pi', 'agent', 'sessions', 'old.jsonl'), 'old-id')
+    // 迁移备份（含 sessions/ 形态——备份即原 pi/ 改名）
+    const backup = join(dataDir, 'pi.backup-v2-1725900000000')
+    await mkdir(join(backup, 'sessions'), { recursive: true })
+    await writeJsonl(join(backup, 'sessions', 'bak.jsonl'), 'bak-id')
+
+    const r = await handleSessionRead({ action: 'doctor' }, { agentDir })
+    const text = r.content[0].text
+    expect(text).toContain(`旧布局残留探测（基点 ${dataDir}）`)
+    expect(text).toContain(`  - ${join(dataDir, 'pi')}（未迁移旧布局 pi/）`)
+    expect(text).toContain(`  - ${backup}（迁移备份 pi.backup-v2-*）`)
+    // 同一迁移指引（§6.11：doctor 与 u14b 启动探测同指引）
+    expect(text).toContain('👉 关闭应用后运行 scripts/migrate-pi-layout-v2.mjs 完成迁移。')
+
+    const d = r.details as DoctorDetails
+    expect(d.globBase).toBe(dataDir)
+    expect(d.leftovers.map((l) => l.kind).sort()).toEqual(['backup', 'unmigrated'])
+  })
+
+  it('残留探测反态：pi/ 空壳（无 agent|sessions 子目录）不报——防纯 pi 宿主 ~/.pi/pi/ 误报（§6.11 v9.1）', async () => {
+    const dataDir = join(tmp, 'data')
+    const agentDir = join(dataDir, 'agent')
+    await writeJsonl(join(agentDir, 'sessions', SLUG, 'a.jsonl'))
+    // 纯 pi 宿主下任意来源的 pi/ 目录：只有无关子目录，无 agent/ 与 sessions/ 形态
+    await mkdir(join(dataDir, 'pi', 'extensions'), { recursive: true })
+
+    const r = await handleSessionRead({ action: 'doctor' }, { agentDir })
+    expect(r.content[0].text).not.toContain('旧布局残留')
+    expect((r.details as DoctorDetails).leftovers).toEqual([])
+  })
+
+  it('subagent 根默认不扫（只列路径与可扫性）；includeSubagents:true 才扫出文件数（§6.3）', async () => {
+    const { agentDir, signals } = await buildFourRootFixture()
+
+    const def = await handleSessionRead({ action: 'doctor' }, signals)
+    const defSub = (def.details as DoctorDetails).roots.find((x) => x.kind === 'subagent')
+    expect(defSub?.fileCount).toBeUndefined()
+    expect(defSub?.scanMs).toBeUndefined()
+    expect(defSub?.exists).toBe(true)
+    expect(def.content[0].text).toContain('未扫描（subagent 根默认不扫')
+
+    const full = await handleSessionRead({ action: 'doctor', includeSubagents: true }, signals)
+    const fullSub = (full.details as DoctorDetails).roots.find((x) => x.kind === 'subagent')
+    expect(fullSub?.fileCount).toBe(1)
+    expect(fullSub?.exists).toBe(true)
+  })
+
+  it('进程内缓存：同根二次调用命中缓存不重扫；根目录 mtime 变化即失效重扫（§7B 要点 8）', async () => {
+    const agentDir = join(tmp, 'agent')
+    await writeJsonl(join(agentDir, 'sessions', SLUG, 'a.jsonl'))
+    const signals: SessionReadSignals = { agentDir }
+
+    const first = (await handleSessionRead({ action: 'doctor' }, signals)).details as DoctorDetails
+    const firstDef = first.roots.find((x) => x.kind === 'default')!
+    expect(firstDef.cached).toBeUndefined() // 首扫
+    expect(firstDef.fileCount).toBe(1)
+
+    const second = (await handleSessionRead({ action: 'doctor' }, signals)).details as DoctorDetails
+    const secondDef = second.roots.find((x) => x.kind === 'default')!
+    expect(secondDef.cached).toBe(true) // 命中缓存，未重扫
+    expect(secondDef.fileCount).toBe(1)
+
+    // 根目录 mtime 变化（根层新增文件）→ 失效重扫，计数更新
+    await writeJsonl(join(agentDir, 'sessions', 'b.jsonl'), 'bbbbbbbb')
+    const third = (await handleSessionRead({ action: 'doctor' }, signals)).details as DoctorDetails
+    const thirdDef = third.roots.find((x) => x.kind === 'default')!
+    expect(thirdDef.cached).toBeUndefined()
+    expect(thirdDef.fileCount).toBe(2)
+  })
+
+  it('缓存 TTL 到期失效重扫（秒级 TTL，fake timers 推进时钟）', async () => {
+    vi.useFakeTimers()
+    try {
+      const agentDir = join(tmp, 'agent-ttl')
+      await writeJsonl(join(agentDir, 'sessions', SLUG, 'a.jsonl'))
+      const signals: SessionReadSignals = { agentDir }
+      const first = (await handleSessionRead({ action: 'doctor' }, signals))
+        .details as DoctorDetails
+      expect(first.roots.find((x) => x.kind === 'default')!.cached).toBeUndefined()
+      await vi.advanceTimersByTimeAsync(DOCTOR_CACHE_TTL_MS + 1)
+      const second = (await handleSessionRead({ action: 'doctor' }, signals))
+        .details as DoctorDetails
+      // TTL 过期 → 即使 mtime 未变也重扫
+      expect(second.roots.find((x) => x.kind === 'default')!.cached).toBeUndefined()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('find 不读 doctor 缓存（§7B 要点 8 PS-14）：doctor 缓存 0 文件后新建 session，find 立即可见', async () => {
+    const agentDir = join(tmp, 'agent')
+    // doctor 首跑时 main 根为空 → 缓存 fileCount=0（PS-14 形态：首条 assistant 前 jsonl 不落盘）
+    await mkdir(join(agentDir, 'sessions'), { recursive: true })
+    await handleSessionRead({ action: 'doctor' }, { agentDir })
+    // 之后新 session 落盘
+    await writeJsonl(join(agentDir, 'sessions', SLUG, 'found-later.jsonl'), 'id-find-later-xyz')
+    // find 实扫立即可见——若 find 读 doctor 缓存（0 候选）此断言必红
+    const r = await handleSessionRead({ action: 'find', query: 'id-find-later-xyz' }, agentDir)
+    const d = r.details as { matches: Array<{ sessionId: string }> }
+    expect(d.matches.some((m) => m.sessionId.includes('id-find-later-xyz'))).toBe(true)
+  })
+
+  it('env/bundleUrl 信号缺失降级：仍出环境判定行（standalone-pi · 未知）+ 完整根表，不抛错', async () => {
+    const agentDir = join(tmp, 'agent')
+    await writeJsonl(join(agentDir, 'sessions', SLUG, 'a.jsonl'))
+    // signals 无 env/bundleUrl 字段（u3 旧信号包形态）
+    const r = await handleSessionRead({ action: 'doctor' }, { agentDir })
+    const text = r.content[0].text
+    expect(text).toContain('环境判定：standalone-pi · 发行形态：未知（不猜）')
+    expect(text).toContain('XYZ_AGENT_EXT_LOG=<未设置> → 未命中')
+    expect(text).toContain('会话根（按优先级）')
+    expect(text).toContain('[default]')
+    expect(text).toContain(
+      `诊断：最高优先级 main 根 [default] ${join(agentDir, 'sessions')}：1 文件。`,
+    )
+  })
+
+  it('空 agentDir 防御：无根表、诊断「无候选根」，残留探测不触发（不扫 cwd 相对路径）', async () => {
+    const r = await handleSessionRead({ action: 'doctor' }, { agentDir: '' })
+    const text = r.content[0].text
+    expect(text).toContain('诊断：无候选根')
+    expect(text).not.toContain('[default]')
+    expect((r.details as DoctorDetails).roots).toEqual([])
+    expect((r.details as DoctorDetails).leftovers).toEqual([])
+  })
+})
+
+// ============================================================
+// u9：F1 重写（§5.2 事实型自检 + 编辑距离 top-3 + 四条做法 + 禁止项）
+// + uuid 归一化两级匹配（§6.7 子决策 1 + §11.5 对比基线）
+// ============================================================
+
+describe('u9 F1 重写 + uuid 归一化（fixture，§5.2 / §6.7 / §11.5）', () => {
+  let tmp: string
+  const SLUG = '--demo-cwd--'
+  const ID1 = '019e6c96-aaaa-bbbb-cccc-000000000001'
+  const ID2 = '019e6c96-aaaa-bbbb-cccc-000000000002'
+
+  /**
+   * 写 session 文件（文件名 = `${id}.jsonl`，extractSessionIdFromFilename 可提取——
+   * F1 编辑距离候选的 id 来源）。subagent:true 写入 subagent 根。
+   */
+  async function writeSession(
+    id: string,
+    opts?: { subagent?: boolean; firstUserText?: string },
+  ): Promise<void> {
+    const dir = opts?.subagent
+      ? join(tmp, 'agent', 'subagents', SLUG, 'sessions')
+      : join(tmp, 'agent', 'sessions', SLUG)
+    await mkdir(dir, { recursive: true })
+    const lines = [JSON.stringify({ type: 'session', id, cwd: '/demo' })]
+    if (opts?.firstUserText !== undefined) {
+      lines.push(
+        JSON.stringify({
+          type: 'message',
+          id: `${id}-m1`,
+          message: { role: 'user', content: [{ type: 'text', text: opts.firstUserText }] },
+        }),
+      )
+    }
+    await writeFile(join(dir, `${id}.jsonl`), lines.join('\n') + '\n')
+  }
+
+  /** find action 便捷调用（agentDir = tmp/agent）。 */
+  function find(query: string, extra?: Partial<SessionReadParams>): Promise<ToolResultLike> {
+    return handleSessionRead({ action: 'find', query, ...extra }, join(tmp, 'agent'))
+  }
+
+  interface ToolResultLike {
+    content: Array<{ type: string; text: string }>
+    details: unknown
+  }
+
+  beforeEach(async () => {
+    tmp = await mkdtemp(join(tmpdir(), 'tool-handler-f1-'))
+  })
+  afterEach(async () => {
+    await rm(tmp, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
+  })
+
+  it('① 大写 uuid 片段命中（§3.3 盲区：String.includes 大小写敏感）', async () => {
+    await writeSession(ID1, { firstUserText: '无关内容' })
+    const r = await find('019E6C96-AAAA')
+    const d = r.details as { matches: Array<{ sessionId: string }> }
+    expect(d.matches).toHaveLength(1)
+    expect(d.matches[0].sessionId).toBe(ID1)
+  })
+
+  it('② 去连字符完整 uuid 命中（§3.3 盲区：与带连字符 id 不构成子串）', async () => {
+    await writeSession(ID1, { firstUserText: '无关内容' })
+    // 去连字符形态与 sessionId/path 均不构成精确子串，只能走归一化层
+    const r = await find('019e6c96aaaabbbbcccc000000000001')
+    const d = r.details as { matches: Array<{ sessionId: string }> }
+    expect(d.matches).toHaveLength(1)
+    expect(d.matches[0].sessionId).toBe(ID1)
+  })
+
+  it('③ F1 文案四要素 + 负向断言（无 recent 误导指引、无「真的没有」归因）', async () => {
+    await writeSession(ID1, { firstUserText: '无关内容' })
+    const r = await find('zzz-no-hit-9q8x')
+    const text = r.content[0].text
+
+    // 首行 + ①事实型自检行（根计数 / 候选集判定 / 归一化声明）
+    expect(text).toContain('无匹配 session："zzz-no-hit-9q8x"')
+    expect(text).toContain('自检（发现层，只陈述事实）')
+    expect(text).toContain('[default]')
+    expect(text).toContain('候选集非空（共 1 文件），根解析正常')
+    expect(text).toContain('查询已做 uuid 归一化匹配（小写 + 去连字符）后仍无命中')
+    // ②编辑距离候选段存在
+    expect(text).toContain('最接近的候选（编辑距离）')
+    // ③「正确做法」四条
+    expect(text).toContain('正确做法')
+    expect(text).toContain('改用标题/keyword')
+    expect(text).toContain('直接传绝对路径')
+    expect(text).toContain('更短前缀')
+    expect(text).toContain('action:"doctor"')
+    // ④最后一行封死 shell 绕行
+    expect(text).toContain('不要用 shell find/ls/rg 搜 session 目录，不要 cat/read 原始 .jsonl')
+    // 负向：无「recent 看全量」误导、无归因断言
+    expect(text).not.toContain('recent')
+    expect(text).not.toContain('真的没有')
+    // details 程序化契约保持（零匹配形态不变）
+    expect(r.details).toEqual({ matches: [], truncated: false })
+  })
+
+  it('④ 编辑距离 top-3：近似 id 入选（标注 source 与差异位），远 id 被挤出', async () => {
+    const near1 = '019aaabc-0000-7000-8000-00000000000a'
+    const near2 = '019aaabc-0000-7000-8000-00000000000b'
+    const near3 = '019aaabc-0000-7000-8000-00000000000c'
+    const far = 'ffffffff-ffff-ffff-ffff-ffffffffffff'
+    await writeSession(near1)
+    await writeSession(near2)
+    await writeSession(near3, { subagent: true })
+    await writeSession(far)
+    // 手算锚点：query 与 near* 前 33 字符相同，第 34 位起 z→0/z→0/z→a，距离 3
+    expect(levenshtein('019aaabc-0000-7000-8000-000000000zzz', near1)).toBe(3)
+    expect(levenshtein('kitten', 'sitting')).toBe(3)
+
+    const r = await find('019aaabc-0000-7000-8000-000000000zzz')
+    const text = r.content[0].text
+    // top-3 恰为三个近似候选（far 距离约 36，第 4 名被上限挤掉）
+    expect(text).toContain(near1)
+    expect(text).toContain(near2)
+    expect(text).toContain(near3)
+    expect(text).not.toContain(far)
+    // 差异位标注（首个差异字符，1-based）
+    expect(text).toContain('差异在第 34 位：z → 0')
+    // source 标注：near3 在 subagent 根，标注透传
+    expect(text).toContain(`${near3}  subagent`)
+  })
+
+  it('⑤ §11.5 归一化对比基线：增量仅限大小写/连字符变体，非 uuid 乱串不被 norm 误吸', async () => {
+    const idHit = '019cafe0-1234-7000-8000-deadbeef0001'
+    await writeSession(idHit, { firstUserText: '福耀玻璃深度研究' })
+    await writeSession(ID2, { firstUserText: '完全不同的另一个会话' })
+
+    // 现状基线：精确小写片段命中 1
+    const base = await find('019cafe0')
+    expect((base.details as { matches: unknown[] }).matches).toHaveLength(1)
+    // 大写变体：增量 = 同一 id（大小写变体），无新对象
+    const upper = await find('019CAFE0')
+    expect((upper.details as { matches: Array<{ sessionId: string }> }).matches.map((m) => m.sessionId)).toEqual([idHit])
+    // 去连字符变体：增量 = 同一 id（连字符变体），无新对象
+    const noDash = await find('019cafe0123470008000deadbeef0001')
+    expect((noDash.details as { matches: Array<{ sessionId: string }> }).matches.map((m) => m.sessionId)).toEqual([idHit])
+    // 'deadbeef' 段是带连字符 id 的连续子串——现状精确匹配已命中，norm 后命中数不变（无增量）
+    const deadbeef = await find('deadbeef')
+    expect((deadbeef.details as { matches: Array<{ sessionId: string }> }).matches.map((m) => m.sessionId)).toEqual([idHit])
+    // keyword 路径不受 norm 影响（非 uuid 特征照常回退首消息）
+    const kw = await find('福耀玻璃')
+    expect((kw.details as { matches: Array<{ sessionId: string }> }).matches.map((m) => m.sessionId)).toEqual([idHit])
+    // 非 uuid 乱串：0 命中（norm 不把乱串吸进 uuid 匹配）
+    const junk = await find('zzznotexist9q')
+    expect((junk.details as { matches: unknown[] }).matches).toHaveLength(0)
+    // hex 乱串（uuid 特征但非任何 id 子串）：两级均 0 → 短路不回退（与现状一致，无召回回归）
+    const hexJunk = await find('0123456789abcdef')
+    expect((hexJunk.details as { matches: unknown[] }).matches).toHaveLength(0)
+  })
+
+  it('⑥ 自检行计数 = 本次实扫结果（不读 doctor 缓存）+ 去重根注记', async () => {
+    const agentDir = join(tmp, 'agent')
+    // PS-14 形态：doctor 首跑时 main 根空 → 缓存 fileCount=0
+    await mkdir(join(agentDir, 'sessions'), { recursive: true })
+    await handleSessionRead({ action: 'doctor' }, { agentDir })
+    // 之后 session 落盘（main 2 + subagent 1）
+    await writeSession(ID1)
+    await writeSession(ID2)
+    await writeSession('019e6c96-aaaa-bbbb-cccc-000000000003', { subagent: true })
+
+    const r = await handleSessionRead(
+      { action: 'find', query: 'zzz-no-hit-9q8x' },
+      { agentDir },
+    )
+    const text = r.content[0].text
+    // 若 F1 读 doctor 缓存（0 文件），以下计数断言必红
+    expect(text).toContain(`${join(agentDir, 'sessions')}：2 文件`)
+    expect(text).toContain(`${join(agentDir, 'subagents')}：1 文件`)
+    expect(text).toContain('候选集非空（共 3 文件）')
+
+    // 完整信号包（live 与 default 同路径）→ 去重根注记，不重复计数
+    const deduped = await handleSessionRead(
+      { action: 'find', query: 'zzz-no-hit-9q8x' },
+      { agentDir, liveSessionDir: join(agentDir, 'sessions') },
+    )
+    expect(deduped.content[0].text).toContain('同路径，已去重')
+    expect(deduped.content[0].text).toContain('候选集非空（共 3 文件）')
+  })
+})
+
+// ============================================================
+// 片段解析接通 [live] 根（同一 roots 契约）：resolveByFragment/doXxx 透传
+// liveSessionDir——[live]≠[default] 环境（纯 pi + 显式 --session-dir）下，find
+// 能列出的 session 在 outline/result 等解析路径同样可达；F1 自检行含 [live] 根行。
+// 全部 mkdtemp fixture 自建自删，不触碰真实数据目录。
+// ============================================================
+
+describe('片段解析接通 [live] 根（fixture，同一 roots 契约）', () => {
+  let tmp: string
+  const SLUG = '--live-cwd--'
+  const ID = '019e6c96-aaaa-bbbb-cccc-0000000000aa'
+  const FRAGMENT = '0000000000aa'
+  let agentDir: string
+  /** liveSessionDir 信号（encodeCwd 形态，normalizeLiveSessionDir 剥层到 sessions/ 根）。 */
+  let liveDir: string
+  /** 剥层后的 [live] 根路径（F1 自检行的显示形态）。 */
+  let liveRoot: string
+
+  /** 在指定目录写 session 文件（header + user 消息，extraLines 追加 assistant 等条目）。 */
+  async function writeSessionAt(dir: string, id: string, extraLines: string[] = []): Promise<void> {
+    await mkdir(dir, { recursive: true })
+    const lines = [
+      JSON.stringify({ type: 'session', id, cwd: '/demo' }),
+      JSON.stringify({
+        type: 'message',
+        id: `${id}-m1`,
+        parentId: id,
+        message: { role: 'user', content: [{ type: 'text', text: 'live 根里的会话' }] },
+      }),
+      ...extraLines,
+    ]
+    await writeFile(join(dir, `${id}.jsonl`), lines.join('\n') + '\n')
+  }
+
+  beforeEach(async () => {
+    tmp = await mkdtemp(join(tmpdir(), 'tool-handler-live-'))
+    agentDir = join(tmp, 'agent')
+    await mkdir(join(agentDir, 'sessions'), { recursive: true }) // [default] 空根
+    liveDir = join(tmp, 'pi-live', 'sessions', SLUG)
+    liveRoot = join(tmp, 'pi-live', 'sessions')
+  })
+  afterEach(async () => {
+    await rm(tmp, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
+  })
+
+  it('① [live]≠[default]：outline 片段解析到 [live] 根 session；不传信号则 F1（负向对照）', async () => {
+    await writeSessionAt(liveDir, ID)
+    // 接通后：片段解析可达 [live] 根，outline 正常产出
+    const r = await handleSessionRead(
+      { action: 'outline', session: FRAGMENT },
+      { agentDir, liveSessionDir: liveDir },
+    )
+    const d = r.details as { stats: { totalTurns: number } }
+    expect(d.stats.totalTurns).toBeGreaterThanOrEqual(1)
+    // 负向对照：不传 liveSessionDir（三根降级）→ 同一片段 F1 零匹配
+    //（[default]/[legacy]/[subagent] 均无此文件——证明命中确实来自 [live] 根）
+    await expect(
+      handleSessionRead({ action: 'outline', session: FRAGMENT }, agentDir),
+    ).rejects.toThrow(/无匹配 session/)
+  })
+
+  it('② F1 自检行含 [live] 根行（剥层路径 + 实扫计数），与 [default] 空根同表可见', async () => {
+    await writeSessionAt(liveDir, ID)
+    const caught = await handleSessionRead(
+      { action: 'outline', session: 'zzz-no-hit-9q8x' },
+      { agentDir, liveSessionDir: liveDir },
+    ).catch((e: unknown) => e)
+    expect(caught).toBeInstanceOf(Error)
+    const text = (caught as Error).message
+    expect(text).toContain('无匹配 session："zzz-no-hit-9q8x"')
+    expect(text).toContain('自检（发现层，只陈述事实）')
+    // [live] 根行：encodeCwd 已剥层到 sessions/ 根，计数 = 本次实扫
+    expect(text).toContain(`${liveRoot}：1 文件`)
+    // [default] 空根同表可见（同一 roots 契约的全貌）
+    expect(text).toContain(`${join(agentDir, 'sessions')}：0 文件`)
+  })
+
+  it('③ result 片段形态同样可达 [live] 根（per-call deps 接线）', async () => {
+    await writeSessionAt(liveDir, ID, [
+      JSON.stringify({
+        type: 'message',
+        id: `${ID}-a1`,
+        parentId: `${ID}-m1`,
+        message: { role: 'assistant', content: [{ type: 'text', text: '最终结论正文' }] },
+      }),
+    ])
+    const r = await handleSessionRead(
+      { action: 'result', session: FRAGMENT },
+      { agentDir, liveSessionDir: liveDir },
+    )
+    expect(r.content[0].text).toContain('最终结论正文')
+  })
+})
+
+// ============================================================
+// u10：find 分组输出（design 2026-09-10 §5.1 形态 / §6.7 子决策 2/3 / §8.2 回归基线）
+// ============================================================
+
+describe('u10 find 分组输出（fixture，§6.7 子决策 2/3 + §8.2 回归基线）', () => {
+  let tmp: string
+  const SLUG = '--demo-cwd--'
+  // uuidv7 同毫秒时间前缀碰撞是现网「34 条 subagent」形态的成因（§3.4），fixture 沿用共享前缀
+  const PREFIX = '019e6c96'
+  const mainId = (n: number) => `${PREFIX}-aaaa-bbbb-cccc-d${String(n).padStart(11, '0')}`
+  const subId = (n: number) => `${PREFIX}-aaaa-bbbb-cccc-e${String(n).padStart(11, '0')}`
+
+  /** 写 session 文件（subagent:true 写入 subagent 根），形态同 u9 段 writeSession。 */
+  async function writeSession(
+    id: string,
+    opts?: { subagent?: boolean; firstUserText?: string },
+  ): Promise<void> {
+    const dir = opts?.subagent
+      ? join(tmp, 'agent', 'subagents', SLUG, 'sessions')
+      : join(tmp, 'agent', 'sessions', SLUG)
+    await mkdir(dir, { recursive: true })
+    const lines = [JSON.stringify({ type: 'session', id, cwd: '/demo' })]
+    if (opts?.firstUserText !== undefined) {
+      lines.push(
+        JSON.stringify({
+          type: 'message',
+          id: `${id}-m1`,
+          message: { role: 'user', content: [{ type: 'text', text: opts.firstUserText }] },
+        }),
+      )
+    }
+    await writeFile(join(dir, `${id}.jsonl`), lines.join('\n') + '\n')
+  }
+
+  /**
+   * 写带 assistant 正文的 subagent（manifest + session 文件三行形态），
+   * 供 result action 批量调用（回归基线：批量头行 8 字符短 id 不受 u10 影响）。
+   */
+  async function writeSubagentWithResult(saId: string, id: string, body: string): Promise<void> {
+    const sessionFile = join(tmp, 'agent', 'subagents', SLUG, 'sessions', `${id}.jsonl`)
+    await mkdir(dirname(sessionFile), { recursive: true })
+    const lines = [
+      JSON.stringify({ type: 'session', id, cwd: '/demo' }),
+      JSON.stringify({
+        type: 'message',
+        id: `${id}-m1`,
+        message: { role: 'user', content: [{ type: 'text', text: 'task' }] },
+      }),
+      JSON.stringify({
+        type: 'message',
+        id: `${id}-a1`,
+        message: { role: 'assistant', content: [{ type: 'text', text: body }] },
+      }),
+    ]
+    await writeFile(sessionFile, lines.join('\n') + '\n')
+    const recordsDir = join(tmp, 'agent', 'subagents', SLUG, 'records')
+    await mkdir(recordsDir, { recursive: true })
+    await writeFile(
+      join(recordsDir, `${saId}.json`),
+      JSON.stringify({ id: saId, rootSessionId: 'root-u10', agentName: 'explorer', sessionFile }),
+    )
+  }
+
+  function find(
+    query: string,
+    extra?: Partial<SessionReadParams>,
+  ): ReturnType<typeof handleSessionRead> {
+    return handleSessionRead({ action: 'find', query, ...extra }, join(tmp, 'agent'))
+  }
+
+  interface FindDetails {
+    matches: Array<{ source: string; sessionId: string }>
+    truncated: boolean
+  }
+
+  beforeEach(async () => {
+    tmp = await mkdtemp(join(tmpdir(), 'tool-handler-u10-'))
+  })
+  afterEach(async () => {
+    await rm(tmp, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
+  })
+
+  it('① main 置顶 + 全 id + ↳ 可复制调用串 + 编号跨组连续（§5.1 全列出形态）', async () => {
+    const M1 = mainId(1)
+    const S1 = subId(1)
+    const S2 = subId(2)
+    await writeSession(M1, { firstUserText: 'main content' })
+    await writeSession(S1, { subagent: true, firstUserText: 'sub content one' })
+    await writeSession(S2, { subagent: true, firstUserText: 'sub content two' })
+
+    const r = await find(PREFIX)
+    const text = r.content[0].text
+    // main 段置顶：main 组头与 main id 均先于 subagent 出现
+    expect(text.indexOf('main（')).toBeLessThan(text.indexOf('subagent（'))
+    expect(text.indexOf(M1)).toBeLessThan(text.indexOf(S1))
+    expect(text).toContain('main（1 条命中）：')
+    expect(text).toContain('subagent（2 条命中）：')
+    // 全 id：36 字符完整出现，8 字符截断形态消失（§6.7 子决策 3）
+    expect(text).toContain(M1)
+    expect(text).not.toContain(`${M1.slice(0, 8)}…`)
+    // ↳ 可复制调用串只附 main 候选（subagent 噪声不配指针）
+    expect(text).toContain(`↳ session_read { action:"outline", session:"${M1}" }`)
+    expect(text).not.toContain(`session:"${S1}"`)
+    // 编号跨组连续：main 是 1 号，subagent 段续 2 号（组内 mtime 序不固定，用正则）
+    expect(text).toContain(`  1. ${M1}`)
+    expect(text).toMatch(/  2\. 019e6c96-aaaa-bbbb-cccc-e0000000000[12]/)
+    // details 合并列表：main 首位、集合完整、无截断
+    const d = r.details as FindDetails
+    expect(d.truncated).toBe(false)
+    expect(d.matches[0]).toMatchObject({ source: 'main', sessionId: M1 })
+    expect(new Set(d.matches.map((m) => m.sessionId))).toEqual(new Set([M1, S1, S2]))
+  })
+
+  it('② subagent 超剩余配额 → 折叠计数行 + 加 source:"subagent" 提示（§6.7 子决策 2）', async () => {
+    const M1 = mainId(1)
+    await writeSession(M1)
+    for (let i = 1; i <= 3; i++) await writeSession(subId(i), { subagent: true })
+
+    // limit 2：main 1 条（无溢出）→ 剩余配额 1 → subagent 展示 1 条 + 溢出折叠
+    const r = await find(PREFIX, { limit: 2 })
+    const text = r.content[0].text
+    expect(text).toContain('main（1 条命中）：')
+    expect(text).toContain('subagent（>1 条命中，显示前 1 条）：')
+    expect(text).toContain('… 另有 subagent 命中未显示。👉 加 source:"subagent" 查看')
+    const d = r.details as FindDetails
+    expect(d.truncated).toBe(true)
+    expect(d.matches).toHaveLength(2)
+    expect(d.matches[0].source).toBe('main')
+    expect(d.matches.filter((m) => m.source === 'subagent')).toHaveLength(1)
+  })
+
+  it('③ main 命中占满 limit → subagent 段 0 条仅显示计数（§6.7：main 优先占满）', async () => {
+    for (let i = 1; i <= 3; i++) await writeSession(mainId(i))
+    for (let i = 1; i <= 2; i++) await writeSession(subId(i), { subagent: true })
+
+    const r = await find(PREFIX, { limit: 3 })
+    const text = r.content[0].text
+    expect(text).toContain('main（3 条命中）：')
+    expect(text).toContain('subagent（有命中未显示——展示配额已被 main 占满）：')
+    expect(text).toContain('👉 加 source:"subagent" 查看')
+    // subagent 条目与调用串不出现（0 条展示）
+    expect(text).not.toContain(subId(1))
+    const d = r.details as FindDetails
+    expect(d.matches).toHaveLength(3)
+    expect(d.matches.every((m) => m.source === 'main')).toBe(true)
+    // 合并总量：命中 3 main + 2 sub > 展示 3 → truncated=true
+    expect(d.truncated).toBe(true)
+  })
+
+  it('④ truncated 按合并总量计算（命中总数 vs 实际输出数，含 main 恰满边界）', async () => {
+    for (let i = 1; i <= 2; i++) await writeSession(mainId(i))
+    for (let i = 1; i <= 2; i++) await writeSession(subId(i), { subagent: true })
+
+    // a) 全列出（4 ≤ 20）：truncated=false
+    const all = (await find(PREFIX)).details as FindDetails
+    expect(all.matches).toHaveLength(4)
+    expect(all.truncated).toBe(false)
+
+    // b) main 恰好占满 limit（2/2）+ subagent 有命中 → 仍截断（防 main 恰满漏探测 subagent）
+    const exact = (await find(PREFIX, { limit: 2 })).details as FindDetails
+    expect(exact.matches).toHaveLength(2)
+    expect(exact.matches.every((m) => m.source === 'main')).toBe(true)
+    expect(exact.truncated).toBe(true)
+
+    // c) 混合截断：展示 3（2 main + 1 sub）< 命中 4 → truncated=true
+    const mixed = (await find(PREFIX, { limit: 3 })).details as FindDetails
+    expect(mixed.matches).toHaveLength(3)
+    expect(mixed.matches.filter((m) => m.source === 'main')).toHaveLength(2)
+    expect(mixed.matches.filter((m) => m.source === 'subagent')).toHaveLength(1)
+    expect(mixed.truncated).toBe(true)
+  })
+
+  it('⑤a 回归基线：find{query:<前缀>, limit:100} main 0 条 + subagent 全列（现网 34 条形态）', async () => {
+    for (let i = 1; i <= 34; i++) await writeSession(subId(i), { subagent: true })
+
+    const r = await find(PREFIX, { limit: 100 })
+    const d = r.details as FindDetails
+    expect(d.matches).toHaveLength(34)
+    expect(d.matches.every((m) => m.source === 'subagent')).toBe(true)
+    expect(d.truncated).toBe(false)
+    const text = r.content[0].text
+    // main 段 0 条可辨识（防「全是 subagent」被误读），subagent 段全列不折叠
+    expect(text).toContain('main（0 条命中）：')
+    expect(text).toContain('subagent（34 条命中）：')
+    expect(text).not.toContain('加 source:"subagent"')
+  })
+
+  it('⑤b 回归基线：result 批量头行仍 8 字符短 id（SESSION_ID_PREFIX_LEN 通路不动）', async () => {
+    const R1 = `${PREFIX}-aaaa-bbbb-cccc-f00000000001`
+    const R2 = `${PREFIX}-aaaa-bbbb-cccc-f00000000002`
+    await writeSubagentWithResult('sa-u10-r1', R1, 'alpha body')
+    await writeSubagentWithResult('sa-u10-r2', R2, 'beta body')
+
+    const res = await handleSessionRead(
+      { action: 'result', session: 'sa-u10-r1,sa-u10-r2' },
+      join(tmp, 'agent'),
+    )
+    const text = res.content[0].text
+    expect(text).toContain(`(session ${R1.slice(0, 8)}…)`)
+    expect(text).toContain(`(session ${R2.slice(0, 8)}…)`)
+  })
+
+  it('⑤c 回归基线：recent 查询 main 段置顶可辨识', async () => {
+    for (let i = 1; i <= 2; i++) await writeSession(mainId(i))
+    for (let i = 1; i <= 2; i++) await writeSession(subId(i), { subagent: true })
+
+    const r = await find('recent')
+    const text = r.content[0].text
+    expect(text.indexOf('main（2 条命中）：')).toBeLessThan(text.indexOf('subagent（2 条命中）：'))
+    const d = r.details as FindDetails
+    expect(d.matches).toHaveLength(4)
+    // 分组价值：main/subagent 的 mtime 交错也被 main 段置顶（§8.2「main 段置顶后可辨识」）
+    expect(d.matches.slice(0, 2).every((m) => m.source === 'main')).toBe(true)
+    expect(d.truncated).toBe(false)
+  })
+
+  it('⑥ resolveByFragment 独立无分组语义：outline 片段多匹配 → F2 全量候选（不被配额截断）', async () => {
+    for (let i = 1; i <= 2; i++) await writeSession(mainId(i))
+    for (let i = 1; i <= 3; i++) await writeSession(subId(i), { subagent: true })
+
+    // 解析路径（resolveByFragment → findSessions limit:10 无 source）保持 mtime 排序 +
+    // limit 截断原语义：5 命中全进 F2 消歧候选，无 main 置顶/配额分组介入（§6.7 末条）
+    const r = await handleSessionRead({ action: 'outline', session: PREFIX }, join(tmp, 'agent'))
+    const d = r.details as { ambiguous: boolean; candidates: Array<{ sessionId: string }> }
+    expect(d.ambiguous).toBe(true)
+    expect(d.candidates).toHaveLength(5)
+    expect(new Set(d.candidates.map((c) => c.sessionId))).toEqual(
+      new Set([mainId(1), mainId(2), subId(1), subId(2), subId(3)]),
+    )
+  })
+
+  it('⑥b 显式 source 查询走单组原语义：不折叠、保持 mtime+limit 截断', async () => {
+    for (let i = 1; i <= 3; i++) await writeSession(subId(i), { subagent: true })
+
+    // 显式 source 本身就是折叠提示所指的展开动作，不再折叠
+    const r = await find(PREFIX, { source: 'subagent', limit: 1 })
+    const text = r.content[0].text
+    expect(text).toContain('subagent（1 条命中）：')
+    expect(text).not.toContain('加 source:"subagent"')
+    const d = r.details as FindDetails
+    expect(d.matches).toHaveLength(1)
+    expect(d.matches[0].source).toBe('subagent')
+    expect(d.truncated).toBe(true)
+  })
+})
+
+// ============================================================
+// u11：metadataProvider 注入 + TTL 缓存（design 2026-09-10 §6.6）
+// handler 级集成：注入包装（withMetadataCache 独立实例，不与 doctorScanCache 串扰）
+// + 标题渲染（§5.1 候选行标题优先）+ provider 抛错降级不外抛。
+// 策略①惰性/②窄化/合并语义在 find.test.ts u11 段覆盖。
+// ============================================================
+describe('u11 metadataProvider 注入 + TTL 缓存（fixture，§6.6）', () => {
+  let tmp: string
+  /** 平铺 main 根（xyz-agent 形态），同时作 liveSessionDir（与 [default] 根同字面路径） */
+  let flatMain: string
+
+  async function writeSession(
+    id: string,
+    opts?: { firstUserText?: string },
+  ): Promise<string> {
+    await mkdir(flatMain, { recursive: true })
+    const lines = [JSON.stringify({ type: 'session', id, cwd: '/demo' })]
+    if (opts?.firstUserText !== undefined) {
+      lines.push(
+        JSON.stringify({
+          type: 'message',
+          id: `${id}-m1`,
+          message: { role: 'user', content: [{ type: 'text', text: opts.firstUserText }] },
+        }),
+      )
+    }
+    const path = join(flatMain, `${id}.jsonl`)
+    await writeFile(path, lines.join('\n') + '\n')
+    return path
+  }
+
+  function findWithProvider(
+    query: string,
+    provider: SessionMetadataProvider,
+  ): ReturnType<typeof handleSessionRead> {
+    return handleSessionRead(
+      { action: 'find', query },
+      { agentDir: join(tmp, 'agent'), liveSessionDir: flatMain },
+      undefined,
+      provider,
+    )
+  }
+
+  beforeEach(async () => {
+    tmp = await mkdtemp(join(tmpdir(), 'tool-handler-u11-'))
+    flatMain = join(tmp, 'agent', 'sessions')
+  })
+  afterEach(async () => {
+    await rm(tmp, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
+  })
+
+  it('② 标题进匹配与渲染：keyword 命中 name → 候选行标题优先展示 + details.matches[].name 透传', async () => {
+    const id = 'm-title-0001'
+    const p = await writeSession(id, { firstUserText: '首消息无关' })
+    const provider = vi.fn(async (dir: string) =>
+      dir === flatMain
+        ? [
+            {
+              path: p,
+              id,
+              cwd: '/demo',
+              name: '太保寿险深度研究攻坚',
+              modified: new Date(),
+              firstMessage: '首消息无关',
+            },
+          ]
+        : [],
+    )
+    const r = await findWithProvider('太保寿险', provider)
+    const text = r.content[0].text
+    // §5.1 形态：候选行末段为标题（name 优先于首消息预览）
+    expect(text).toContain('太保寿险深度研究攻坚')
+    const d = r.details as { matches: Array<{ sessionId: string; name?: string }> }
+    expect(d.matches[0].sessionId).toBe(id)
+    expect(d.matches[0].name).toBe('太保寿险深度研究攻坚')
+    // 注入边界生效：provider 被 TTL 包装调用且实参非空串
+    expect(provider).toHaveBeenCalledTimes(1)
+    expect(provider.mock.calls[0][0]).toBe(flatMain)
+  })
+
+  it('④ provider 抛错 → handler 不抛，降级首条 user 匹配（标题留空，错误不外泄）', async () => {
+    const id = 'err-handler-01'
+    await writeSession(id, { firstUserText: 'handler 降级命中文本' })
+    const provider = vi.fn(async () => {
+      throw new Error('listAll secret boom')
+    })
+    const r = await findWithProvider('handler 降级命中', provider)
+    const d = r.details as { matches: Array<{ sessionId: string; name?: string }> }
+    expect(d.matches).toHaveLength(1)
+    expect(d.matches[0].sessionId).toBe(id)
+    expect(d.matches[0].name).toBeUndefined()
+    // 错误细节不进工具输出（降级不是错误）
+    expect(r.content[0].text).not.toContain('boom')
+  })
+
+  it('⑤ TTL 缓存（fake timers）：TTL 内不重调、过期重调、目录 mtime 变化失效', async () => {
+    const id = 'ttl-00000001'
+    const p = await writeSession(id, { firstUserText: '无关' })
+    const provider = vi.fn(async (dir: string) =>
+      dir === flatMain
+        ? [{ path: p, id, cwd: '/demo', name: '标题', modified: new Date() }]
+        : [],
+    )
+    // 仅 fake Date（缓存 TTL 判定用），fs/performance 走真实实现
+    vi.useFakeTimers({ toFake: ['Date'] })
+    try {
+      // 首查：cache miss → 调 1 次
+      await findWithProvider('zzznohit9q', provider)
+      expect(provider).toHaveBeenCalledTimes(1)
+      // TTL 内二查：命中缓存不重调
+      await findWithProvider('zzznohit9q', provider)
+      expect(provider).toHaveBeenCalledTimes(1)
+      // TTL 过期 → 重调
+      vi.setSystemTime(Date.now() + METADATA_CACHE_TTL_MS + 1)
+      await findWithProvider('zzznohit9q', provider)
+      expect(provider).toHaveBeenCalledTimes(2)
+      // TTL 内但目录 mtime 变化 → 失效重调
+      const bumped = new Date(Date.now() + 60_000)
+      await utimes(flatMain, bumped, bumped)
+      await findWithProvider('zzznohit9q', provider)
+      expect(provider).toHaveBeenCalledTimes(3)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+})
+
+// ---------------------------------------------------------------------------
+// u12 跨会话内容检索（fixture，§2 目标 5 / §8.2 V8：窄化前置 + 字节上限 + 渲染）
+// 全部 mkdtemp fixture 自建自删，不触碰真实数据目录。
+// ---------------------------------------------------------------------------
+
+describe('u12 跨会话内容检索（fixture，V8）', () => {
+  let tmp: string
+  /** main 根（平铺，[default] 根直扫）与 subagent 根 */
+  let mainDir: string
+  const SLUG = '--demo-cwd--'
+  // uuidv7 风格形态（find 输出的完整 id 即此形态；u12 索引按 header id，不依赖文件名反推）
+  const mainId = (n: number) => `019e6c96-aaaa-bbbb-cccc-d${String(n).padStart(11, '0')}`
+  const subId = (n: number) => `019e6c96-aaaa-bbbb-cccc-e${String(n).padStart(11, '0')}`
+
+  /**
+   * 写多 turn session（链式 parentId——buildTreeView leaf 回溯需要，无链的后行 entry
+   * 会被当旁支过滤，MF-5 段同款教训）。turn 分段：user 开新 turn，assistant 并入当前。
+   */
+  async function writeSession(
+    id: string,
+    turns: Array<{ role: 'user' | 'assistant'; text: string }>,
+    opts?: { subagent?: boolean },
+  ): Promise<void> {
+    const dir = opts?.subagent
+      ? join(tmp, 'agent', 'subagents', SLUG, 'sessions')
+      : join(tmp, 'agent', 'sessions')
+    await mkdir(dir, { recursive: true })
+    const lines = [JSON.stringify({ type: 'session', id, cwd: '/demo' })]
+    turns.forEach((t, i) => {
+      lines.push(
+        JSON.stringify({
+          type: 'message',
+          id: `${id}-m${i}`,
+          parentId: i === 0 ? id : `${id}-m${i - 1}`,
+          message: { role: t.role, content: [{ type: 'text', text: t.text }] },
+        }),
+      )
+    })
+    await writeFile(join(dir, `${id}.jsonl`), lines.join('\n') + '\n')
+  }
+
+  /** 造大文件：追加一条 2KB filler 文本（字节上限用例用，pattern 避开 filler 字符）。 */
+  async function writeFatSession(id: string): Promise<void> {
+    await writeSession(id, [
+      { role: 'user', text: `filler ${'x'.repeat(2048)}` },
+      { role: 'assistant', text: 'done' },
+    ])
+  }
+
+  interface CrossDetails {
+    rejected?: boolean
+    candidateCount?: number
+    pattern: string
+    scope: string
+    degraded: boolean
+    byteBudget: number
+    scannedBytes: number
+    scanned: Array<{
+      sessionId: string
+      source: string
+      name?: string
+      hits: Array<{ turnIndex: number; entryIndex: number; role: string; matchSnippet: string }>
+      hitsTotal?: number
+    }>
+    skipped: Array<{ sessionId: string; reason: string; sizeBytes?: number }>
+    truncated: boolean
+  }
+
+  beforeEach(async () => {
+    tmp = await mkdtemp(join(tmpdir(), 'tool-handler-u12-'))
+    mainDir = join(tmp, 'agent', 'sessions')
+  })
+  afterEach(async () => {
+    await rm(tmp, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
+  })
+
+  it('① 窄化拒绝：候选超上限 → 拒绝文案 + 先 find 指引，不深扫（V8）', async () => {
+    // 库中放一个真实可命中的 session——拒绝路径不得把它扫出来
+    await writeSession(mainId(1), [
+      { role: 'user', text: '讨论 adj_factor 的历史数据' },
+      { role: 'assistant', text: 'adj_factor 表在 dws 库' },
+    ])
+    const ids = Array.from({ length: MULTI_SEARCH_MAX_SESSIONS + 1 }, (_, i) => mainId(i + 10))
+    const r = await handleSessionRead(
+      { action: 'search', session: ids.join(','), pattern: 'adj_factor' },
+      join(tmp, 'agent'),
+    )
+    const text = r.content[0].text
+    expect(text).toContain('跨会话检索已拒绝')
+    expect(text).toContain(`超出单次上限 ${MULTI_SEARCH_MAX_SESSIONS} 个`)
+    expect(text).toContain('先窄化')
+    expect(text).toContain('action:"find"')
+    expect(text).toContain('action:"search", session:"<id1>,<id2>"')
+    const d = r.details as Partial<CrossDetails>
+    expect(d.rejected).toBe(true)
+    expect(d.candidateCount).toBe(MULTI_SEARCH_MAX_SESSIONS + 1)
+    // 不深扫：可命中内容与命中结构都不出现
+    expect(text).not.toContain('adj_factor 表在 dws 库')
+    expect(text).not.toContain('hits:')
+    expect(d.scanned).toBeUndefined()
+  })
+
+  it('②a 字节上限截断：预算按序消耗，放不下的文件起整段停止并报告已扫范围', async () => {
+    const A = mainId(1)
+    const B = mainId(2)
+    await writeSession(A, [
+      { role: 'user', text: 'small session' },
+      { role: 'assistant', text: 'ok' },
+    ])
+    await writeFatSession(B)
+    // 直接调导出函数注入小预算（工具路径走默认 64MB，fixture 不构造 64MB 文件）
+    const r = await searchAcrossSessions([A, B], 'zzzkw', { agentDir: join(tmp, 'agent') }, {
+      byteBudget: 1024,
+    })
+    const d = r.details as CrossDetails
+    // A 扫完（无命中也入 scanned），B 放不下 → byte-budget，且其 sizeBytes 有报告
+    expect(d.scanned).toHaveLength(1)
+    expect(d.scanned[0].sessionId).toBe(A)
+    expect(d.scannedBytes).toBeGreaterThan(0)
+    expect(d.scannedBytes).toBeLessThanOrEqual(1024)
+    expect(d.skipped).toHaveLength(1)
+    expect(d.skipped[0]).toMatchObject({ sessionId: B, reason: 'byte-budget' })
+    expect(d.skipped[0].sizeBytes).toBeGreaterThan(1024)
+    const text = r.content[0].text
+    expect(text).toContain('not scanned')
+    expect(text).toContain(B)
+    expect(text).toContain(A)
+    // 未扫 id 附单独检索指引
+    expect(text).toContain(`action:"search", session:"${B}", pattern:"zzzkw"`)
+  })
+
+  it('②b 首个文件即超预算 → 0 扫描，整段未扫报告（不突破上限）', async () => {
+    const B = mainId(2)
+    await writeFatSession(B)
+    const r = await searchAcrossSessions([B], 'zzzkw', { agentDir: join(tmp, 'agent') }, {
+      byteBudget: 512,
+    })
+    const d = r.details as CrossDetails
+    expect(d.scanned).toHaveLength(0)
+    expect(d.scannedBytes).toBe(0)
+    expect(d.skipped).toEqual([{ sessionId: B, reason: 'byte-budget', sizeBytes: expect.any(Number) }])
+    expect(r.content[0].text).toContain('not scanned')
+  })
+
+  it('③ 命中渲染：session 列表（完整 id+source+标题）+ turn 索引/角色/片段 + 可执行调用串', async () => {
+    const A = mainId(1)
+    const B = subId(1)
+    const C = mainId(2)
+    // A：T000 两命中（user+assistant）+ T001 一命中（assistant）
+    await writeSession(A, [
+      { role: 'user', text: '查询 adj_factor 的历史数据' },
+      { role: 'assistant', text: 'adj_factor 表在 dws 库' },
+      { role: 'user', text: '换一个话题' },
+      { role: 'assistant', text: '再看 adj_factor 的最新分区' },
+    ])
+    await writeSession(B, [
+      { role: 'user', text: 'subagent task 无关键词' },
+      { role: 'assistant', text: '结果里含 adj_factor 字样' },
+    ], { subagent: true })
+    await writeSession(C, [
+      { role: 'user', text: '完全没有关键词的内容' },
+    ])
+    const provider: SessionMetadataProvider = async (dir) =>
+      dir === mainDir
+        ? [{ path: join(mainDir, `${A}.jsonl`), id: A, cwd: '/demo', name: '太保寿险深度研究', modified: new Date() }]
+        : []
+    const r = await handleSessionRead(
+      { action: 'search', session: `${A},${B},${C}`, pattern: 'adj_factor' },
+      { agentDir: join(tmp, 'agent'), liveSessionDir: mainDir },
+      undefined,
+      provider,
+    )
+    const text = r.content[0].text
+    // header：命中/已扫计数 + 默认预算标注（handleSessionRead 路径走 SEARCH_SCAN_BYTE_BUDGET，
+    // formatScanBytes 的 MB 形态恒 1 位小数）
+    expect(text).toContain('2/3 session(s) hit for /adj_factor/')
+    expect(text).toContain(`${(SEARCH_SCAN_BYTE_BUDGET / (1024 * 1024)).toFixed(1)}MB budget`)
+    // 命中块：完整 id + source + 标题（provider 注入）+ 命中数，列表序 = 传入序
+    expect(text).toContain(`1. ${A} · main · 太保寿险深度研究（3 hits）`)
+    expect(text).toContain(`2. ${B} · subagent（1 hit）`)
+    // turn 索引 + entry 序号 + 角色 + 片段
+    expect(text).toContain('     T000 #0 user: ')
+    expect(text).toContain('     T000 #1 assistant: ')
+    expect(text).toContain('     T001 #1 assistant: ')
+    // 可直接执行的调用串（真实参数 = pattern）
+    expect(text).toContain(`↳ session_read { action:"search", session:"${A}", pattern:"adj_factor" }`)
+    expect(text).toContain(`↳ session_read { action:"search", session:"${B}", pattern:"adj_factor" }`)
+    // 已扫无命中段
+    expect(text).toContain('scanned, no hit:')
+    expect(text).toContain(`${C} · main`)
+    const d = r.details as CrossDetails
+    expect(d.rejected).toBeUndefined()
+    expect(d.truncated).toBe(false)
+    expect(d.degraded).toBe(false)
+    expect(d.byteBudget).toBe(SEARCH_SCAN_BYTE_BUDGET)
+    expect(d.skipped).toEqual([])
+    expect(d.scanned.map((s) => s.sessionId)).toEqual([A, B, C])
+    expect(d.scanned[0].hits).toHaveLength(3)
+    expect(d.scanned[0].name).toBe('太保寿险深度研究')
+    expect(d.scanned[1].hits).toHaveLength(1)
+    // B 只有一条 user → 单 turn，assistant 命中在 T000 #1
+    expect(d.scanned[1].hits[0]).toMatchObject({
+      turnIndex: 0,
+      entryIndex: 1,
+      role: 'assistant',
+    })
+    expect(d.scanned[2].hits).toHaveLength(0)
+  })
+
+  it('④ 无命中形态 + not-found 报告（不在库中的 id 不中断整体）', async () => {
+    const A = mainId(1)
+    const GHOST = mainId(99)
+    await writeSession(A, [{ role: 'user', text: '普通内容' }])
+    const r = await handleSessionRead(
+      { action: 'search', session: `${A},${GHOST}`, pattern: 'zzznothing' },
+      join(tmp, 'agent'),
+    )
+    const text = r.content[0].text
+    expect(text).toContain('0/1 session(s) hit for /zzznothing/')
+    expect(text).toContain('scanned, no hit:')
+    expect(text).toContain(`${A} · main`)
+    expect(text).toContain('换更精确 pattern')
+    expect(text).toContain('not found in library')
+    expect(text).toContain(`- ${GHOST}`)
+    const d = r.details as CrossDetails
+    expect(d.scanned).toHaveLength(1)
+    expect(d.scanned[0].hits).toHaveLength(0)
+    expect(d.skipped).toEqual([{ sessionId: GHOST, reason: 'not-found' }])
+  })
+
+  it('⑤ 单会话语义无回归：无逗号 session 走原路径（hits 结构），pattern 含逗号不误分流', async () => {
+    const A = mainId(1)
+    await writeSession(A, [
+      { role: 'user', text: 'aaa plugin 内容' },
+      { role: 'assistant', text: 'bbb' },
+    ])
+    // 单 id：原 details.hits 结构与 header 形态不变
+    const r = await handleSessionRead(
+      { action: 'search', session: A, pattern: 'plugin' },
+      join(tmp, 'agent'),
+    )
+    expect(r.content[0].text).toContain('1 hit(s) for /plugin/')
+    const d = r.details as { hits: unknown[]; truncated: boolean; scanned?: unknown }
+    expect(d.hits).toHaveLength(1)
+    expect(d.truncated).toBe(false)
+    expect(d.scanned).toBeUndefined()
+    // pattern 含逗号不触发跨会话（分流只看 session）
+    const r2 = await handleSessionRead(
+      { action: 'search', session: A, pattern: 'aaa,bbb' },
+      join(tmp, 'agent'),
+    )
+    expect((r2.details as { hits: unknown[] }).hits).toHaveLength(0)
+    expect((r2.details as { scanned?: unknown }).scanned).toBeUndefined()
+    expect(r2.content[0].text).not.toContain('session(s) hit')
+  })
+
+  it('⑥ per-session limit 截断：超限 session 标注 >N hits，truncated=true', async () => {
+    const A = mainId(1)
+    await writeSession(A, [
+      { role: 'user', text: 'kw one' },
+      { role: 'assistant', text: 'kw two' },
+      { role: 'user', text: 'kw three' },
+    ])
+    const r = await searchAcrossSessions([A], 'kw', { agentDir: join(tmp, 'agent') }, { limit: 2 })
+    const d = r.details as CrossDetails
+    expect(d.truncated).toBe(true)
+    expect(d.scanned[0].hits).toHaveLength(2)
+    expect(d.scanned[0].hitsTotal).toBe(3)
+    expect(r.content[0].text).toContain('（>3 hits, showing first 2）')
+  })
+
+  it('⑦ abort 信号透传：跨会话扫描中断抛错（与单会话 MF-5 语义一致）', async () => {
+    const A = mainId(1)
+    await writeSession(A, [{ role: 'user', text: 'content' }])
+    const ac = new AbortController()
+    ac.abort()
+    await expect(
+      searchAcrossSessions([A], 'kw', { agentDir: join(tmp, 'agent') }, { signal: ac.signal }),
+    ).rejects.toThrow(/中断/)
   })
 })

@@ -22,7 +22,7 @@ import { isActiveStatus, isTerminalStatus } from "../../engine/goal";
 import { contextInjectionPrompt } from "../../projection/prompts";
 import { asTheme, renderTerminalStatusLine } from "../../projection/widget";
 import type { GoalSession } from "../../session";
-import { clearGoalSession } from "../../session";
+import { cancelContinuationTimer, clearGoalSession } from "../../session";
 import { buildPorts } from "../ports";
 
 interface BeforeAgentStartResult {
@@ -38,6 +38,10 @@ export async function handleBeforeAgentStart(
 	session: GoalSession,
 	ctx: ExtensionContext,
 ): Promise<BeforeAgentStartResult | undefined> {
+	// MF-6③：新用户活动（新 turn 开始）使旧的退避 continuation 作废——该轮
+	// agent_end 会按最新状态重新决策。放在 state 检查之前：即使 goal 已清，
+	// 旧 timer 也不该在新 turn 开始后仍存活
+	cancelContinuationTimer(session);
 	if (!session.state) return;
 
 	pi.appendEntry("goal:log", {

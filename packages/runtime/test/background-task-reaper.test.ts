@@ -553,6 +553,8 @@ function makeStartupDeps(): StartupBackgroundDeps {
     broadcastAppInfo: vi.fn(),
     skillRegistry: { initGlobal: vi.fn(async () => undefined), getGlobalSkills: vi.fn(() => []) } as unknown as StartupBackgroundDeps['skillRegistry'],
     pluginService: { initialize: vi.fn(async () => undefined) } as unknown as StartupBackgroundDeps['pluginService'],
+    // u17：spawn 清单读取 port（reap 全 mock 场景下值不被消费，形态保真）
+    readSpawnMarkers: () => [],
   }
 }
 

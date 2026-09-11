@@ -236,6 +236,13 @@ export default function pendingNotificationsExtension(pi: ExtensionAPI): void {
 	});
 
 	// ── session_shutdown：所有 active → cancelled + 补 entry（U11） ──
+	// [W4 翻档登记] U11（shutdown 标 cancelled）随翻档对全部现存类型（process 档）
+	// 不再发生——process 档语义本就跨 shutdown 存活，任务收尾归任务自身/reaper/
+	// 监督器，不由 session 退出裁定；清理痕迹由 core 注册对账 sweep 兜底（覆盖
+	// subagent/workflow；bash 无 record/store 可查，死亡窗口丢失无补发通道——显式
+	// 边界，impl-plan §5 偏差登记）。已按设计
+	// 接受（设计 D4 连带面 3），非缺陷。本 handler 与 U3/U4 机器同为 session 档
+	// 留存件，待未来 session 档类型。
 	pi.on("session_shutdown", (_event, _ctx: ExtensionContext) => {
 		const active = getActive(registry);
 		for (const op of active) {
@@ -261,7 +268,15 @@ export default function pendingNotificationsExtension(pi: ExtensionAPI): void {
 			"查询当前活跃的异步操作（workflow/subagent/bash 后台任务）。action=count 返回数量；action=list 返回列表。状态由 EventBus + session entries 维护，无需手动注册。",
 		parameters: PendingNotificationsParams,
 		execute: async (_toolCallId: string, params: { action: "count" | "list" }, _signal: AbortSignal | undefined, _onUpdate: unknown, _ctx: ExtensionContext): Promise<{ content: { type: "text"; text: string }[]; details: PendingToolDetails }> => {
-			const active = getActive(registry);
+			// [W4 读侧过滤③ 工具读侧半口] 防御性按当前 session 过滤（rebuild 入口已按
+			// sessionId 过滤，此处是第二道）：listener 注册路径写入的 entry sessionId =
+			// 注册时的 currentSessionId，session 替换（/new /fork 重建闭包）前残留的
+			// 旧 session entry 若经任何路径进入 registry，投影面会虚报跨 session 活跃。
+			// currentSessionId 为空串（session_start 未到）时不过滤（同 rebuild 的
+			// 旧形态容错方向：宁放行不误逐）。
+			const active = getActive(registry).filter(
+				(op) => currentSessionId === "" || op.sessionId === currentSessionId,
+			);
 
 			debugLog("debug", `tool ${params.action} requested`, { action: params.action, activeCount: active.length });
 

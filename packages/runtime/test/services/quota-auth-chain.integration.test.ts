@@ -15,7 +15,9 @@ import { QuotaService } from '../../src/services/quota-service.js'
 import { XyzProviderStore } from '../../src/services/provider-extras-store.js'
 import { AuthStorage } from '../../src/services/auth/auth-storage.js'
 import { AuthService } from '../../src/services/auth/auth-service.js'
+import { ProviderCredentialResolver } from '../../src/services/auth/provider-credential-resolver.js'
 import { setModelsPath } from '../../src/infra/pi/pi-provider-store.js'
+import { PiConfigStore } from '../../src/infra/pi/pi-config-store.js'
 
 let dir: string
 let agentDir: string
@@ -26,7 +28,7 @@ const mockFetch = vi.fn()
 
 beforeEach(() => {
   dir = mkdtempSync(join(tmpdir(), 'quota-auth-chain-'))
-  agentDir = join(dir, 'pi', 'agent')
+  agentDir = join(dir, 'agent')
   mkdirSync(join(agentDir, 'config'), { recursive: true })
   process.env.XYZ_AGENT_DATA_DIR = dir
   setModelsPath(join(agentDir, 'models.json'))
@@ -59,8 +61,17 @@ function writeAuthJson(credentials: Record<string, unknown>): void {
   writeFileSync(authJsonPath, JSON.stringify(credentials, null, 2), 'utf-8')
 }
 
-/** 组合根同款注入：getAuthCredential = AuthService.getCredential（A2-2 生产链路）。 */
+/**
+ * 组合根同款注入（M2fg 恒注入形态）：api-key 段经 ProviderCredentialResolver（authService +
+ * authStorage + configStore 三依赖，index.ts 同款）；oauth 段仍经 getAuthCredential
+ * （AuthService.getCredential，直读现值不 refresh——D6）。
+ */
 function makeService(): QuotaService {
+  const resolver = new ProviderCredentialResolver({
+    authService,
+    authStorage: new AuthStorage(authJsonPath),
+    configStore: new PiConfigStore(),
+  })
   return new QuotaService({
     dataDir: dir,
     providerExtrasStore: extrasStore,
@@ -68,6 +79,7 @@ function makeService(): QuotaService {
       ? { name: id, quota: { fetcher: id === 'kimi-coding' ? 'kimi-coding' : 'zhipu' } }
       : undefined),
     getAuthCredential: (providerId) => authService.getCredential(providerId),
+    providerCredentialResolver: resolver,
   })
 }
 

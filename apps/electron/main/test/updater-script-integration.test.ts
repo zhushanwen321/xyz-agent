@@ -44,6 +44,9 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 // CI 的 mac runner 上 hdiutil 比本地慢约 3 倍（happy path 本地 ~7s、CI 实测 21-23s），
 // vitest 默认 20s 在 CI 必撞线（2026-09-07 v0.9.15 post-merge CI 两连挂）；
 // 60s = CI 最慢观测的 2.6 倍余量，M6（本地 17s 的固定等待窗口）同受覆盖
+// 注意：用例级第三参显式超时会覆盖本预算——曾漂移出 13 处显式 20_000，
+// 让 happy path 在 CI 仍撞 20s 线（2026-09-10）；本文件用例一律不写显式超时，
+// 统一由这行管辖，新增用例也不要补第三参。
 vi.setConfig({ testTimeout: 60_000 })
 import { mkdtempSync, rmSync, existsSync, writeFileSync, mkdirSync, readFileSync, statSync, chmodSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -380,7 +383,6 @@ describe.skipIf(!IS_MAC || !HAS_HDIUTIL || !HAS_DITTO || !HAS_SHASUM)('updater-s
       // 批次 5 互斥：退出时 pid 文件被 trap 清理（验收①退出侧）
       expect(existsSync(path.join(tmpDir, 'updater.pid')), '退出后 pid 文件应被清理').toBe(false)
     },
-    20_000,
   )
 
   it(
@@ -404,7 +406,6 @@ describe.skipIf(!IS_MAC || !HAS_HDIUTIL || !HAS_DITTO || !HAS_SHASUM)('updater-s
       expect(result.status).toBe('failed')
       expect(result.error).toBe('sha mismatch')
     },
-    20_000,
   )
 
   it(
@@ -427,7 +428,6 @@ describe.skipIf(!IS_MAC || !HAS_HDIUTIL || !HAS_DITTO || !HAS_SHASUM)('updater-s
       expect(parsed.version).toBe(evilVersion)
       expect(parsed.injected).toBeUndefined()
     },
-    20_000,
   )
 
   it(
@@ -458,7 +458,6 @@ describe.skipIf(!IS_MAC || !HAS_HDIUTIL || !HAS_DITTO || !HAS_SHASUM)('updater-s
       expect(result.error).toContain('dmg mount failed')
       expect(result.error).toContain('hdiutil detach')
     },
-    20_000,
   )
 
   it(
@@ -486,7 +485,6 @@ describe.skipIf(!IS_MAC || !HAS_HDIUTIL || !HAS_DITTO || !HAS_SHASUM)('updater-s
       const result = JSON.parse(readFileSync(vars.resultPath, 'utf8')) as { status: string; error: string }
       expect(result.error).toBe('extract failed')
     },
-    20_000,
   )
 })
 
@@ -527,7 +525,6 @@ describe.skipIf(!IS_MAC || !HAS_HDIUTIL || !HAS_DITTO || !HAS_SHASUM)('updater-s
       // result 未写（脚本被杀，任何状态都未落盘）
       expect(existsSync(vars.resultPath), 'result 不应被写').toBe(false)
     },
-    20_000,
   )
 
   it(
@@ -562,7 +559,6 @@ describe.skipIf(!IS_MAC || !HAS_HDIUTIL || !HAS_DITTO || !HAS_SHASUM)('updater-s
       // result 未写（脚本死在写 done 之前）
       expect(existsSync(vars.resultPath)).toBe(false)
     },
-    20_000,
   )
 
   it(
@@ -594,7 +590,6 @@ describe.skipIf(!IS_MAC || !HAS_HDIUTIL || !HAS_DITTO || !HAS_SHASUM)('updater-s
       // done 未写
       expect(existsSync(vars.resultPath), 'result 不应被写').toBe(false)
     },
-    20_000,
   )
 
   it(
@@ -630,7 +625,6 @@ describe.skipIf(!IS_MAC || !HAS_HDIUTIL || !HAS_DITTO || !HAS_SHASUM)('updater-s
         try { if (parent.pid) process.kill(parent.pid, 'SIGKILL') } catch { /* 已退 */ }
       }
     },
-    20_000,
   )
 
   it(
@@ -659,7 +653,6 @@ describe.skipIf(!IS_MAC || !HAS_HDIUTIL || !HAS_DITTO || !HAS_SHASUM)('updater-s
       const result = JSON.parse(readFileSync(vars.resultPath, 'utf8')) as { status: string }
       expect(result.status).toBe('done')
     },
-    20_000,
   )
 
   it(
@@ -697,7 +690,6 @@ describe.skipIf(!IS_MAC || !HAS_HDIUTIL || !HAS_DITTO || !HAS_SHASUM)('updater-s
       expect(result.status).toBe('failed')
       expect(result.error).toBe('backup failed')
     },
-    20_000,
   )
 
   it(
@@ -729,7 +721,6 @@ describe.skipIf(!IS_MAC || !HAS_HDIUTIL || !HAS_DITTO || !HAS_SHASUM)('updater-s
       expect(result.status).toBe('failed')
       expect(result.error).toBe('swap failed')
     },
-    20_000,
   )
 
   it(
@@ -757,7 +748,6 @@ describe.skipIf(!IS_MAC || !HAS_HDIUTIL || !HAS_DITTO || !HAS_SHASUM)('updater-s
       // 不应进入后续阶段（等待/解压都没跑）
       expect(log).not.toContain('[stage] S1 extract')
     },
-    20_000,
   )
 })
 

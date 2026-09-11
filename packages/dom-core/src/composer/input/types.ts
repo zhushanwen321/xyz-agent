@@ -1,5 +1,5 @@
 /**
- * composer input 模块类型 —— core/domain/composer/input/ 的内部类型契约（W2）。
+ * composer input 模块类型 —— packages/dom-core/src/composer/input/ 的内部类型契约（W2）。
  *
  * 定位：p3-strangler-domains::composer W2 input 模块迁入 core 的类型骨架。
  * 承接 slice 级 design review IF1/IF2/IF9/IF10（ContenteditableCallbacks/ChipCallbacks/

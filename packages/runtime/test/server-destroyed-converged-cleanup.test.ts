@@ -17,7 +17,7 @@ import { RuntimeServer } from '../src/transport/server.js'
 import { SessionService } from '../src/services/session/session-service.js'
 import { MessageBus } from '../src/services/message-bus/message-bus.js'
 import { ExtensionTimeoutManager } from '../src/services/extension-timeout-manager.js'
-import { updateSessionOccupancy } from '../src/services/session/event-interpreter.js'
+import { applySessionOccupancyTransition } from '../src/services/session/event-interpreter.js'
 import { createMockSessionServiceClass } from './helpers/service-mocks.js'
 import type { ISessionService } from '../src/interfaces.js'
 import type { IMessageBroker } from '../src/interfaces.js'
@@ -133,7 +133,8 @@ describe('D6a: 真实 SessionService 两条销毁路径触发 onSessionDestroyed
     // compaction_end 永不到达，onSessionExit 全复位是唯一兜底——否则重连 renderer 经
     // stateSnapshot 回放恢复的是永久占用投影。先置占用投影（订阅前，received 只收
     // triggerExit 后的帧），再订阅并触发退出。
-    updateSessionOccupancy(session, bus, { turn: 'generating', compacting: true })
+    applySessionOccupancyTransition(session, bus, 'generating')
+    applySessionOccupancyTransition(session, bus, 'compacting-start')
 
     // 订阅 bus（BusClient 最小契约 readyState + send）捕获 publish 帧；spy 记录
     // clearSession（removeSessionEntry 内部清订阅者集合）相对顺序

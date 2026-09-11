@@ -9,7 +9,7 @@
  * - onScopeDispose：scope 卸载后 visibilitychange 不再触发检测
  * - 补查 await 窗口 dispose：runAutoCheck await 恢复后不排新周期 timer（W05 review）
  *
- * Mock 策略对齐 useAppUpdate.test.ts（vi.mock @/lib/ipc + markdown，effectScope 包 useAppUpdate）。
+ * Mock 策略对齐 useAppUpdate.test.ts（vi.mock @/api/domains/settings + markdown，effectScope 包 useAppUpdate）。
  *
  * 运行：cd packages/renderer && npx vitest run src/__tests__/composables/useAppUpdate.visibility.test.ts
  */
@@ -32,7 +32,7 @@ const hoisted = vi.hoisted(() => {
   }
 })
 
-vi.mock('@/lib/ipc', () => ({
+vi.mock('@/api/domains/settings', () => ({
   checkForUpdate: hoisted.checkForUpdate,
   updateDownload: hoisted.updateDownload,
   updateInstall: hoisted.updateInstall,

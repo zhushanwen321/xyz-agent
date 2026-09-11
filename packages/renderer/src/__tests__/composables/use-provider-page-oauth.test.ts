@@ -4,8 +4,8 @@
  * 覆盖：
  * - onQuickSetupOauthLogin(template)：quicksetup 来源 → oauth.login(template.id)
  *  启动共享状态机（Dialog 打开 pending 态，config.oauthLogin 调用参数正确）
- * - auth.success（edit 来源）成功路径：立即 setProvider 持久化 authMethod='oauth'
- *  （name/api/baseUrl 随行）+ toast.info 授权成功 + presence 刷新（hasOAuth）
+ * - auth.success（edit 来源）成功路径：立即 setProvider 只传 authMethod='oauth'
+ *  （防线⑤：不随行 name/type/baseUrl 快照 artifact）+ toast.info 授权成功 + presence 刷新（hasOAuth）
  * - auth.success（edit 来源）setProvider 失败路径：toast.error 展示错误信息
  *  （恢复动作=重试保存），presence 仍刷新（凭据已写 auth.json）
  * - oauthDialogProvider：编辑体登录目标派生（含 builtin 模板 oauthName）
@@ -157,21 +157,19 @@ describe('useProviderPageOauth onQuickSetupOauthLogin（quicksetup 来源）', (
 })
 
 describe('useProviderPageOauth onEditOauthLogin → auth.success（edit 来源收尾）', () => {
-  it('成功路径：setProvider 持久化 authMethod=oauth（name/api/baseUrl 随行）+ toast.info + presence 刷新', async () => {
+  it('成功路径：setProvider 只传 authMethod=oauth（不随行 name/type/baseUrl）+ toast.info + presence 刷新', async () => {
     const page = mountOauth()
 
     page.onEditOauthLogin(KIMI_PROVIDER)
     await flushPromises()
     await emitAuthSuccess('kimi-coding')
 
-    // 立即持久化（对齐 QuickSetup payload 形态，避免 models.json 空壳条目）
+    // 防线⑤（设计 D1）：只传 authMethod——name/type/baseUrl 是展示派生值/快照 artifact，
+    // 回传会把 artifact 冻进 models.json override；runtime 侧「不物化空壳」防线兜底
     expect(configMock.setProvider).toHaveBeenCalledTimes(1)
-    expect(configMock.setProvider).toHaveBeenCalledWith('kimi-coding', {
-      name: 'Kimi Coding',
-      type: 'openai-completions',
-      baseUrl: 'https://api.kimi.com/v1',
-      authMethod: 'oauth',
-    })
+    expect(configMock.setProvider).toHaveBeenCalledWith('kimi-coding', { authMethod: 'oauth' })
+    const payload = configMock.setProvider.mock.calls[0][1] as Record<string, unknown>
+    expect(Object.keys(payload)).toEqual(['authMethod'])
     // 用户可见反馈：授权成功 toast（zh-CN locale：已授权（{name}））
     expect(toastMessages().some((m) => m.includes('已授权') && m.includes('Kimi Coding'))).toBe(true)
     // presence 刷新（凭证区「已登录」态数据源；hasOAuth=false → delete 分支）

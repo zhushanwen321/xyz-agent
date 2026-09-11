@@ -5,11 +5,14 @@
     到 body，不受 composer-box 父容器 overflow/stacking context 限制（修复 D5 定位 bug）。
     **anchor 是 slot 传入的 composer-box**：composer-box 内任何 focus 都算 inside，
     不触发 onFocusOutside dismiss（修复 focus-outside 误关 bug）。
-    键盘事件（↑↓ ⏎ Esc）由 Composer 在 ComposerInput keydown 时调 handleKeydown 路由进来。
+    键盘事件（↑↓ ⏎ Tab Esc）主入口 = 本组件经 command-popover-keyboard.ts 注册的 window
+    capture 监听；Composer 在 ComposerInput keydown 时调 handleKeydown 为兜底路（见
+    composer-keydown.ts），二者共用同一 handleKeydown——幂等守卫（e.defaultPrevented）在
+    command-popover-keyboard.ts 内，同一事件只被先到的入口消费。
     **@open-auto-focus.prevent**：禁掉 reka-ui PopoverContent 的 FocusScope 自动聚焦——
     否则浮层打开会把焦点抢到首个命令按钮，contenteditable 不再收键，导致
     「敲 / 后无法继续输入做实时筛选」（query 实时过滤依赖焦点留在输入区）。
-    键盘导航走 window capture 监听，与焦点位置无关，故禁自动聚焦不影响 ↑↓⏎Esc。
+    键盘导航走 window capture 监听，与焦点位置无关，故禁自动聚焦不影响 ↑↓⏎Tab Esc。
     **宽度**：w 取 --reka-popper-anchor-width（= composer-box 宽），严格对齐 composer 宽度；
     max-w calc(100vw-16px) 兜底防极窄视口溢出。提示词列 truncate 在固定宽度内截断。
     右侧提示词列透传 slash 命令 description（skill 描述等），无则退显 kind 标签。
@@ -28,8 +31,11 @@
     <PopoverAnchor as-child>
       <slot />
     </PopoverAnchor>
+    <!-- v-if 只看 open：每个 open 态都有可见行（候选列表 / 空态 / 加载中 / 加载失败）。
+         这是「浮层 open 即消费键盘」的前提——不可见态吞键会导致消息发不出且无提示，
+         故此前按「实际可见才消费」；反馈行补齐后该理由消失（决策因果见 command-popover-keyboard.ts）。 -->
     <PopoverContent
-      v-if="open && (items.length > 0 || fileFallbackVisible)"
+      v-if="open"
       side="top"
       align="start"
       :side-offset="6"
@@ -56,6 +62,27 @@
       >
         <FolderOpen class="size-[15px] shrink-0 opacity-60" />
         <span class="truncate">{{ t('panel.command.fileNoResults') }}</span>
+      </div>
+      <!-- 加载中空态（landing `$` 有 cwd 但候选未到）：本次 open 被 1s 节流跳过 / 上一轮请求在途。
+           两种来源都是「结果稍后会到」的态，必须有可见行兜住（否则 open 但无渲染）。 -->
+      <div
+        v-else-if="fileLoadingVisible"
+        class="flex items-center gap-2 px-2.5 py-2 text-[12px] text-neutral-dim"
+        data-testid="cmd-popover-loading"
+      >
+        <LoaderCircle class="size-[15px] shrink-0 opacity-60" />
+        <span class="truncate">{{ t('panel.command.loading') }}</span>
+      </div>
+      <!-- 通用无匹配空态：覆盖其余全部「open 但无候选」态——slash/session/subagent/skill 空源、
+           landing `@` 无 sessionId、landing `$` 无 cwd、landing `$` 候选源非空但 query 无匹配。
+           该行同时是「open 即消费键盘」的反馈前提（见脚本区 fileLoadingVisible 上方注释）。 -->
+      <div
+        v-else-if="items.length === 0"
+        class="flex items-center gap-2 px-2.5 py-2 text-[12px] text-neutral-dim"
+        data-testid="cmd-popover-empty"
+      >
+        <SearchX class="size-[15px] shrink-0 opacity-60" />
+        <span class="truncate">{{ t('panel.command.noMatches') }}</span>
       </div>
       <template v-else>
         <!-- list · 行用纯 div（对齐 demo .cmd-row：避免 Button variant=ghost 的 font-medium/ring-offset 噪音）。
@@ -116,20 +143,20 @@
 </template>
 
 <script setup lang="ts">
-import { computed, inject, onBeforeUnmount, ref, toRef, watch } from 'vue'
+import { computed, inject, onMounted, ref, toRef, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { AlertCircle, FolderOpen } from '@lucide/vue'
+import { AlertCircle, FolderOpen, LoaderCircle, SearchX } from '@lucide/vue'
 import { Popover, PopoverAnchor, PopoverContent } from '@/components/ui/popover'
 import { SLASH_ICON_COMPONENTS } from '@/composables/slashIcons'
 import { useCommandStore } from '@/composables/features/command/useCommandStore'
-import { iconKeyForCommand, filterAndSortFileCandidates } from '@xyz-agent/core'
+import { iconKeyForCommand, filterAndSortFileCandidates, toFileCandidates } from '@xyz-agent/core'
 import { SLASH_COMMAND_SOURCE_KEY } from './command-popover-source'
-import { buildSessionCandidates, buildSubagentCandidates, buildSlashCandidates, normalizedSlashName } from './command-popover-symbols'
+import { buildSessionCandidates, buildSubagentCandidates, buildSlashCandidates, buildPanelSlashCandidates, buildLandingSlashCandidates } from './command-popover-symbols'
 import { buildSkillCandidates } from './command-popover-skill-candidates'
-import { useCommandPopoverCwdFileView } from './command-popover-open-fetch'
-import { useCommandPopoverDelivery } from './command-popover-delivery'
-import { useCommandPopoverFileCandidates } from './command-popover-file-candidates'
-import { isInternalSkillName, isInternalSlashName } from '@/lib/internal-command-filter'
+import { useCommandPopoverOpenFetch } from './command-popover-open-fetch'
+import { useCommandSync } from '@/composables/panel/useCommandSync'
+import { useFileSearch } from '@/composables/features/search/useFileSearch'
+import { useCommandPopoverKeyboard } from '@/composables/panel/command-popover-keyboard'
 import type { SkillInfo } from '@xyz-agent/shared'
 import { useSessionStore } from '@/stores/session'
 import { useSubagentStore } from '@/stores/subagent'
@@ -167,6 +194,8 @@ const emit = defineEmits<{
     name: string
     icon?: string
     description?: string
+    /** slash 路 skill 项标记（D3）：onCmdSelect 按「项类型」而非入口 type 分流到 skill 通路 */
+    isSkill?: boolean
     /** skill 路：SKILL.md 绝对路径（可得时带上）；缺省时 runtime 经 get_commands 权威映射解析 */
     location?: string
     /** session 路（#）：选中 session 的 id + 显示 label */
@@ -184,30 +213,57 @@ const controlledOpen = computed({
   set: (v: boolean) => emit('update:open', v),
 })
 
-const activeIndex = ref(0)
-
 const { t } = useI18n()
 const commandStore = useCommandStore()
-/** file 候选加载（挂载 / 切 session 拉取，store 缓存幂等——ADR-0049；见 command-popover-file-candidates.ts） */
-const { fileCandidates } = useCommandPopoverFileCandidates(toRef(props, 'sessionId'))
+const sessionIdRef = toRef(props, 'sessionId')
+
+/** panel 路 file 候选加载：挂载 / 切 session 拉取（store 缓存幂等，命中不重拉——ADR-0049）。
+ *  触发时机是挂载 + sid 变化，与 open-fetch 的 open 边沿 landing cwd 路是 D2 双路数据源
+ *  （panel 有 sid 走本路；原 command-popover-file-candidates.ts，u20 内联回本组件）。 */
+const { load: loadFileCandidates } = useFileSearch()
+const fileCandidates = ref<ReturnType<typeof toFileCandidates>>([])
+async function loadCandidates(): Promise<void> {
+  if (!sessionIdRef.value) return
+  const nodes = await loadFileCandidates(sessionIdRef.value)
+  fileCandidates.value = toFileCandidates(nodes)
+}
+onMounted(() => { void loadCandidates() })
+watch(sessionIdRef, () => { void loadCandidates() })
 /**
  * landing cwd 路 $ 候选 + D7 三态（无 sid 时 open-fetch 边沿拉取，D2；panel 有 sid 走上方
  * fileCandidates）。错误态/空态两因区分 + 5000 截断提示 + B5/#10 cwd 快照守卫与 open 边沿清 ref，
- * 视图态封装在 command-popover-open-fetch.ts 的 useCommandPopoverCwdFileView（行数约束下沉）。
+ * 拉取与视图态同在 command-popover-open-fetch.ts 的 useCommandPopoverOpenFetch。
  */
 const {
   cwdFileCandidates,
   fileErrorVisible,
   fileNoResultsVisible,
-  fileFallbackVisible,
   fileTruncatedVisible,
   retryCwdFileFetch,
-} = useCommandPopoverCwdFileView({
+} = useCommandPopoverOpenFetch({
   open: () => props.open,
   type: () => props.type,
   sessionId: () => props.sessionId,
   cwd: () => props.cwd,
 })
+
+/**
+ * landing `$` 有 cwd 但候选未到（加载中反馈行）——等价于 open-fetch 内部
+ * `cwdFileStatus === 'idle'`：本次 open 因 1s 节流跳过、上一轮请求在途，两者都是
+ * 「结果稍后会到」态，需可见行兜住（否则该 open 态什么都不渲染）。
+ * 推导与状态机一一对应：success + 空候选 ⇒ fileNoResultsVisible，error ⇒ fileErrorVisible，
+ * 故「候选空 且 两态皆假」⟺ idle；用候选长度（非 items）判据，query 过滤致空不误判为加载中。
+ * cwd 访问器即 props.cwd（landing `$` 无 cwd 时无候选源，落通用无匹配行）。
+ */
+const fileLoadingVisible = computed(
+  () =>
+    props.type === 'file' &&
+    !props.sessionId &&
+    !!props.cwd &&
+    cwdFileCandidates.value.length === 0 &&
+    !fileErrorVisible.value &&
+    !fileNoResultsVisible.value,
+)
 // 四符号体系候选源：# sessionStore（sidebar 同款跨 cwd 全量）/ @ subagentStore（per-session 分区）
 const sessionStore = useSessionStore()
 const subagentStore = useSubagentStore()
@@ -225,37 +281,22 @@ const slashCommands = computed(() => {
   // merged：registry 声明 ∪ pi 真源（resolveSlashCommands 纯函数，壳注入；无注入时退化 pi 真源）
   const merged = slashSource ? slashSource.resolveSlashCommands(piCmds) : piCmds
   if (variant.value === 'landing') {
-    const extCmds = merged
-    const seen = new Set<string>()
-    extCmds.forEach((c) => seen.add(normalizedSlashName(c.name)))
-    // SkillInfo[] → slash 项（/skill:<name> 归一化），跳过 seen 同名 + __ 前缀
-    const mapSkillInfo = (skills: SkillInfo[]) =>
-      skills
-        .filter((s) => !isInternalSkillName(s.name))
-        .filter((s) => !seen.has(`/skill:${s.name}`))
-        .map((s) => {
-          seen.add(`/skill:${s.name}`)
-          return {
-            id: `skill-${s.name}`,
-            name: `/skill:${s.name}`,
-            kind: 'skill',
-            icon: 'star',
-            description: s.description,
-          }
-        })
-    // 优先级：merged 源已在 seen，全局次之（globalSkills），项目最后（projectSkills 补独有项）
-    const globalSkillCmds = mapSkillInfo(props.globalSkills ?? [])
-    const projectSkillCmds = mapSkillInfo(props.projectSkills ?? [])
-    return [...extCmds, ...globalSkillCmds, ...projectSkillCmds]
+    return buildLandingSlashCandidates(merged, props.globalSkills ?? [], props.projectSkills ?? [])
   }
-  // panel 态：compact + merged（pi 真源存在性交叉校验），不并入 globalSkills
-  const compactCmd = { id: 'compact', name: 'compact', kind: 'builtin', icon: 'compact', description: t('panel.command.compactDesc') }
-  return [compactCmd, ...merged.filter((c) => !isInternalSlashName(c.name))]
+  // panel 态：compact + merged（pi 真源存在性交叉校验），不并入 globalSkills；组装（含 D3
+  // location 回填）下沉 command-popover-symbols（≤300 行规范）
+  return buildPanelSlashCandidates(merged, piCmds, {
+    id: 'compact',
+    name: 'compact',
+    kind: 'builtin',
+    icon: 'compact',
+    description: t('panel.command.compactDesc'),
+  })
 })
 
 /** slash 命令投递闭环（挂载/切 session 补拉 + session.commands 订阅；open 边沿拉取归
- *  useCommandPopoverOpenFetch，双路并存会重复 RPC——详见 command-popover-delivery.ts） */
-useCommandPopoverDelivery(toRef(props, 'sessionId'))
+ *  useCommandPopoverOpenFetch，双路并存会重复 RPC——详见 useCommandSync） */
+useCommandSync(sessionIdRef)
 
 /** 统一候选项视图（四路归一；file/slash 在此派生，session/subagent 委托 command-popover-symbols） */
 interface CmdItem {
@@ -269,7 +310,8 @@ interface CmdItem {
   description?: string
   /** skill 路透传：SKILL.md 绝对路径（select payload → insertSkillChip dataset），可得时带上 */
   location?: string
-  /** skill 路专用：已插入过（selectedSkillNames 命中）→「已选」禁选（多 skill 注入 D2 去重） */
+  /** skill 候选（skill 路 + slash 路的 skill 项，S-2）：已插入过（selectedSkillNames 命中）
+   *  →「已选」禁选（多 skill 注入 D2 去重） */
   selected?: boolean
   /** file 路副行（父目录）/ session·subagent 路副行（subText） */
   dirPath?: string
@@ -317,8 +359,10 @@ const items = computed<CmdItem[]>(() => {
     // skill-only 候选（多 skill 注入 D1/D2）：分数据源 + query 过滤 + 已选标记（纯函数拆分）
     return buildSkillCandidates(variant.value, props, props.sessionId ? commandStore.getCommands(props.sessionId) : [])
   }
-  // slash 路（行首命令浮层）：query 过滤 + CmdItem 组装（纯函数拆分至 command-popover-symbols）
-  return buildSlashCandidates(slashCommands.value, props.query, iconKeyForCommand)
+  // slash 路（行首命令浮层）：query 过滤 + CmdItem 组装（纯函数拆分至 command-popover-symbols）。
+  // selectedSkillNames 透传（S-2）：slash 路的 skill 项同样打 selected → 「已选」禁选，
+  // 与 skill 入口去重口径合流（否则同一 skill 可经 + 菜单「命令」入口插两次）
+  return buildSlashCandidates(slashCommands.value, props.query, iconKeyForCommand, props.selectedSkillNames)
 })
 
 const ICONS = SLASH_ICON_COMPONENTS
@@ -341,6 +385,7 @@ function onSelect(item: CmdItem): void {
     name: item.name,
     icon: item.icon,
     description: item.description,
+    isSkill: item.isSkill,
     location: item.location,
     sessionId: item.sessionId,
     label: item.label,
@@ -349,57 +394,20 @@ function onSelect(item: CmdItem): void {
   })
 }
 
-/** ComposerInput keydown 路由：浮层 open 时处理 ↑↓ ⏎ Esc，返回 true 表示已消费。
- * 幂等守卫 defaultPrevented：window capture 与 contenteditable 冒泡两条入口命中同一事件，
- * 不守卫 ↑↓ 会跳两项。① preventDefault，② 见 defaultPrevented 直接 return。 */
-function handleKeydown(e: KeyboardEvent): boolean {
-  if (!props.open) return false
-  if (e.defaultPrevented) return false // 幂等守卫：① 已消费则 ② 不再重复处理
-  const list = items.value
-  if (list.length === 0) return false
-  if (e.key === 'ArrowDown') {
-    e.preventDefault()
-    activeIndex.value = (activeIndex.value + 1) % list.length
-    return true
-  }
-  if (e.key === 'ArrowUp') {
-    e.preventDefault()
-    activeIndex.value = (activeIndex.value - 1 + list.length) % list.length
-    return true
-  }
-  if (e.key === 'Enter' || e.key === 'Tab') {
-    e.preventDefault()
-    onSelect(list[activeIndex.value])
-    return true
-  }
-  if (e.key === 'Escape') {
-    e.preventDefault()
+// ── 键盘路由（↑↓ ⏎ Tab Esc）+ activeIndex 收敛在 command-popover-keyboard.ts ──────────
+// 由该 composable 单点收敛 activeIndex（列表变化 sync 夹到合法区间），故 Enter 读点直取
+// list[activeIndex] 不再 Math.min 兜底；window capture 监听与 Escape 关闭也随之下沉。
+const { activeIndex, handleKeydown } = useCommandPopoverKeyboard<CmdItem>({
+  open: () => props.open,
+  items: () => items.value,
+  onSelect,
+  close: () => {
     controlledOpen.value = false
-    return true
-  }
-  return false
-}
-
-/** window keydown capture 监听：键盘导航唯一入口，先于组件 keydown 保证稳定命中。 */
-function onWindowKeydown(e: KeyboardEvent): void {
-  if (!props.open) return
-  handleKeydown(e)
-}
-
-if (typeof window !== 'undefined') {
-  window.addEventListener('keydown', onWindowKeydown, true)
-  onBeforeUnmount(() => window.removeEventListener('keydown', onWindowKeydown, true))
-}
-
-// 浮层打开时重置高亮到第一项；type 切换也重置
-watch(
-  () => [props.open, props.type, props.query],
-  () => {
-    activeIndex.value = 0
   },
-)
+  resetKeys: () => [props.open, props.type, props.query],
+})
 
-// ── D7 三态派生与 landing cwd 候选 ref 见 useCommandPopoverCwdFileView（command-popover-open-fetch.ts）──
+// ── D7 三态派生与 landing cwd 候选 ref 见 useCommandPopoverOpenFetch（command-popover-open-fetch.ts）──
 
 defineExpose({ handleKeydown })
 </script>

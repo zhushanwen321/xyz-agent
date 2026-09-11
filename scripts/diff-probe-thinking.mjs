@@ -17,6 +17,7 @@
 
 import { registerHooks } from 'node:module'
 import { spawnSync } from 'node:child_process'
+import { readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 
@@ -41,6 +42,11 @@ if (!process.execArgv.includes('--experimental-transform-types')) {
 }
 
 const RUNTIME_SRC_URL_PREFIX = pathToFileURL(join(REPO_ROOT, 'packages', 'runtime', 'src') + '/').href
+// [merge dev-0.9.17 2026-09] shared/src 前缀：logger.ts 的 readLogKeepDays（crash-resilience
+// D6-⑦）运行时 import '@xyz-agent/shared' → workspace exports 解析到 src/index.ts，其内部
+// 是 bundler resolution 风格的无扩展名相对 import（'./protocol'）——Node ESM 严格解析吃不下，
+// 与 runtime src 的 .js 后缀问题同型，hook 同款兜底（.ts 回退，bare specifier 不碰）。
+const SHARED_SRC_URL_PREFIX = pathToFileURL(join(REPO_ROOT, 'packages', 'shared', 'src') + '/').href
 registerHooks({
   resolve(specifier, context, nextResolve) {
     if (specifier.endsWith('.js') && (context.parentURL ?? '').startsWith(RUNTIME_SRC_URL_PREFIX)) {
@@ -50,7 +56,31 @@ registerHooks({
         // 命中真实 .js 产物时回退原解析
       }
     }
+    if (
+      (context.parentURL ?? '').startsWith(SHARED_SRC_URL_PREFIX) &&
+      (specifier.startsWith('./') || specifier.startsWith('../')) &&
+      !/\.(js|ts|json|mjs|cjs|node|css)$/.test(specifier)
+    ) {
+      try {
+        return nextResolve(`${specifier}.ts`, context)
+      } catch {
+        // 目录 import / 真实产物存在时回退原解析
+      }
+    }
     return nextResolve(specifier, context)
+  },
+  // shared/src 的 json import 无 with { type: 'json' } 属性（bundler resolution 惯例，
+  // vitest/打包链宽松），Node 严格 ESM 拒绝——load hook 把 json 短路成 ESM default export
+  //（与 resolve hook 同款「不动源文件」哲学）。
+  load(url, _context, nextLoad) {
+    if (url.endsWith('.json')) {
+      return {
+        format: 'module',
+        shortCircuit: true,
+        source: `export default ${JSON.stringify(JSON.parse(readFileSync(fileURLToPath(url), 'utf8')))}\n`,
+      }
+    }
+    return nextLoad(url)
   },
 })
 

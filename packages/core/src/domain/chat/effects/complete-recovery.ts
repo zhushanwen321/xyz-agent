@@ -16,8 +16,7 @@
  * 「complete 对已终态气泡不改状态、不回填」的 P-C 现状保持不回归。
  */
 import type { Message } from '@xyz-agent/shared'
-import { commitMessages, type MessagesRef } from '../mutations'
-import { readUsage } from '../readers'
+import { commitMessages, terminalMessagePatch, type MessagesRef } from '../mutations'
 
 export interface CompleteRecoveryDeps {
   messages: MessagesRef
@@ -47,17 +46,12 @@ export function recoverPrematureTimeoutMessages(deps: CompleteRecoveryDeps): boo
     // 无非 timeout finalize；防御校验防异常序列把已恢复实体二次改写）
     if (m.status !== 'error' || m.prematureTimeout !== true) return m
     recovered = true
-    const usage = i === lastAssistantIdx ? readUsage(payload) : undefined
-    const shouldOverrideContent = i === lastAssistantIdx && finalContent !== undefined && finalContent.length > 0
+    // 终态字段 patch 单源（与 registry streaming 收口分支同语义，S4-A6）；
+    // 恢复分支额外清 prematureTimeout 打标（仅此分支需要）
     return {
-      ...m,
-      status: isErrorStop ? 'error' : 'complete',
-      ...(usage ? { usage } : {}),
-      // 追加形态错误：仅最后一条 assistant 写 Message.error（finalizeMessages 双通道同语义）
-      ...(i === lastAssistantIdx && isErrorStop && errorMessage ? { error: errorMessage } : {}),
-      ...(shouldOverrideContent ? { content: finalContent } : {}),
+      ...terminalMessagePatch(m, i, { lastAssistantIdx, isErrorStop, errorMessage, finalContent, payload }),
       prematureTimeout: undefined,
-    } satisfies Message
+    }
   })
   if (recovered) commitMessages(messages, sessionId, recoveredNext)
   return recovered

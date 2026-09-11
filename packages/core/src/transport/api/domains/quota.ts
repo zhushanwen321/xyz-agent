@@ -8,7 +8,7 @@
  * 设计文档：docs/page-design/archive/v3/coding-plan-quota/design.md
  * HANDOFF：.xyz-harness/coding-plan-quota/HANDOFF.md
  */
-import type { NormalizedQuotaRow, QuotaFetchFailureReason } from '@xyz-agent/shared'
+import type { NormalizedQuotaRow, QuotaConfigurePayload, QuotaFetchFailureReason } from '@xyz-agent/shared'
 import { RPC_BACKSTOP_TIMEOUT_MS } from '../pending'
 import { command } from '../request'
 
@@ -59,18 +59,13 @@ export async function refreshQuota(providerId: string): Promise<QuotaResult> {
 }
 
 /**
- * Settings 配置。启用/禁用 + 写 cookie（cookie 类）+ 持久化 fetcher + 专属 apiKey（api-key 类）
- * + workspace 地址（资源维度 fetcher 如 opencode，完整 URL 或裸 wrk_ id，runtime 归一化）。
- * enabled=false 不删缓存。apiKey/workspace 空字符串 = 清除，undefined = 不变。
+ * Settings 配置。整对象透传 payload（coding-plan-quota-config-ux §7.1 契约收敛）：
+ * 原 6 个位置参数中 4 个是同构的 `string | undefined`，调用方错位编译器不报错；收敛后
+ * 后续加字段只改 shared 类型、漏切调用方必是参数数/属性名编译错。
+ * 各可选键缺省 = 不变（runtime persist 继承链）；cookie 空串 = 清除；apiKey/workspace
+ * 空字符串同样 = 清除（UI 侧已不再产出空串，见 D13）。enabled=false 不删缓存。
  */
-export async function configure(
-  providerId: string,
-  enabled: boolean,
-  cookie?: string,
-  fetcher?: string,
-  apiKey?: string,
-  workspace?: string,
-): Promise<{ ok: boolean; error?: string }> {
-  const reply = await command('quota.configure', { providerId, enabled, cookie, fetcher, apiKey, workspace }, RPC_BACKSTOP_TIMEOUT_MS)
+export async function configure(payload: QuotaConfigurePayload): Promise<{ ok: boolean; error?: string }> {
+  const reply = await command('quota.configure', payload, RPC_BACKSTOP_TIMEOUT_MS)
   return { ok: reply.ok, error: reply.error }
 }

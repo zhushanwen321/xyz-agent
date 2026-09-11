@@ -306,11 +306,11 @@ describe('guardOutboundPushFrame（push 通路守卫纯函数）', () => {
   it('占位文案路径可得时填实路径；formatTruncationNote 含 MB 体积', () => {
     const withPath: OutboundFrameGuardOptions = {
       ...SMALL_OPTS,
-      resolveSessionFilePath: (sid) => (sid === 's1' ? '/data/pi/agent/sessions/x/1_s1.jsonl' : null),
+      resolveSessionFilePath: (sid) => (sid === 's1' ? '/data/agent/sessions/x/1_s1.jsonl' : null),
     }
     const note = formatTruncationNote(5 * 1024 * 1024, 's1', withPath)
     expect(note).toContain('5.0 MB')
-    expect(note).toContain('/data/pi/agent/sessions/x/1_s1.jsonl')
+    expect(note).toContain('/data/agent/sessions/x/1_s1.jsonl')
     // 不可得（null / 未注入）→ 占位
     expect(formatTruncationNote(1024, 's2', withPath)).toContain('（见 runtime 日志）')
     expect(formatTruncationNote(1024, 's1', SMALL_OPTS)).toContain('（见 runtime 日志）')
@@ -483,7 +483,7 @@ describe('ServerMessageBroker.reply 出站守卫', () => {
     const broker = new ServerMessageBroker({ clients: new Set([ws]) }, mockServices, {
       warnBytes: 1024,
       truncateBytes: 4096,
-      resolveSessionFilePath: (sid) => (sid === 's1' ? '/data/pi/agent/sessions/x/1_s1.jsonl' : null),
+      resolveSessionFilePath: (sid) => (sid === 's1' ? '/data/agent/sessions/x/1_s1.jsonl' : null),
     })
 
     broker.reply(ws, 'req-50', 'message.error', { sessionId: 's1', message: 'x'.repeat(5000) })
@@ -491,7 +491,7 @@ describe('ServerMessageBroker.reply 出站守卫', () => {
     expect(wsSent(ws)).toHaveLength(1)
     const sent = JSON.parse(wsSent(ws)[0][0] as string) as { payload: { code: string; message: string } }
     expect(sent.payload.code).toBe('payload_too_large')
-    expect(sent.payload.message).toContain('/data/pi/agent/sessions/x/1_s1.jsonl')
+    expect(sent.payload.message).toContain('/data/agent/sessions/x/1_s1.jsonl')
     expect(sent.payload.message).not.toContain('（见 runtime 日志）')
   })
 

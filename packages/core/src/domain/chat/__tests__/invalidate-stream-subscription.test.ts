@@ -52,7 +52,8 @@ function makeFixture(): Fixture {
     // [u4b 收窄] EnsureStreamSubDeps.chatApi = Pick<ChatApiPort, 'streamSubscribe'>，
     // 只注入消费面（excess property check 不放行多余键）
     chatApi: { streamSubscribe },
-    toast: { error: vi.fn() },
+    // [session-dead 第三环] warning：defer 重投熔断提示的注入面（本用例不触发）
+    toast: { error: vi.fn(), warning: vi.fn() },
     t: (k: string) => k,
     getCompactQueue: () => ({
       flush: vi.fn().mockResolvedValue(true),

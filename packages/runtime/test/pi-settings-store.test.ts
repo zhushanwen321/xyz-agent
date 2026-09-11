@@ -26,8 +26,8 @@ let settingsPath: string
 
 beforeEach(async () => {
   tmpDir = await mkdtempP(join(tmpdir(), 'pi-settings-store-test-'))
-  settingsPath = join(tmpDir, 'pi', 'agent', 'settings.json')
-  mkdirSync(join(tmpDir, 'pi', 'agent'), { recursive: true })
+  settingsPath = join(tmpDir, 'agent', 'settings.json')
+  mkdirSync(join(tmpDir, 'agent'), { recursive: true })
   setSettingsPath(settingsPath)
 })
 

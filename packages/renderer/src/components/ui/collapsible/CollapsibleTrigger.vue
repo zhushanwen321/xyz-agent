@@ -9,7 +9,7 @@ import { cn } from '@/lib/utils'
  * CollapsibleTrigger —— 折叠触发器（reka-ui CollapsibleTrigger 封装）。
  * 默认 as-child 透传（配合 Button 等组件使用，不额外渲染 button 元素）。
  *
- * testId 透传到根元素 data-testid（与 PopoverListItem 同款测试锚点模式）。
+ * testId 透传到根元素 data-testid（同款测试锚点模式见 packages/ui/src/primitives/popover/PopoverListItem.vue）。
  */
 const props = withDefaults(
   defineProps<

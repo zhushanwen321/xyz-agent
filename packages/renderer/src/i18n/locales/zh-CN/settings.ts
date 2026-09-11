@@ -254,6 +254,8 @@ export default {
       infoApi: 'API',
       infoBaseUrl: 'Base URL',
       infoModels: '内置模型',
+      // M4：QuickSetup 模板卡空值占位（混合协议显示复用 providerEdit.apiMixed）
+      emptyValue: '—',
       credentialModeLabel: '凭据方式',
       credentialModePlaintext: 'API Key',
       credentialModeEnv: '环境变量',
@@ -302,11 +304,8 @@ export default {
       errorUnknown: '授权失败，请重试',
     },
   },
-  // ── Provider 编辑弹窗（ProviderEditModal）──
+  // ── 手风琴就地编辑（R4 · 取代 ProviderEditModal）──
   providerEdit: {
-    addTitle: '添加供应商',
-    editTitle: '编辑供应商',
-    dialogDescription: '配置供应商凭据与模型清单',
     fieldName: '名称',
     fieldNamePlaceholder: 'My Provider',
     fieldType: '类型',
@@ -316,6 +315,18 @@ export default {
     apiOpenai: 'OpenAI Compatible',
     apiOpenaiResponses: 'OpenAI Responses API',
     fieldBaseUrl: 'Base URL',
+    // ── M4：网关优先派生展示（u-contracts 预置；文案 = 设计 §3.1 场景 A/A' + §3.3 D5）──
+    fieldEndpoint: '端点（自定义网关）',
+    fieldEndpointPlaceholder: '留空使用内置端点；填写后覆盖该 provider 全部模型的请求地址',
+    baseUrlKeepHint: '留空保持不变',
+    endpointBuiltin: '内置端点',
+    endpointBuiltinMixed: '内置端点（按模型分发）',
+    endpointNotProvided: '内置目录未提供',
+    endpointGateway: '自定义网关：{url}',
+    endpointGatewayCovers: '覆盖全部模型',
+    apiMixed: '按模型分发',
+    apiMixedDetail: '按模型分发（{distribution}）',
+    apiDistributionItem: '{api} ×{count}',
     fieldApiKey: 'API Key',
     apiKeyHint: '仅本地加密存储',
     apiKeyPlaceholderSet: '••••••••（已设置）',
@@ -352,10 +363,25 @@ export default {
     addHeader: '+ 添加 header',
     testConnection: '测试连接',
     testing: '测试中...',
-    autoDiscover: '自动发现模型',
+    autoDiscover: '模型发现',
     discovering: '发现中...',
     testOk: '连接成功，找到 {count} 个模型',
     testFail: '连接失败，请检查 API Key',
+    // ── M3：测试连接 per-协议真实请求结果（u-contracts 预置；文案 = 设计 §3.1 场景 A/B + §3.5 错误规格表，禁 emoji）──
+    testConnTitle: '连接测试结果',
+    testRowSuccess: '{api}（{modelId}）连接成功',
+    testRowHttpError: '{api}（{modelId}）：HTTP {status} {message}',
+    testRowUnsupported: '{api}：暂不支持该协议的连接测试',
+    testRowNoBaseUrl: '{api}：模型未配置 baseUrl（内置目录未提供），无法测试连接',
+    testRowNoEnabledModel: '{api}：该协议无启用模型',
+    testNoApiKey: '未找到 API Key——该 provider 的凭据尚未配置',
+    testNoModels: '该 provider 无可用模型，无法测试连接',
+    testHintNoApiKey: '在上方「API Key」填写并保存后重试；或确认授权管理（auth.json）中已有该 provider 凭据',
+    testHintHttpError: '检查 API Key 有效性与网络/代理（需可访问 {baseUrl}）后重试',
+    testHintNoBaseUrl: '该类 provider 的端点由运行时按目录解析，暂不支持连接测试；详情见 runtime 日志（<dataDir>/logs/）',
+    testHintNoEnabledModel: '在模型清单中启用至少一个该协议的模型后重试',
+    testHintNoModelsCustom: '先用「模型发现」拉取或手动添加模型',
+    testHintNoModelsCatalog: '内置模型恒存在，出现该提示请查看 runtime 日志排查',
     modelList: '模型清单',
     // B-2 混合列表（builtin 只读 + override 增删；wave4 C4 边界修订见 ProviderEditBody 注释）
     builtinModelsLabel: '内置模型',
@@ -386,35 +412,49 @@ export default {
     cancel: '取消',
     save: '保存',
     saving: '保存中…',
-    unsavedTitle: '有未保存的修改',
-    unsavedDesc: '确定关闭？未保存的改动将丢失。',
-    unsavedConfirm: '确认关闭',
-    unsavedCancel: '继续编辑',
     // Coding Plan 额度查询
     quotaSection: 'Coding Plan 额度查询',
     quotaType: '类型',
     quotaTypePlaceholder: '未选择',
     quotaTypeHint: '选择对应的 Coding Plan 类型',
+    // D8（coding-plan-quota-config-ux §6.9）：类型未定（空草稿或 preset 未命中时）区块只留下拉 + 这一句说明
+    quotaTypeFirstHint: '先选一个查询类型，下面的参数会按类型自动变化。',
     quotaEnable: '启用额度查询',
-    quotaEnableHint: '查询 5h/周/月 配额使用',
-    quotaAuthMethod: '认证方式',
-    quotaCredentialOk: 'API Key 已配置',
-    quotaCredentialMissing: 'API Key 未设置',
-    // B-3：fetcher.auth 含 oauth 时的凭证态
-    quotaCredentialOauthReady: '凭证已就绪（OAuth 登录）',
-    quotaCredentialOauthMissing: '请先完成 OAuth 登录',
-    quotaCredentialOauthMissingHint: '在上方「凭据」区完成 OAuth 登录后即可查询额度',
+    // D4（§6.5）：开关退化为纯配置位——只表达「要不要在浮层里展示」，不触发查询
+    quotaEnableHintIdle: '在对话框容量浮层里展示配额；可随时开关，不触发查询',
+    // §7.4 跨区块时序两套文案：provider 表单是草稿模型，runtime 只能读落盘凭据
+    quotaProviderCredentialMissing: '上方「凭据」区还没有可用的 API Key，请先填写，或改用专属 Key',
+    quotaProviderCredentialPendingSave: '上方「凭据」区已填写 API Key，保存 provider 配置后即可查询',
     quotaApiKey: '专属 API Key',
-    quotaApiKeyHint: '（可选）用于查询额度，留空则使用上方的 API Key',
-    quotaApiKeyPlaceholder: '留空则使用上方的 API Key',
     quotaApiKeySetPlaceholder: '已配置，输入新值可覆盖',
-    quotaSaveApiKey: '保存',
-    quotaApiKeyFallbackOrder: '查询将依次使用：专属 Key → Provider 凭证',
-    quotaTestQuery: '测试查询',
+    quotaExclusiveKeyPlaceholder: '粘贴 Coding Plan 平台的 API Key',
+    // D3（§6.4）凭证来源分段控件：UI 显示的选择与 runtime 实际使用的凭证同源
+    quotaCredentialSourceLabel: '凭证来源',
+    quotaSourceProvider: '用 Provider 凭据',
+    quotaSourceExclusive: '用专属 Key',
+    quotaSourceProviderOauthHint: '使用上方「凭据」区的 OAuth 登录态',
+    quotaSourceProviderApiKeyHint: '使用上方「凭据」区填写的 API Key',
+    quotaSourceExclusiveHint: '只用于额度查询，不影响对话使用的凭据',
     quotaTestSuccess: '查询成功',
     quotaTestFail: '查询失败，请检查凭证',
-    // A2-4 失败态文案（reason 透传后的恢复指引，Phase B 渲染）
-    quotaFetchFailUnauthorized: '额度查询失败：凭证可能过期。与该供应商发起一次对话触发凭证刷新后，点击刷新重试',
+    // D9（coding-plan-quota-config-ux §6.10）：configureError 统一走 i18n，不再透出硬编码中文——
+    // setEnabled 落盘失败 / saveAndTest 落盘失败两条路径（useQuotaConfigure.ts）
+    quotaConfigureFail: '额度查询配置保存失败',
+    // D2（§6.3）：保存与测试合一——区块唯一主动作按钮；D1 置灰时旁注「参数齐全后可点」
+    quotaSaveAndTest: '保存并测试',
+    quotaSaveAndTestRunning: '查询中…',
+    quotaReadyHint: '参数齐全后可点',
+    // D1（§6.2）字段级提示：显式白名单三键（'type' 走 D8 分支不配文案，见 §7.4）
+    quotaMissingCookie: '这里必须填 —— 该平台的额度接口只认 Cookie，没有继承路径',
+    quotaMissingApiKey: '这里必须填 —— 已选择「用专属 Key」，但还没有可用的 Key',
+    quotaMissingWorkspace: '这里必须填 —— 额度挂在具体 workspace 下，同一个 Cookie 可能对应多个',
+    quotaSaveAndTestFail: '保存并测试失败',
+    // A2-4 失败态文案（reason 透传后的恢复指引，Phase B 渲染）。
+    // 动作必须指向本屏真实存在的控件（§5.2 路径 3）：设置页区块内只有「保存并测试」，
+    // 没有「刷新」——「刷新」入口只存在于对话页浮层（那里的对应 key 在 panel.context.*）。
+    quotaFetchFailUnauthorized: '额度查询失败：凭证可能过期。与该供应商发起一次对话触发凭证刷新后，点击「保存并测试」重试',
+    // §5.2 路径 3 cookie 变体：「发起一次对话刷新」对 cookie 用户是不存在的动作
+    quotaFetchFailUnauthorizedCookie: '额度查询失败：凭证可能已失效。请从浏览器重新复制该平台的 Cookie 粘贴后重试',
     quotaFetchFailNetwork: '额度查询失败：网络异常或服务不可用，请检查网络连接后重试',
     quotaFetchFailNoSubscription: '额度查询失败：未检测到有效订阅，请确认账号已开通对应 Coding Plan 套餐',
     // S5：cookie 类 provider 的 no-subscription 业务码不可区分「无订阅 vs Cookie 失效」（fetcher 层论证不可行），两可提示
@@ -422,23 +462,23 @@ export default {
     quotaFetchFailParse: '额度查询失败：额度响应解析失败，请稍后重试；若持续出现请更新应用',
     // not_configured（D1-3，timeout-audit-hygiene-batch）：workspace 未配置——指引去配置而非检查凭证
     quotaFetchFailNotConfigured: '额度查询失败：未配置 Workspace。打开 opencode.ai 控制台，从浏览器地址栏复制 workspace 页 URL，填入上方「Workspace 地址」后重试',
+    // no-credential（D6，coding-plan-quota-config-ux §5.2 路径 4）：凭证链解析不到任何凭证——文案指向两个可填位置；cookie 变体由 CodingPlanSection 按 authKinds 分支渲染（U5）
+    quotaFetchFailNoCredential: '额度查询失败：未找到可用凭证。请在上方「凭据」区填写 API Key，或在此填写专属 API Key',
+    // §5.2 路径 4 cookie 变体（幽灵态：cookieSet=true 但 secrets 缺失，只能重贴 Cookie 恢复）
+    quotaFetchFailNoCredentialCookie: '额度查询失败：未找到可用凭证。请在下方重新粘贴该平台的 Cookie 后重试',
     // Workspace 地址（资源维度 fetcher 如 opencode-go，D1-1）
     quotaWorkspaceLabel: 'Workspace 地址',
-    quotaWorkspaceHint: '（opencode 必填）',
     quotaWorkspacePlaceholder: '粘贴 workspace 页 URL 或 wrk_ id',
-    quotaWorkspaceSetPlaceholder: '已配置，输入新值可覆盖',
-    quotaWorkspaceSave: '保存',
     quotaWorkspaceHelp: '打开 opencode.ai 控制台进入你的 workspace，从浏览器地址栏复制页面 URL（形如 https://opencode.ai/workspace/wrk_xxx/go）',
     quotaWorkspaceRequired: '请先输入 Workspace 地址',
     quotaWorkspaceInvalid: 'Workspace 地址无效：请粘贴 opencode.ai 的 workspace 页 URL（形如 https://opencode.ai/workspace/wrk_xxx/go）或裸 wrk_ id',
-    quotaWorkspaceSaveFail: 'Workspace 保存失败',
     // B-3 失败态旧缓存折叠入口（design §3.4 展示语义）
     quotaLastSuccessToggle: '查看上次成功数据',
     quotaLastSuccessAt: '数据截至 {time}',
-    quotaCookieSet: '已配置',
-    quotaCookieNotSet: '未配置',
+    // D1 字段级标记：独立于输入草稿（D7 去掩码后输入框为空不代表未配置）
+    quotaRequiredBadge: '必填',
+    quotaConfiguredBadge: '已配置',
     quotaCookiePlaceholder: '在此粘贴 cookie 字符串',
-    quotaSaveCookie: '保存 Cookie',
     quotaUpdateCookie: '更新 Cookie',
     // 三窗口标签 + 时间格式化（CodingPlanSection 内联额度预览）
     quotaWindow5h: '5h',

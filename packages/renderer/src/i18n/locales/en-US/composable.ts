@@ -1,5 +1,7 @@
 export default {
   agentProcessing: 'Agent is processing',
+  // Defer-retry circuit breaker (session-dead part 3): actionable notice — stall suspicion + escape hatch
+  deferFlushStalled: 'pi is still processing, the message may be stuck: auto-retry stopped. Right-click the session in the sidebar to force quit it, then send again',
   sendFailed: 'Failed to send message: {msg}',
   supplementSendFailed: 'Failed to send supplement: {msg}',
   nextTurnSendFailed: 'Failed to send next turn: {msg}',

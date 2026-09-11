@@ -599,6 +599,8 @@ const mockReap = rh
 
 /** runStartupBackgroundInit 最小依赖组（除收殓链外全部 spy/常量对象）。 */
 function makeBgDeps(onOrphanReapChainScheduled?: (completion: Promise<void>) => void) {
+  // u17 判据 v2：readSpawnMarkers 现为必填 dep（本用例不触发收殓清单消费，null = 清单缺席 fail-safe）
+  const readSpawnMarkers = vi.fn(() => null)
   const extensionService = {
     migrateBuiltinExtensions: vi.fn(async () => undefined),
     checkAndAutoUpgrade: vi.fn(async () => []),
@@ -615,6 +617,7 @@ function makeBgDeps(onOrphanReapChainScheduled?: (completion: Promise<void>) => 
     initialize: vi.fn(async () => undefined),
   } as unknown as PluginService
   return {
+    readSpawnMarkers,
     configStore: {} as PiConfigStore,
     authStorage: {} as AuthStorage,
     credentialWriter: { saveCredential: vi.fn() },

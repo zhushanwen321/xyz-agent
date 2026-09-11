@@ -5,7 +5,8 @@
  * - classifyPromptRejection：pi 双拒绝字符串 → 'compacting' | 'processing'，非 busy → null
  * - busy 预检分型：isCompacting → 'compacting'；isGenerating / isBashRunning → 'busy'（存量）
  * - catch 转译：pi busy 类拒绝 → send.rejected 分型广播 + 零 message.error（不进错误气泡链路）
- *   + isGenerating 复位（转译的拒绝同样意味着 turn 没跑起来）+ 返回 rejected:true（handler 走
+ *   + 复位语义按分型分叉（processing → isGenerating=true + occupancy generating「pi 有 runtime
+ *   不知情的 turn 在跑」；compacting → false + idle）+ 返回 rejected:true（handler 走
  *   message.status{rejected} ack，与预检拒绝同构）
  * - 非 busy pi 错误（auth/无模型等）：保留现状 message.error 广播，无 send.rejected
  * - clientUuid 原样回带：预检与转译两路；未传时 payload 不含该键
@@ -40,6 +41,10 @@ function makeMockSession(overrides: Partial<IManagedSessionView> = {}): IManaged
     isCompacting: false,
     isBashRunning: false,
     bashRunToken: undefined,
+    // registerSession 在真实链路里把 occupancy 初始化为 idle；显式给出才能断言
+    // dispatching → idle / generating 的转移与广播帧（缺省时 updateSessionOccupancy 按 idle
+    // 兜底合并，同样成立，但转移断言需要可读的初值）。
+    occupancy: { turn: 'idle', compacting: false, bash: false },
     ...overrides,
   }
 }
@@ -52,10 +57,17 @@ interface MockOpts {
 }
 
 function makeMocks(opts: MockOpts = {}) {
+  const isBashRunning = opts.isBashRunning ?? false
+  const isGenerating = opts.isGenerating ?? false
+  const isCompacting = opts.isCompacting ?? false
+  // [u3b 预检改读 occupancy] 预检输入源从三布尔改为 occupancy 投影（session-dead-structural-fixes
+  // D2 settling 预检裁决）。真实链路里二者经转移原语原子同步（同一挂点「合并 + 派生」双写合一），
+  // fixture 镜像该同步——置布尔的用例同时给对应投影态；布尔保留供非预检读点与派生断言使用。
   const session = makeMockSession({
-    isBashRunning: opts.isBashRunning ?? false,
-    isGenerating: opts.isGenerating ?? false,
-    isCompacting: opts.isCompacting ?? false,
+    isBashRunning,
+    isGenerating,
+    isCompacting,
+    occupancy: { turn: isGenerating ? 'generating' : 'idle', compacting: isCompacting, bash: isBashRunning },
   })
 
   const promptFn = opts.promptError
@@ -95,6 +107,18 @@ function findRejected(broadcasts: ServerMessage[]) {
 
 function findError(broadcasts: ServerMessage[]) {
   return broadcasts.find((m) => m.type === 'message.error')
+}
+
+/**
+ * 取广播中的 session.occupancy turn 序列（顺序即转移序）。
+ *
+ * session.occupancy 是前端占用投影的唯一输入（renderer D1 占用短路 / defer 队列 flush
+ * 触发条件都读它）——断言它是「用户可见状态」级证据，而非纯内部字段。
+ */
+function occupancyTurns(broadcasts: ServerMessage[]): string[] {
+  return broadcasts
+    .filter((m) => m.type === 'session.occupancy')
+    .map((m) => (m.payload as ServerMessage<'session.occupancy'>['payload']).turn)
 }
 
 describe('classifyPromptRejection —— pi 拒绝原文映射（D2 识别函数）', () => {
@@ -183,7 +207,7 @@ describe('sendPrompt busy 预检分型（D2：按命中维度分型广播）', (
 describe('sendPrompt catch 拒绝转译（D2：pi busy 类拒绝不进 message.error）', () => {
   beforeEach(() => vi.clearAllMocks())
 
-  it('manual 压缩原文 → send.rejected{reason:"compacting"} + 零 message.error + isGenerating 复位 + rejected ack', async () => {
+  it('manual 压缩原文 → send.rejected{reason:"compacting"} + 零 message.error + isGenerating/turn 复位 idle + rejected ack', async () => {
     const { dispatcher, session, broadcasts } = makeMocks({ promptError: new Error(PI_COMPACTING_MSG) })
 
     const result = await dispatcher.sendMessage('s1', 'hello')
@@ -194,11 +218,13 @@ describe('sendPrompt catch 拒绝转译（D2：pi busy 类拒绝不进 message.e
     expect(rejected).toMatchObject({ sessionId: 's1', reason: 'compacting', message: '压缩进行中，消息将自动排队' })
     expect(broadcasts.filter((m) => m.type === 'send.rejected')).toHaveLength(1)
     expect(findError(broadcasts)).toBeUndefined()
-    // 复位语义保持：转译的拒绝也意味着 turn 没跑起来（catch 复位对转译路同样生效）
+    // 复位语义保持：compacting 拒绝意味着 turn 没跑起来（#1 dispatching → #8 idle）
     expect(session.isGenerating).toBe(false)
+    expect(session.occupancy?.turn).toBe('idle')
+    expect(occupancyTurns(broadcasts)).toEqual(['dispatching', 'idle'])
   })
 
-  it('auto 压缩 / post-run 原文 → send.rejected{reason:"processing"} + 零 message.error', async () => {
+  it('auto 压缩 / post-run 原文（pi 有 runtime 不知情的 turn 在跑）→ send.rejected{reason:"processing"} + 零 message.error + isGenerating=true + turn generating', async () => {
     const { dispatcher, session, broadcasts } = makeMocks({ promptError: new Error(PI_PROCESSING_MSG) })
 
     const result = await dispatcher.sendMessage('s1', 'hello')
@@ -206,7 +232,21 @@ describe('sendPrompt catch 拒绝转译（D2：pi busy 类拒绝不进 message.e
     expect(result).toEqual({ blocked: true, rejected: true })
     expect(findRejected(broadcasts)).toMatchObject({ sessionId: 's1', reason: 'processing', message: 'Agent 正在处理' })
     expect(findError(broadcasts)).toBeUndefined()
-    expect(session.isGenerating).toBe(false)
+    // 以 pi 的拒绝为权威信号：pi 在跑 → 置 generating，不得伪造 idle（否则 defer 队列无限重投）
+    expect(session.isGenerating).toBe(true)
+    expect(session.occupancy?.turn).toBe('generating')
+  })
+
+  it('processing 拒绝：messageBus 收到 session.occupancy{turn:"generating"} 帧且全程无 idle 帧（前端占用投影的唯一输入）', async () => {
+    const { dispatcher, broadcasts } = makeMocks({ promptError: new Error(PI_PROCESSING_MSG) })
+
+    await dispatcher.sendMessage('s1', 'hello')
+
+    // 用户可见断言：occupancy 帧是前端 sessionPhase / D1 占用短路 / defer flush 的唯一输入
+    const frames = broadcasts.filter((m) => m.type === 'session.occupancy')
+    expect(frames.length).toBeGreaterThan(0)
+    expect(frames[frames.length - 1]!.payload).toMatchObject({ sessionId: 's1', turn: 'generating' })
+    expect(occupancyTurns(broadcasts)).not.toContain('idle')
   })
 
   it('转译拒绝 + clientUuid → payload 原样回带', async () => {
@@ -240,8 +280,10 @@ describe('非 busy 的 pi 错误保留现状（D2 接管副作用表：非 busy 
     const err = findError(broadcasts)
     expect(err).toBeDefined()
     expect((err!.payload as { message: string }).message).toBe('No model configured')
-    // 现状复位语义不变
+    // 现状复位语义不变：非 busy 真失败 → turn 回 idle（#1 dispatching → #8 idle）
     expect(session.isGenerating).toBe(false)
+    expect(session.occupancy?.turn).toBe('idle')
+    expect(occupancyTurns(broadcasts)).toEqual(['dispatching', 'idle'])
   })
 })
 

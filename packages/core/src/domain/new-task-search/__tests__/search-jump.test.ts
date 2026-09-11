@@ -112,6 +112,41 @@ describe('TC-8: slash 注入 pendingSlash', () => {
     expect(deps.commandStore.pendingSlash.value!.sessionId).toBeNull()
   })
 
+  it('skill 命令项（isSkill:true + location）→ 两字段透传进 pendingSlash（消费侧据此分流 skill 通路）', async () => {
+    const deps = makeDeps()
+    const { confirm } = useSearchJump(deps)
+    const item: SearchItem = {
+      type: 'command',
+      title: 'skill:code-review',
+      sub: '代码评审',
+      icon: 'star',
+      commandKind: 'slash',
+      isSkill: true,
+      location: '/skills/code-review/SKILL.md',
+    }
+    const result = await confirm(item, { activeSessionId: 's1' })
+
+    expect(result).toEqual({ ok: true })
+    expect(deps.commandStore.pendingSlash.value).toMatchObject({
+      command: 'skill:code-review',
+      icon: 'star',
+      sessionId: 's1',
+      isSkill: true,
+      location: '/skills/code-review/SKILL.md',
+    })
+  })
+
+  it('普通命令项（无 isSkill/location）→ pendingSlash 两字段 undefined（命令通路回归锁）', async () => {
+    const deps = makeDeps()
+    const { confirm } = useSearchJump(deps)
+    const item: SearchItem = { type: 'command', title: 'goal', sub: '目标', icon: 'goal', commandKind: 'slash' }
+    await confirm(item, { activeSessionId: 's1' })
+
+    const pending = deps.commandStore.pendingSlash.value!
+    expect(pending.isSkill).toBeUndefined()
+    expect(pending.location).toBeUndefined()
+  })
+
   it('command action 抛错 → {ok:false,error}（AC-6.8）', async () => {
     const deps = makeDeps()
     deps.commandStore.registerApp([{ id: 'n', name: '抛错', action: () => { throw new Error('boom') } }])

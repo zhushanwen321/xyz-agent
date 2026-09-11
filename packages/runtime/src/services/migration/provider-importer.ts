@@ -41,7 +41,19 @@ import type { ParseResult, ParsedProvider, ParsedOrphanCredential } from './prov
 // 内置 model 由 pi catalog 无条件加载，复制会与内置升级漂移）。
 import builtinData from '../../generated/builtin-providers.json'
 import { isCatalogProvider } from '../provider-catalog.js'
+// 防线载体（设计 D1）：importer 直调 infra upsertProvider，不经过 setProvider——两条主路径
+// （applyProviderEntry / applyOrphanWithTemplate）都在 upsert 前接载体，防线落在写入点。
+import { applyProviderWritePolicy, type ProviderWriteKind } from '../provider-config-helper.js'
 import type { CredentialWriter } from '../auth/auth-storage.js'
+
+/**
+ * catalog provider 导入在 credentialWriter 未注入时的降级 reason（设计 D1④）。
+ * catalog 定义来自 pi 内置 catalog、凭据只允许落 auth.json（0600）——无写入通道时
+ * 宁丢不写错位，不再把模板 artifact（api/baseUrl）或 apiKey 写进 models.json。
+ * imported 状态语义保持只对真实落盘成立。
+ */
+const CATALOG_CREDENTIAL_WRITER_UNAVAILABLE =
+  'built-in provider import requires credential writer: configure credentials via the settings UI'
 
 /**
  * previewImport 的成功返回（importId 供 Step2 applyImport 用 + 脱敏 preview 供前端渲染）。
@@ -244,11 +256,43 @@ async function applyProviderEntry(
     }
   }
 
-  // 自定义 provider 或 credentialWriter 未注入：写 models.json 全配置（现有行为）
+  // 自定义 provider 或 credentialWriter 未注入：写 models.json（经防线载体转译）
   try {
     // 剥离 _ 前缀元数据（对象解构，剩余即干净的 PiProviderConfig）
-    const { _sourceName, _apiKeyExtracted, _credentialType, _envVarName, _warnings, ...piConfig } = provider
-    upsertProvider(_sourceName, piConfig)
+    const {
+      _sourceName, _apiKeyExtracted, _credentialType, _envVarName, _warnings,
+      // 载体托管的字段单独取出：name/baseUrl/apiKey/api/models 由 applyProviderWritePolicy
+      // 按 kind + source 语义转译后写回；其余字段（headers/compat/modelOverrides/authMethod 等）
+      // 原样透传（rest）——不经过载体托管的面保持导入的完整语义。
+      name, baseUrl, apiKey, api, models,
+      ...rest
+    } = provider
+    const kind: ProviderWriteKind = isCatalogProvider(_sourceName) ? 'catalog' : 'custom'
+    const merged: Record<string, unknown> = { ...rest }
+    // models 归一为自由 record（载体入参形态）：spread 出匿名对象类型才具隐式索引签名
+    const modelEntries = models?.map((m) => ({ ...m }))
+    // 防线载体（设计 D1④）：source='import' 时 catalog 的 provider 级 api/baseUrl 一律剥除
+    // （导入数据不是用户在 UI 显式设置的网关，不产生隐形网关）；空串转译同 settings 路径。
+    const { skipUpsert } = applyProviderWritePolicy(
+      merged,
+      { name, baseUrl, apiKey, api, models: modelEntries },
+      kind,
+      'import',
+      _sourceName,
+    )
+    if (skipUpsert) {
+      // 防线③ 不物化空壳：剥除/转译后无实质字段（八字段全缺）→ 不落盘。
+      // catalog 在 credentialWriter 未注入时 API key 本也无处安放（宁丢不写错位）——
+      // imported 状态语义只对真实落盘成立，故报 failed 并引导经 UI 配置凭据。
+      return {
+        id: _sourceName,
+        name: _sourceName,
+        status: 'failed',
+        reason: kind === 'catalog' ? CATALOG_CREDENTIAL_WRITER_UNAVAILABLE : 'nothing to import',
+      }
+    }
+    // as 断言约定见 applyProviderWritePolicy JSDoc「维护约定」（形状安全由载体字段族保证）
+    upsertProvider(_sourceName, merged as PiProviderConfig)
     return { id: _sourceName, name: _sourceName, status: 'imported' }
   } catch (e) {
     return {
@@ -311,16 +355,36 @@ async function applyOrphanWithTemplate(
     }
   }
 
-  // credentialWriter 未注入时 fallback：写 models.json 模板（现有行为）
-  try {
-    const config: PiProviderConfig = {
-      name: tpl.name,
-      api: tpl.api,
-      baseUrl: tpl.baseUrl,
+  // credentialWriter 未注入时的降级：catalog provider 定义来自 pi 内置 catalog，凭据只允许
+  // 落 auth.json（0600）——无写入通道时无处安放，宁丢不写错位（设计 D1④）：不再把模板
+  // artifact（tpl.api/tpl.baseUrl）与 config.apiKey 写进 models.json，返回 failed 引导
+  // 用户经 UI 配置凭据（imported 状态语义只对真实落盘成立，不再有「写模板进 models.json」的降级）。
+  if (isCatalogProvider(oc.providerId)) {
+    return {
+      id: oc.providerId,
+      name: oc.providerId,
+      status: 'failed',
+      reason: CATALOG_CREDENTIAL_WRITER_UNAVAILABLE,
     }
-    if (oc.apiKey !== undefined) config.apiKey = oc.apiKey
-    upsertProvider(oc.providerId, config)
-    return { id: oc.providerId, name: oc.providerId, status: 'imported' }
+  }
+
+  // 非 catalog 孤儿凭据：写 models.json 模板（经防线载体转译，source='import'）
+  try {
+    const merged: Record<string, unknown> = {}
+    const { skipUpsert } = applyProviderWritePolicy(
+      merged,
+      { name: tpl.name, api: tpl.api, baseUrl: tpl.baseUrl, apiKey: oc.apiKey },
+      'custom',
+      'import',
+      oc.providerId,
+    )
+    if (!skipUpsert) {
+      // as 断言约定见 applyProviderWritePolicy JSDoc「维护约定」（形状安全由载体字段族保证）
+      upsertProvider(oc.providerId, merged as PiProviderConfig)
+      return { id: oc.providerId, name: oc.providerId, status: 'imported' }
+    }
+    // 模板无实质字段（八字段全缺）→ 不物化空壳，也不谎报 imported
+    return { id: oc.providerId, name: oc.providerId, status: 'failed', reason: 'nothing to import' }
   } catch (e) {
     return {
       id: oc.providerId,

@@ -26,7 +26,7 @@ vi.mock('@/stores/session', () => ({
 }))
 
 import SessionItem from '@/components/sidebar/SessionItem.vue'
-import { useComposerInjectionStore } from '@/composables/panel/composer-injection-store'
+import { composerInjectionStore } from '@/composables/panel/composer-injection-store'
 
 /** 本条被引用 session 的 fixture（sidebar 列表项） */
 const ITEM = { id: 's-item', label: '会话条目', cwd: '/p', lastActiveAt: 0 }
@@ -41,7 +41,7 @@ function mountItem(): ReturnType<typeof mount> {
 beforeEach(() => {
   setActivePinia(createPinia())
   localStorage.removeItem('xyz-agent:session-markers')
-  useComposerInjectionStore().clearInjection()
+  composerInjectionStore.clearInjection()
 })
 
 afterEach(() => {
@@ -56,7 +56,7 @@ describe('SessionItem 引用到输入区（写入侧）', () => {
     expect(btn.exists()).toBe(true)
     await btn.trigger('click')
 
-    const store = useComposerInjectionStore()
+    const store = composerInjectionStore
     expect(store.pendingInjection.value).toMatchObject({
       target: 'current',
       sessionId: 's-cur',
@@ -70,7 +70,7 @@ describe('SessionItem 引用到输入区（写入侧）', () => {
     const wrapper = mountItem()
     await wrapper.find('[data-testid="quote-to-composer-btn"]').trigger('click')
 
-    const store = useComposerInjectionStore()
+    const store = composerInjectionStore
     expect(store.pendingInjection.value).toMatchObject({
       target: 'new',
       sessionId: null,
@@ -84,7 +84,7 @@ describe('SessionItem 引用到输入区（写入侧）', () => {
     const wrapper = mountItem()
     await wrapper.find('[data-testid="quote-to-composer-btn"]').trigger('click')
 
-    const store = useComposerInjectionStore()
+    const store = composerInjectionStore
     expect(store.pendingInjection.value).toMatchObject({
       target: 'current',
       sessionId: 's-item',

@@ -202,6 +202,55 @@ export const PLUGIN_NOTIFY_LIMITS = {
 } as const
 
 /**
+ * 引擎子进程 env 契约常量 SSOT（W12，docs/design/subagent-engine-protocolization.impl-plan.md §2.12）。
+ *
+ * 消费形态：@zhushanwen/subagent-engine-sdk 的 src/env.ts 内联镜像本块（构建期生成物，
+ * SDK 不得运行时 import @xyz-agent/shared——F9：zsw 宿主链不可依赖 shared）；
+ * 逐项相等由 .githooks/check_env_whitelist_sync.py 断言（漂移即红）。
+ * 两处改动必须同批提交。
+ */
+export const ENGINE_ENV_PREFIXES: readonly string[] = [
+  // L2 manifest 放行的保留前缀拒绝表：manifest envPrefixes 声明这些前缀 = 试图
+  // 越过 L0/L1 基础设施面自配 XYZ_ 族变量，一律拒绝 + warn（引擎基础设施键只经 L0 注入）
+  'XYZ_', 'XYZ_AGENT_', 'XYZ_SUBAGENT_',
+]
+
+export const ENGINE_ENV_DENY_LIST: readonly string[] = [
+  // 出站 deny 清单（与 spawn-env-contract.ts SPAWN_ENV_OUTBOUND_DENY_LIST 同成员——
+  // 引擎 spawn 面同样不得携带生命周期标志 / WS 令牌；此处单列因 SDK 不能 import shared）
+  'XYZ_AGENT_PACKAGED',
+  'XYZ_RUNTIME_TOKEN',
+  // 凭证键：引擎凭据不跨进程（设计不变量 5），泄漏面与 WS 令牌同级
+  'XYZ_AGENT_API_KEY',
+  // 父身份键（relay tee 帧归属）：防父身份误归属——引擎按 run.params.ctx 重写，
+  // 误继承会把孙帧归到父 record
+  'XYZ_SUBAGENT_RELAY_SESSION_ID',
+  'XYZ_SUBAGENT_RELAY_RECORD_ID',
+  // 防御性剥除（workspace 纪律死名登记）：全仓零生产写入方，仅历史探针文档提及；
+  // 剥除防未来写入方复活旧值，登记见 impl-plan §2.12 偏差登记段
+  'XYZ_SUBAGENT_RELAY_STDIN',
+  'XYZ_SUBAGENT_RELAY_STDOUT',
+  'XYZ_SUBAGENT_RELAY_STDERR',
+]
+
+/**
+ * 引擎启动 env 名 SSOT（W9 生成块挂载，impl-plan §2.9；与上方 W12 的 ENGINE_ENV_*
+ * 生成块同文件、行区间互斥——串行边 W12→W9 保证）。
+ *
+ * 两个 env 名的写入方/读取方（跨包镜像登记，勿单独改动）：
+ * - ROOTS（L1 引擎发现根，path.delimiter 分隔绝对路径列表）：写入 =
+ *   packages/runtime/src/services/session/engine-roots.ts（本 SSOT import 消费）；
+ *   读取 = core engine-discovery-roots.ts（parseEngineRootsEnv，W4 字面量）。
+ * - NODE（引擎 node 执行器，与 relay 的 XYZ_SUBAGENT_RELAY_NODE 不复用）：写入 =
+ *   runtime engine-roots.ts（打包态注入 pi 子进程）；读取 = SDK
+ *   src/node-executor.ts（字面量镜像——SDK 不得 import shared，F9 同上方 W12 块）。
+ */
+export const ENGINE_LAUNCH_ENV_KEYS = {
+  ROOTS: 'XYZ_AGENT_ENGINE_ROOTS',
+  NODE: 'XYZ_AGENT_ENGINE_NODE',
+} as const
+
+/**
  * 前端 toast 并发上限（D7「限流与防毒化」）。
  *
  * 在列 toast 超过上限时新 toast 丢弃并计数（droppedCount），防止通知风暴刷屏。

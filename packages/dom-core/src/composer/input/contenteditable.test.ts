@@ -2,7 +2,10 @@
  * contenteditable.ts composable 单测 —— composer input 模块 contenteditable 组合逻辑（W2 TC2）。
  *
  * 覆盖：onInput（slash/hash 触发检测）、paste 通路（pasteImage badge 回填 / text 降级）、
- * setText（caret start/end）、clear、syncEmpty、saveSelection/restoreSelection（savedRange 生命周期）。
+ * setText（caret start/end）、clear、syncEmpty、saveSelection/restoreSelection（savedRange
+ * 生命周期 + D1 分区「活选区优先，savedRange 仅 blur 回退」：含跨边界活选区不采信 + 应用失败
+ * 落末尾兜底）、moveCaretVertical（单行 at-edge）、clear 族（boundaryLen）、
+ * onKeydown IME 守卫（composition 中不转发 keydown，composer-chip-insertion-semantics D2）。
  *
  * jsdom 限制：document.execCommand('insertText') 部分支持（paste 纯文本降级 / insertTextAtCursor
  * 不强测）；caretRangeFromPoint 未实现（moveCaretVertical 多行分支不测）。moveCaretVertical 单行
@@ -416,6 +419,161 @@ describe('useContenteditableInput saveSelection / restoreSelection', () => {
   })
 })
 
+// ── 插入位置权威源（设计 D1：活选区优先，savedRange 仅 blur 回退）──
+
+describe('useContenteditableInput restoreSelection 活选区优先（设计 D1）', () => {
+  let cleanup: () => void
+  beforeEach(() => {
+    window.getSelection()?.removeAllRanges()
+  })
+  afterEach(() => {
+    cleanup?.()
+  })
+
+  it('键盘路径活选区命中 → savedRange 不覆盖（光标留在活位置，失败模式 A 根修）', () => {
+    const c = setup('AAA BBB CCC')
+    c.el.contentEditable = 'true'
+    const textNode = c.el.firstChild as Text
+    // savedRange = 头部（点击空框时的旧快照）
+    cursorAt(textNode, 0)
+    c.saveSelection()
+    // 活光标随打字推进到末尾
+    cursorAt(textNode, 11)
+    c.restoreSelection()
+    const after = window.getSelection()
+    expect(after?.anchorNode).toBe(textNode)
+    expect(after?.anchorOffset).toBe(11)
+    cleanup = c.cleanup
+  })
+
+  it('blur 且选区被移出编辑器 → 应用 savedRange（blur 回退路径行为保留）', () => {
+    const c = setup('AAA BBB CCC')
+    c.el.contentEditable = 'true'
+    const textNode = c.el.firstChild as Text
+    cursorAt(textNode, 4)
+    c.saveSelection()
+    // 选区被移出编辑器（点击浮层文本场景）
+    const external = document.createElement('div')
+    external.textContent = 'popover item'
+    document.body.appendChild(external)
+    cursorAt(external.firstChild as Text, 0)
+    c.restoreSelection()
+    const after = window.getSelection()
+    expect(after?.rangeCount).toBeGreaterThan(0)
+    expect(c.el.contains(after?.anchorNode ?? null)).toBe(true)
+    expect(after?.anchorNode).toBe(textNode)
+    expect(after?.anchorOffset).toBe(4)
+    external.remove()
+    cleanup = c.cleanup
+  })
+
+  it('活选区跨边界（锚点在编辑器内、焦点在编辑器外）→ 不采信该 range，回落 savedRange（S-3）', () => {
+    const c = setup('AAA BBB CCC')
+    c.el.contentEditable = 'true'
+    const textNode = c.el.firstChild as Text
+    // savedRange = 编辑器内旧快照（起拖前的光标位置）
+    cursorAt(textNode, 4)
+    c.saveSelection()
+    // 活选区跨边界：一端在编辑器内、另一端在编辑器外（鼠标从输入框拖到消息区）
+    const external = document.createElement('div')
+    external.textContent = 'message body'
+    document.body.appendChild(external)
+    const sel = window.getSelection()
+    sel?.removeAllRanges()
+    const range = document.createRange()
+    range.setStart(textNode, 1)
+    range.setEnd(external.firstChild as Text, 3)
+    sel?.addRange(range)
+    expect(sel?.focusNode).toBe(external.firstChild) // 前置：跨边界选区已成立
+
+    c.restoreSelection()
+
+    // 跨边界 range 未被采信（否则下游 insertChipAtSelection 的 deleteContents 会删到编辑器外）：
+    // 两端点均在编辑器内且已 collapse = savedRange 生效
+    const after = window.getSelection()
+    expect(c.el.contains(after?.focusNode ?? null)).toBe(true)
+    expect(after?.isCollapsed).toBe(true)
+    expect(after?.anchorNode).toBe(textNode)
+    expect(after?.anchorOffset).toBe(4)
+    external.remove()
+    cleanup = c.cleanup
+  })
+
+  it('savedRange 应用失败（addRange 静默丢弃）→ caret 落编辑器末尾（placeCaretAtEnd 兜底）', () => {
+    const c = setup('AAA')
+    c.el.contentEditable = 'true'
+    const doomed = document.createTextNode('doomed')
+    c.el.appendChild(doomed)
+    cursorAt(doomed, 6)
+    c.saveSelection()
+    doomed.remove()
+    // 背景：DOM 规范的 live range 更新会把删除节点上的 savedRange 自动重锚到父元素
+    // （锚点=el 的 element 位置），合规 DOM 上无法构造「悬空 range」；真实 Chromium 对
+    // 边界失效 range 的 addRange 是静默丢弃。本用例用 Selection 桩模拟该丢弃语义
+    // （仅桩浏览器 Selection 对象，restoreSelection 本体走真实链路）：
+    // 锚点被重锚到 element 容器的 range 视为无效丢弃，锚点为文本节点才接受
+    // ⚠️ 本用例锁的是防御性分支，产线可达性未证：桩自行定义了「丢弃」语义，若真实引擎
+    // 不按此语义处理，则 placeCaretAtEnd 在产线不触发——通过本用例不等于产线行为保证。
+    const external = document.createElement('div')
+    external.textContent = 'outside'
+    document.body.appendChild(external)
+    const ranges: Range[] = []
+    const externalText = external.firstChild as Text
+    const fakeSel = {
+      get rangeCount() { return ranges.length },
+      get anchorNode() { return ranges[0]?.startContainer ?? null },
+      get anchorOffset() { return ranges[0]?.startOffset ?? 0 },
+      removeAllRanges() { ranges.length = 0 },
+      addRange(r: Range) {
+        if (r.startContainer.nodeType === Node.TEXT_NODE) ranges[0] = r
+      },
+    } as unknown as Selection
+    const r = document.createRange()
+    r.setStart(externalText, 0)
+    r.collapse(true)
+    ranges[0] = r // 活选区在编辑器外（blur 场景）
+    const getSelSpy = vi.spyOn(window, 'getSelection').mockReturnValue(fakeSel)
+    c.restoreSelection()
+    getSelSpy.mockRestore()
+    expect(fakeSel.rangeCount).toBe(1)
+    const lastText = c.el.lastChild as Text
+    expect(fakeSel.anchorNode).toBe(lastText)
+    expect(fakeSel.anchorOffset).toBe(lastText.length)
+    external.remove()
+    cleanup = c.cleanup
+  })
+
+  it('!savedRange 且活选区失效 → 仍回焦不应用任何 range（对齐现状回焦行为）', () => {
+    const c = setup('hello')
+    c.el.contentEditable = 'true'
+    // 无 saveSelection（savedRange=null）+ 活选区移出编辑器
+    const external = document.createElement('div')
+    external.textContent = 'outside'
+    document.body.appendChild(external)
+    cursorAt(external.firstChild as Text, 0)
+    expect(() => c.restoreSelection()).not.toThrow()
+    // 断言成立的双形态（轮 3-5 复审 N-3b）：分支②加固后，编辑器外活选区在 el.focus() 后
+    // 仍越界 ⇒ 被 removeAllRanges() 清掉（rangeCount 归零、anchorNode 为 null）；加固前
+    // 选区原样停在编辑器外（anchorNode = 外部文本节点）。contains(null) 与 contains(外部节点)
+    // **皆为 false** ⇒ 两种因都满足下方 contains 断言；故补一条显式断言把「清掉 ⇒ rangeCount
+    // === 0」的因果锁住，防 contains 断言因 null 恒真而空转（回退加固行 ⇒ 本行红）。
+    // jsdom 不支持 contenteditable div 的 activeElement 断言，回焦行为由不抛错 + 分支可达保证。
+    // **环境前提（轮 3-6 复审 RC3-F3，实测）**：本行在本环境成立依赖「`el.focus()` 不迁移选区」
+    // ——本节建元素用 `el.contentEditable = 'true'` **属性赋值**形态，jsdom 29 下该形态
+    // `focus()` 只置 activeElement（实测停在 BODY）、选区仍停在编辑器外文本节点，故 rangeCount
+    // 归零只能来自加固分支的 removeAllRanges()。同版本 jsdom 若用 `contenteditable="true"`
+    // **属性**（`setAttribute` 或 HTML 解析）建元素，`focus()` 会把选区迁入该元素（实测
+    // anchorNode 落回编辑器、activeElement = 该元素）⇒ 加固分支不触发、rangeCount 为 1，本行
+    // 会因环境差异变红。即本锁的强度绑定「本环境 + 本节建元素方式」：换 DOM 引擎（happy-dom /
+    // Chromium）或改建元素方式时需按引擎行为重写本行；断言的语义（回焦后清掉编辑器外选区）
+    // 不受影响。
+    expect(c.el.contains(window.getSelection()?.anchorNode ?? null)).toBe(false)
+    expect(window.getSelection()?.rangeCount).toBe(0)
+    external.remove()
+    cleanup = c.cleanup
+  })
+})
+
 describe('useContenteditableInput moveCaretVertical（jsdom 单行 at-edge）', () => {
   let cleanup: () => void
   afterEach(() => {
@@ -499,6 +657,60 @@ describe('useContenteditableInput clear 族（boundaryLen 模式：只删「符�
     window.getSelection()?.removeAllRanges()
     expect(() => c.clearDollarFileQueryText()).not.toThrow()
     expect(c.getText()).toBe('see $quer')
+    cleanup = c.cleanup
+  })
+})
+
+// ── IME 守卫（composer-chip-insertion-semantics 设计 D2「IME 确认不被劫持」的元素级防线）──
+// 浮层 Enter/Tab 分支的 composingRef/e.isComposing 双保险只覆盖浮层自身；产线上「组合态
+// Enter 不发送」的第一道（也是唯一必然生效的）防线在本文件 onKeydown 开头（contenteditable.ts:242
+// `if (composing.value || e.isComposing) return`）——组合中事件根本不转发到 composer 分发器
+// （forwardKeydown → composer-keydown）。此前该守卫零测试覆盖，renderer 的浮层用例因 target
+// 是纯 div 直挂分发器而绕过它。
+describe('useContenteditableInput onKeydown IME 守卫（composition 中不转发 keydown）', () => {
+  let cleanup: () => void
+  afterEach(() => {
+    cleanup?.()
+  })
+
+  it('compositionstart 置 composing 后 Enter（isComposing=false）→ 不转发 keydown、不触发 onEnterKeydown', () => {
+    const c = setup('已组合')
+    // 产线接线：ComposerInput.vue `@compositionstart="composing = true"`（对同一 ref 直写）
+    c.composing.value = true
+
+    const e = new KeyboardEvent('keydown', { key: 'Enter', cancelable: true })
+    c.onKeydown(e)
+
+    expect(c.callbacks.onEnterKeydown).not.toHaveBeenCalled()
+    expect(c.callbacks.onKeydown).not.toHaveBeenCalled() // 不转发给 composer 分发器
+    expect(e.defaultPrevented).toBe(false) // 不拦截，放行给 IME 做候选词确认
+    cleanup = c.cleanup
+  })
+
+  it('事件属性路径：e.isComposing=true → 同样不转发 keydown（双保险的另一半）', () => {
+    const c = setup('组合中')
+    const e = new KeyboardEvent('keydown', { key: 'Enter', cancelable: true })
+    Object.defineProperty(e, 'isComposing', { value: true })
+
+    c.onKeydown(e)
+
+    expect(c.callbacks.onEnterKeydown).not.toHaveBeenCalled()
+    expect(c.callbacks.onKeydown).not.toHaveBeenCalled()
+    expect(e.defaultPrevented).toBe(false)
+    cleanup = c.cleanup
+  })
+
+  it('compositionend 复位后 Enter 正常转发（守卫非恒真：正控证明上面两用例能区分回归）', () => {
+    const c = setup('done')
+    c.composing.value = true
+    c.onCompositionEnd() // 产线接线：`@compositionend`
+    expect(c.composing.value).toBe(false)
+
+    const e = new KeyboardEvent('keydown', { key: 'Enter', cancelable: true })
+    c.onKeydown(e)
+
+    expect(c.callbacks.onEnterKeydown).toHaveBeenCalledTimes(1)
+    expect(e.defaultPrevented).toBe(true) // Enter 被 contenteditable 拦截后交 composer 分发
     cleanup = c.cleanup
   })
 })

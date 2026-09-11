@@ -15,6 +15,8 @@
 import type { Ref } from 'vue'
 import { useChat } from '@/composables/features/chat/useChat'
 import { session as sessionApi } from '@/api'
+import { useCompactQueue } from '@/composables/panel/useCompactQueue'
+import { composerInjectionStore } from '@/composables/panel/composer-injection-store'
 import { useSearchModalDeps } from '@/composables/features/search/useSearchModalDeps'
 import { useSideDrawer } from '@/composables/features/drawer/useSideDrawer'
 import { useSubagentStore } from '@/stores/subagent'
@@ -60,10 +62,12 @@ export function useSidebarSessionActions(options: UseSidebarSessionActionsOption
     targetSessionId,
   } = options
   const { t } = useI18n()
-  const { error: toastError } = useToast()
+  const { error: toastError, info: toastInfo } = useToast()
   const subagentStore = useSubagentStore()
   const workflowStore = useWorkflowStore()
-  const { abort: abortSession } = useChat()
+  const { abort: abortSession, clearDeferFlushRetryTimer, clearQueueState } = useChat()
+  // [session-dead 结构性修复 D3] forceQuit 队列回收的清队/注入通路（单例，App.vue scope 常驻）
+  const compactQueue = useCompactQueue()
 
   async function onSelectSession(id: string): Promise<void> {
     try {
@@ -147,6 +151,22 @@ export function useSidebarSessionActions(options: UseSidebarSessionActionsOption
    * renderer 过渡态）与本路径（runtime 构造性不 respawn → 终态 dead 页）不可区分，靠
    * renderer 本地标记分流（forced-exit-marks，读后即清）。RPC 失败撤销标记，防残留把
    * 该 session 下次意外崩溃误判为强制退出。
+   * [session-dead 结构性修复 D3] forceQuit 成功后回收该 session 的 defer 队列（仅挂用户
+   * 显式强制退出入口——设计 D4 置位点分型，K2 强杀等非用户路径不经此处）：
+   * 1. 清 core 的 1s 重投 timer + 连续失败计数（队列将被清空，重投脉冲失效）；
+   * 2. compactQueue.drain 整队回收（含已提交在途条目——进程已死确认帧永不再来），斩断
+   *    「forceQuit 的 occupancy 全复位帧触发自动 flush → ensureActive → 0.5s 复活」主腿；
+   * 3. 回收文本经 composer injection 一次性通道写回 Composer 草稿（insertTextAtCursor
+   *    追加语义，不覆盖用户正在输入的内容；多条按序 '\n\n' 拼接，设计 §5 检查点④定稿）。
+   *    时序：RPC reply 前 session.exited 已按 WS FIFO 到达并 markDead → dead 占位接管、
+   *    Composer 已卸载 → 注入请求滞留槽位，用户点击 dead session 走 restore 重开后由
+   *    useComposerInjection 的 onMounted 遗留请求补消费（草稿可见、可改、可一键重发）；
+   *    [F-U2] 槽位是单值覆盖通道（forceQuit 后、restore 前任何其他注入都会覆盖），
+   *    回收侧写入前读槽位现状做 '\n\n' 累积追加，防止 toast 已宣称「已收回草稿」的
+   *    文本被后续注入静默吞掉（详见下方写入点注释）。
+   * 4. toast 一条「N 条排队消息已收回草稿」（N=0 不提示）。
+   * 5. [session-dead G1] 清 core queueStates 的 pi 快照（clearQueueState）——steer 气泡
+   *    数据源随 pi 死亡作废且 restore 后无 queue_update 帧再清，不清则永久残留。
    */
   async function onForceQuitSession(id: string): Promise<void> {
     markForcedExit(id)
@@ -156,6 +176,35 @@ export function useSidebarSessionActions(options: UseSidebarSessionActionsOption
       consumeForcedExit(id)
       const msg = e instanceof Error ? e.message : String(e)
       toastError(t('sidebar.forceQuitFailed', { msg }))
+      return
+    }
+    clearDeferFlushRetryTimer(id)
+    // [session-dead G1] 清 pi queue_update 快照：steer 直投/defer 气泡的数据源随 pi 死亡
+    // 确定性作废，restore 后无 queue_update 帧会再清它——不清则气泡永久残留（「状态撒谎」，
+    // Gate B 实测）。与下方 drain（defer 队列本体）同点编排；steer 文本草稿回收涉及产品
+    // 语义另行裁决，本处只修展示残留。
+    clearQueueState(id)
+    const drained = compactQueue.drain(id)
+    if (drained.length > 0) {
+      const draftText = drained
+        .map((m) => m.text)
+        .filter((text) => text.trim().length > 0)
+        .join('\n\n')
+      if (draftText) {
+        // [F-U2] 槽位为单值覆盖语义（幂等以最后一次为准）：回收文本是唯一副本（队列已
+        // drain 清空，不可再生），直接请求会在「forceQuit 后、restore 前」窗口被任何其他
+        // 注入（drawer 注入 / 另一 session 的 forceQuit 回收）覆盖丢失，且 toast 已宣称
+        // 「已收回草稿」——违背「消息不丢」。故槽位已有 text 时累积 '\n\n' 追加而非覆盖
+        // （不动 store 的单值通道语义，拼接留在唯一需要它的回收侧）。槽位为 path/refSessionId
+        // chip 注入时无 text 可拼，回收文本优先覆盖——chip 由用户操作产生可重发，唯一副本优先。
+        const pendingText = composerInjectionStore.pendingInjection.value?.text
+        composerInjectionStore.requestInjection({
+          target: 'current',
+          sessionId: id,
+          text: pendingText ? `${pendingText}\n\n${draftText}` : draftText,
+        })
+      }
+      toastInfo(t('sidebar.forceQuitQueueRecovered', drained.length, { named: { count: drained.length } }))
     }
   }
 
