@@ -357,7 +357,7 @@ describe('deleteSession', () => {
     const f = makeFixture()
     seed(f.store, [{ cwd: '/a', sessions: [summary('del')] }])
     f.store.activeId.value = 'del'
-    f.panel.findPanelBySession.mockReturnValue({ type: 'panel', id: 'p1', sessionId: 'del' })
+    f.panel.findPanelBySession.mockReturnValue({ id: 'p1', sessionId: 'del' })
 
     await f.session.deleteSession('del')
 
