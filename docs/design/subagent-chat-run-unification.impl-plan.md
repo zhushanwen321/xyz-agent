@@ -61,6 +61,10 @@ graph TD
 | U1 | schema 同形校验落地为载荷级 JSON Schema 片段 runSessionParamsSchema，非帧级深校验 | 合理——帧级 params=ANY_JSON 不深校验是 schema.ts 现行设计裁决，U1 不越界 |
 | U1 | deprecated 落点扩展到 InteractResult 与 ProtocolParamsMap/ResultMap 的 interact 属性行（+2 处） | 合理——同属「声明处标注」，保证 IDE 消费面完整 |
 | U1 | resume-schema.test.ts 双键同形断言族在 U6 删 chat 键后随退役 | 登记——纳入 U6 测试处置范围（文件头已注明去向） |
+| U3 | spawn-runner chatMode 语义改为「agent_settled resolve + 杀链收割」（原保活给 registry 续聊） | 合理——D7 对齐必需件：续聊 = 新 run，进程无保活理由；agent_end 仍不 kill 保住 compact 收尾窗 |
+| U3 | e2e 历史召回为构造性断言（fixture 回显历史行数） | 合理——真实 LLM 召回归 U4 真机 S1 |
+| U3 | server 删除 chat run 跳过 per-run askUser 绑定的特判；pi-engine 删三个 chat 私有死函数 | 合理——链路解耦后死代码（TS noUnusedLocals 拦截无法保留）；registry 本体与 interact 删除仍归 U5 |
+| U3 | 过渡期事实：U3 已落而 U2 未合入期间，chat 流的 core 旧链路在首轮收割后无法经 interact 续聊 | 已知——DAG 定义 U4 依赖 U2+U3，双单元合入后链路完整；U2 在途 |
 
 ## 6 状态表
 
@@ -70,7 +74,7 @@ graph TD
 |------|------|------|---------|
 | U1 | committed | 1 | commit bc9322d05：SDK 7 文件 + resume-schema.test.ts 12 用例；重跑 152 passed；typecheck exit 0；读端三包零改动。解冻前置 = C-pi-14 守卫落地（e7740ca39，过渡豁免 104 文件） |
 | U2 | pending | 0 | — |
-| U3 | pending | 0 | — |
+| U3 | committed | 1 | commit 2b7bf4f11：pi CLI 9 文件；重跑 336 passed（26 文件）+ typecheck exit 0；e2e 构造性历史召回 + 收割上报断言 |
 | U4 | pending | 0 | — |
 | U5 | pending | 0 | — |
 | U6 | pending | 0 | — |
