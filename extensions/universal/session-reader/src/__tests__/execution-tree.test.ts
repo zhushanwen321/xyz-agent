@@ -2,8 +2,10 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { tmpdir } from 'node:os'
 import { execSync } from 'node:child_process'
 import { mkdtemp, mkdir, writeFile, rm } from 'node:fs/promises'
-import { join } from 'node:path'
+import { readdirSync, readFileSync } from 'node:fs'
+import { basename, join } from 'node:path'
 import { buildExecutionTree, formatExecutionTreeText, type ExecutionTreeNode } from '../core/execution-tree.js'
+import { extractSessionIdFromFilename } from '../discovery/subagents.js'
 
 /**
  * M3b U7 buildExecutionTree 单测（design m3b 6 testCases）。
@@ -18,7 +20,9 @@ import { buildExecutionTree, formatExecutionTreeText, type ExecutionTreeNode } f
  * - TC-m3b-cycle-detection：workflow 指针环（A→B→A），visited Set 防环
  * - TC-m3b-single-node：单节点树（无后代，ES5）
  * - TC-m3b-source-priority：parentRecordId 三级数据源优先级（manifest>identity>flat，DM4）
- * - TC-m3b-real-data-guard：本机真实数据 flat 回退（旧机制，skipIf CI 无数据）
+ * - TC-m3b-real-data-guard：本机真实数据结构断言（解析不抛错/树自洽，skipIf CI 无数据）。
+ *   不硬编码易变本机 session id（原 FAM 锚点的 records 已被 GC）——测试时从本机 records
+ *   目录动态发现真实家族根，只做结构断言，不断言 sourceMode 具体值/record 数等易变快照
  */
 
 // ---- fixture 常量（uuid 特征，互不为子串，满足 extractSessionIdFromFilename）----
@@ -691,18 +695,89 @@ describe('buildExecutionTree - fixture', () => {
 // 真实数据守卫（CI 无本机 ~/.pi/agent → skip）
 // ============================================================
 
+/**
+ * 从本机 subagents records 目录发现一个真实执行树根：某 rootSessionId 被 >=2 条 manifest
+ * 引用（家族树非空的构造性保证），且它自身不是任何 record 的 session id（排除 MF-2
+ * subagent root 歧义，保证 root.type==='main'）。逐目录扫描、命中即返避免全量 IO；
+ * 无合格数据返 undefined（调用方 skip——本机无真实数据不硬失败）。
+ */
+function findRealTreeRoot(): string | undefined {
+  let cwdDirs: string[]
+  try {
+    cwdDirs = readdirSync(join(REAL_AGENT_DIR, 'subagents'), { withFileTypes: true })
+      .filter((d) => d.isDirectory())
+      .map((d) => d.name)
+      .sort()
+  } catch {
+    return undefined
+  }
+  for (const cwd of cwdDirs) {
+    let files: string[]
+    try {
+      files = readdirSync(join(REAL_AGENT_DIR, 'subagents', cwd, 'records'))
+        .filter((f) => f.endsWith('.json'))
+        .sort()
+    } catch {
+      continue // 该 cwd 无 records 目录
+    }
+    const countByRoot = new Map<string, number>()
+    const recordSessionIds = new Set<string>()
+    for (const f of files) {
+      let v: unknown
+      try {
+        v = JSON.parse(readFileSync(join(REAL_AGENT_DIR, 'subagents', cwd, 'records', f), 'utf8'))
+      } catch {
+        continue // 坏 manifest 容错跳过
+      }
+      if (typeof v !== 'object' || v === null) continue
+      if (!('sessionFile' in v) || !('rootSessionId' in v)) continue
+      const m = v as { sessionFile: unknown; rootSessionId: unknown }
+      const sid =
+        typeof m.sessionFile === 'string'
+          ? extractSessionIdFromFilename(basename(m.sessionFile))
+          : ''
+      if (sid !== '') recordSessionIds.add(sid)
+      if (typeof m.rootSessionId === 'string' && m.rootSessionId !== '') {
+        countByRoot.set(m.rootSessionId, (countByRoot.get(m.rootSessionId) ?? 0) + 1)
+      }
+    }
+    for (const [root, n] of countByRoot) {
+      if (n >= 2 && !recordSessionIds.has(root)) return root
+    }
+  }
+  return undefined
+}
+
 describe.skipIf(!HAS_REAL)('buildExecutionTree - 真实数据守卫', () => {
-  it('TC-m3b-real-data-guard：本机旧机制数据 flat 回退，不抛错，totalNodes>1', async () => {
-    // 取一个真实存在的 main session（FAM 是 fork 家族根）
-    const FAM = '019fe620-8ae1-78a7-b76a-43a1ba4cc3c7'
-    const tree = await buildExecutionTree(FAM, REAL_AGENT_DIR)
-    // 旧机制：sourceMode='flat-fallback'（全无 parentRecordId）
-    expect(tree.sourceMode).toBe('flat-fallback')
-    // 有 subagent 后代（本机 3610 record，FAM 树非空）
-    expect(tree.totalNodes).toBeGreaterThan(1)
-    // 不抛错（已隐含：到这行说明成功）
+  it('TC-m3b-real-data-guard：本机真实数据解析不抛错，树非空且结构自洽', async (ctx) => {
+    // 不硬编码易变本机 session id（原 FAM 锚点的 records 已被 GC——sourceMode='flat-fallback'
+    // 与 totalNodes>1 断言双双过期）。改为测试时动态发现真实家族根（findRealTreeRoot），
+    // 只做结构断言；无合格数据 → skip（守卫语义）。flat-fallback 机制行为由 fixture 用例
+    // TC-m3b-flat-fallback / TC-m3b-bfs-spread 无条件覆盖。
+    const ROOT = findRealTreeRoot()
+    if (ROOT === undefined) return ctx.skip()
+    const tree = await buildExecutionTree(ROOT, REAL_AGENT_DIR)
+    // 契约值域：sourceMode 只能是两种精度模式之一（record 含 parentRecordId → precise，
+    // 全无 → flat-fallback），不锁具体值
+    expect(['precise', 'flat-fallback']).toContain(tree.sourceMode)
+    // 真实家族树非空：ROOT 有 >=2 条 record，正常数据下至少挂载出第 2 个节点
+    expect(tree.totalNodes).toBeGreaterThanOrEqual(2)
     expect(tree.root.type).toBe('main')
-    expect(tree.root.sessionId).toBe(FAM)
+    expect(tree.root.sessionId).toBe(ROOT)
+    // 树结构自洽（ExecutionTreeNode 契约，与具体数据形态无关）：DFS 实际节点数 ===
+    // totalNodes；子节点 depth = 父 depth + 1；全树 rootSessionId 共享同一顶层 main
+    let count = 0
+    const walk = (node: ExecutionTreeNode): void => {
+      count++
+      expect(node.rootSessionId).toBe(tree.root.rootSessionId)
+      for (const c of node.children) {
+        expect(c.depth).toBe(node.depth + 1)
+        walk(c)
+      }
+    }
+    walk(tree.root)
+    expect(count).toBe(tree.totalNodes)
+    // 不抛错（已隐含：到这行说明成功）
   }, 60000)
 })
 
