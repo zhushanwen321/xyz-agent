@@ -19,9 +19,9 @@
     <!-- retry/queue 指示位（spec C10，#13，composer 上方独立行）：
          auto_retry_end / message_start 到达时 store 自动清 → state=undefined → 组件 v-if 消失 -->
     <RetryIndicator :state="retryState" />
-    <!-- turn 进展观测条（session-dead D6 C1 方案一）：长 turn 事实展示 + 超阈值警示 +
-         中性操作项；「中止此 turn」接既有 abort 链路（onStopClick，与 stop 按钮同路） -->
-    <TurnProgressBar :session-id="sessionId" @abort="onStopClick" />
+    <!-- [session-dead V5②] turn 进展观测条已提升到 Panel.vue composer-band（overlay/composer
+         互斥对之外）：ask_user 等待期 Composer 整体卸载，留在本组件内观测条会一起消失，
+         awaitingUser 分型文案无处渲染（Gate B 实测断点）。挂载点/abort 接线见 Panel.vue。 -->
     <!-- 命令浮层（§2d @/#//）：anchor = composer-box（slot），reka-ui Popover portal body。
          composer-box 内 focus 算 inside 不触发 dismiss，键盘路由见 onKeydown。
          cwd：landing 态 $ 候选的 cwd 通道（landing-composer-session-file-symbols D2；
@@ -201,7 +201,6 @@ import ModelSelectPopover from './ModelSelectPopover.vue'
 import ThinkingLevelPopover from './ThinkingLevelPopover.vue'
 import ContextChipsBar from './ContextChipsBar.vue'
 import RetryIndicator from './RetryIndicator.vue'
-import TurnProgressBar from './TurnProgressBar.vue'
 import QueueBubble from './QueueBubble.vue'
 import { useChatStore } from '@/stores/chat'
 import { useProjectSkills, useGlobalSkills } from '@/composables/features/settings/useProjectSkills'

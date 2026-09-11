@@ -1265,6 +1265,9 @@ export function createUseChat(deps: UseChatDeps) {
     abortBash,
     // [session-dead 结构性修复 D3] forceQuit 队列回收编排消费：清重投 timer + 失败计数
     clearDeferFlushRetryTimer,
+    // [session-dead G1] forceQuit 后清 pi queue_update 快照（气泡残留修复）——steer 队列随
+    // pi 死亡作废，restore 后无 queue_update 帧再清它；转发 core store 同名 action
+    clearQueueState: (sessionId: string) => chat.clearQueueState(sessionId),
   }
 }
 

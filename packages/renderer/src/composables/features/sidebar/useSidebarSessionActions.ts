@@ -64,7 +64,7 @@ export function useSidebarSessionActions(options: UseSidebarSessionActionsOption
   const { error: toastError, info: toastInfo } = useToast()
   const subagentStore = useSubagentStore()
   const workflowStore = useWorkflowStore()
-  const { abort: abortSession, clearDeferFlushRetryTimer } = useChat()
+  const { abort: abortSession, clearDeferFlushRetryTimer, clearQueueState } = useChat()
   // [session-dead 结构性修复 D3] forceQuit 队列回收的清队/注入通路（单例，App.vue scope 常驻）
   const compactQueue = useCompactQueue()
 
@@ -160,6 +160,8 @@ export function useSidebarSessionActions(options: UseSidebarSessionActionsOption
    *    回收侧写入前读槽位现状做 '\n\n' 累积追加，防止 toast 已宣称「已收回草稿」的
    *    文本被后续注入静默吞掉（详见下方写入点注释）。
    * 4. toast 一条「N 条排队消息已收回草稿」（N=0 不提示）。
+   * 5. [session-dead G1] 清 core queueStates 的 pi 快照（clearQueueState）——steer 气泡
+   *    数据源随 pi 死亡作废且 restore 后无 queue_update 帧再清，不清则永久残留。
    */
   async function onForceQuitSession(id: string): Promise<void> {
     try {
@@ -170,6 +172,11 @@ export function useSidebarSessionActions(options: UseSidebarSessionActionsOption
       return
     }
     clearDeferFlushRetryTimer(id)
+    // [session-dead G1] 清 pi queue_update 快照：steer 直投/defer 气泡的数据源随 pi 死亡
+    // 确定性作废，restore 后无 queue_update 帧会再清它——不清则气泡永久残留（「状态撒谎」，
+    // Gate B 实测）。与下方 drain（defer 队列本体）同点编排；steer 文本草稿回收涉及产品
+    // 语义另行裁决，本处只修展示残留。
+    clearQueueState(id)
     const drained = compactQueue.drain(id)
     if (drained.length > 0) {
       const draftText = drained

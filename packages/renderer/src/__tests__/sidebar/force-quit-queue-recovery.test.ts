@@ -13,6 +13,9 @@
  *  - 提示：toast「N 条排队消息已收回草稿」（N=0 不提示）
  *  - 配套：core clearDeferFlushRetryTimer 清 1s 重投 timer + 失败计数（timer 行为本体在
  *    core __tests__/force-quit-defer-recovery.test.ts）
+ *  - 配套 [session-dead G1]：core clearQueueState 清 pi queue_update 快照（steer 气泡随 pi
+ *    死亡作废，restore 后无 queue_update 帧再清——不清则气泡永久残留；store 层行为本体在
+ *    core __tests__/store.test.ts clearQueueState describe）
  *  - 挂点分型（设计 D4）：仅用户显式强制退出入口编排回收；forceQuit RPC 失败（error envelope）
  *    不回收不提示（保持既有 toastError）
  *
@@ -32,6 +35,7 @@ const apiMock = vi.hoisted(() => ({
 }))
 const chatComposable = vi.hoisted(() => ({
   clearDeferFlushRetryTimer: vi.fn(),
+  clearQueueState: vi.fn(),
 }))
 const toastMocks = vi.hoisted(() => ({
   error: vi.fn(),
@@ -46,6 +50,7 @@ vi.mock('@/composables/features/chat/useChat', () => ({
   useChat: () => ({
     abort: vi.fn(),
     clearDeferFlushRetryTimer: chatComposable.clearDeferFlushRetryTimer,
+    clearQueueState: chatComposable.clearQueueState,
   }),
 }))
 vi.mock('@/composables/useToast', () => ({
@@ -131,6 +136,8 @@ describe('onForceQuitSession 队列回收编排（session-dead D3）', () => {
     expect(apiMock.forceQuit).toHaveBeenCalledWith('s1')
     // 配套：core 重投 timer + 失败计数清理（1s 重投脉冲随队列回收失效）
     expect(chatComposable.clearDeferFlushRetryTimer).toHaveBeenCalledWith('s1')
+    // 配套 [session-dead G1]：清 pi queue_update 快照（steer 气泡随 pi 死亡作废，restore 后无帧再清）
+    expect(chatComposable.clearQueueState).toHaveBeenCalledWith('s1')
     // 行为 1：队列清空
     expect(queue.count('s1')).toBe(0)
     // 行为 2：草稿回收——注入槽位按序拼接文本（消费端光标插入 = 追加语义，见 DOM 测试）
@@ -158,6 +165,7 @@ describe('onForceQuitSession 队列回收编排（session-dead D3）', () => {
     expect(composerInjectionStore.pendingInjection.value).toBeNull()
     expect(toastMocks.info).not.toHaveBeenCalled()
     expect(chatComposable.clearDeferFlushRetryTimer).not.toHaveBeenCalled()
+    expect(chatComposable.clearQueueState).not.toHaveBeenCalled()
   })
 
   it('FQ-3: 空队列成功 → 清重投状态照常执行，无注入无提示（N=0 不提示）', async () => {

@@ -1,10 +1,16 @@
 /**
- * TurnProgressBar → Composer 中止接线测试（u4 验收④：「中止操作走既有 abort 链路」）。
+ * TurnProgressBar → abort 链路接线测试（u4 验收④：「中止操作走既有 abort 链路」）。
  *
  * 断言链路（真实组件树 + 真实 pinia store，仅 RPC 面 mock）：
- * TurnProgressBar「中止此 turn」点击 → emit abort → Composer.onStopClick
- * → staging 无活跃 → onAbort（core dispatch/submit）→ chatApi.abort(sessionId)
- * （既有 abort RPC 通路，与 Composer stop 按钮同一条链——不新增任何中止通道）。
+ * TurnProgressBar「中止此 turn」点击 → emit abort → Panel.onProgressAbort
+ * → useChat.abort(sessionId)（core dispatch/submit onAbort 同源原语）
+ * → chatApi.abort(sessionId)（既有 abort RPC 通路，与 Composer stop 按钮同一条链——
+ * 不新增任何中止通道）。
+ *
+ * [session-dead V5②] TurnProgressBar 挂载点自 Composer 内提升到 Panel composer-band
+ * （overlay/composer 互斥对之外）——ask_user 等待期 Composer 整体卸载，留在 Composer 内
+ * 观测条会一起消失、awaitingUser 分型文案无处渲染（Gate B 实测断点）。abort 接线随挂载点
+ * 移到 Panel（staging abortIfInProgress 优先级不保留，见 Panel.vue 挂载处注释）。
  *
  * mock/stub 集合对齐 composer-smoke.test.ts 既有范式（Panel 真实子树挂 Composer），
  * TurnProgressBar 刻意**不进 stub 表**（接线对象必须真实渲染）。
@@ -185,7 +191,7 @@ describe('中止接线（u4 验收④）：TurnProgressBar → 既有 abort 链�
     await nextTick()
     const abortBtn = wrapper.find('[data-testid="turn-progress-abort"]')
     expect(abortBtn.exists()).toBe(true)
-    // 用户点击 → emit abort → Composer.onStopClick → onAbort → chatApi.abort
+    // 用户点击 → emit abort → Panel.onProgressAbort → useChat.abort → chatApi.abort
     await abortBtn.trigger('click')
     await vi.advanceTimersByTimeAsync(0)
     await nextTick()
