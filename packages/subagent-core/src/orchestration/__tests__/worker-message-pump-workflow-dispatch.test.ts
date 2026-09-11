@@ -245,7 +245,7 @@ describe("pump → executeWorkflowAgent 端到端", () => {
 // ── 4：注入面回退（旧 deps 不注入 dispatch） ──────────────────
 
 describe("workflowAgentDispatch 未注入回退", () => {
-  it("旧 deps（仅 runner）→ deps.runner.run 被调（SAR 旧路径兼容，W4 归位）", async () => {
+  it("旧 deps（仅 runner）→ deps.runner.run 被调（[H2 W4] SAR.run 已掏空为纯转调 executeWorkflowAgent，两分支执行体归一；生产恒注入 dispatch 本分支不可达，仅为旧测试 deps 形态兼容）", async () => {
     const run = new WorkflowRun(
       "wf-pump-fallback-1",
       { scriptName: "test-wf", scriptSource: "agent('hi')", args: {}, scriptPath: "/tmp/test.js" },

@@ -57,7 +57,14 @@ import { SUBAGENT_RECORD_CUSTOM_TYPE } from "../record-entry.ts";
 import {
   _resetSettledWatchdogsForTest,
   _setMidRoundNoProgressWindowMsForTest,
+  armMidRoundNoProgress,
+  getMidRoundNoProgressWindowMs,
+  hasSettledWatchdog,
+  isSettledWatchdogDisabled,
+  SETTLED_MID_ROUND_NO_PROGRESS_MS,
+  SETTLED_WATCHDOG_ENV,
 } from "../settled-watchdog.ts";
+import { resetCoreForTests } from "../../core/host-services.ts";
 import { clearEngines, registerEngine } from "../engine/registry.ts";
 import type { EngineCapabilities } from "../engine/types.ts";
 import type { EnginePort } from "../engine/port.ts";
@@ -653,5 +660,61 @@ describe("引擎死亡与 adopt 豁免（§3.4 + 决策表）", () => {
     expect(wfRecord.status).toBe("closed"); // 落空 → 正常终态化
     expect(wfRecord.closedReason).toBe("gc");
     expect(supervisor.supervisedIds()).toEqual([]);
+  });
+});
+
+// ── settled-watchdog 原语守护（[H2 W4] 自 subprocess-agent-runner-no-progress-
+//    full-chain.test.ts 迁移——原语不随 SAR.run 掏空退役，守护唯一 arm 点现为
+//    service 派发路径，用例归本文件） ──────────────────────────────
+
+describe("settled-watchdog 原语守护（自 SAR full-chain 测试迁移）", () => {
+  beforeEach(() => {
+    _resetSettledWatchdogsForTest();
+    loggerMock.warn.mockClear();
+    // 宿主 shell export 隔离：守护开关 env 必须处于「未设」基线（空串 = 未设）。
+    vi.stubEnv(SETTLED_WATCHDOG_ENV, "");
+  });
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    _resetSettledWatchdogsForTest();
+    resetCoreForTests();
+  });
+
+  it("默认值守护：生产中段窗恒 30min；测试注入不改常量且可复位（防将来重构手滑）", () => {
+    expect(SETTLED_MID_ROUND_NO_PROGRESS_MS).toBe(30 * 60 * 1000);
+    expect(getMidRoundNoProgressWindowMs()).toBe(SETTLED_MID_ROUND_NO_PROGRESS_MS);
+
+    _setMidRoundNoProgressWindowMsForTest(1_500);
+    expect(getMidRoundNoProgressWindowMs()).toBe(1_500);
+    // 注入是覆盖值的读取，不污染常量本体（生产路径读到的默认值不变）。
+    expect(SETTLED_MID_ROUND_NO_PROGRESS_MS).toBe(30 * 60 * 1000);
+
+    _resetSettledWatchdogsForTest();
+    expect(getMidRoundNoProgressWindowMs()).toBe(SETTLED_MID_ROUND_NO_PROGRESS_MS);
+  });
+
+  it("U-B3 env ≤0 的 warn 明示 workflow 域 no-progress 熔断连带失效（只改文案，不动开关语义）", () => {
+    vi.stubEnv(SETTLED_WATCHDOG_ENV, "0");
+    // 惰性首读触发解析 + warn 留痕（本文件 hoisted-mock 了 core/logger——settled-watchdog
+    // 的 logger.warn 进 loggerMock，与原 full-chain 文件的 HostServices.log 捕获等价）。
+    expect(isSettledWatchdogDisabled()).toBe(true);
+    const warn = loggerMock.warn.mock.calls
+      .map((args) => String(args[0]))
+      .find((message) => message.includes(SETTLED_WATCHDOG_ENV));
+    expect(warn).toBeDefined();
+    // 文案必须覆盖 M3 复用同一原语带来的 workflow 域连带后果（修复前只提 chat 域）。
+    expect(warn).toContain("workflow");
+    expect(warn).toContain("no-progress");
+    expect(warn).toContain("SAR.run");
+
+    // 开关语义不动：arm 仍 no-op（本条目只补文案与注释，不新增 env、不改行为）。
+    const fired: string[] = [];
+    armMidRoundNoProgress("sa-env-off", {
+      onMidTimeout: () => fired.push("mid"),
+      onSettleTimeout: () => fired.push("settle"),
+    });
+    expect(hasSettledWatchdog("sa-env-off")).toBe(false);
+    expect(fired).toEqual([]);
   });
 });

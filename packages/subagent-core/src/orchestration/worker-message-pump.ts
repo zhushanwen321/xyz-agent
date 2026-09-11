@@ -762,7 +762,10 @@ function dispatchAgentCall(
   // 收尾」）：workflowAgentDispatch = SubagentService.executeWorkflowAgent 的注入
   // 形态——真实 record（origin:"workflow" + parentRunId=run.runId）进 store、事件
   // 流经 service 内 journal 接线进 record、streaming/守护/池归 service 派发路径。
-  // 未注入时（旧测试 deps）回退 deps.runner（SAR 旧编排，W4 归位时统一）。
+  // 未注入时（旧测试 deps）回退 deps.runner——[H2 W4] SAR.run 已掏空为纯转调
+  // executeWorkflowAgent，两分支执行体归一（同一 service 编排），仅 parentRunId
+  // 来源不同（注入路径闭包携带真实 run.runId；回退路径为 SAR 直调占位）。生产
+  // 装配恒注入 dispatch（extension index.ts makeDeps），回退分支生产不可达。
   // 旁路 progress record 族（createRecord + updateFromEvent + SubagentStream +
   // trace.live 挂载）随本切换整体退役——TUI/GUI 实时进度改从 store 订阅（D2）。
   const dispatch = deps.workflowAgentDispatch;
