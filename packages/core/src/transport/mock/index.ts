@@ -1113,6 +1113,11 @@ const modelsSub = makeMockSubscription(() =>
 
 export const model = {
   onModels: (h: (models: ModelInfo[]) => void) => modelsSub.subscribe(h),
+  // 主动拉取（与 onModels 同源快照，对齐 real 侧「订阅首推 + 按需拉取」双通路契约；
+  // settings-lifecycle init 的 listModels 兜底拉取在 mock 模式依赖本方法——u17 mock 接回）
+  async listModels(): Promise<ModelInfo[]> {
+    return modelsSub.snapshot()
+  },
   async switchModel(sessionId: string, provider: ProviderId, modelId: string) {
     await sleep(TIMING.ack)
     // 回执契约与真实 api 对齐（C-pi-13）：mock 无 pi，生效值 = 请求值回显
