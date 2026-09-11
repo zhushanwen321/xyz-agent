@@ -35,8 +35,10 @@ import { applySessionOccupancyTransition } from '../../services/session/event-in
 import type { IManagedSessionView } from '../../services/session/types.js'
 import { spawnPiFixture, REAL_PI_READY, REAL_PI_SKIP_REASON, type PiFixture } from './pi-fixture.js'
 
-/** 单步等待上限（任务护栏：每步最多 60s，真实 LLM 轮次余量） */
-const STEP_TIMEOUT_MS = 60_000
+/** 单步等待上限（任务护栏：每步最多 120s，真实 LLM 轮次余量）。
+ * 60s 在全量套件并发跑（469 文件 + real-pi 进程）时余量不足，曾观测单步超时
+ * （事件流完整走到 agent_settled 但目标谓词未命中）；单跑 9s，120s = 13 倍余量，仅校准护栏量级。 */
+const STEP_TIMEOUT_MS = 120_000
 /** 第二条消息唯一标记（user message 注入断言锚点） */
 const PROBE_MARK = 'PROBE-SD1:'
 /** PROBE turn 的 assistant 定局标记（run 尾部边沿锚点） */
