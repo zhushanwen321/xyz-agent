@@ -83,6 +83,10 @@ graph TD
 | U5 | U5→U6 设计内过渡态：subagent-core 6 文件 9 处 TS2305（type-only import 已删 SDK 符号），分布 = port.ts / remote-engine.ts / reverse-router.ts / engine/types.ts / subagent-service.ts:118 / protocol-closure.test.ts | 已知——全部位于 U6 删除清单「engine 层承载件」；vitest 运行时绿（core 2883 passed 实证 type-only import 擦除）；U6 落地收敛，UF-1 验收面（core pnpm test）不受影响 |
 | U5 | HostStreamDeltaParams 的 recordId 关联形态保留未删 | 合理——不命中 grep 门 pattern，其 core 消费面（reverse-router recordId 分路）属 U6 删除清单 |
 | U5 | conversation 能力位按 D5 保留（pi native / zcode unsupported / gate / manifest 不动，注释语义收窄为 resume 能力位）；chat-domain-v1x.test.ts 整删后 SDK 侧 gate 文案契约断言随文件退役 | 合理——D5 位与 gate 行为保留；gate 行为覆盖仍存于 core capability-gate.test.ts 与 pi server.test.ts gate 用例 |
+| UF-1 | 红1（collectRecords 绑定重建缺 round 投影）= 前任实现缺口，修法为 scanFile 内 identity miss 且绑定携带 round 时补 entry.light.round（+6 行最小侵入），不动 buildRecord 签名与既有全量重建语义；cold-resurrect.ts/alive-store.ts 零触碰 | 合理——既有语义 identity entry 磁盘重建不恢复 round，绑定路径按需补投影 |
+| UF-1 | 红2（写失败不阻塞用例红）根因 = 测试桩缺陷（mkdir 后漏 chmod 0o555，目录实际可写），非实现缺陷——同文件 A 组同款用例绿证明 writeRecordBinding 只读目录行为正确 | 合理——修测试桩不改实现 |
+| UF-1 | 红3（跨重启全链断言错位）根因 = 首任测试断言挖错协议承载位：chat 会话形态参数（recordId/resume）挂 RunContext（port.ts:146）不在 task；修正后与 delivery-methods.test.ts:191 既有绿测试同口径 | 合理——协议承载位以 port.ts 既有契约为准 |
+| UF-1 | typecheck 验收口径调整：typecheck exit 0 在 U6 前不可达（U5 过渡态 9 处 TS2305），调整为「恰好 9 且逐条为已登记分布、零新增」 | 已知——U6 落地后收敛到 exit 0 |
 
 ## 6 状态表
 
@@ -95,7 +99,7 @@ graph TD
 | U5 | committed | 1 | commit 465bb7d0d：26 文件 +396/-2996；grep 门三包源码+测试双方向零命中；sdk 133 / pi 303 / zcode 243+3 skipped 全绿 + 三 typecheck 0（主 agent 独立重跑逐字相符）；处置表前 8 行清零；7 偏差登记 §5；UF-1 并行在途改动共存未触碰 |
 | U6 | pending | 0 | — |
 | U7 | pending | 0 | — |
-| UF-1 | in-progress | 2 | 首任 dev 完成主体实现（工作区 4 文件 +249/-19：state-marker 载体 + record-store 消费 + service 写点 + 13 用例 10 绿）后因账户限流 1302 阵亡；残留 3 红用例（collectRecords 重建分支 / ⑤写失败不阻塞 / ③跨重启全链）+ typecheck 仅剩已登记的 9 处 U5→U6 过渡态 TS2305（非本单元面）；接替 dev 已带失败明细证据包派出 |
+| UF-1 | committed | 2 | commit f70dc2da4：4 文件（state-marker 载体 / record-store 消费 / service 写点 / record-binding.test 13 用例）；主 agent 独立重跑 13/13 + 全量 2896 passed \| 4 skipped + typecheck 恰 9 处已登记过渡态；接替 dev 修 3 红（1 实现缺口 + 2 测试缺陷）后 5 验收项 clause_map 全覆盖；4 偏差登记 §5 |
 
 ## 7 残留风险与变更历史
 
@@ -110,3 +114,4 @@ graph TD
   - 2026-09-11 **U4 真机基线轮完成**：隔离实例（/tmp/xyz-iso-data，PORT_OFFSET=200，vite 1421，CDP 9242，真实 LLM MiMo-V2.5-Pro，staged 引擎 bundle-extensions 重建含 U1-U3）。逐场景签收见 §2 U4 行：S1/S2/S3/S4/S7/S8 ✅（**sess_8590cc5a 遗留热路径零通知确认修复**——快续聊轮通知到达）；S6 ❌ 触发 **UF-1**（跨重启续聊绑定断裂，engine-CLI 时代预存缺口：PI_SUBAGENT_SELF_RECORD_ID 无注入点 → 身份条目永不落盘 → coldLookupForAction 无映射可查；展示层 3 条 vs message 链 not-found 双注册表不同源实测钉位）。新增 UF-1 单元（§2/§3 DAG/§6），与 U5 并行、先于 U6，Gate B 复验 S6 三变体。冷启量化入表。气泡观察项未复现、Gate B 续观；两项低优观察（turns/tok 计数、exit code 128 vs 143）随 UF-1/U7 批带走。
   - 2026-09-11 **U5 流转 committed（465bb7d0d）**：删路①引擎侧完成——SDK 通道族 9→8/方法 10→9、pi chat-session.ts 删、zcode interact 桩删、处置表前 8 行清零，grep 门三包零命中；三包测试/typecheck 独立重跑全绿。U5→U6 过渡态（core 6 处 TS2305 type-only import）登记 §5，U6 收敛。UF-1 与 U5 同批派发（领地不相交），U5 硬核验时文件集严格二分，UF-1 在途 4 文件未触碰。
   - 2026-09-11 **UF-1 首任 dev 限流阵亡 → 接替派出**：主体实现已完成（+249/-19，13 用例 10 绿），账户限流 1302 中断于收尾段；残留 3 红用例钉位（collectRecords 重建分支消费缺口 / 写失败不阻塞 warn 路径 / service 跨重启集成链）。按接替程序补派（失败明细 + TS2305 过渡态禁触清单随 task 附上）。U6 仍锁于 UF-1（subagent-service.ts 串行）。
+  - 2026-09-11 **UF-1 流转 committed（f70dc2da4）**：接替 dev 修 3 红后 13/13 绿、全量 2896 passed、typecheck 恰 9 处已登记过渡态零新增；5 验收项 clause_map 全覆盖（回填点落盘 / collectRecords+findLightById 解析 / coldLookupForAction 全链 / .state 终态优先级 / 写失败不阻塞）。就绪集重算：**U6 就绪**（U5+UF-1 双 committed）——此后 S6 三变体跨重启续聊的真机复验移至 Gate B（UF-1 单测已覆盖全链，真机留验收签收）。
