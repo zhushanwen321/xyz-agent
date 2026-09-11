@@ -35,10 +35,6 @@ afterAll(() => rmSync(tmp, { recursive: true, force: true, maxRetries: 3 }))
 /** 构造最小合法 .vue（模板用 xyz-ui 映射组件，不触原生 HTML/Emoji/Tab/v-model 检查） */
 function makeVue({ scriptLines, marker = null, markerLineOffset = null }) {
   const lines = []
-  const markerAt = (ln) => {
-    while (lines.length < ln - 1) lines.push('// filler')
-    lines.push(marker)
-  }
   if (marker && markerLineOffset === null) lines.push(marker)
   lines.push('<template>')
   lines.push('  <Button>ok</Button>')
