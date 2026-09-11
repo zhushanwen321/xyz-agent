@@ -133,9 +133,10 @@ data:    { error: "unknown error" }   ← 结构化 data 字段，message 不含
 
 `e2e/harness.mjs` 导出：
 
-- **进程编排**：`spawnPi(opts)`（tmp 初始化 + auth 迁移 + 交错时间轴 + RPC client）、`startHangServer()`（A5 stub socket）
+- **进程编排**：`spawnPi(opts)`（tmp 初始化 + auth 迁移 + 交错时间轴 + RPC client）、`startHangServer()`（A5 stub socket）、`runScenario(name, fn)`（场景 runner 通用执行器：单场景失败不阻断，四分类汇总）、`runStandalone(moduleUrl, run)`（独立执行入口判定 + exit code 映射，run-aN.mjs 尾部共用）
 - **RPC client**（spawnPi 返回值的 `rpc`）：`request(cmd)`（id 关联）、`waitFor(type, opts)`、`waitForSessionLog(pattern, opts)`（轮询 session JSONL 的 rename-session:log entry，pattern 匹配 message）、`prompt(msg)`、`setSessionName(name)`、`getState()`
-- **断言纯函数**（场景脚本与单测共用）：`rebuildPreview` / `parseLogMessages` / `extractRenameLogEntries` / `extractLastStopAssistant` / `firstAssistantStartT` / `lastStopAssistantEndT` / `countToolCalls` / `countLlmRequestLogs` / `countSessionInfoEntries` / `assertTitleGuards` / `classifyFailure`
+- **断言纯函数**（场景脚本与单测共用）：`sleep`（场景通用 sleep）/ `assert`（场景通用 assert，失败抛 assertion 分类 HarnessError）/ `rebuildPreview` / `parseLogMessages` / `lastSessionInfoEntry`（取最后一条 session_info entry，name SSOT）/ `parseJsonlEntries`（逐行 JSON.parse，坏行跳过）/ `extractRenameLogEntries` / `extractLastStopAssistant` / `firstAssistantStartT` / `lastStopAssistantEndT` / `countToolCalls` / `countLlmRequestLogs` / `countSessionInfoEntries` / `assertTitleGuards` / `assertLogTitleMatches`（断言 renamed to 日志标题与 session_info 落库一致）/ `classifyFailure`
+- **共用常量/类**：`E2E_MODEL`（测试模型，值见开头）、`LLM_REQUEST_MARKER`（rename LLM request 日志行前缀）、`RENAME_LOG_CUSTOM_TYPE`（rename 日志 entry 的 customType）、`HarnessError`（携带失败分类的错误类，classifyFailure 归类依据）
 - **清理**：handle 的 `kill()`（按 PID）与 `cleanup()`（kill + 删 tmp；`E2E_KEEP_TMP=1` 保留现场）
 
 单测：`cd extensions/universal/rename-session && npx vitest run e2e/harness.test.mjs`（根 vitest.config.ts 的 include 白名单精确列 `e2e/harness.test.mjs`；scenarios.test.mjs 只在专用 e2e/vitest.e2e.config.ts 的 include 里）。
