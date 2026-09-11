@@ -67,14 +67,14 @@ pi install npm:@zhushanwen/pi-rename-session
 
 三个入口共用同一条落库管道（`callRenameLLM` → 防覆盖重查 → `setSessionName`），按 `mode` 分派：
 
-1. **入口分派（事件面 live 读 mode）**：`message_end` 入口（first-prompt）过滤 `role === "user"`；`turn_end` 入口（first-stop）按下方流程；`agent-tool` 模式不注册任何自动逻辑（两入口命中即静默返回），改为 extension load 时注册 `rename_session` 工具。
+1. **入口分派（事件面 live 读 mode）**：`message_end` 入口（first-prompt）过滤 `role === "user"`；`turn_end` 入口（first-stop）按下方流程；`agent-tool` 模式不激活自动命名逻辑（两 handler 常驻注册、命中即静默返回），改为 extension load 时注册 `rename_session` 工具。
 2. **开关 + subagent 过滤**（自动路径共用）：开关关闭（flag 不存在且 `enabled=false`）直接返回；session 路径含 `subagents` 段视为子进程 session，跳过。
 3. **O(1) 快速路径（first-stop）**：只有 `stopReason === "stop"` 的 turn 才继续——**rename 一定在 round 末触发**（最终 turn 的 message 即最终 assistant 回复，final text 零遍历可得），不会在首个 iteration 中途命名。first-prompt 入口的对应守卫：首条 user 判定 = handler 执行时 `getEntries()` 中 user message 计数 === 0（pi 的 extension handler 先于该条 message 的 entries append 执行，本条即 session 首条 user；steering/follow-up 消息到达时首条已入 entries，天然不重复触发）。
 4. **首 round 判定（first-stop）**：session entries 中成功（stop）assistant 回复数 === 1 才触发（后续 round 不重复 rename；error 轮的 assistant 回复不计数，延迟到下一个成功轮）。
 5. **两段输入构造**：`[user(首条 prompt), assistant(最终回复文本), user(instruction)]`——任务意图 + 轮次结论恰好与标题语义对齐，不含 toolCall/toolResult 过程数据；两段文本各截断 4000 Unicode 码点（中文场景约 4k token/段，成本可控且不随工具数增长）。assistant 段为空（first-prompt 模式 / 纯工具结束的 round）时降级为两条——标题主信号本就是 prompt。
 6. **LLM 生成 slug 标题**：独立精简 system prompt（<200 字符的 slug 词组约束，非整个 agent prompt）+ instruction（正反例 few-shot，作为追加 user message 发送）+ `tools: []` + `maxTokens: 64`，按 `config.model` 独立选模（空 ref 跟随会话主模型）发起一次 LLM 调用；固定 30s 超时（超时归一为失败，走静默跳过）。
 7. **落库**：cleanTitle 清洗（去首尾引号 / markdown 强调标记 / 句尾标点、空白归一、按码点截断）后 `setSessionName` 写入。**落库前重查** `pi.getSessionName()`——LLM 调用窗口（2-30s）内用户手动命名的竞态由此兜住，已有名则 skip 不覆盖。**不**写入 session history，对话记录不受影响。
-8. **`rename_session` 工具（agent-tool）**：execute 内先 live 读 config 守卫——mode 已切走时拒绝（错误文案含恢复指引：切回 agent-tool / 手动改名）；title 经 cleanTitle 清洗，空值拒绝；非空直接 `setSessionName` **不走防覆盖守卫**（agent 显式调用 = 代表用户的意图，允许覆盖任何既有名，含自动名/语义名）。
+8. **`rename_session` 工具（agent-tool）**：execute 内守卫链依次为——先拒绝 subagent session（子会话是临时产物，subagent 排除守卫覆盖 message_end / turn_end / 工具三入口，C-ext-21）；再 live 读 config 守卫——mode 已切走时拒绝（错误文案含恢复指引：切回 agent-tool / 手动改名）；title 经 cleanTitle 清洗，空值拒绝；非空直接 `setSessionName` **不走防覆盖守卫**（agent 显式调用 = 代表用户的意图，允许覆盖任何既有名，含自动名/语义名）。
 
 ### 可靠性行为
 

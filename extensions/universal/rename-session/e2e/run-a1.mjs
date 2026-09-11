@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * A1 场景：工具型首轮 —— 触发时机 + 输入内容证据链（设计 §8.3 A1 / 契约 C1）。
+ * A1 场景：工具型首轮 —— 触发时机 + 输入内容证据链（契约 C1）。
  *
  * 流程：真实 pi + mimo，在有 ts 文件的 fixture 目录发「列出当前目录的 ts 文件并统计行数」
  * （触发多 iteration 工具调用），round 完成后等 rename 落库，然后五重断言：
@@ -106,7 +106,7 @@ function findSoleLlmRequest(logEntries) {
 /** A1 ① 流序判别（主）+ 时刻辅助：LLM request 之后无 turn 事件、时刻不早于最终 message_end-1s。 */
 function assertStreamOrder(timeline, llmReq) {
 	// 锚点 = session JSONL 中 LLM request entry 的时刻（data.timestamp，与时间轴同为
-	// 本机 epoch ms 可比较）。断言集 = 设计 §8.3 A1① 的 turn_start/message_start/
+	// 本机 epoch ms 可比较）。断言集 = 场景 A1 ① 流序判别的 turn_start/message_start/
 	// message_end（不含 turn_end：pi 先调 turn_end handler 再向 stdout 写事件，最终
 	// turn_end 滞后 LLM request 1ms 级是通道顺序伪影非中途触发；中途触发的真特征是
 	// 其时刻之后仍有下一 iteration 事件）

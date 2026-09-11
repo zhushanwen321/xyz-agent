@@ -1,5 +1,5 @@
 /**
- * E2E 场景 A1-A5 的 vitest 包装（cw test gate 兼容）。
+ * E2E 场景 A1-A7 的 vitest 包装（cw test gate 兼容）。
  *
  * 背景：cw test gate 用 vitest 输出解析器统计 `N passed` / `N failed`，
  * `node e2e/run-all.mjs` 的自定义表格输出解析不到（passed=0）。本文件把 7 个

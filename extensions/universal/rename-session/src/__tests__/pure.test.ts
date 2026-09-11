@@ -18,11 +18,11 @@ import {
 } from "../pure.js";
 
 // ────────────────────────────────────────────────────
-// countSuccessfulAssistantReplies（D6：触发判定改用的成功-turn 计数）
+// countSuccessfulAssistantReplies（触发判定用的成功-turn 计数）
 // ────────────────────────────────────────────────────
 
 describe("countSuccessfulAssistantReplies", () => {
-	it("TC-D6-1: 混合 stopReason（stop×1/toolUse/error/length/user/compaction）→ 只数 stop 的 assistant，返回 1", () => {
+	it("TC-S1: 混合 stopReason（stop×1/toolUse/error/length/user/compaction）→ 只数 stop 的 assistant，返回 1", () => {
 		const entries = [
 			{ type: "message", message: { role: "user" } },
 			{ type: "message", message: { role: "assistant", stopReason: "toolUse" } },
@@ -34,7 +34,7 @@ describe("countSuccessfulAssistantReplies", () => {
 		expect(countSuccessfulAssistantReplies(entries)).toBe(1);
 	});
 
-	it("TC-D6-2: 工具型首轮（多 toolUse + 最终 1 stop）→ 1（轮末最终 iteration 才触发）", () => {
+	it("TC-S2: 工具型首轮（多 toolUse + 最终 1 stop）→ 1（轮末最终 iteration 才触发）", () => {
 		const entries = [
 			{ type: "message", message: { role: "user" } },
 			{ type: "message", message: { role: "assistant", stopReason: "toolUse" } },
@@ -44,7 +44,7 @@ describe("countSuccessfulAssistantReplies", () => {
 		expect(countSuccessfulAssistantReplies(entries)).toBe(1);
 	});
 
-	it("TC-D6-3: 仅 error 轮 → 0（error 轮不命名，延迟到下一成功轮）", () => {
+	it("TC-S3: 仅 error 轮 → 0（error 轮不命名，延迟到下一成功轮）", () => {
 		const entries = [
 			{ type: "message", message: { role: "user" } },
 			{ type: "message", message: { role: "assistant", stopReason: "error" } },
@@ -52,7 +52,7 @@ describe("countSuccessfulAssistantReplies", () => {
 		expect(countSuccessfulAssistantReplies(entries)).toBe(0);
 	});
 
-	it("TC-D6-4: 2 个 stop（已有成功轮后的新 session round）→ 2（不再触发）", () => {
+	it("TC-S4: 2 个 stop（已有成功轮后的新 session round）→ 2（不再触发）", () => {
 		const entries = [
 			{ type: "message", message: { role: "user" } },
 			{ type: "message", message: { role: "assistant", stopReason: "stop" } },
@@ -62,7 +62,7 @@ describe("countSuccessfulAssistantReplies", () => {
 		expect(countSuccessfulAssistantReplies(entries)).toBe(2);
 	});
 
-	it("TC-D6-5: assistant 无 stopReason 字段 → 不计（只认显式 stop，宽松数据不误触发）", () => {
+	it("TC-S5: assistant 无 stopReason 字段 → 不计（只认显式 stop，宽松数据不误触发）", () => {
 		const entries = [
 			{ type: "message", message: { role: "user" } },
 			{ type: "message", message: { role: "assistant" } },
@@ -72,7 +72,7 @@ describe("countSuccessfulAssistantReplies", () => {
 });
 
 // ────────────────────────────────────────────────────
-// countUserMessages（D2：first-prompt 模式首条判定——message_end(user) handler 内
+// countUserMessages（设计 rename-session-three-modes.md D2：first-prompt 模式首条判定——message_end(user) handler 内
 // entries 计数 === 0 ⇔ 本条即 session 首条 user，探针 P1 实测该时点 entries 不含本条）
 // ────────────────────────────────────────────────────
 
@@ -171,7 +171,7 @@ describe("cleanTitle", () => {
 		expect(cleanTitle("  \n修复登录 bug\n  ", 50)).toBe("修复登录 bug");
 	});
 
-	// ── 尾部标点清理（D4 配套：slug 标题不带句尾标点，LLM 漏遵从时兜底） ──
+	// ── 尾部标点清理（slug 风格配套：标题不带句尾标点，LLM 漏遵从时兜底） ──
 
 	it("尾部中文句号清除 → '修复登录超时'", () => {
 		expect(cleanTitle("修复登录超时。", 50)).toBe("修复登录超时");
@@ -242,7 +242,7 @@ describe("normalizeRenameConfig", () => {
 		expect(normalizeRenameConfig(cfg)).toEqual(cfg);
 	});
 
-	// ── mode 三值枚举（D1：normalize 逐字段校验回默认） ──
+	// ── mode 三值枚举（设计 rename-session-three-modes.md D1：normalize 逐字段校验回默认） ──
 
 	it("mode 三个合法值（first-prompt/first-stop/agent-tool）→ 原样保留", () => {
 		for (const mode of ["first-prompt", "first-stop", "agent-tool"] as const) {
@@ -333,7 +333,7 @@ describe("normalizeRenameConfig", () => {
 });
 
 // ────────────────────────────────────────────────────
-// env 覆盖层删除负面（D6：PI_RENAME_* 四键已删，预置变量不得有任何幽灵效果，设计 V8）
+// env 覆盖层删除负面（设计 rename-session-three-modes.md D6 / V8：PI_RENAME_* 四键已删，预置变量不得有任何幽灵效果）
 // ────────────────────────────────────────────────────
 
 describe("env 覆盖层删除负面（PI_RENAME_* 无效果）", () => {

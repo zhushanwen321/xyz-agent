@@ -39,7 +39,7 @@ import net from "node:net";
 
 // ──────────────────────── 常量 ────────────────────────
 
-/** 测试模型（项目规范：禁 kimi；A1-A5 主对话模型）。 */
+/** 测试模型（项目规范：禁 kimi；A1-A7 主对话模型）。 */
 export const E2E_MODEL = "xiaomi-token-plan-cn/mimo-v2.5-pro";
 
 const E2E_DIR = fileURLToPath(new URL(".", import.meta.url));
@@ -51,7 +51,7 @@ const REPO_ROOT = join(EXT_DIR, "..", "..", "..");
 /** pi cli 真身（node_modules/.bin/pi 是指向它的 symlink；直接 require 真身避开 shebang/权限问题）。 */
 const PI_CLI = join(REPO_ROOT, "node_modules/@earendil-works/pi-coding-agent/dist/cli.js");
 
-/** rename LLM 超时（D7 固定 30s）+ 余量，waitForSessionLog 等 rename 结果日志的默认上限。 */
+/** rename LLM 超时（固定 30s，与 llm.ts RENAME_TIMEOUT_MS 同值）+ 余量，waitForSessionLog 等 rename 结果日志的默认上限。 */
 const RENAME_SETTLE_TIMEOUT_MS = 45_000;
 
 // ──────────────────────── 错误与失败分类 ────────────────────────
@@ -159,7 +159,7 @@ export function parseJsonlEntries(lines) {
 	return entries;
 }
 
-// previewText 同构常量（extensions/universal/rename-session/src/llm.ts D9 契约，Unicode 码点单位）
+// previewText 同构常量（与 extensions/universal/rename-session/src/llm.ts 的 preview 截断契约同值，Unicode 码点单位）
 const PREVIEW_MAX_CODE_POINTS = 300;
 const PREVIEW_HEAD_CODE_POINTS = 200;
 const PREVIEW_TAIL_CODE_POINTS = 100;
@@ -281,7 +281,7 @@ export function extractLastStopAssistant(jsonlLines) {
 }
 
 /**
- * 从交错时间轴取首条 assistant message_start 事件的时刻（A6 first-prompt 触发时点断言，设计 V2）。
+ * 从交错时间轴取首条 assistant message_start 事件的时刻（A6 first-prompt 触发时点断言，设计 rename-session-three-modes.md V2）。
  * timeline 条目 = createTimeline 的 {t, stream, line}：只认 stdout 流（stream === "out"）的
  * JSON 事件行（RPC 无过滤转发全部 session 事件），坏 JSON 行跳过。无匹配返回 null（调用方 assert）。
  * @param {Array<{t: number, stream: string, line: string}>} timeline
@@ -328,7 +328,7 @@ export function lastStopAssistantEndT(timeline) {
 }
 
 /**
- * 数 session JSONL 行数组中指定工具的 toolCall 次数（A7 agent-tool 场景，设计 V3/V10 的
+ * 数 session JSONL 行数组中指定工具的 toolCall 次数（A7 agent-tool 场景，设计 rename-session-three-modes.md V3/V10 的
  * 确定性判据支撑：pi RPC 无工具清单查询命令，但「无工具 ⇒ 必无 toolCall」与 agent 行为无关）。
  * toolCall block 形态：assistant message content 数组成员 {type:"toolCall", name, arguments}；
  * toolResult message 与非数组 content 不计入。坏行跳过；lines 为 null/undefined（session

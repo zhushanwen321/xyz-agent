@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * A4 场景：error 轮不命名 + 重启 --session 续跑后下一成功轮命名（设计 §8.3 A4）。
+ * A4 场景：error 轮不命名 + 重启 --session 续跑后下一成功轮命名。
  *
  * 阶段 1：tmp 配坏 provider（models.json 覆盖 baseUrl → http://127.0.0.1:1/v1，探针 4 写法）
  *         发「帮我看下这个目录结构」→ round error。断言：turn_end 带 stopReason=error、

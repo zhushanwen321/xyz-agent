@@ -19,7 +19,7 @@ const logger = getLogger("rename-session");
 
 /**
  * turn_end 事件的宽松类型（参考 pi extensions/types.ts 的 TurnEndEvent）。
- * message 收紧为带 stopReason 的宽松结构（D2 快速路径读取），不依赖 pi 类型导出。
+ * message 收紧为带 stopReason 的宽松结构（turn_end 快速路径读取），不依赖 pi 类型导出。
  * 注意交叉目标用 `& object` 而非 `& Record<string, unknown>`：pi 的 AgentMessage 联合成员是
  * interface（无隐式 index signature），后者会导致 handler 注册 on("turn_end") 时参数逆变校验
  * 失败（tsc 实测重载匹配崩掉）；`& object` 同样表达「是对象 + 可选 stopReason」且可编译。
@@ -32,7 +32,7 @@ interface TurnEndLikeEvent {
 }
 
 /**
- * message_end 事件的宽松类型（设计 D2 first-prompt 入口）。同 TurnEndLikeEvent 的
+ * message_end 事件的宽松类型（设计 rename-session-three-modes.md D2 first-prompt 入口）。同 TurnEndLikeEvent 的
  * `& object` 逆变技巧；message 只读 role（分派过滤）与 content（载荷取文本）。
  */
 interface MessageEndLikeEvent {
@@ -41,14 +41,14 @@ interface MessageEndLikeEvent {
 }
 
 /**
- * mode 切走后残留 rename_session 工具被调用的 execute 守卫文案（D3，isError 经 throw 产生）。
+ * mode 切走后残留 rename_session 工具被调用的 execute 守卫文案（设计 rename-session-three-modes.md D3，isError 经 throw 产生）。
  * 与失败路径表「守卫拒绝」行 / V10 通过标准三处对齐：含恢复动作指引。
  */
 const RENAME_TOOL_MODE_GUARD_MESSAGE =
 	"模式已切换，rename_session 仅在 agent-tool 模式可用；本会话可切回 agent-tool 立即恢复（live 读 mode），或手动改名（GUI rename / pi 原生 /name）。";
 
 /**
- * subagent session 的 rename_session 工具 execute 守卫文案（D7 守卫闭环，C-ext-21 三入口
+ * subagent session 的 rename_session 工具 execute 守卫文案（设计 rename-session-three-modes.md D7 守卫闭环，C-ext-21 三入口
  * 复用；isError 经 throw 产生）。不暴露内部路径细节——subagents 目录形态是跨包实现耦合，
  * 面向 agent 的报错只说结论与指引。
  */
@@ -56,10 +56,10 @@ const RENAME_TOOL_SUBAGENT_GUARD_MESSAGE =
 	"当前会话是 subagent 子任务会话（临时产物，不参与会话命名体系），不支持重命名；请继续当前任务，无需重试。";
 
 /**
- * 注册 rename_session 工具（D3 agent-tool 模式）。
+ * 注册 rename_session 工具（设计 rename-session-three-modes.md D3 agent-tool 模式）。
  *
  * 关键语义：
- * - subagent session 守卫（D7）：isSubagentSession 命中即 throw isError——subagent
+ * - subagent session 守卫（设计 rename-session-three-modes.md D7）：isSubagentSession 命中即 throw isError——subagent
  *   子进程同样加载本 extension（全局 mode=agent-tool 时 subagent 也注册本工具），
  *   子会话是临时产物不参与 rename 体系，与 message_end / turn_end 两入口同语义。
  * - execute 内 live 读 config 守卫：mode !== "agent-tool"（mode 切走后本工具残留在
@@ -112,7 +112,7 @@ function registerRenameSessionTool(pi: ExtensionAPI): void {
 
 /**
  * pi-rename-session extension 工厂函数。
- * 三种触发模式（设计 D1，默认 first-stop）共用同一落库管道（callRenameLLM → 防覆盖重查 →
+ * 三种触发模式（设计 rename-session-three-modes.md D1，默认 first-stop）共用同一落库管道（callRenameLLM → 防覆盖重查 →
  * setSessionName）：
  * - first-stop（默认）：首个成功 round 末触发（turn_end 入口，现状行为）
  * - first-prompt：首条 user 消息发出即触发（message_end 入口，不等回复，标题只基于 prompt）
@@ -126,19 +126,19 @@ export default function renameSessionExtension(pi: ExtensionAPI): void {
 
 	registerAutoRenameCommand(pi);
 
-	// 工具注册面（D1 求值时点边界）：只在 extension load 时求值一次——pi 无 unregisterTool，
+	// 工具注册面（设计 rename-session-three-modes.md D1 求值时点边界）：只在 extension load 时求值一次——pi 无 unregisterTool，
 	// 切 mode 后已存活 session 的工具清单不回溯（切到 agent-tool 当前 session 无工具、切走则
 	// 工具残留），残留工具由 execute 内 live mode 守卫兜底（RENAME_TOOL_MODE_GUARD_MESSAGE）。
 	if (loadRenameConfig().mode === "agent-tool") {
 		registerRenameSessionTool(pi);
 	}
 
-	// 在途去重标志（D2）：工厂闭包级而非模块级——pi 的 extensionCache 缓存 factory、每次
+	// 在途去重标志（设计 rename-session-three-modes.md D2）：工厂闭包级而非模块级——pi 的 extensionCache 缓存 factory、每次
 	// session 创建重执行工厂函数，闭包变量 = per-session 生命周期；模块顶层变量进程级存活，
 	// 进程内 /fork、/session 切换 session 时会跨 session 污染、吞掉新 session 的唯一命名机会。
 	let firstPromptInFlight = false;
 
-	// message_end 入口（first-prompt 模式，D2）：首条 user 消息发出即命名，不等回复完成。
+	// message_end 入口（first-prompt 模式，设计 rename-session-three-modes.md D2）：首条 user 消息发出即命名，不等回复完成。
 	pi.on("message_end", async (event: MessageEndLikeEvent, ctx: ExtensionContext) => {
 		// handler 侧 debug 日志（C3 同款契约）：firstPrompt 前缀区分触发入口（与 turn_end 路径
 		// 共享 skip: name exists / renamed to 契约文案，harness 断言可归因到本入口）
@@ -153,7 +153,7 @@ export default function renameSessionExtension(pi: ExtensionAPI): void {
 			const config = loadRenameConfig();
 			if (!config.enabled) return;
 
-			// 3. mode 分派（事件面 live 读，D1：GUI 切 mode 对活跃 session 的自动命名即时生效——
+			// 3. mode 分派（事件面 live 读，设计 rename-session-three-modes.md D1：GUI 切 mode 对活跃 session 的自动命名即时生效——
 			//    first-stop / agent-tool 模式下本入口静默返回，V10 A 段「切走即停」）
 			if (config.mode !== "first-prompt") {
 				debugLog(`skip: mode=${config.mode}`);
@@ -163,7 +163,7 @@ export default function renameSessionExtension(pi: ExtensionAPI): void {
 			// 4. 排除 subagent 子进程 session（守卫链复用，C-ext-21 覆盖面含本新入口）
 			if (isSubagentSession(ctx.sessionManager.getSessionDir())) return;
 
-			// 5. 首条 user 判定（D2）：extension handler 先于本条 message 的 entries append 执行
+			// 5. 首条 user 判定（设计 rename-session-three-modes.md D2）：extension handler 先于本条 message 的 entries append 执行
 			//    （探针 P1 实测：user message_end 时 getEntries() 的 user 计数为 0，assistant
 			//    message_end 时已变 1），计数 === 0 ⇔ 本条即 session 首条 user——steering/follow-up
 			//    队列消息到达时首条已入 entries（计数 ≥1），天然不重复触发
@@ -173,7 +173,7 @@ export default function renameSessionExtension(pi: ExtensionAPI): void {
 				return;
 			}
 
-			// 6. prompt 文本从 event 载荷取（D2：entries 此时不含本条，只能从载荷取；探针 P1 实测
+			// 6. prompt 文本从 event 载荷取（设计 rename-session-three-modes.md D2：entries 此时不含本条，只能从载荷取；探针 P1 实测
 			//    content 为 text blocks 数组，extractMessageText → joinTextBlocks 拼出完整 prompt）
 			const promptText = extractMessageText(event.message);
 			if (promptText === "") {
@@ -181,18 +181,18 @@ export default function renameSessionExtension(pi: ExtensionAPI): void {
 				return;
 			}
 
-			// 7. 在途去重（D2）：by construction 第二条 user 到达时首条已 append（步 5 拦截），本
+			// 7. 在途去重（设计 rename-session-three-modes.md D2）：by construction 第二条 user 到达时首条已 append（步 5 拦截），本
 			//    标志兜住极端交错双发；settle 后释放（首条窗口已消费，释放后新到达靠步 5 拦截）
 			if (firstPromptInFlight) return;
 			firstPromptInFlight = true;
 
 			// 8. fire-and-forget（同 turn_end 契约）：handler 立即 resolve，LLM 调用与 setSessionName
 			//    在后台异步完成。finalMessage 传空 content——first-prompt 语义即「不等回复」，
-			//    finalText 为空串走 buildTitleMessages 两条降级（标题只基于 prompt，D2 设计语义）
+			//    finalText 为空串走 buildTitleMessages 两条降级（标题只基于 prompt，设计 rename-session-three-modes.md D2 语义）
 			void callRenameLLM(ctx, config, { content: [] }, {
 				promptText,
 				// usage 落账回调注入（与 turn_end 路径同款契约）：调用时点 ok:true && usage 后立即、
-				// cleanTitle 前；catch 位于回调实现内部（§3.6），appendEntry 抛错只记日志
+				// cleanTitle 前；catch 位于回调实现内部（回调自吞错），appendEntry 抛错只记日志
 				appendUsageEntry: (model, usage) => {
 					try {
 						pi.appendEntry("rename-session", { model, usage });
@@ -239,7 +239,7 @@ export default function renameSessionExtension(pi: ExtensionAPI): void {
 			const config = loadRenameConfig();
 			if (!config.enabled) return;
 
-			// 2. mode 分派（事件面 live 读，D1）：first-stop 才走 turn_end 自动命名——
+			// 2. mode 分派（事件面 live 读，设计 rename-session-three-modes.md D1）：first-stop 才走 turn_end 自动命名——
 			//    first-prompt / agent-tool 模式下本入口静默返回（V10 A 段「切走即停」；
 			//    切回 first-stop 后 live 恢复分派，但已跑过成功 round 的 session 受一次性窗口约束）
 			if (config.mode !== "first-stop") {
@@ -250,14 +250,14 @@ export default function renameSessionExtension(pi: ExtensionAPI): void {
 			// 3. 排除 subagent 子进程 session（子 session 是临时产物，rename 产生噪音）
 			if (isSubagentSession(ctx.sessionManager.getSessionDir())) return;
 
-			// 4. O(1) 快速路径（D2）：turn_end 每个 iteration 发一次，只有 stopReason==='stop' 的
+			// 4. O(1) 快速路径：turn_end 每个 iteration 发一次，只有 stopReason==='stop' 的
 			// 最终 turn 才触发（过滤 toolUse 中间轮与 error/aborted/length 异常轮）
 			if (event.message.stopReason !== "stop") {
 				debugLog(`skip: stopReason=${event.message.stopReason}`);
 				return;
 			}
 
-			// 5. 首 turn 判定（D6）：成功（stop）assistant 回复数 === 1。触发时刻的 turn_end 必然是
+			// 5. 首 turn 判定：成功（stop）assistant 回复数 === 1。触发时刻的 turn_end 必然是
 			// round 的最终 turn，其 event.message 即最终 assistant message（final text 零遍历可得）
 			const entries = ctx.sessionManager.getEntries();
 			const successCount = countSuccessfulAssistantReplies(entries);
@@ -270,12 +270,12 @@ export default function renameSessionExtension(pi: ExtensionAPI): void {
 			// 若 await callRenameLLM 会阻塞 agent 进入下一次迭代。这里用 detached promise 脱离 await 链，
 			// 真正实现 fire-and-forget：handler 立即 resolve，LLM 调用与 setSessionName 在后台异步完成。
 			void callRenameLLM(ctx, config, event.message, {
-				// usage 落账回调注入（设计 §3.3 ③）：闭包捕获 pi，把 rename LLM 调用的 usage 以
+				// usage 落账回调注入：闭包捕获 pi，把 rename LLM 调用的 usage 以
 				// custom entry 落盘（pi.appendEntry → {type:"custom",customType:"rename-session",
 				// data:{model,usage},timestamp}，不进对话流不进 LLM 上下文）。调用时点
 				// （ok:true && usage 后立即、cleanTitle 前）由 llm.ts 统一规定。
 				appendUsageEntry: (model, usage) => {
-					// §3.6：catch 必须位于回调实现内部——appendEntry 抛错（session 已切换等）只记
+					// catch 必须位于回调实现内部——appendEntry 抛错（session 已切换等）只记
 					// 日志，不影响回调返回与后续 cleanTitle/setSessionName（「标题照常落库」）。
 					try {
 						pi.appendEntry("rename-session", { model, usage });
@@ -286,7 +286,7 @@ export default function renameSessionExtension(pi: ExtensionAPI): void {
 			})
 				.then((title) => {
 					if (!title) return;
-					// 防覆盖（D5）：落库前重查——LLM 调用窗口（2-30s）内用户手动命名的竞态由此兜住
+					// 防覆盖：落库前重查——LLM 调用窗口（2-30s）内用户手动命名的竞态由此兜住
 					// （发起前查没有意义，那时查不能防竞态；skip 文案是 E2E 硬契约）
 					if (pi.getSessionName()) {
 						debugLog("skip: name exists");

@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * A7 场景：agent-tool 模式 —— rename_session 工具改名 + first-stop 对照（设计 V3 / D3）。
+ * A7 场景：agent-tool 模式 —— rename_session 工具改名 + first-stop 对照（设计 rename-session-three-modes.md V3 / D3）。
  *
  * 主进程：config 写 mode:"agent-tool"（extension load 时注册 rename_session 工具），先经
  * RPC 预置既有名（防覆盖守卫的触发前提），prompt 要求 agent 调 rename_session 改成指定标题。

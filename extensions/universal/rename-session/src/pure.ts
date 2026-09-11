@@ -12,7 +12,7 @@ import {
 
 // ──────────────────────── 配置 ────────────────────────
 
-/** 触发模式三值枚举（设计 D1）：互斥，默认 "first-stop"（零行为迁移）。 */
+/** 触发模式三值枚举（设计 rename-session-three-modes.md D1）：互斥，默认 "first-stop"（零行为迁移）。 */
 export type RenameMode = "first-prompt" | "first-stop" | "agent-tool";
 
 /**
@@ -21,10 +21,10 @@ export type RenameMode = "first-prompt" | "first-stop" | "agent-tool";
  * 收口自旧版 pure.ts 的 `RenameConfig`（switchFilePath/maxTitleLength/renameInstruction 硬编码常量）：
  * - 开关双机制：`enabled` 字段（pi CLI 用户主开关，默认 false）+ xyz-agent runtime 的
  *   auto-rename-enabled flag 文件（live 覆盖源，存在即开，见下方 [COMPAT] 契约）
- * - model 从「搭便车 ctx.model」改为独立 `ModelSelector`（仅支持 ref 精确指定；空 ref 跟随会话主模型，见 llm.ts D5 fallback）
+ * - model 从「搭便车 ctx.model」改为独立 `ModelSelector`（仅支持 ref 精确指定；空 ref 跟随会话主模型，见 llm.ts 的空 ref fallback）
  * - maxTitleLength 保留（默认 50）
  * - renameInstruction 不进配置（i18n 留未来），由代码常量 RENAME_INSTRUCTION 承载
- * - mode（设计 D1）：first-prompt 首条 user 消息触发 / first-stop 首个成功 round 末触发（默认，现状）/
+ * - mode（设计 rename-session-three-modes.md D1）：first-prompt 首条 user 消息触发 / first-stop 首个成功 round 末触发（默认，现状）/
  *   agent-tool 不自动生成、注册 rename_session 工具由 agent 自主改名
  */
 export interface RenameSessionConfig {
@@ -76,7 +76,7 @@ function isThinkingLevel(raw: unknown): raw is ModelThinkingLevel {
 	return typeof raw === "string" && THINKING_LEVELS.has(raw);
 }
 
-/** 默认配置：关闭、空 ref（跟随会话主模型，见 llm.ts D5 fallback）、first-stop 触发、标题上限 50、不启用 thinking。 */
+/** 默认配置：关闭、空 ref（跟随会话主模型，见 llm.ts 的空 ref fallback）、first-stop 触发、标题上限 50、不启用 thinking。 */
 export const DEFAULT_RENAME_CONFIG: RenameSessionConfig = {
 	enabled: false,
 	model: { type: "ref", ref: "" },
@@ -148,7 +148,7 @@ export function normalizeRenameConfig(raw: unknown): RenameSessionConfig {
 
 	const enabled = typeof obj.enabled === "boolean" ? obj.enabled : DEFAULT_RENAME_CONFIG.enabled;
 
-	// mode 逐字段校验（D1）：旧 config 无字段 / 非法值 → 默认 first-stop（零迁移，现状行为）
+	// mode 逐字段校验（设计 rename-session-three-modes.md D1）：旧 config 无字段 / 非法值 → 默认 first-stop（零迁移，现状行为）
 	const mode = isRenameMode(obj.mode) ? obj.mode : DEFAULT_RENAME_CONFIG.mode;
 
 	const maxTitleLength =
@@ -185,9 +185,9 @@ function normalizeModelSelector(raw: unknown): ModelSelector | null {
  * 2. 配置文件（<agentDir>/config/rename-session-ext-config.json）
  * 3. 默认值
  *
- * [HISTORICAL] 原 env 覆盖层（`PI_` + 包名前缀四键，最高优先级）已删（设计 D6 / ext-simplify-15 D1 吸收）：
+ * [HISTORICAL] 原 env 覆盖层（`PI_` + 包名前缀四键，最高优先级）已删（设计 rename-session-three-modes.md D6，吸收 ext-simplify-15 D1）：
  * 全仓 0 生产 setter、4 键中 3 键从未被用过，唯一用法是 1 个历史验收场景。预置该前缀的
- * 环境变量不再有任何效果（幽灵负面场景见设计 V8，负面用例在 pure.test.ts）。
+ * 环境变量不再有任何效果（幽灵负面场景见设计 rename-session-three-modes.md V8，负面用例在 pure.test.ts）。
  */
 export function loadRenameConfig(): RenameSessionConfig {
 	// 1. 从配置文件加载基础配置（带 mtime+size 缓存）
@@ -211,7 +211,7 @@ export function saveRenameConfig(
 // ──────────────────────── 首 turn / 首 prompt 判定 ────────────────────────
 
 /**
- * 数 session entries 中的 user message 条数（first-prompt 模式首条判定用，设计 D2）。
+ * 数 session entries 中的 user message 条数（first-prompt 模式首条判定用，设计 rename-session-three-modes.md D2）。
  *
  * 调用时点契约：pi 的 extension handler 先于该条 message 的 entries append 执行
  * （agent-session.js `_emitExtensionEvent` 先于 `appendMessage`，探针 P1 已实测），
@@ -237,7 +237,7 @@ interface EntryLike {
 /**
  * 数 session 中「成功完成」的 assistant 回复数（stopReason === "stop"），触发判定用（===1 触发 rename）。
  *
- * 只数 stop 的理由（设计 D6）：pi 的 turn_end 每个 iteration 发一次，中间 iteration 的
+ * 只数 stop 的理由：pi 的 turn_end 每个 iteration 发一次，中间 iteration 的
  * stopReason 是 toolUse；error/aborted 轮的错误上下文不该用来命名（延迟到下一个成功轮）；
  * length（输出被 max token 截断）截断文本质量无保证，与 error 同等对待。
  * 无 stopReason 字段的宽松数据不计（只认显式 stop，防误触发）。
@@ -274,7 +274,7 @@ export function cleanTitle(content: string, maxLength: number): string {
 	const normalized = trimmed.replace(/\s+/g, " ");
 
 	// 去首部引号/markdown 标记 + 尾部引号/markdown/标点（。．.，,、;；!！?？：:）。
-	// 尾部标点是 D4 slug 风格的兜底（prompt 已约束「不要句尾标点」，LLM 漏遵从时在此清除）；
+	// 尾部标点是 slug 风格约束的兜底（prompt 已约束「不要句尾标点」，LLM 漏遵从时在此清除）；
 	// 只清首尾——中间标点保留（如 version 号 'v1.2.3' 中间的点）。
 	const cleaned = normalized
 		.replace(/^["“”'`*_]+|["“”'`*_。．.，,、;；!！?？：:]+$/g, "")
