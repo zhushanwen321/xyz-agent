@@ -112,6 +112,9 @@ Commit 映射（执行期 subagent 禁 git，commit 由主会话核验验收条�
 | D-5 | V5 基线产物不入库（不新增仓库文件） | 基线 JSONL 摘录与查询输出贴实施 PR 描述 + 留存路径登记 §6 状态表；独立为 u0 检查点满足任务要求「首个开发单元的前置动作或独立检查点」的后者 |
 | D-6 | changeset 只新增 `.changeset/*.md` 声明 minor，不在本 PR 手改 package.json version（保持 0.6.0） | 本仓发布纪律（AGENTS.md）：PR 阶段只加 changeset 文件（type 初判、最终人工定），版本号由 merge 阶段 changeset version 生命周期统一 bump。设计的「minor bump（0.6.0→0.7.0）」通过 changeset minor 声明兑现，随 u1 代码同 commit（任务要求 3 的「同 commit」落到 changeset 文件与代码同 commit） |
 | D-7 | 导出面计数口径：任务输入写「15→5」，以设计 v3 正文「14 具名导出 → 5（default 出口不计）」为准 | 设计第 1 轮审查 INFO-2 已修正口径并全文统一（实数 src/index.ts:52-67 为 14 具名 + default 出口）；本计划目标快照与验收条款均按 14→5 |
+| u1-dev-1 | session_start handler 缓存 sessionManager 到闭包 + currentEntries() helper（设计 §6.1⑤「缩为设 currentSessionId 一行」的实现细化） | 现算方案下 EventBus 回调无 ctx 参数，写侧前置判断的 entries 读取通道必须在 session_start 缓存；未 session_start 前返回空数组 = 等价历史空 registry 放行口径 | handler 仍零写操作，语义不变；验收③符号扫描不受影响 | 合理偏差，接受 |
+| u1-dev-2 | safeAppendEntry 错误用例断言方向反转（原「落盘失败内存 registry 仍更新」→ 终态「落盘失败 → entries 无注册 → 工具查不到且 listener 未坏」） | 设计 §5.2 显式登记的终态行为（消除工具/守卫分裂） | 非回归，是终态语义 | 合理偏差，接受 |
+| u1-dev-3 | 测试 fixture makeRegisterEntry 默认 data 移除 expiresAt 键 | 对齐终态写入形态（E5 改写面内实现细节） | 「读取侧不校验历史 expiresAt」用例改经 extra 注入该键，覆盖保留 | 合理偏差，接受 |
 
 领地核实例外：无。所有领地路径实读核实存在，行号锚点与设计 §7 执行项表逐条吻合（E1/E2 的 state.ts 行号、E3/E4 的 index.ts 行号、E5 的测试 describe 区段、E6 的 conformance import/行号、E8 的 pending-reconcile.ts:115 原文「pending 自身 TTL 之外的」、E7 的 C-proc-13 ③ 原文枚举、E10 的 DOC_MODULE_MAP 10 条目零覆盖本组、extension-dependencies.json:26 失实 reason 原文——全部实读确认）。
 
