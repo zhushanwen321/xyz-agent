@@ -85,6 +85,7 @@ graph TD
 |------|------|------|------|
 | u4 | 领地外新建 `packages/runtime/src/services/session/session-rename-fanout.ts`（D4 处理体从 index.ts 抽出，index.ts 仅留依赖注入接线） | index.ts 文件尾 `main().catch(...)` import 即执行、接线闭包不可直测（index.ts 既有注释明言；`agent-settled-fanout.ts` 为 PR #189 review 同因提取先例）；新文件与并行单元领地零交集 | 接受（2026-09-12）：领地白名单目的在防冲突，测试可达性优先；引用方 grep 验证仅 index.ts + 自身测试 |
 | u4 | 空串 name（≠ undefined）原样透传不改写（`??` 只捕 undefined） | pi trim 归一后空串本不该出现，出现也不静默译码（TC2b 钉住） | 接受：与设计 D4「undefined 回落」语义一致，更保守 |
+| u4 | event-interpreter.test.ts TC-RN2 用例名顺带更新（「组合根 ?? "" 兜底」→「组合根回落 basename 派生」，断言零变化，1 行注释级） | 旧描述与 u4 新实现矛盾；必要同步（阶段 3 审查 R8 补记） | 接受（2026-09-12 补记）：注释级领地外扩张 |
 | u1 | execute 守卫的 isError 经 **throw** 产生（设计 D3 字面「返回 isError」） | pi 0.84.4 实装核证：agent-loop.js executePreparedToolCall 将 execute 正常返回包成 {result, isError:false}，返回值的 isError 字段被丢弃，throw 才产生 isError 状态 | 接受（2026-09-12）：throw 是「返回 isError」在 pi API 下的正确映射；design-code-sync 阶段同步校准设计 D3 措辞 |
 | u1 | 验收④ grep PI_RENAME 按生产代码口径（src 非测试文件 0 命中；测试文件 12 处 = 负面用例 vi.stubEnv 必需引用） | 验收②（env 删除负面用例）与④（0 命中）字面冲突，负面用例必然引用被删键名字面量 | 接受：生产口径达成，测试引用是删除行为的证明而非残留 |
 | u5 | 领地外扩张 4 文件：interfaces.ts（IConfigService +两方法声明）、config-service.ts（委托实现）、packages/shared/src/index.ts（RenameMode 导出）、worktree/worktree-service.test.ts（mock stub） | settings 通路结构必需的接线链（handler→接口→service→helper），形态逐点对齐 getRenameModel 先例；impl-plan 领地清单定时未核查接口链，非 dev 越权 | 接受（2026-09-12）：扩张件计入 u5 files_changed；接口扩展引发的其余 mock stub 一并允许（逐个列明） |
@@ -110,7 +111,7 @@ graph TD
 - e2e/README.md（不在任何单元领地）仍写 A1-A5 计数，与新场景集 A1-A7 不一致——Gate B 真实跑后随 RESULTS.md 一起回写，或阶段 3 一致性审查裁决归属
 - run-a3.mjs 内部 countLlmRequests/countSessionInfos 与 harness 新导出（countLlmRequestLogs/countSessionInfoEntries）同构并存——后续触及 a3 的单元顺手收敛，不阻塞
 - CHANGELOG.md 条目归 merge/release 流程（项目惯例）
-- GUI「跟随会话模型」文案与既有 RenameModelNotSet i18n 键的关系（复用改义 or 新键，u6 实施时按 i18n 键管理惯例定）——未闭环
+- GUI「跟随会话模型」文案与既有 RenameModelNotSet i18n 键的关系——**已闭环（2026-09-12 u6）：新键 renameModelFollow，旧键删除 0 残留**
 - V10 场景需 GUI dev 双 session + 模式切换实操，依赖 u5/u6 完成后联调（Gate B 收口）
 
 **变更历史**：

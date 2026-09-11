@@ -119,7 +119,7 @@ rename 落库后的完整链路与断点：
 
 #### D1：mode 三值枚举（选定：`"first-prompt" | "first-stop" | "agent-tool"`，默认 first-stop）
 
-- **采用**：config schema 加第 5 字段 `mode`；`normalizeRenameConfig` 逐字段校验回默认（旧 config 无字段 → first-stop，零迁移）；三值互斥，`agent-tool` 模式下不注册 turn_end/message_end 自动逻辑。**求值时点（by design 边界）**：事件面（自动命名分派）每次事件 live 读 config——GUI 切 mode 对**活跃 session 的自动命名行为即时生效**（边界：first-stop 自动命名受一次性窗口约束，实装判定 `countSuccessfulAssistantReplies !== 1` 即跳过——已在任一 mode 下产生成功 round 的 session 切回 first-stop 后，新 round 末计数必 ≥ 2，**不再自动命名**，见失败路径表「切回时窗口已过」行；切回改变的是分派逻辑，不重置窗口）；工具注册面（`rename_session` 工具）只在 pi 进程启动加载 extension 时求值一次（pi 无 unregisterTool API，loader.js 注册后不可撤销）——**切 mode 后已存活 session 的工具清单不回溯**：切到 agent-tool 当前 session 无工具、切走则工具残留，残留工具由 execute 内 live mode 守卫兜底（见 D3）。GUI 切换交互须提示「工具面对新会话生效」。
+- **采用**：config schema 加第 5 字段 `mode`；`normalizeRenameConfig` 逐字段校验回默认（旧 config 无字段 → first-stop，零迁移）；三值互斥，`agent-tool` 模式下自动命名逻辑**不激活**（两个事件 handler 常驻注册，每次事件 live 分派拦截——这是「切回 first-stop 即时恢复自动命名」的唯一自洽实现，见求值时点段；「不注册」字面与 live 边界矛盾，v3.3 校准）。**求值时点（by design 边界）**：事件面（自动命名分派）每次事件 live 读 config——GUI 切 mode 对**活跃 session 的自动命名行为即时生效**（边界：first-stop 自动命名受一次性窗口约束，实装判定 `countSuccessfulAssistantReplies !== 1` 即跳过——已在任一 mode 下产生成功 round 的 session 切回 first-stop 后，新 round 末计数必 ≥ 2，**不再自动命名**，见失败路径表「切回时窗口已过」行；切回改变的是分派逻辑，不重置窗口）；工具注册面（`rename_session` 工具）只在 pi 进程启动加载 extension 时求值一次（pi 无 unregisterTool API，loader.js 注册后不可撤销）——**切 mode 后已存活 session 的工具清单不回溯**：切到 agent-tool 当前 session 无工具、切走则工具残留，残留工具由 execute 内 live mode 守卫兜底（见 D3）。GUI 切换交互须提示「工具面对新会话生效」。**开关与 mode 的正交关系**：开关 flag 只门控自动路径（两入口第一步查 `enabled`）；agent-tool 的工具注册与 execute 不受 flag 门控——GUI mode 控件相应不随开关禁用（v3.3 据实现升为书面契约）。
 - **被否**：① 正交两维（autoTrigger × toolRegistered）——支持 4 种组合态，当前只需求 3 种，多出的「自动关 + 工具关」是无意义态；② 组合枚举值（`first-prompt+tool`）——0 现存需求方，且为想象组合预埋建模方向（正交需求未来该用正交字段表达），2026-09-11 过度设计审计判定 cut；③ 工具面动态注册（事件回调内按 live mode 反复 registerTool）——注销缺失导致工具面不可收敛，复杂度全部花在对抗 pi API 限制，收益仅「存量 session 立即获得工具」，不值得。
 - **证据**：normalizeRenameConfig 已有 4 字段同款模式（pure.ts:187-209）；startup-config-declaration.test 断言 package.json `startupConfig.content` 与 DEFAULT 深相等——**默认值含 mode 后该声明须同批更新**（拆分层落点）。
 
@@ -240,6 +240,7 @@ rename 落库后的完整链路与断点：
 | `extensions/universal/rename-session/{README.md,skills/.../SKILL.md}` | mode 文档 + 3 源配置表 + 跟随会话模型语义 + 附录 A 指针一行（见 u2） |
 | `extensions/universal/rename-session/e2e/` | run-a6（first-prompt）/run-a7（agent-tool）+ harness 断言函数 |
 | `packages/runtime/src/index.ts` | onSessionRenamed +broadcast + 空名回落 |
+| `packages/runtime/src/services/session/session-rename-fanout.ts` | D4 处理体提取（index.ts 文件尾 main() 无条件执行使接线闭包不可直测，agent-settled-fanout.ts 先例；impl-plan u4 偏差裁决，v3.3 回写） |
 | `packages/runtime/src/services/worktree-config-helper.ts` | +getRenameMode/setRenameMode（rmwExtConfigField 复用）+ `RENAME_MODEL_DEFAULT_CONFIG` 镜像补 mode 字段 |
 | `packages/runtime/src/transport/settings-message-handler.ts` + `packages/shared/src/protocol.ts` | `config.getRenameMode` / `config.setRenameMode` 命令（对齐 config.* 前缀惯例） |
 | `packages/core/.../domains/settings.ts` + `packages/renderer/.../SystemAutoRenameSection.vue` + i18n ×2 | 模式 Select + 文案 |
@@ -251,7 +252,7 @@ rename 落库后的完整链路与断点：
 - P1/P2/P3 探针结果（§3.4，⛔ 合入前）。
 - e2e harness 对 message_end 事件的监听能力核对（现有 harness 只订阅既有事件面，可能需扩展事件白名单——实施时确认）。
 - D6 删除后 `docs/design/usage-page-fixes.impl-plan.md:41,102,123,147` 对 `PI_RENAME_MODEL`/`getEnvOverrides` 的引用成为悬空引用——该文档是历史签收记录**保留原样不改写**（不在 check-doc-symbol-drift 守卫覆盖内，登记此处置声明防实施期困惑）；若未来重跑该 wave，按本设计 §3.3 D6/V7 新程序执行。
-- GUI「跟随会话模型」文案与既有 RenameModelNotSet i18n 键的关系（复用改义 or 新键，实施时按 i18n 键管理惯例定）。
+- GUI「跟随会话模型」文案与既有 RenameModelNotSet i18n 键的关系——**已定（2026-09-12 u6）：新键 `renameModelFollow` 替代 `renameModelNotSet`（旧键删除 0 残留；对齐 smart-context `smartContextModelFollow` 先例，避免键名与语义长期矛盾）**。
 
 ---
 
@@ -272,3 +273,4 @@ rename 落库后的完整链路与断点：
 - v3（2026-09-11）：影响面审第 2 轮修复（2 MF + 3 S）。**V10 预期方向修正**（v2 把「切到 agent-tool 后 A 仍自动命名」写反——事件面 live 的正确语义是切走即停自动命名；连带补「切回后 B 首个成功 round 的自动命名被 agent 已设名防覆盖拦截」闭环断言）；**ext-simplify-15 标注载体改判**（该文档在兄弟分支 untracked、三路皆断——改为本附录 A 表格为唯一登记载体 + 兄弟分支落地时实施者自查，u2 撤销跨 worktree 写入）；失败路径表补「守卫拒绝」「切回时一次性窗口已过」两行；in-flight 标志层级修正（模块级 → **工厂闭包级**，防 /fork、/session 进程内切 session 时跨 session 污染）；D8 GUI 场景集与 §4 实际构成对齐（V4/V5/V6/V10）。
 - v3.1（2026-09-12）：主审第 2 轮复审 0 must-fix + 1 suggestion 修复——V3/V10 的「工具不在清单」断言改为确定性判据（JSONL 无 rename_session toolCall entry：pi RPC 无工具清单查询命令，无工具 ⇒ 必无 toolCall，与 agent 行为无关）。主审五条 v2 修复全数核实成立（含 V2 时序断言的 await 链构造性闭合增强论证）。
 - v3.2（2026-09-12）：影响面审第 3 轮修复（1 MF + 3 S）。**V10 B 段断言归因修正**（v3 的「防覆盖守卫 skip」路径在实装判定顺序下不可达——同步段 `count !== 1` 先行 return，callRenameLLM 不发起，`.then` 落库前防覆盖重查不执行；改为「一次性窗口 count ≥ 2 拦截（`skip: count=N` 日志），agent 名保持不变」+ 防覆盖检查点由 V6 同构覆盖声明——语义名与 agent 名走同一 `.then` 重查，证据形态同为 `skip: name exists`）；D1 事件面补一次性窗口边界句（已消费窗口的 session 切回不自动命名，切回改变分派不重置窗口）；失败路径表「切回时窗口已过」行恢复指引修正（v3 的「残留 agent-tool 工具改名」在本行 mode=first-stop 前提下被 execute 守卫拒绝——标注「先切回 agent-tool」前置；「守卫拒绝」行恢复列补手动 rename 出路）；D3 isError 文案样例补恢复动作指引并与失败路径表/V10 三处对齐；u2/§5.3 README 增附录 A 指针一行（吸收登记的主动可达性锚点）。
+- v3.3（2026-09-12）：实施期校准（dev-flow 阶段 3 一致性审查 doc_errors 修复）。D1 首句「不注册自动逻辑」改为「不激活（handler 常驻 + live 分派拦截）」——消除与同段 live 边界/V10 B 段的字面矛盾（实现即如此）；D1 补开关与 mode 正交关系书面契约；§5.3 文件地图补 session-rename-fanout.ts 行（u4 偏差裁决回写）；§5.4 i18n 键决定回写（新键 renameModelFollow）。设计 D3「返回 isError」在 pi 0.84.4 实装的正确映射为 throw（execute 返回值 isError 字段被 agent-loop 丢弃），实现已按 throw 落地（u1 偏差登记）。
