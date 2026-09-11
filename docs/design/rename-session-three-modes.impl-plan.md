@@ -1,6 +1,6 @@
 # rename-session 三模式 实施计划
 
-基线: 本文件首次 commit（以 `git log` 本文件路径为准） | 来源设计: `docs/design/rename-session-three-modes.md`（v3.2） | 日期: 2026-09-12
+基线: 本文件首次 commit（以 `git log` 本文件路径为准） | 来源设计: `docs/design/rename-session-three-modes.md`（v3.3，@181fc2197） | 日期: 2026-09-12
 
 ## 0 章节映射
 
@@ -75,7 +75,7 @@ graph TD
 - 根 `pnpm run lint`（eslint --max-warnings 0，含 taste-lint）
 
 **Gate B 验收场景（阶段 5，设计 §4 V1-V10 逐行签收）**：
-- V1/V2/V3/V7/V8/V9：pi CLI 真实进程 + 真实模型 `xiaomi-token-plan-cn/mimo-v2.5-pro`（e2e harness，**禁 kimi**），共享临时 `PI_CODING_AGENT_DIR` 顺序跑
+- V1/V2/V3/V7/V8/V9：pi CLI 真实进程 + 真实模型 `xiaomi-token-plan-cn/mimo-v2.5-pro`（e2e harness，**禁 kimi**），共享临时 `PI_CODING_AGENT_DIR` 顺序跑——**V9 已改道（见 §6 阶段 5）：pi 0.84.4 RPC 拒空串（rpc-mode.js trim 校验），V9 实际经 GUI 组事件注入验证**
 - V4/V5/V6/V10：GUI dev（`pnpm dev` + Playwright 连 9222）+ `~/.xyz-agent-dev` 隔离数据目录
 - 探针 P1-P3（设计 §3.4，⛔ 实施期门）：随 u1 开工首日执行，结果回写设计文档；任一探针否决设计假设 → 停工上报（走 impl-plan §7 风险流程），不得静默改设计
 
@@ -109,9 +109,9 @@ graph TD
 ## 7 残留风险与变更历史
 
 **残留风险**：
-- **[Gate A 已知失败·存量非本区间] session-reader `TC-m3b-real-data-guard`**（execution-tree.test.ts:700）：硬编码本机 `~/.pi/agent` 真实数据 + 固定 sessionId，断言旧机制 flat-fallback，本机数据演化后确定红（隔离重跑确定性失败）；区间 0 文件改动（最后改动 f482e73b0 为 base 祖先），与本次流水线零关联。处置：范围外不修，建议后续单独修复（改固定 fixture 或放宽断言）；在含本包的全量 Gate 中将持续红，消费方注意甄别。改动区全绿（runtime 459/5202、core 120/1951、renderer 384/4183、subagent-core 190/2834、rename-session 6/203、shared 28/335、pi-subagent-cli 22/304），零绕过（区间 diff grep skip/disable 模式零匹配）。
+- **[Gate A 已知失败·存量非本区间] session-reader `TC-m3b-real-data-guard`**（execution-tree.test.ts:695）：硬编码本机 `~/.pi/agent` 真实数据 + 固定 sessionId，断言旧机制 flat-fallback，本机数据演化后确定红（隔离重跑确定性失败）；区间 0 文件改动（最后改动 f482e73b0 为 base 祖先），与本次流水线零关联。处置：范围外不修，建议后续单独修复（改固定 fixture 或放宽断言）；在含本包的全量 Gate 中将持续红，消费方注意甄别。改动区全绿（runtime 459/5202、core 120/1951、renderer 384/4183（含 C-U1 review fix c630ef103 新增 2 例，§6 状态表 u6 行 4181 为其 commit 时点数）、subagent-core 190/2834、rename-session 6/203、shared 28/335、pi-subagent-cli 22/304），零绕过（区间 diff grep skip/disable 模式零匹配）。
 - 探针 P1-P3 已全部闭环（P1/P2 = u1 实测通过零降级，dcc189dc4；P3 = u4 单测级通过同步调用安全，帧序归 Gate B V4/V5）
-- ~~e2e/README.md（不在任何单元领地）仍写 A1-A5 计数~~ **已清账（7693f1a05 修复 A-U2 时更新为 A1-A7 + 函数清单）**；同类注释级残留 3 处（scenarios.test.mjs:2 / vitest.e2e.config.ts:3 / harness.mjs:42 仍写 A1-A5）+ 包 README:77 工具守卫排序描述滞后（B-U1 后 subagent 守卫为第一步）——登记 Gate B 后清账批（定向复审 2026-09-12 low 级新发现，不阻塞）
+- ~~e2e/README.md（不在任何单元领地）仍写 A1-A5 计数~~ **已清账（7693f1a05 修复 A-U2 时更新为 A1-A7 + 函数清单）**；同类注释级残留 3 处（scenarios.test.mjs:2 / vitest.e2e.config.ts:3 / harness.mjs:42 仍写 A1-A5）+ 包 README:77 工具守卫排序描述滞后（B-U1 后 subagent 守卫为第一步）——**已清账（design-code-sync 第 1 轮组 A，2026-09-12：3 处 A1-A7 + 守卫链排序描述对齐 index.ts 实装）**
 - run-a3.mjs 内部 countLlmRequests/countSessionInfos 与 harness 新导出（countLlmRequestLogs/countSessionInfoEntries）同构并存——后续触及 a3 的单元顺手收敛，不阻塞
 - CHANGELOG.md 条目归 merge/release 流程（项目惯例）
 - GUI「跟随会话模型」文案与既有 RenameModelNotSet i18n 键的关系——**已闭环（2026-09-12 u6）：新键 renameModelFollow，旧键删除 0 残留**
@@ -119,3 +119,6 @@ graph TD
 
 **变更历史**：
 - 2026-09-12：初版（来源设计 v3.2；tech-design 审查收敛轨迹：主审 2 轮 0 must-fix、影响面审 3 轮 1 must-fix 全修 + 第 4 轮聚焦复审）。
+- 2026-09-12：阶段 2 收口（fcde41628）——6/6 单元 committed，状态表 + 证据指针落位（含 u4 领地外提取 / u5 接线扩张等偏差裁决回写）。
+- 2026-09-12：阶段 3-4 review 修复与定向复审（8a61fb9b0）——定向复审 7/7 判定、无新 must-fix；残留台账结算（i18n 键闭环、e2e README A1-A7 清账）；同期来源设计升 v3.3（181fc2197 实施期校准）。
+- 2026-09-12：阶段 5 双绿（55fec6746）——Gate A 改动区全绿（唯一失败 = session-reader 存量环境用例，登记残留）+ Gate B 10/10 场景 pass；V9 改道发现（pi 0.84.4 RPC 拒空串）登记。
