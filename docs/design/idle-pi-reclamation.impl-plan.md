@@ -12,7 +12,7 @@
 | 终态/机制 | §3 解决方案（§3.1 终态场景一~四；§3.3 决策 D1-D8；§3.4 探针清单 P1-P8） |
 | 验收场景表 | §4 验收（V1-V7 + 「负面行为验证」段） |
 | 下一层拆分 | §5 下一层拆分（U1-U4 表 + 文件改动地图 + 待验证检查点） |
-| 待验证检查点 | §5 末段「待验证检查点」（P1-P8 全部 + 阈值 2h/查看窗口 30min 校准） |
+| 待验证检查点 | §5 末段「待验证检查点」（原 P1-P8 全部；2026-09-11 收窄为 P4 scheduler relay 真机腿 + P8 + 阈值 2h/查看窗口 30min 校准，余者已闭环见设计 §3.4 探针表） |
 
 **对抗式审查证据（阶段 0.3）**：同会话 4 轮双审循环（`tech-design-review` 主审 + `tech-design-impact-review` 影响面审，并行派发），收敛轨迹 R1 3+4 must-fix → R2 1+1 → R3 1+1 → R4 **双报告 0 must-fix / 0 suggestion**；审查在会话内完成、报告未落盘，设计定稿 commit `af81f289f`（附录含被否谱系：removeSessionEntry 复用 / hasSubscribers 豁免 / 超时抢跑 / 冻结 / renderer 驱动）。
 
@@ -145,3 +145,5 @@ graph TD
 - 9c78c7eab Gate B 记录（V1-V5/V7 pass，V6 交付后观察）。
 - 00cc6b296 design-code-sync round 1 修复（11 findings：2 must-fix / 3 medium / 6 low，全 doc 侧零代码改动）——impl-plan：审查基线 hash 回填、R14 双源默认值入登记表、R6 口径更正（14 用例连坐，原记 12）、删重复交付态段、变更历史补全；设计文档 46 行修订（D2#5 depth()/D2#7 join 语义与 ReclaimSeat 术语对齐实装、20+ 行号引用刷新至当时 HEAD、附录链接修复）。
 - 48927ed6b design-code-sync round 2 复审决议（0 must-fix；2 suggestions + 1 info）——变更历史排序声明修正（「按提交序」→「按主题分批，批内提交序」+ 批内真序重排）、D3 归属表悬空符号 registerSession → getOrCreateDelivery、变更历史补 b930bc28d 节点。
+- 30b24a52a design-code-sync round 3 全量再审查修复（16 findings：4 must-fix / 7 suggestion / 5 info，三分区 reviewer 聚合，全 doc/注释侧零行为改动）——设计文档：useChat 锚点重定位至 core ensureStreamSubscription、message-bus 行号刷新、sendRaw 口径改写（extension_ui_response 无回执生产通道）、归属表补 respawn.cancel 行、P1/P3/P6 探针状态按 Gate B 证据回写（P4 部分闭环，relay 真机腿归 V6）、§5 检查点收窄；impl-plan：变更历史补本行前两 commit、u3 拆分指针、P7 注释坐标刷新；session-lifecycle.ts 注释（⑥a/⑥b 标号 + SIGCONT 前置）。
+- （本行所在 commit）round 3 聚焦复审收尾——主 agent 亲为（两次 subagent 派发均被限流击杀）：16/16 真修复核验 + 补登 30b24a52a 变更历史 + §0 映射表检查点口径随 §5 收窄同步。
