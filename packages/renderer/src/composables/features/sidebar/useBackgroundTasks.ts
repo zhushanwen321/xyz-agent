@@ -41,7 +41,7 @@ import type { BackgroundTaskEntry } from '@/lib/background-task-bucket'
 const UPDATED_TYPE = 'backgroundTask:updated'
 
 /** per-session 分区形态。 */
-export interface BackgroundTasksPartition {
+interface BackgroundTasksPartition {
   /** registry 全量投影（list reply / 广播 payload 原样，不做二次加工）。 */
   tasks: BackgroundTaskEntry[]
   /** 是否成功拉到过一次 list reply（空表也算）——区分「从未拉取」与「拉到空表」。 */

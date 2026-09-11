@@ -4,15 +4,15 @@
  * 职责：
  * 1. 订阅 session.forkNotice 全局广播（runtime fork 成功后推送），按 srcSessionId 路由到
  *    对应 session 的对话流，插入 transient ForkNotice 反馈行（RV1）。
- * 2. 实例化 useForkBranchNotify 追踪后台分支状态变化（running→done/error/stopped），
- *    fork 成功时 registerFork 建立追踪基线；状态变化时 onBranchStatusChange 追加反馈行（RV2）。
+ * 2. 追踪后台分支状态变化（running→done/error/stopped）：fork 成功时 registerFork 建立
+ *    追踪基线；groups 变化经 syncForkBranches diff，状态变化时追加反馈行（RV2）。
  *
  * 数据流：
  * - session.forkNotice（global 广播，payload 含 srcSessionId/newSessionId/branchName/preview）
  *   → pushNotice(srcSessionId, { newSessionId, branchName, preview }) 入 feed
  *   → registerFork(srcSessionId, newSessionId, branchName ?? preview ?? '') 建立分支追踪基线
- * - config.sessions 广播更新 session.groups → useForkBranchNotify diff 检测分支 status 翻转
- *   → onBranchStatusChange(kind) → pushNotice(srcSessionId, { kind, branchName }) 追加状态行
+ * - config.sessions 广播更新 session.groups → syncForkBranches diff 检测分支 status 翻转
+ *   → onChange(kind) → pushNotice(srcSessionId, { kind, branchName }) 追加状态行
  *
  * Transient 语义：feed 仅前端内存维护，不写 chat store messages（不持久化、不进 JSONL）。
  * session 删除时 clearSession 清 feed，避免悬挂。模块级单例 ref 让所有 MessageStream 实例
@@ -21,12 +21,19 @@
  * 生命周期：App.vue onMounted 调 bindForkNoticeEffect() 注册全局订阅（onScopeDispose 退订）；
  * MessageStream 各实例调 useForkNoticeFeed() 读自身 session 的通知渲染。
  */
-import { onScopeDispose, readonly, ref, shallowRef, watch, type DeepReadonly, type Ref } from 'vue'
+import { onScopeDispose, readonly, shallowRef, watch, type DeepReadonly, type Ref } from 'vue'
 import { storeToRefs } from 'pinia'
 import type { ServerMessage, SessionGroup } from '@xyz-agent/shared'
 import * as events from '@xyz-agent/core/transport/api'
 import { useSessionStore } from '@/stores/session'
-import { useForkBranchNotify, type BranchChangeKind, type BranchStatusChange } from '@/composables/features/fork-handoff/useForkBranchNotify'
+import {
+  clearUnread,
+  registerFork,
+  resetForkBranchState,
+  syncForkBranches,
+  unreadByBranch,
+  type BranchChangeKind,
+} from '@/composables/features/fork-handoff/useForkBranchNotify'
 
 /** ForkNotice 反馈行 entry（transient，前端内存） */
 export interface ForkNoticeEntry {
@@ -38,7 +45,7 @@ export interface ForkNoticeEntry {
   branchName?: string
   /** fork-ask 的提问预览（优先于 branchName 展示） */
   preview?: string
-  /** 状态变化语义（done/error/stopped/waiting）：有值时反馈行展示分支跑完/出错的衍生文案 */
+  /** 状态变化语义（done/error/stopped）：有值时反馈行展示分支跑完/出错的衍生文案 */
   kind?: BranchChangeKind
   /** 源分支是否已删除——true 时「查看」降级为纯文本（spec §4） */
   sessionDeleted?: boolean
@@ -58,14 +65,6 @@ let noticeSeq = 0
  */
 // taste:allow-no-data-owner W24-EX-A（ADR-0049 全局 sid 协调器/订阅注册基建，登记草稿）：fork 通知 feed 全局 SSOT（无 sidRef 的显式 sid 协调器，上方注释已述 ADR-0049 例外）
 const feedMap = shallowRef<Map<string, ForkNoticeEntry[]>>(new Map())
-/** 模块级分支追踪：trackedBranches / unreadByBranch（由 bindForkNoticeEffect 写入，侧栏角标读） */
-// taste:allow-no-data-owner W24-EX-B（模块级单例 UI 瞬态，12 类未覆盖存量，登记草稿）：分支追踪集合（侧栏角标读，bindForkNoticeEffect 写——12 类未覆盖的分支角标 GUI 态）
-const trackedBranchesRef = ref<ReadonlySet<string>>(new Set())
-// taste:allow-no-data-owner W24-EX-B（模块级单例 UI 瞬态，12 类未覆盖存量，登记草稿）：分支未读角标 Map（同上，12 类未覆盖的分支角标 GUI 态）
-const unreadByBranchRef = ref<ReadonlyMap<string, boolean>>(new Map())
-
-/** 模块级 registerFork 实现引用（bindForkNoticeEffect 写入，pushForkNoticeAsk 复用 RV2 分支追踪） */
-let registerForkImpl: ((srcSessionId: string, branchId: string, label: string) => void) | null = null
 
 /**
  * 读取指定 session 的 ForkNotice 反馈行列表（响应式）。
@@ -115,10 +114,7 @@ export function useForkNoticeFeed(): {
 export function resetForkNoticeFeed(): void {
   noticeSeq = 0
   feedMap.value = new Map()
-  trackedBranchesRef.value = new Set()
-  unreadByBranchRef.value = new Map()
-  clearUnreadImpl = null
-  registerForkImpl = null
+  resetForkBranchState()
 }
 
 /**
@@ -175,7 +171,8 @@ function removeNoticeForBranch(srcSessionId: string, newSessionId: string): void
  *
  * 仅 fork-ask 调本函数；纯 fork 仍走 runtime 广播（bindForkNoticeEffect 的 session.forkNotice
  * 订阅 → forkedPrefix）。RV2 分支追踪（registerFork）两边都建立——fork-ask 也需追踪后台状态变化。
- * bindForkNoticeEffect 未注册时（如测试未调）registerForkImpl 为 null，安全降级为 no-op。
+ * registerFork 是模块级函数（useForkBranchNotify 单例），无需 bind 前置；状态由
+ * resetForkNoticeFeed（→ resetForkBranchState）统一隔离。
  *
  * 去重（防 fork-ask 双 notice）：runtime 对每次 session.fork 都广播（含 fork-ask 的 fork），
  * 与本地推送存在竞速。双向去重——
@@ -193,26 +190,22 @@ export function pushForkNoticeAsk(
 ): void {
   removeNoticeForBranch(srcSessionId, newSessionId)
   pushNotice(srcSessionId, { newSessionId, preview })
-  registerForkImpl?.(srcSessionId, newSessionId, preview)
+  registerFork(srcSessionId, newSessionId, preview)
 }
 
 /**
  * 注册全局 fork-notice 效果（RV1+RV2 接线点）。
  *
- * 在 App.vue onMounted 调用一次（单实例）。内部：
+ * 在 App.vue setup 调用一次（单实例，App setup 是全局 effect 作用域）。内部：
  * - 订阅 session.forkNotice 全局广播 → pushNotice + registerFork
- * - 实例化 useForkBranchNotify(session.groups) 追踪分支状态
- * - onBranchStatusChange → pushNotice 追加状态行
- * - 把 trackedBranches/unreadByBranch 同步到模块级 ref（侧栏角标跨组件读）
- * - onScopeDispose 退订（App 卸载时清理）
+ * - watch session.groups → syncForkBranches diff，状态变化 onChange → pushNotice 追加状态行
+ * - onScopeDispose 退订并重置分支态（App 卸载时清理）
  */
 export function bindForkNoticeEffect(): void {
   const sessionStore = useSessionStore()
-  // groupsRef 供 useForkBranchNotify diff——storeToRefs 取响应式 ref（store 属性访问会被解包）。
+  // groupsRef 供分支状态 diff——storeToRefs 取响应式 ref（store 属性访问会被解包）。
   const { groups } = storeToRefs(sessionStore)
   const groupsRef: Ref<SessionGroup[]> = groups
-  const { trackedBranches, unreadByBranch, registerFork, clearUnread, onBranchStatusChange } =
-    useForkBranchNotify(groupsRef)
 
   // RV1：订阅 session.forkNotice 全局广播（payload 无 sessionId，routeInbound 走 global 通道）。
   // 收到后按 srcSessionId 把 ForkNotice 插入对应 session 的对话流（transient feed）。
@@ -231,55 +224,33 @@ export function bindForkNoticeEffect(): void {
 
   // RV2：后台分支状态变化（running→done/error/stopped）→ 追加反馈行通知。
   // kind 语义映射到反馈行：done → 分支已完成、error → 分支出错、stopped → 分支已停止。
-  onBranchStatusChange((change: BranchStatusChange) => {
-    pushNotice(change.srcSessionId, {
-      newSessionId: change.branchId,
-      branchName: change.label,
-      kind: change.kind,
+  // groups 深度 watch 驱动 diff，onChange 是唯一路由（单消费方，无多播注册表）。
+  watch(groupsRef, (next) => {
+    syncForkBranches(next, (change) => {
+      pushNotice(change.srcSessionId, {
+        newSessionId: change.branchId,
+        branchName: change.label,
+        kind: change.kind,
+      })
     })
-  })
-
-  // 同步分支追踪状态到模块级 ref（侧栏角标跨组件读）。
-  watch(trackedBranches, (s) => { trackedBranchesRef.value = s }, { immediate: true })
-  watch(unreadByBranch, (m) => { unreadByBranchRef.value = m }, { immediate: true })
-  // 暴露 clearUnread 给 useForkBranchBadges（模块级引用，侧栏角标消费时调）。
-  clearUnreadImpl = clearUnread
-  // 暴露 registerFork 给 pushForkNoticeAsk（fork-ask 本地推送时复用 RV2 分支追踪）。
-  registerForkImpl = registerFork
+  }, { deep: true })
 
   onScopeDispose(() => {
     unsubForkNotice()
-    clearUnreadImpl = null
-    registerForkImpl = null
-    trackedBranchesRef.value = new Set()
-    unreadByBranchRef.value = new Map()
+    resetForkBranchState()
   })
 }
 
 /**
- * 读取分支追踪状态（侧栏角标消费，RV2）。
- * 模块级单例 ref——bindForkNoticeEffect 写入，任意组件读 trackedBranches/unreadByBranch。
- * clearUnread 透传到 useForkBranchNotify（用户查看分支后清未读角标）。
+ * 读取分支未读角标状态（侧栏角标消费，RV2）。
+ * 直接转发 useForkBranchNotify 的模块级单例（unreadByBranch SSOT 在 features 层，
+ * 本函数仅是 ForkGroup 的读取门面）。clearUnread 透传：用户查看分支后清未读角标。
  */
 export function useForkBranchBadges(): {
-  /** 追踪中的分支 id 集合（响应式，供侧栏角标展示） */
-  trackedBranches: Ref<ReadonlySet<string>>
   /** 分支 id → 未读标记（需关注/已完成未查看） */
   unreadByBranch: Ref<ReadonlyMap<string, boolean>>
   /** 清除某分支未读角标（用户查看后调） */
   clearUnread: (branchId: string) => void
   } {
-  // clearUnread 委托：bindForkNoticeEffect 在 App 作用域持有 useForkBranchNotify 实例，
-  // 此处的 clearUnread 需访问该实例。通过模块级 ref 存最新实例引用（bind 时写入）。
-  const clear = (branchId: string): void => {
-    clearUnreadImpl?.(branchId)
-  }
-  return {
-    trackedBranches: trackedBranchesRef,
-    unreadByBranch: unreadByBranchRef,
-    clearUnread: clear,
-  }
+  return { unreadByBranch, clearUnread }
 }
-
-/** 模块级 clearUnread 实现引用（bindForkNoticeEffect 写入） */
-let clearUnreadImpl: ((branchId: string) => void) | null = null
