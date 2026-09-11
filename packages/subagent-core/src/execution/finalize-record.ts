@@ -279,6 +279,17 @@ export async function doFinalizeRecord(
 }
 
 /**
+ * [H1 U2 / D7] 轮终处置的 outcome 入参（判别联合）。
+ *
+ * 命名与协议 AgentOutcome 同名不同物（设计 D7 v6：kind 判别联合消歧）——
+ * kind 判别轮终分流：成功轮正文来源 = Continuation 成功分支的 content（协议
+ * AgentOutcome.content 映射产物）；失败轮 reason = 失败原因原文。
+ */
+export type RoundSettlementOutcome =
+  | { kind: "success"; content: string }
+  | { kind: "failed"; reason: string };
+
+/**
  * 对话模式轮次完成收尾：record 进 idle 态（非终态化，等待续聊）。
  *
  * 与 doFinalizeRecord 的关键区别（M2-A idle 语义）：
@@ -291,46 +302,43 @@ export async function doFinalizeRecord(
  *   - 删 .alive marker（进程已 SIGTERM 回收，不再是活进程）
  *   - emitUnregister（进程已死，从 pending 活跃后代差集移除；record 留内存不 archive）
  *
- * MF-2：设 record.result = result.text（否则 notifier idle 回复正文恒为 "(empty)"，
- *   G1/G2 多轮回复送达不成立）。失败轮次（result.success=false，MF-6 回退 idle 路径）
- *   error 优先于 text：collectResult 恒带 getFullText 全量正文，text 优先会把失败的
- *   恢复指引覆盖成轮内旧正文（Gate B S-B-1 实测：settled watchdog kill 后宿主收到
- *   成功形态通知，无从得知挂死与恢复方式）。
+ * 状态：record.status = "running"（覆盖 closed 回滚——机制本体，配套前置 = 调用方
+ * 已做终态守卫；H1 U2 起唯一活调用面 = Continuation 轮末分流与 SP-5 one-shot 成功，
+ * 全部以 status==="running" 入口，构造性保证不会回滚 close 终态化）。
+ * record.round += 1（成功失败同计——round = attempt 计数，失败轮不递增会让失败通知
+ * 与上一轮成功通知同 dedup key，60s 窗内被吞，设计 D7）。各步骤 best-effort 互不阻断。
  *
- * 状态：record.status = "idle"（覆盖 tryTransition 设的 done/failed），record.round += 1。
- * 各步骤 best-effort 互不阻断（参照 doFinalizeRecord 的 bestEffort 用法）。
- *
- * @param deps 与 doFinalizeRecord 同源（从 SubagentService 注入）
- * @param result 本轮 AgentResult（MF-2：result.text 写入 record.result 供 notifier idle 回复）
+ * @param outcome [H1 U2 / D7] 轮终 outcome——result 写入规则按 kind 分流：
+ *   成功轮 result = content（chat 域空 content 兜底 "(no output this round)"，
+ *   lastError 不混入正文——现行 `roundText || (lastError ? …)` 混入形态退役）；
+ *   one-shot 共享调用点恒传 success（行为零变化 G3：空 content → 前值 ?? "(empty)"）。
+ *   失败轮 result = 前值 ?? 失败摘要（首轮失败无正文可保则写
+ *   "round did not complete: <reason>"——GUI record 视图不被失败污染、renderer
+ *   hasRunning 判据 result !== undefined 仍成立），record.lastError 写失败原因；
+ *   [T2-③/LC-1] 可达性从 result 字段迁移到通知 outcome（失败通知由调用方承载）。
  */
 export async function doFinalizeRoundToIdle(
   deps: FinalizeDeps,
   record: ExecutionRecord,
-  result: AgentResult,
+  outcome: RoundSettlementOutcome,
 ): Promise<void> {
-  // MF-2：设 record.result 供 notifier idle 回复正文（否则恒 "(empty)"，G1/G2 不成立）。
-  // [T2-③ / LC-1] 失败轮 error 优先：collectResult 恒带 getFullText 全量正文（即使
-  // success=false），text 优先会把 watchdog 等失败的恢复指引覆盖成轮内正文（半成品 /
-  // 回补值），宿主无从得知失败与恢复方式（S-B-1 首轮 settled watchdog 实测）。
-  // [R2-1] 轮终写点恒写非空：one-shot 空文本成功完成（collectResult getFullText 返回 ""、
-  // success=true、真实可达，本写点被 subagent-service runAndFinalize 的成功分支共用）首轮
-  // result 前值 undefined，兜底补 "(empty)" 占位——措辞与 notifier buildLlmContent 的
-  // `record.result ?? "(empty)"` 兜底同款，通知文案逐字节不变（[增量 G2] G4 取舍保持）。
-  // 轮终信号优先：record.result 非 undefined 是 renderer hasRunning 排除「轮终
-  // running-resumable」的判据（shared SubagentRecord.result 契约），保持 undefined 会让
-  // 完成注入后末位 turn 永久「工作中」。续轮（前值存在）沿用前值：one-shot 无增量语义，
-  // record.result = 该 subagent 最终输出。chatMode 空增量轮 → 固定占位
-  // "(no output this round)"（D5：增量语义下沿用旧 record.result = 上一轮增量，本轮通知
-  // 正文 = 上一轮内容，父 agent 误读为原样重复回复）。
+  // [D7 写入规则] 轮终 result 写入按 outcome.kind 分流（MF-2 承诺不变：record.result
+  // 供 notifier idle 回复正文，恒写非空——renderer hasRunning 判据依赖）。
   let nextResult: string | undefined;
-  if (result.error && (!result.success || !result.text)) {
-    nextResult = `round did not complete: ${result.error}`;
-  } else if (result.text) {
-    nextResult = result.text;
+  if (outcome.kind === "failed") {
+    // 失败轮：前值保真（有最后成功正文则保留），无前值（首轮失败）写失败摘要；
+    // lastError 写失败原因（排障面——renderer 在 result 非 undefined 时不显示 error）。
+    record.lastError = outcome.reason;
+    nextResult = record.result ?? `round did not complete: ${outcome.reason}`;
   } else if (record.chatMode) {
-    nextResult = "(no output this round)";
+    // chat 成功轮：本轮增量 = content；空 content 兜底 "(no output this round)"
+    //（D7 ⑤——统一占位，lastError 失败文案不再混入成功轮正文）。
+    nextResult = outcome.content || "(no output this round)";
   } else {
-    nextResult = record.result ?? "(empty)";
+    // one-shot 成功轮（SP-5 共享调用点，G3 行为零变化）：content 或前值 ?? "(empty)"
+    //（[R2-1] 轮终写点恒写非空，措辞与 notifier buildLlmContent 的
+    // `record.result ?? "(empty)"` 兜底同款，通知文案逐字节不变）。
+    nextResult = outcome.content || record.result || "(empty)";
   }
   record.result = nextResult;
 

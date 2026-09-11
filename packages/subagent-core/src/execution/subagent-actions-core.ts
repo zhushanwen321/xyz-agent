@@ -35,6 +35,10 @@ import type {
 } from "./types.ts";
 import { ResurrectDeniedError } from "./types.ts";
 import { COLLECT_SCAN_LIMIT } from "./collect-coordinator.ts";
+// [H1 U2 / D5 双写点①] SP-5 升级 gate 的错误构造（文案/错误码/恢复指引单一权威，
+// 与 Continuation D4 revive 格写点②共用）+ 默认引擎 id（engine 留痕缺省判据）。
+import { engineConversationUpgradeUnsupportedError } from "./engine/common/capability-gate.ts";
+import { DEFAULT_ENGINE_ID } from "./engine/registry.ts";
 
 // ============================================================
 // 常量
@@ -564,15 +568,21 @@ export async function messageHandler(
   }
 
   // one-shot upgrade：非 chatMode 的 active record（running/idle）收到 message 时
-  // 自动升级为 chatMode，后续走 deliverChatMessage 统一投递路径（热路径或冷路径 resume）。
+  // 自动升级为 chatMode，后续走 Continuation 统一续聊路径（新 run + resume 锚点）。
   // closed/cancelled 终态 record 不可 upgrade（getRecordForAction 已抛 not found）。
   // chatMode 是 ExecutionRecord 的 readonly 字段，用 Mutable<T> 显式断言绕过 readonly 约束（upgrade 语义）。
   // Object.assign 隐式绕过 readonly 不可追踪，改为单字段显式赋值。
   // 进程内 upgrade 入口——one-shot 首条 message 触发 upgrade 置位 chatMode=true。
-  // 与 subagent-service.ts getRecordForAction 磁盘重建（跨重启恢复入口）分工：
+  // 与 conversation-continuation 的 D4 revive 格（跨重启冷升级写点②）分工协同：
   // 本入口服务进程内 one-shot，跨重启路径恒被 getRecordForAction 磁盘重建绕过
-  //（该处无条件 chatMode=true）。改动这两处必须协同。
+  //（该处经 Continuation revive 格 gate 化）。改动这两处必须协同。
+  // [H1 U2 / D5 双写点①] 升级前置 gate：conversation 位检查——unsupported 引擎
+  //（zcode）的 one-shot 收到 message 不升级（升级后续聊行为悬空），硬拒 + fork/重派
+  // 指引（engineConversationUpgradeUnsupportedError 文案单源）。
   if (!record.chatMode && record.status === "running") {
+    if (!service.canUpgradeToConversation(record)) {
+      throw engineConversationUpgradeUnsupportedError(record.engine ?? DEFAULT_ENGINE_ID);
+    }
     type Mutable<T> = { -readonly [K in keyof T]: T[K] };
     (record as Mutable<ExecutionRecord>).chatMode = true;
   }

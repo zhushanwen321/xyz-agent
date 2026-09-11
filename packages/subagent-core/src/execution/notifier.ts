@@ -28,6 +28,33 @@ import { deriveOutcome } from "./execution-record.ts";
 import { getBoundNotifyLedger, NOTIFY_CUSTOM_TYPE } from "./notify-ledger.ts";
 import type { ClosedReason, ExecutionOutcome } from "./types.ts";
 
+// ============================================================
+// [T4① / PS-2] notify 门（H1 U2 自 subagent-service.ts 迁入——Continuation
+// 成功/失败分支双闸共用；原位置 re-export 保持既有 import 路径不变）
+// ============================================================
+
+/** notify 门拦截集：disposeAllRecords 因这两类原因关闭的 record，其迟到的
+ *  轮次完成回注不得注入新 session——/new、/fork 的决策（[v4 A-6]）
+ *  是「被关 record 的告知改由 list 的 closedReason 表达」，不主动通知；旧门只排除
+ *  cancelled，parent-new/parent-fork 放行 → 新对话被「Subagent X failed: closed due to
+ *  parent-new」的僵尸回执 triggerTurn 唤醒，已废弃会话的通知注入新上下文。 */
+const NOTIFY_BLOCKED_CLOSED_REASONS: ReadonlySet<ClosedReason> = new Set(["parent-new", "parent-fork"]);
+
+/**
+ * [T4① / PS-2] 轮次完成回注的 notify 门（按 closedReason 白名单放行）。
+ *
+ * cancelled（cancelBackground 自己 notify）与 parent-new/parent-fork（编排性关闭，
+ * 告知由 list 的 closedReason 表达）不放行；其余（undefined = 本路径抢到 CAS 尚未
+ * 终态化的迟到回调、user-close/gc 等真实终态）照旧回注。导出供测试与调用点复用。
+ * [H1 U2] 消费面扩为三处：Continuation 成功分支（route 前）、失败分支（独立载荷
+ * 发出前，B#19 投递门照迁移）、泛化派发主干尾部（one-shot 回注，现状不变）。
+ */
+export function notifyGateAllowsDelivery(closedReason: ClosedReason | undefined): boolean {
+  if (closedReason === undefined) return true;
+  if (closedReason === "cancelled") return false;
+  return !NOTIFY_BLOCKED_CLOSED_REASONS.has(closedReason);
+}
+
 /** U4：delivery warn 出口注入用——facade 同 component 同引用，与 index.ts 的
  *  getLogger("subagents") 共享单例；configureCore 后透明切换到宿主实现。 */
 const notifyLogger = getLogger("subagents");

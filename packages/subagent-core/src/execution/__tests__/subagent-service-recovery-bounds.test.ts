@@ -230,41 +230,56 @@ describe("T2③ hot-path settled watchdog", () => {
   });
 
   it("arms the settled watchdog after a successful hot-path prompt", async () => {
-    const record = makeRecord({ id: "sa-hot-arm" });
+    // [H1 U2] deliverChatMessage = Continuation 派发（续聊轮需 sessionFile 锚点）
+    const record = makeRecord({ id: "sa-hot-arm", sessionFile: path.join(agentDir, "sa-hot-arm.jsonl") });
+    fs.writeFileSync(record.sessionFile!, "{}\n", "utf-8");
     store.register(record);
     await deliverChat(service, record, "hello", false);
-    expect(fake.interacts.length).toBe(1);
+    await vi.waitFor(() => expect(fake.runs.length).toBe(1));
+    expect(fake.interacts.length).toBe(0); // interact 热路径退役——Continuation 轮派发 run
     expect(hasSettledWatchdog(record.id)).toBe(true);
   });
 
-  it("onMidTimeout: kills the child (engine cancel), fails the round, error carries 'settled watchdog' marker and recovery hint", async () => {
+  it("onMidTimeout: kills the child (engine cancel + round abort), fails the round via run settlement, error carries 'settled watchdog' marker and recovery hint", async () => {
     // fake timers 必须先于 arm 生效（useFakeTimers 不接管已存在的真实 timer）
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
-    const record = makeRecord({ id: "sa-hot-timeout" });
+    // [H1 U2] Continuation 轮需要 sessionFile 锚点
+    const record = makeRecord({ id: "sa-hot-timeout", sessionFile: path.join(agentDir, "sa-hot-timeout.jsonl") });
+    fs.writeFileSync(record.sessionFile!, "{}\n", "utf-8");
     store.register(record);
     await deliverChat(service, record, "hello", false);
+    await vi.waitFor(() => expect(fake.runs.length).toBe(1));
     expect(hasSettledWatchdog(record.id)).toBe(true);
 
-    // [D9 两段式] 热路径 prompt 发出后挂中段：静默满中段窗长触发（本测试替身不驱动
-    // 协议事件，中段静默形态直达）
+    // [D9 两段式] 轮开跑后挂中段：静默满中段窗长触发（本测试替身不驱动协议事件，
+    // 中段静默形态直达）
     await vi.advanceTimersByTimeAsync(SETTLED_MID_ROUND_NO_PROGRESS_MS + 1);
 
-    // kill 收敛入口被触发（onTimeout 第一步）
-    expect(killChildSpy).toHaveBeenCalledWith(record.id, "settled watchdog (hot path)");
+    // kill 收敛入口被触发（[H1 U2] Continuation watchdog fire → killRoundChildForWatchdog，
+    // source 含 phase 名——旧 onHotPathSettledWatchdogTimeout 的 "(hot path)" 标记退役）
+    expect(killChildSpy).toHaveBeenCalledWith(record.id, "settled watchdog (mid-round)");
     // watchdog 到期自清（armedTimers 先删条目再执行回调）
     expect(hasSettledWatchdog(record.id)).toBe(false);
-    // 该轮失败终态化（chatMode → MF-6 回退 resumable）+ 失败通知
-    expect(record.resumable).toBe(true);
+    // [H1 U2] fire abort 轮 signal → 在途 run 收敛（替身模拟 abort 合成失败终态）→
+    // onRunSettled 失败分支簿记（chatMode → MF-6 回退 resumable）+ 失败通知
+    fake.runs[0]!.settle({
+      content: "",
+      error: "engine_run_failed: run aborted (settled watchdog mid-round no-progress); the process was terminated to bound the wait. Recovery: check state with subagents action:'list', then re-send your message to continue.",
+      exitCode: null,
+    });
+    await vi.waitFor(() => expect(record.resumable).toBe(true));
     expect(record.status).toBe("running");
-    expect(record.result).toContain("settled watchdog");
-    expect(record.result).toContain("Recovery");
-    expect(record.result).toContain("action:'list'");
-    // 失败通知送达（内核直发路径）
+    // [H1 U2 / D7] 失败轮 lastError 写失败原因（result = 前值 ?? 失败摘要——失败摘要
+    // 由 Continuation 失败通知独立承载）
+    expect(record.lastError).toContain("settled watchdog");
+    expect(record.lastError).toContain("Recovery");
+    expect(record.lastError).toContain("action:'list'");
+    // 失败通知送达（Continuation 独立载荷——正文带失败摘要与恢复指引）
     expect(pi.sendMessage).toHaveBeenCalled();
     const sendMessageCalls = (pi.sendMessage as unknown as ReturnType<typeof vi.fn>).mock.calls as Array<[{ content?: string }]>;
     const notifyContent = sendMessageCalls[0]?.[0]?.content ?? "";
     expect(notifyContent).toContain("settled watchdog");
-    // [W3] 引擎侧终止意图（fire-and-forget；fake timers 下只断言受理动作已发出）
+    // [W3] 引擎侧终止意图（watchdog fire 的 cancel；fake timers 下只断言受理动作已发出）
     const cancel = fake.interacts.find((c) => c.action.kind === "cancel");
     expect(cancel).toBeDefined();
   });

@@ -144,6 +144,9 @@ function makeService(over: Record<string, unknown> = {}): SubagentService {
     getRecordForAction: vi.fn(),
     closeSubagent: vi.fn(),
     deliverChatMessage: vi.fn(),
+    // [H1 U2 / D5 双写点①] messageHandler 升级 gate 判据读 service.canUpgradeToConversation
+    //（stub 缺省放行 = pi 默认引擎语义；gate 拒绝面专项见 conversation-continuation.test.ts）。
+    canUpgradeToConversation: vi.fn(() => true),
     // [U2] startHandler 缺省 collect 解析读真实 config（偏差#3 接线）：stub 缺省 async
     //（本文件不测 collect 语义，专项见 start-collect-guard.test.ts）。
     getCollectSyncDefault: vi.fn(() => "async" as const),
@@ -152,6 +155,9 @@ function makeService(over: Record<string, unknown> = {}): SubagentService {
   return {
     execute: m.execute,
     cancel: m.cancel,
+    // [H1 U2 / D5 双写点①] messageHandler 升级 gate 判据经平铺访问器（真实 service 为
+    // 平铺方法，非 queries/chatActions 聚合面成员），stub 须同构挂载。
+    canUpgradeToConversation: m.canUpgradeToConversation,
     // [U2 偏差#3 接线] startHandler 经平铺访问器读 config 缺省 collect（真实 service
     // 为平铺方法 subagent-service.ts:1786，非 queries 聚合面成员），stub 须同构挂载。
     getCollectSyncDefault: m.getCollectSyncDefault,
@@ -638,6 +644,26 @@ describe("⛔4 messageHandler（守卫 + upgrade + 投递，快照 = pi-sw 实�
     );
     expect(upgradeRec.chatMode).toBe(true);
     expect(deliverChatMessage).toHaveBeenCalledWith(upgradeRec, "hi", false);
+  });
+
+  it("[H1 U2 / D5 双写点①] one-shot upgrade gate 拒绝：unsupported 引擎（canUpgradeToConversation=false）→ 硬拒 + fork/重派指引，chatMode 不置位", async () => {
+    const deliverChatMessage = vi.fn(async () => {});
+    const zcodeRec = makeExecRecord({ id: "bg-z", chatMode: false, status: "running", engine: "zcode" });
+    const err = await errOf(() =>
+      messageHandler(
+        makeService({
+          getRecordForAction: vi.fn(() => zcodeRec),
+          deliverChatMessage,
+          canUpgradeToConversation: vi.fn(() => false),
+        }),
+        { subagentId: "bg-z", text: "hi" },
+      ),
+    );
+    // 文案 = engineConversationUpgradeUnsupportedError 单源（错误码前缀 + 拒绝依据）
+    expect(err.errorName).toBe("EngineError");
+    expect(err.message).toContain("cannot be upgraded to a resumable conversation");
+    expect(zcodeRec.chatMode).toBe(false);
+    expect(deliverChatMessage).not.toHaveBeenCalled();
   });
 
   it("getRecordForAction 拒绝 + 无终态快照 → 原错误透传（文案最准原则）", async () => {

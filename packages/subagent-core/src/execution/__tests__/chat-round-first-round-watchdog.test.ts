@@ -183,28 +183,29 @@ describe("[F-2] 首轮/冷续轮 settled-watchdog arm（kickOffChatRound run 派
     expect(killChildSpy).not.toHaveBeenCalled();
 
     // 刷新后再满整个静默窗才触发
+    // [H1 U2] Continuation 轮的 watchdog kill 源 = continuation.onWatchdogFire
+    //（killRoundChildForWatchdog，source 含 phase 名——旧 onHotPathSettledWatchdogTimeout
+    // 的 "(hot path)" 标记随旧 arm 点退役）
     await vi.advanceTimersByTimeAsync(SETTLED_MID_ROUND_NO_PROGRESS_MS + 1);
-    expect(killChildSpy).toHaveBeenCalledWith(handle.subagentId, "settled watchdog (hot path)");
+    expect(killChildSpy).toHaveBeenCalledWith(handle.subagentId, "settled watchdog (mid-round)");
   });
 
-  it("首轮 settled 相位交棒：中段窗内相位到达 → 切收尾段（中段窗不再触发，收尾段硬顶触发）", async () => {
+  it("首轮 run 应答驱动 settle 交棒（D7 v5 轻形态）：应答到达即交棒 → 轮终簿记后两段守护清空", async () => {
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
     const handle = await service.execute({ task: "stuck after settle", slug: "t", ctxModel: CTX_MODEL, conversation: true });
     const run = fake.runs[0]!;
+    expect(getSettledWatchdogPhase(handle.subagentId)).toBe("mid-round");
 
-    await vi.advanceTimersByTimeAsync(SETTLED_MID_ROUND_NO_PROGRESS_MS / 2);
-    // 首轮 runId 键 roundLifecycle settled 相位（W3 报告称已接——本用例核实链路生效）
-    run.emitLifecycle({ phase: "settled", usage: { input: 1, output: 1, cacheRead: 0, cacheWrite: 0 } });
-    expect(getSettledWatchdogPhase(handle.subagentId)).toBe("settled"); // 已交棒收尾段
-
-    // 中段不再计时（交棒清掉，不继承——30min 静默判据对收尾段失效）；收尾段未满（<600s）不触发
-    await vi.advanceTimersByTimeAsync(SETTLED_WATCHDOG_TIMEOUT_MS - 1);
-    expect(killChildSpy).not.toHaveBeenCalled();
-    expect(hasSettledWatchdog(handle.subagentId)).toBe(true); // 收尾段仍在计时
-
-    // 收尾段硬顶（600s 默认）到期触发
-    await vi.advanceTimersByTimeAsync(2);
-    expect(killChildSpy).toHaveBeenCalledWith(handle.subagentId, "settled watchdog (hot path)");
+    // [H1 U2] 交棒源改 run 应答（旧 roundLifecycle settled 相位帧随相位机退役——
+    // onRunSettled 内 noteRoundSettledFromProtocol 先于轮终簿记，随后簿记完成
+    // disarmRoundWatchdog 清两段——不残留 armed 误杀已收敛轮）
+    run.settle({ content: "round text" });
+    await vi.waitFor(() => expect(hasSettledWatchdog(handle.subagentId)).toBe(false));
+    // 轮终簿记完成（round+1，record 保持 running-resumable）
+    await vi.waitFor(() => {
+      const rec = (service as unknown as { store: RecordStore }).store.getMutable(handle.subagentId);
+      expect(rec?.round).toBe(1);
+    });
   });
 });
 
@@ -282,56 +283,45 @@ describe("[F3] 续聊轮 active 轮内心跳相位（handleChatRoundPhase case a
     fs.rmSync(agentDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
   });
 
-  /** 热路径续聊轮就位：record 注册 + deliverChatMessage（路由注册 + 中段守护 armed）。 */
+  /** 热路径续聊轮就位：record 注册 + deliverChatMessage（Continuation 派发 + 中段守护 armed）。 */
   async function armHotPathRound(recordId: string): Promise<ExecutionRecord> {
     const record = makeChatRecord(recordId);
     record.sessionFile = path.join(agentDir, `${recordId}-session.jsonl`);
     fs.writeFileSync(record.sessionFile, "{}\n", "utf-8");
     store.register(record);
     await service.chatActions.deliverChatMessage(record, "long tool round", false);
+    await vi.waitFor(() => expect(fake.runs.length).toBe(1));
     expect(hasSettledWatchdog(record.id)).toBe(true);
     expect(getSettledWatchdogPhase(record.id)).toBe("mid-round");
     return record;
   }
 
-  it("recordId 键 active 相位刷新中段静默计时：半窗 + active + 半窗不触发，再满窗才触发", async () => {
+  it("轮内事件行（runId 键 onEvent）刷新中段静默计时：半窗 + 刷新 + 半窗不触发，再满窗才触发", async () => {
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
     const record = await armHotPathRound("sa-active-hb");
+    const run = fake.runs[fake.runs.length - 1]!;
 
     await vi.advanceTimersByTimeAsync(SETTLED_MID_ROUND_NO_PROGRESS_MS / 2);
-    // 续聊轮「仅工具输出、零正文」形态：delta 通道无帧，唯一刷新源 = active 心跳
-    fake.emitRecordLifecycle(record.id, { phase: "active" });
+    // [H1 U2] 续聊轮「仅工具输出、零正文」形态的刷新源 = run 事件通道（recordId 键
+    // active 相位随相位机退役；runId 键 onEvent 对 Continuation 轮恒挂载）
+    run.emitEvent({ type: "tool_call", toolName: "grep" });
     await vi.advanceTimersByTimeAsync(SETTLED_MID_ROUND_NO_PROGRESS_MS / 2 + 1);
-    // 半窗已过但 active 刷新过——未到期（修复前无刷新源，此处已 kill）
+    // 半窗已过但事件行刷新过——未到期
     expect(killChildSpy).not.toHaveBeenCalled();
     expect(hasSettledWatchdog(record.id)).toBe(true);
 
-    // active 之后无新帧：再满整窗才触发
+    // 刷新之后无新帧：再满整窗才触发（Continuation 轮 watchdog kill 源含 phase 名）
     await vi.advanceTimersByTimeAsync(SETTLED_MID_ROUND_NO_PROGRESS_MS + 1);
-    expect(killChildSpy).toHaveBeenCalledWith(record.id, "settled watchdog (hot path)");
+    expect(killChildSpy).toHaveBeenCalledWith(record.id, "settled watchdog (mid-round)");
   });
 
-  it("active 非轮终相位：不交棒不置闲（phase 保持 mid-round、record 状态不动）", async () => {
+  it("轮内事件行只刷新：不交棒不处置 record（phase 保持 mid-round、record 状态不动）", async () => {
     const record = await armHotPathRound("sa-active-nonterminal");
-    fake.emitRecordLifecycle(record.id, { phase: "active" });
-    // 对照 settled（交棒收尾段）/idle（disarm + 挂 idle timer）：active 两者皆不触发
+    const run = fake.runs[fake.runs.length - 1]!;
+    run.emitEvent({ type: "tool_call", toolName: "grep" });
+    // 事件行 = 中段刷新（对照 run 应答 settle = 交棒 + 轮终簿记）：两者皆不触发
     expect(getSettledWatchdogPhase(record.id)).toBe("mid-round");
     expect(record.status).toBe("running");
-    expect(killChildSpy).not.toHaveBeenCalled();
-  });
-
-  it("未知相位静默忽略（前向兼容：不 throw、不刷新、不处置 record）", async () => {
-    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
-    const record = await armHotPathRound("sa-unknown-phase");
-
-    await vi.advanceTimersByTimeAsync(1_000);
-    expect(() => {
-      // 未来协议相位（运行时帧不受本地类型联合约束——switch 无 default 静默忽略）
-      fake.emitRecordLifecycle(record.id, { phase: "queued" });
-    }).not.toThrow();
-    expect(getSettledWatchdogPhase(record.id)).toBe("mid-round");
-    expect(record.status).toBe("running");
-    // 未刷新：1s 已过但静默窗仍从 arm 起算——active/未知相位之外无处置面
     expect(killChildSpy).not.toHaveBeenCalled();
   });
 });
