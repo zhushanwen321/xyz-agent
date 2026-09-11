@@ -24,13 +24,13 @@ Out-of-scope：审计「已核实非过度」清单（见审计报告同名节�
 
 ### 2.1 组 A：死代码纯删除（候选 1、2、8）
 
-- 候选 1（search 残留，约 621 行）：删 `packages/renderer/src/composables/features/search/useSearch.ts`、`useSearchJump.ts`、`composables/features/new-task/useRecents.ts`、`composables/features/command/useCommandRegistry.ts` 及配套测试（`useSearch.test.ts`、`useSearchJump.test.ts`、`useRecents.test.ts`、`__tests__/i18n/section-kind.test.ts` 中的引用）。core 侧收口见 §4 裁决 1。
+- 候选 1（search 残留，约 621 行）：删 `packages/renderer/src/composables/features/search/useSearch.ts`、`useSearchJump.ts`、`composables/features/new-task/useRecents.ts`、`composables/features/command/useCommandRegistry.ts` 及配套测试（`useSearch.test.ts`、`useSearchJump.test.ts`、`useRecents.test.ts`、`__tests__/i18n/section-kind.test.ts` 中的引用）。core 侧收口见 §4 裁决 4。
 - 候选 2（markdown 交互，约 284 行）：删 `composables/panel/useMarkdownInteractions.ts`、`useCodeblockCopy.ts`、`useToolMeta.ts`、`__tests__/composables/useMarkdownInteractions-fallback.test.ts`；修正 `composables/logic/markdown.ts:284` 误导注释（实际点击处理在 `packages/ui/src/features/chat/MarkdownRenderer.vue:144-190`）。
 - 候选 8（shell 孤儿，约 57 行）：删 `shell/sessions-entry.ts`、`__tests__/shell/sessions-entry.test.ts`、`shell/index.ts` 与 `workspace/index.ts` 中的死脚手架常量；「未来替换挂载实现」意图一行注释挂 `useSidebar.ts`。
 
 ### 2.2 组 B：语句级清理点（#1-#6、#9、#10、#12）
 
-审计报告「另有 12 处代码级清理点」节全量落地，其中 #7 随候选 2、#8 随候选 10、#11 随候选 9。#1（约 40 个零引用导出收窄）按域分 3 批执行；fork/popover 域符号（ApplyDeltaFn、FinalizeStreamFn、SetMessagesFn、BackgroundTask*、CwdFileFetchStatus）不在独立批次执行，随组 E/G 的文件级改动顺带收窄，避免同文件跨组冲突。
+审计报告「另有 12 处代码级清理点」节全量落地（#3 落地形态偏离审计字面：审计写 `PendingAction` 三态判别联合 → `pendingTarget: string | null`，实际为 `ref<string | null | undefined>(undefined)`——`undefined` 是区分「无守卫在途」与「确认后收起」的必要存在性哨兵，`guardDialogOpen` 以 `!== undefined` 驱动，故不能压成 `string | null`；其余各点按审计字面落地），其中 #7 随候选 2、#8 随候选 10、#11 随候选 9。#1（约 40 个零引用导出收窄）按域分 3 批执行；fork/popover 域符号（ApplyDeltaFn、FinalizeStreamFn、SetMessagesFn、BackgroundTask*、CwdFileFetchStatus）不在独立批次执行，随组 E/G 的文件级改动顺带收窄，避免同文件跨组冲突。
 
 ### 2.3 组 C：usage 颜色归属（候选 9 + #11）
 
@@ -42,27 +42,27 @@ Out-of-scope：审计「已核实非过度」清单（见审计报告同名节�
 
 ### 2.5 组 E：孪生/镜像收敛（候选 6、10 + #8）
 
-- listSync（候选 10）：`useSubagentListSync.ts` 与 `useWorkflowListSync.ts` 合并为单参数化模块。合并前置裁决见 §4 裁决 2：workflow 版 tab watch 的 `{ immediate: true }` 是冗余（其全部触发场景被首个 watch 的 immediate 覆盖），删除之，两文件行为归一后合并。
-- fork 通知链路（候选 6）：`useForkBranchNotify.ts`（204 行）+ `useForkNoticeEffect.ts`（286 行）——feed/追踪态改模块级单例（同文件 feedMap 既有范式，ADR-0049 例外注释已论证），删实例化+镜像层与 onBranchStatusChange 多播 Set（全仓恰 1 注册方），删 `classifyChange` 的 'waiting' 死分支（`SessionStatus` 联合类型无该值，永不可达）。预计 490 行缩约三分之一。FR-19 角标功能多消费方（App.vue/ForkGroup.vue/MessageStream/useForkActions）全部保留。
+- listSync（候选 10）：`useSubagentListSync.ts` 与 `useWorkflowListSync.ts` 合并为单参数化模块。合并前置裁决见 §4 裁决 5：workflow 版 tab watch 的 `{ immediate: true }` 是冗余（其全部触发场景被首个 watch 的 immediate 覆盖），删除之，两文件行为归一后合并。
+- fork 通知链路（候选 6）：`useForkBranchNotify.ts`（204 行）+ `useForkNoticeEffect.ts`（286 行）——feed/追踪态改模块级单例（同文件 feedMap 既有范式，ADR-0049 例外注释已论证），删实例化+镜像层与 onBranchStatusChange 多播 Set（全仓恰 1 注册方），删 `classifyChange` 的 'waiting' 死分支（`SessionStatus` 联合类型无该值，永不可达）。预计 490 行缩约三分之一；实际收敛后 `134 + 256 = 390` 行（约 -20%）。FR-19 角标功能多消费方（App.vue/ForkGroup.vue/MessageStream/useForkActions）全部保留。
 
 ### 2.6 组 F：settings 传输路径归一（候选 4、7）
 
-- 候选 4：接口缝（core `SettingsTransport` + provide）保留（5 个测试文件真实注入，豁免）；`settings-transport-adapter.ts` 坍缩——import 源从 `core/transport/api/domains/{config,model,extension}` 直连改为 `@/api` 门面三元导出（§4 裁决 3：mock 模式下 settings 域走 mock，与全应用一致），或内联进 `useSettingsShell.ts` + `discoverModels` 8 行 guard 移入域内。涉改测试：stubTransport 相关（settings-modal-smoke.test.ts 等，执行时 grep `SettingsTransport` 精确定位）。
-- 候选 7（§4 裁决 4：留作测试接缝）：`api/domains/settings.ts` 文件头改写唯一正当理由「测试 mock 接缝」并统一 `useAppUpdate.ts` 的 10 个 IPC 函数 import 路径回本层（消除已发生的绕过泄漏）；顺带 #2（`useAppUpdate.ts:787-788` restore* 两函数移出生产返回对象）。
+- 候选 4：接口缝（core `SettingsTransport` + provide）保留（真实注入 = renderer 4 个测试文件 + core 3 个测试文件，豁免）；`settings-transport-adapter.ts` 坍缩——import 源从 `core/transport/api/domains/{config,model,extension}` 直连改为 `@/api` 门面三元导出（§4 裁决 3：mock 模式下 settings 域走 mock，与全应用一致），或内联进 `useSettingsShell.ts` + `discoverModels` 8 行 guard 移入域内。涉改测试：stubTransport 相关（settings-modal-smoke.test.ts 等，执行时 grep `SettingsTransport` 精确定位）。注入点枚举（可复现，`grep -rn provideSettingsTransport`）：renderer = `__tests__/settings/settings-modal-smoke.test.ts`、`__tests__/settings/provider-edit-body-phase-b.test.ts`、`__tests__/settings/settings-modal-skill-dirs.test.ts`、`components/settings/extension/__tests__/PluginContributionsPage.test.ts`；core = `domain/settings/__tests__/settings-lifecycle.test.ts`、`settings-store.test.ts`、`use-provider-edit.test.ts`；`composables/shell/__tests__/useSettingsShell.test.ts` 走 `vi.mock('settings-transport-adapter')`，不注入本接口，不计入。
+- 候选 7（§4 裁决 2：留作测试接缝）：`api/domains/settings.ts` 文件头改写唯一正当理由「测试 mock 接缝」并统一 `useAppUpdate.ts` 的 10 个 IPC 函数 import 路径回本层（消除已发生的绕过泄漏）；顺带 #2（`useAppUpdate.ts:787-788` restore* 两函数移出生产返回对象）。
 
 ### 2.7 组 G：command-popover 域合并 + 门禁豁免（候选 3）
 
 两步同批（缺一会被门禁弹回）：
 
 - 规则层：`.githooks/vue_rules_checker.py` 增加豁免通道——文件头 `<!-- split-justified: <语义域> -->` 登记后 `MAX_SCRIPT_LINES` 上限放行（具体形态：登记文件仍受一个更高的绝对上限约束，防止无限膨胀；门禁无登记的超限文件依旧拦截）。规则本体改动按项目规范附 `[HISTORICAL]` 式说明注释。
-- 代码层：`command-popover-delivery.ts` 并回同域（命令投递）、`command-popover-file-candidates.ts` 内联回 `CommandPopover.vue` 或并入 `command-popover-open-fetch.ts` 的 file 分支、`useCommandPopoverCwdFileView` 并入 open-fetch 删回调缝、`composer-injection-store.ts:22-24` 3 行兼容函数统一为 const 形态、`useForkNoticeStream.ts`（一行派生+两个一行转发）并回消费方。合并后的超行文件加 split-justified 登记。语义域清晰或有测试锁定回归史的 keyboard/symbols/skill-candidates/source/trigger 五模块不动。
+- 代码层：`command-popover-delivery.ts` 并回同域（命令投递）、`command-popover-file-candidates.ts` 内联回 `CommandPopover.vue` 或并入 `command-popover-open-fetch.ts` 的 file 分支、`useCommandPopoverCwdFileView` 并入 open-fetch 删回调缝、`composer-injection-store.ts:22-24` 3 行兼容函数统一为 const 形态、`useForkNoticeStream.ts`（一行派生+两个一行转发）并回消费方。合并后的超行文件加 split-justified 登记。语义域清晰或有测试锁定回归史的 keyboard/symbols/skill-candidates/source/trigger 五语义域**结构**不动（symbols/skill-candidates/source 三文件随 §2.2 #1 顺带 export 收窄，不改行为）。
 
 ## 3 验收场景表
 
 | # | 真实流程 | 通过标准 |
 |---|---------|---------|
 | V1 | 删除后 `pnpm dev` 启动应用，⌘K 搜索全流程：搜命令/file/会话 + jump 跳转 | 功能与删除前等价（本体在 core/ui）；`vue-tsc --noEmit` 绿；全仓 grep 无悬空 import |
-| V2 | markdown 渲染页：代码块复制按钮、文件路径点击 | 功能等价（本体在 ui 包 MarkdownRenderer）；grep 无对已删 3 文件的引用 |
+| V2 | markdown 渲染页：代码块复制按钮、文件路径点击 | 功能等价（本体在 ui 包 MarkdownRenderer）；grep 无悬空 **import**（类型/构建安全；注释提及不在判据内） |
 | V3 | 会话列表/侧栏/settings 页正常打开 | 无 console 报错；sessions-entry 删除无残留引用 |
 | V4 | usage 页打开：各 provider 配色显示 | 颜色与改动前一致；两个 UsagePage 实例不互相覆盖（代码审阅：颜色随 AggregatedData 返回） |
 | V5 | 重命名会话对话框：空名/超 60 字/含换行拒绝，合法名成功 | 行为与改写前等价；`pnpm --filter @xyz-agent/frontend build` 成功且产物无 vee-validate |
