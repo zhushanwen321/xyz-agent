@@ -71,7 +71,7 @@ graph TD
 | Unit | 状态 | 轮次 | 证据指针 |
 |------|------|------|---------|
 | R0 | committed | 1 | （基线后首个 commit）：18 域分区纯移动重排（独立复核 = 非注释行多重集 md5 一致 + 113 块锚点断言）+ r0-inventory.md 三清单（①34 字段重收敛口径 + 12 构造器赋值 + 7 跨聚合边；②16 直写写点通道表；③28 文件/87 命中 → 13 真深绑定性）+ 两条机械对账（34/34、16/16）+ 基线绿 2903/4；偏差 8 条登记于清单 §6（关键：impl-plan「字段 17」口径不可复现重收敛为 34；R1 字段清单漏列 uiObservability/execNesting/forkDepthAls 以清单为准；finalizeRoundToIdle 归 R4） |
-| R1 | pending | - | |
+| R1 | in_flight | - | dev 已派发（字段归属以 R0 清单①为准；assertReady D4 打样；深绑改写首落地） |
 | R2 | pending | - | |
 | R3 | pending | - | |
 | R4 | pending | - | |
