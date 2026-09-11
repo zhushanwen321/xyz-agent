@@ -35,19 +35,13 @@ export interface TickResult {
 	timeStartedAt: number;
 }
 
-/** 预算维度（time budget 已移除，仅 token）。 */
-export type BudgetDimension = "token";
-
-export type BudgetDecision =
-	| { type: "warning70"; dimension: BudgetDimension }
-	| { type: "warning90"; dimension: BudgetDimension };
+export type BudgetDecision = { type: "warning70" } | { type: "warning90" };
 
 export interface BudgetCheckResult {
-	terminal: { type: "exceeded"; dimension: BudgetDimension } | null;
+	terminal: { type: "exceeded" } | null;
 	warnings: BudgetDecision[];
 	shouldSendSteering: boolean;
 }
-
 
 // ── token 累加（FR-8.6）──────────────────────────────
 
@@ -127,29 +121,29 @@ export function getBudgetColor(percent: number): "error" | "warning" | "muted" {
 export function checkBudgetOnTurnEnd(state: GoalRuntimeState): BudgetCheckResult {
 	const result: BudgetCheckResult = { terminal: null, warnings: [], shouldSendSteering: false };
 
-	if (state.budget.tokenBudget) {
-		const tokenPct = state.tokensUsed / state.budget.tokenBudget;
-		if (tokenPct >= 1 && state.budgetLimitSteeringSent) {
-			result.terminal = { type: "exceeded", dimension: "token" };
-			return result;
+		if (state.budget.tokenBudget) {
+			const tokenPct = state.tokensUsed / state.budget.tokenBudget;
+			if (tokenPct >= 1 && state.budgetLimitSteeringSent) {
+				result.terminal = { type: "exceeded" };
+				return result;
+			}
+			if (tokenPct >= BUDGET_RATIO_HIGH && !state.budgetLimitSteeringSent) {
+				result.shouldSendSteering = true;
+			} else if (tokenPct >= BUDGET_RATIO_HIGH && !state.tokenWarning90Sent) {
+				result.warnings.push({ type: "warning90" });
+			} else if (tokenPct >= BUDGET_RATIO_LOW && !state.tokenWarning70Sent) {
+				result.warnings.push({ type: "warning70" });
+			}
 		}
-		if (tokenPct >= BUDGET_RATIO_HIGH && !state.budgetLimitSteeringSent) {
-			result.shouldSendSteering = true;
-		} else if (tokenPct >= BUDGET_RATIO_HIGH && !state.tokenWarning90Sent) {
-			result.warnings.push({ type: "warning90", dimension: "token" });
-		} else if (tokenPct >= BUDGET_RATIO_LOW && !state.tokenWarning70Sent) {
-			result.warnings.push({ type: "warning70", dimension: "token" });
-		}
-	}
 
 	return result;
 }
 
 // ── resume 预算重检 ──────────────────────────────────
 
-export function checkBudgetOnResume(state: GoalRuntimeState): { type: "exceeded"; dimension: BudgetDimension } | null {
+export function checkBudgetOnResume(state: GoalRuntimeState): { type: "exceeded" } | null {
 	if (state.budget.tokenBudget && state.tokensUsed >= state.budget.tokenBudget) {
-		return { type: "exceeded", dimension: "token" };
+		return { type: "exceeded" };
 	}
 	return null;
 }

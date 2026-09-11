@@ -9,26 +9,24 @@
  * - ports.ts：机器可检查的能力边界
  * - adapters/ports.ts：Pi → ServicePorts 桥接（单一构造点）
  * - service.ts：事件入口协调器（applyEvent）
- * - adapters/：Pi 桥接（command-adapter / event-adapter / ports）
+ * - adapters/：Pi 桥接（command-adapter / event-handlers / ports）
  * - projection/：渲染（widget / prompts）
  *
  * FR-4.2/D-16：ctx 必填，移除 lastCtx 模块级可变状态。
  * FR-6.4：移除 hasPendingInjection。
- * FR-6.7：移除 pendingPause（ESC 改用 ctx.signal.aborted 守卫，在 event-adapter）。
+ * FR-6.7：移除 pendingPause（ESC 改用 ctx.signal.aborted 守卫，在各 event handler）。
  */
 
 import type { ExtensionAPI, ExtensionCommandContext, ExtensionContext, MessageEndEvent } from "@earendil-works/pi-coding-agent";
 import { Text } from "@earendil-works/pi-tui";
 
 import { handleGoalCommand } from "./adapters/command-adapter";
-import {
-	handleAgentEnd,
-	handleBeforeAgentStart,
-	handleMessageEnd,
-	handleSessionShutdown,
-	handleSessionStart,
-	handleTurnEnd,
-} from "./adapters/event-adapter";
+import { handleAgentEnd } from "./adapters/event-handlers/agent-end";
+import { handleBeforeAgentStart } from "./adapters/event-handlers/before-agent-start";
+import { handleMessageEnd } from "./adapters/event-handlers/message-end";
+import { handleSessionShutdown } from "./adapters/event-handlers/session-shutdown";
+import { handleSessionStart } from "./adapters/event-handlers/session-start";
+import { handleTurnEnd } from "./adapters/event-handlers/turn-end";
 import { registerGoalControlTool } from "./adapters/goal-control-adapter";
 import { buildPorts } from "./adapters/ports";
 import { createGoal } from "./service";
@@ -68,7 +66,7 @@ export default function goalExtension(pi: ExtensionAPI) {
 
 	registerGoalControlTool(pi, session);
 
-	// ── Events（全部委托 adapters/event-adapter）────────
+	// ── Events（全部委托 adapters/event-handlers）────────
 
 	pi.on("before_agent_start", async (_event, ctx: ExtensionContext) => {
 		return handleBeforeAgentStart(pi, session, ctx);
