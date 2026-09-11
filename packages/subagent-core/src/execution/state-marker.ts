@@ -21,11 +21,29 @@
 // 语义）不并入。
 //
 // best-effort：写 IO 错静默，不阻断主流程。
+//
+// [UF-1] record 绑定 sidecar（`.record-binding`）同挂本载体族：宿主侧在 record.sessionFile
+// 回填点写「record id → session 文件」映射（engine-CLI 化后子 session 文件无身份 entry，
+// 旧 PI_SUBAGENT_SELF_RECORD_ID 注入链消失，collectRecords/findLightById 失去 id→file
+// 工件——本 sidecar 是该映射的宿主侧落盘权威）。与终态 sidecar 的关系：
+//   - 读侧消费（record-store scanFile）：仅当子文件无 identity entry 时用绑定重建身份，
+//     status 判定仍走 buildRecord 四分支矩阵——`.state`（终态）优先级天然高于绑定的
+//     running 形态，二者并存无冲突（终态后绑定保留：resurrect 回边删 .state 后绑定
+//     仍在，再崩溃仍可恢复）；
+//   - GC：session-file-gc 的 sidecar 名单暂未含本扩展名（孤儿绑定在 jsonl 被 GC 后
+//     残留，量级 = 崩溃 record 数，接受；名单扩展归 GC 领地批次）。
 
 import * as fs from "node:fs";
 
+import { getLogger } from "../core/logger.ts";
+
+const logger = getLogger("subagents");
+
 /** 终态 sidecar 扩展名（写侧新名 + 读侧兼容旧名；GC 清理名单与此同源语义）。 */
 export const STATE_SIDECAR_EXT = ".state";
+
+/** record 绑定 sidecar 扩展名（UF-1：宿主侧 id→file 映射载体）。 */
+export const RECORD_BINDING_SIDECAR_EXT = ".record-binding";
 const LEGACY_FINALIZED_EXT = ".finalized";
 const LEGACY_CANCELLED_EXT = ".cancelled";
 
@@ -199,4 +217,121 @@ export function statStateStamp(sessionFile: string): SidecarStat | null {
     }
   }
   return found ? { mtimeMs, size } : null;
+}
+
+// ============================================================
+// record 绑定 sidecar（UF-1：宿主侧 id→file 映射的写读）
+// ============================================================
+
+/**
+ * 绑定 sidecar 载荷（v1）。字段集 = record-store 磁盘重建 light record 所需的
+ * 全部身份域（IdentityHeaderRecon 投影源）+ 对话形态域（chatMode/round）。
+ * undefined 字段经 JSON.stringify 自然缺省（读侧守卫归一）。
+ */
+export interface RecordBinding {
+  /** schema 版本。消费方按 v 判别解析，不认识的版本跳过而非猜测。 */
+  v: 1;
+  recordId: string;
+  /** 根 Pi session id（session 隔离过滤与归属校验用；initSession 前的异常窗口 undefined）。 */
+  rootSessionId?: string;
+  /** 直接父 record id（跨层归属校验用；顶层 undefined）。 */
+  parentRecordId?: string;
+  /** 递归深度（顶层 0）。 */
+  depth: number;
+  agent: string;
+  task: string;
+  slug: string;
+  /** 执行模式（窄字面量跟随 types.ts ExecutionMode 现值；扩展时随 schema v2）。 */
+  mode: "background";
+  startedAt: number;
+  /** 对话形态标志（message 链恢复语义的分流域）。 */
+  chatMode: boolean;
+  /** 已完成对话轮数（绑定写时点快照；回填点早于轮终 +1，恢复值可滞后一拍）。 */
+  round?: number;
+  model: string;
+  thinkingLevel?: string;
+  /** 创建时启用 worktree 隔离（重建面 hadWorktree 恢复源）。 */
+  worktree: boolean;
+}
+
+/**
+ * 写 record 绑定 sidecar（原子写：独占创建 tmp → rename 覆盖目标）。
+ *
+ * best-effort 记账面：任何 I/O 失败只 warn 不抛——绑定写发生在派发/应答主路径上，
+ * 绑定缺失只影响跨重启恢复能力，不得影响当前进程的派发推进。
+ *
+ * @param sessionFile 子 session.jsonl 绝对路径（绑定目标 = `<sessionFile>.record-binding`）
+ */
+export function writeRecordBinding(sessionFile: string, binding: RecordBinding): void {
+  const target = `${sessionFile}${RECORD_BINDING_SIDECAR_EXT}`;
+  // tmp 名带 pid：多进程共享 sessionsDir 时互不覆盖；wx 独占创建防同进程残留碰撞。
+  const tmp = `${target}.${process.pid}.tmp`;
+  try {
+    fs.writeFileSync(tmp, JSON.stringify(binding), { encoding: "utf-8", flag: "wx" });
+    fs.renameSync(tmp, target);
+  } catch (err) {
+    try {
+      fs.rmSync(tmp, { force: true });
+    } catch (_e) {
+      void _e; // tmp 清理失败不追加处理（同为目标目录 IO 故障域）
+    }
+    logger.warn("[subagents] record binding write failed (best-effort bookkeeping; dispatch unaffected)", {
+      detail: {
+        sessionFile,
+        error: err instanceof Error ? err.message : String(err),
+      },
+    });
+  }
+}
+
+/**
+ * 读 record 绑定 sidecar。
+ *
+ * 返回 undefined：文件缺失 / JSON 损坏 / 版本不识别 / 关键身份域缺失或类型非法
+ * （recordId/agent/task/mode/startedAt 是重建 light record 的最低要求，残缺载荷
+ * 拒绝重建——与 rebuildEntryRecord 的损坏 entry 跳过语义同向，不把损坏残留误判成
+ * 可恢复身份）。可选域（rootSessionId/parentRecordId/round/thinkingLevel）类型非法
+ * 时归一 undefined，不影响整体判读。
+ */
+export function readRecordBinding(sessionFile: string): RecordBinding | undefined {
+  let raw: string;
+  try {
+    raw = fs.readFileSync(`${sessionFile}${RECORD_BINDING_SIDECAR_EXT}`, "utf-8");
+  } catch {
+    return undefined; // sidecar 不存在（正常——未回填 sessionFile 的 record 无绑定）
+  }
+  let parsed: Partial<RecordBinding>;
+  try {
+    parsed = JSON.parse(raw) as Partial<RecordBinding>;
+  } catch {
+    return undefined;
+  }
+  if (
+    parsed.v !== 1 ||
+    typeof parsed.recordId !== "string" ||
+    parsed.recordId === "" ||
+    typeof parsed.agent !== "string" ||
+    typeof parsed.task !== "string" ||
+    (parsed.mode !== "background") ||
+    typeof parsed.startedAt !== "number"
+  ) {
+    return undefined;
+  }
+  return {
+    v: 1,
+    recordId: parsed.recordId,
+    rootSessionId: typeof parsed.rootSessionId === "string" ? parsed.rootSessionId : undefined,
+    parentRecordId: typeof parsed.parentRecordId === "string" ? parsed.parentRecordId : undefined,
+    depth: typeof parsed.depth === "number" ? parsed.depth : 0,
+    agent: parsed.agent,
+    task: parsed.task,
+    slug: typeof parsed.slug === "string" ? parsed.slug : "",
+    mode: parsed.mode,
+    startedAt: parsed.startedAt,
+    chatMode: parsed.chatMode === true,
+    round: typeof parsed.round === "number" ? parsed.round : undefined,
+    model: typeof parsed.model === "string" ? parsed.model : "",
+    thinkingLevel: typeof parsed.thinkingLevel === "string" ? parsed.thinkingLevel : undefined,
+    worktree: parsed.worktree === true,
+  };
 }

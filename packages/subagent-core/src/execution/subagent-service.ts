@@ -118,7 +118,7 @@ import { EngineSdkError } from "@zhushanwen/subagent-engine-sdk";
 import type { HostRoundLifecycleParams, ProtocolError, ResumeAnchor } from "@zhushanwen/subagent-engine-sdk";
 import type { StreamSink, SubagentStream } from "./stream-sink.ts";
 import { createBackgroundStream } from "./stream-sink.ts";
-import { writeCancelledState } from "./state-marker.ts";
+import { writeCancelledState, writeRecordBinding } from "./state-marker.ts";
 import type { WorktreeHandle } from "./types.ts";
 import type {
   AgentEvent,
@@ -1659,6 +1659,40 @@ export class SubagentService {
   //（与 closed 候选守卫 assertReconnectAllowed 对称）。
 
   /**
+   * [UF-1] record 绑定 sidecar 写（sessionFile 回填点统一入口）。
+   *
+   * engine-CLI 化后子 session 文件不含身份 entry（旧 PI_SUBAGENT_SELF_RECORD_ID
+   * 注入链消失），跨重启后 coldLookupForAction（findLightById + collectRecords）
+   * 失去 id→file 映射，message 一律「not found or not owned」（U4 基线 S6 ❌）。
+   * 本方法在 record.sessionFile 被回填的代码点落 `<sessionFile>.record-binding`
+   * （id→file + rootSessionId 等身份域），record-store 扫描侧据它重建身份。
+   *
+   * best-effort 记账面：绑定写失败只 warn（state-marker 内部），不阻断派发主路径；
+   * sessionFile 未回填（undefined）时静默跳过（绑定无从谈起）。
+   */
+  private writeBindingForRecord(record: ExecutionRecord): void {
+    const sessionFile = record.sessionFile;
+    if (!sessionFile) return;
+    writeRecordBinding(sessionFile, {
+      v: 1,
+      recordId: record.id,
+      rootSessionId: record.rootSessionId,
+      parentRecordId: record.parentRecordId,
+      depth: record.depth,
+      agent: record.agent,
+      task: record.task,
+      slug: record.slug,
+      mode: record.mode,
+      startedAt: record.startedAt,
+      chatMode: record.chatMode === true,
+      round: record.round,
+      model: record.model,
+      thinkingLevel: record.thinkingLevel,
+      worktree: record.worktreeHandle !== undefined || record.hadWorktree === true,
+    });
+  }
+
+  /**
    * close action 的统一行为分流（running 子态 × force）。
    *
    *   chatMode（[H1 U2 / D4] close 行统一）：
@@ -2435,6 +2469,7 @@ export class SubagentService {
   private async finalizeEngineOutcome(record: ExecutionRecord, outcome: AgentOutcome): Promise<boolean> {
     if (outcome.sessionFile !== undefined) {
       record.sessionFile = outcome.sessionFile;
+      this.writeBindingForRecord(record);
     }
     if (
       outcome.error !== undefined &&
@@ -2568,6 +2603,7 @@ export class SubagentService {
   private outcomeToAgentResult(record: ExecutionRecord, outcome: AgentOutcome): AgentResult {
     if (outcome.sessionFile !== undefined) {
       record.sessionFile = outcome.sessionFile;
+      this.writeBindingForRecord(record);
     }
     return {
       text: outcome.content,
@@ -2794,7 +2830,11 @@ export class SubagentService {
               : {}),
           },
         );
-        if (outcome.sessionFile !== undefined) record.sessionFile = outcome.sessionFile;
+        if (outcome.sessionFile !== undefined) {
+          record.sessionFile = outcome.sessionFile;
+          // [UF-1] 轮应答锚点落盘：跨重启后 coldLookupForAction 据此解析 id→file。
+          this.writeBindingForRecord(record);
+        }
         if (record.chatMode && continuation !== undefined) {
           // [H1 U2] 轮末分流：run 应答（= agent_settled）回流 Continuation——round+1 /
           // 通知 / 交棒 / drain 全在 onRunSettled 单点（D7）。
@@ -2914,6 +2954,8 @@ export class SubagentService {
     const sessionFile = anchor.sessionRef["sessionFile"];
     if (typeof sessionFile === "string" && sessionFile !== "") {
       record.sessionFile = sessionFile;
+      // [UF-1] 锚点回填即绑定落盘（idle 帧先于 run 应答帧——本点先于轮应答写点生效）。
+      this.writeBindingForRecord(record);
     }
     // engineHandle 回填（①级读取钥匙；幂等守卫——终态回填已落则不覆盖）。
     if (record.engineHandle === undefined || record.engineHandle.sessionRef["sessionId"] === undefined) {

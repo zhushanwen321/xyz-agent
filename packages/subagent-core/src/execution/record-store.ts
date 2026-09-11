@@ -30,6 +30,10 @@ import { getLogger } from "../core/logger.ts";
 import { getCurrentActivity, getDisplayItems, getEventLog, markReconstructedStatus, snapshot as toSnapshot } from "./execution-record.ts";
 import { readStateMarker, statStateStamp, writeFinalizedState } from "./state-marker.ts";
 import type { StateMarker } from "./state-marker.ts";
+// [UF-1] record 绑定 sidecar：宿主侧 id→file 映射（engine-CLI 化后子文件无 identity
+// entry 时代的身份载体）——scanFile 探测分支在 identity miss 时消费它重建 light record。
+import { readRecordBinding, RECORD_BINDING_SIDECAR_EXT } from "./state-marker.ts";
+import type { RecordBinding } from "./state-marker.ts";
 import { toSubagentRecordEntry, SUBAGENT_RECORD_CUSTOM_TYPE } from "./record-entry.ts";
 import type { ManifestRecord, ManifestStore } from "./manifest-store.ts";
 import { INDEX_WRITE_MIN_INTERVAL_MS, loadIndex, saveIndex } from "./sessions-index.ts";
@@ -122,7 +126,7 @@ interface SidecarMatrix {
  *          full === light 是哨兵（「已尝试但无详情可补」，如无 assistant message
  *          的文件），避免重复全文重读；stat 戳变化时随 light 一起重置重试。
  *
- * 校验：jsonl + 终态 sidecar + alive 的 stat 戳对比（终态戳为该组文件 .state/.finalized/.cancelled 的合并戳，见 state-marker.statStateStamp）。任何写操作至少改变一个戳 →
+ * 校验：jsonl + 终态 sidecar + alive + record 绑定（[UF-1]）的 stat 戳对比（终态戳为该组文件 .state/.finalized/.cancelled 的合并戳，见 state-marker.statStateStamp）。任何写操作至少改变一个戳 →
  * 只重建该文件，其余 N-1 个复用缓存（statSync 毫秒级，取代旧的整体失效重扫）。
  */
 interface FileCacheEntry {
@@ -133,6 +137,8 @@ interface FileCacheEntry {
   jsonl: Stamp;
   state: Stamp | null;
   alive: Stamp | null;
+  /** [UF-1] record 绑定 sidecar 戳（null = 无绑定文件）。 */
+  binding: Stamp | null;
   /** 最近一次重建时读到的终态 sidecar 内容（校验命中路径复用，不重读文件）。 */
   stateMarker: StateMarker | undefined;
   aliveData: AliveMarker | undefined;
@@ -145,22 +151,28 @@ interface NegativeFileEntry {
   jsonl: Stamp;
   state: Stamp | null;
   alive: Stamp | null;
+  /** [UF-1] 绑定戳纳入负缓存：绑定文件后到（run 应答回填点落盘）改变戳，
+   *  打破负缓存触发重探测——「先扫描后绑定落盘」时序的恢复能力锚点。 */
+  binding: Stamp | null;
 }
 
 /** fileCache 值类型：正常条目或负缓存条目。 */
 type FileCacheValue = FileCacheEntry | NegativeFileEntry;
 
-/** scanFile 单文件本轮 stat 戳集合（jsonl + 终态 sidecar（含旧名合并戳）+ alive）。 */
+/** scanFile 单文件本轮 stat 戳集合（jsonl + 终态 sidecar（含旧名合并戳）+ alive + record 绑定）。 */
 interface FileStamps {
   jsonl: Stamp;
   state: Stamp | null;
   alive: Stamp | null;
+  binding: Stamp | null;
 }
 
 /** sidecar payload 读取结果（索引命中与探测重建两分支共享的读点）。 */
 interface SidecarPayloads {
   state: StateMarker | undefined;
   aliveData: AliveMarker | undefined;
+  /** [UF-1] record 绑定载荷（identity miss 时的身份重建源）。 */
+  binding: RecordBinding | undefined;
 }
 
 /** 孤儿判定的末行读取初始窗口（常规 entry 远小于此，避免全文件读）。 */
@@ -402,12 +414,13 @@ function sameNullableStamp(a: Stamp | null, b: Stamp | null): boolean {
   return sameStamp(a, b);
 }
 
-/** 缓存条目与本轮 stat 戳全同（jsonl + 终态 sidecar + alive，null 语义对齐）→ 零读取复用。 */
+/** 缓存条目与本轮 stat 戳全同（jsonl + 终态 sidecar + alive + record 绑定，null 语义对齐）→ 零读取复用。 */
 function isFreshCache(cached: FileCacheValue, stamps: FileStamps): boolean {
   return (
     sameStamp(cached.jsonl, stamps.jsonl) &&
     sameNullableStamp(cached.state, stamps.state) &&
-    sameNullableStamp(cached.alive, stamps.alive)
+    sameNullableStamp(cached.alive, stamps.alive) &&
+    sameNullableStamp(cached.binding, stamps.binding)
   );
 }
 
@@ -424,14 +437,15 @@ function detectIdentity(file: string, size: number): IdentityHeaderRecon | undef
 }
 
 /**
- * sidecar payload 读取（读顺序：终态 marker → alive marker）。
- * 两者都是活态数据，调用方沿用每轮重读语义；终态 marker 静态数据仅在戳非空时读
+ * sidecar payload 读取（读顺序：终态 marker → alive marker → record 绑定）。
+ * 三者都是活态数据，调用方沿用每轮重读语义；终态 marker 静态数据仅在戳非空时读
  * （文件小，成本可忽略）。
  */
 function readSidecarPayloads(file: string, stamps: FileStamps): SidecarPayloads {
   return {
     state: stamps.state !== null ? readStateMarker(file) : undefined,
     aliveData: stamps.alive !== null ? readAliveMarker(file) : undefined,
+    binding: stamps.binding !== null ? readRecordBinding(file) : undefined,
   };
 }
 
@@ -1044,11 +1058,12 @@ export class RecordStore {
   }
 
   /**
-   * 扫描单文件：stat 戳（jsonl + 终态 sidecar + alive）校验，全同 → 复用缓存（零文件读取，
-   * 含负缓存直接返回 null）；否则重建 light。
+   * 扫描单文件：stat 戳（jsonl + 终态 sidecar + alive + record 绑定）校验，全同 →
+   * 复用缓存（零文件读取，含负缓存直接返回 null）；否则重建 light。
    * identity 定位两级：头部 64KB（首轮会话）→ 全文 fallback（续聊场景 identity
-   * append 在尾部）；两级都找不到 → 写负缓存（防每轮全文重读）。
-   * 返回 null：文件消失/读失败/无 identity → 跳过。
+   * append 在尾部）；两级都找不到 → [UF-1] record 绑定 sidecar 回退（宿主侧身份
+   * 载荷重建 light）→ 仍无 → 写负缓存（防每轮全文重读）。
+   * 返回 null：文件消失/读失败/无 identity 且无绑定 → 跳过。
    */
   private scanFile(file: string, now: number): FileCacheEntry | null {
     const jsonl = statStamp(file);
@@ -1060,6 +1075,7 @@ export class RecordStore {
       jsonl,
       state: statStateStamp(file),
       alive: statStamp(`${file}.alive`),
+      binding: statStamp(`${file}${RECORD_BINDING_SIDECAR_EXT}`),
     };
 
     const cached = this.fileCache.get(file);
@@ -1074,24 +1090,66 @@ export class RecordStore {
     // [perf L-1] 磁盘索引查询（首扫惰性装载，miss/空索引时 get 恒 undefined = 无索引）。
     // 条目戳匹配 jsonl 当前 stat → 零内容读取构造缓存条目。undefined = 未命中
     // （落到下方探测），null = 负条目命中（零探测跳过）。
-    const fromIndex = this.buildEntryFromIndex(file, stamps, now);
-    if (fromIndex !== undefined) return fromIndex;
+    // [UF-1] 绑定 sidecar 存在的文件跳过索引投影：SessionsIndexEntry 不含
+    // chatMode/round（身份域子集），索引命中会把绑定承载的对话形态域抹成 undefined。
+    if (stamps.binding === null) {
+      const fromIndex = this.buildEntryFromIndex(file, stamps, now);
+      if (fromIndex !== undefined) return fromIndex;
+    }
 
     // [perf L-1] 索引 miss/戳不匹配落到原三级探测：本轮探测结果必须进索引（含负探测）。
     // 覆盖两种形态：首扫（映像已装载但 miss/不匹配）与后续轮次（映像已释放，凡进重建分支必是戳变化）。
     this.indexDirty = true;
 
+    const payloads = readSidecarPayloads(file, stamps);
     const header = detectIdentity(file, jsonl.size);
-    if (!header) {
-      // 负缓存：确认无 identity。后续扫描 stat 命中直接跳过；戳变化（文件补写）自动重试。
+    // [UF-1] 身份源两级：子文件 identity entry（历史权威，命中时绑定不参与）→
+    // record 绑定 sidecar（engine-CLI 化后子文件无身份 entry，宿主在 sessionFile
+    // 回填点落盘的 id→file 映射承担恢复能力）。两者皆缺 → 负缓存。
+    const base = header ?? RecordStore.identityFromBinding(payloads.binding, file);
+    if (!base) {
+      // 负缓存：确认无 identity。后续扫描 stat 命中直接跳过；戳变化（文件补写 /
+      // 绑定后到落盘）自动重试。
       this.fileCache.set(file, { negative: true, ...stamps });
       return null;
     }
-    const payloads = readSidecarPayloads(file, stamps);
-    const entry = RecordStore.buildFileCacheEntry(header, file, stamps, payloads, now);
+    const entry = RecordStore.buildFileCacheEntry(base, file, stamps, payloads, now);
+    // [UF-1] 绑定承载的对话形态域补投影：IdentityHeaderRecon 无 round 槽位
+    //（既有语义：identity entry 磁盘重建不恢复 round），绑定路径在其上恢复——
+    // 续聊轮数随绑定快照可滞后一拍（state-marker.RecordBinding.round 契约）。
+    if (header === undefined && payloads.binding?.round !== undefined) {
+      entry.light.round = payloads.binding.round;
+    }
     this.fileCache.set(file, entry);
-    this.idToFile.set(header.id, file);
+    this.idToFile.set(base.id, file);
     return entry;
+  }
+
+  /**
+   * [UF-1] record 绑定载荷 → light 身份基底（IdentityHeaderRecon 同形投影）。
+   * 绑定缺失/损坏返回 undefined（调用方落负缓存，不把损坏残留误判成身份）。
+   * forkDepth/model_change/thinking_level_change 等头部途经信息绑定期不存在：
+   * forkDepth 恒 undefined、model/thinkingLevel 取绑定快照值。
+   */
+  private static identityFromBinding(binding: RecordBinding | undefined, file: string): IdentityHeaderRecon | undefined {
+    if (binding === undefined) return undefined;
+    return {
+      id: binding.recordId,
+      agent: binding.agent,
+      mode: binding.mode,
+      task: binding.task,
+      slug: binding.slug,
+      startedAt: binding.startedAt,
+      rootSessionId: binding.rootSessionId,
+      parentRecordId: binding.parentRecordId,
+      depth: binding.depth,
+      forkDepth: undefined,
+      chatMode: binding.chatMode,
+      worktree: binding.worktree,
+      model: binding.model,
+      thinkingLevel: binding.thinkingLevel,
+      sessionFile: file,
+    };
   }
 
   /**
@@ -1264,6 +1322,7 @@ export class RecordStore {
       jsonl: stamps.jsonl,
       state: stamps.state,
       alive: stamps.alive,
+      binding: stamps.binding,
       stateMarker: payloads.state,
       aliveData: payloads.aliveData,
     };
