@@ -83,7 +83,7 @@ function makeOneShotRecord(
   record.status = status;
   record.controller = new AbortController();
   // v4 B-1：one-shot 完成后 record 为 running（idle 折入 running）+ isResumable（无活进程）。
-  // sessionFile 总设（冷路径 resume 锚点校验需要，热路径无害）。
+  // sessionFile 总设（[H1 U6] resume 锚点形态键——续聊轮统一经新 run + ctx.resume 续写）。
   record.sessionFile = "/tmp/fake-session.jsonl";
   record.round = 1;
   return record;
@@ -93,7 +93,7 @@ function makeOneShotRecord(
 // SP-5 one-shot upgrade
 // ============================================================
 
-describe("SP-5 one-shot upgrade（message → chatMode + 冷 resume）", () => {
+describe("SP-5 one-shot upgrade（message → chatMode + resume 锚点续聊）", () => {
   let agentDir: string;
   let service: SubagentService;
   let store: RecordStore;
@@ -144,9 +144,9 @@ describe("SP-5 one-shot upgrade（message → chatMode + 冷 resume）", () => {
   });
 
   // TC-2: upgrade 后续聊派发（resume 锚点续写原文件）
-  // 场景：one-shot idle-resumable record → message → chatMode=true →
+  // 场景：one-shot running-resumable record → message → chatMode=true →
   // Continuation 派发新轮（[H1 U6] 新 run + resume 锚点）
-  it("TC-2: one-shot idle record 收到 message → chatMode 升级 + 新 run resume", async () => {
+  it("TC-2: one-shot running-resumable record 收到 message → chatMode 升级 + 新 run resume", async () => {
     const record = makeOneShotRecord(sessionRootId);
     store.register(record);
 
