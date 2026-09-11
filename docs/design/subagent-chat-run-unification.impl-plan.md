@@ -115,7 +115,7 @@ graph TD
 
 ## 7 残留风险与变更历史
 
-- 残留风险：① 设计文档行号基于 commit 64e379a7c 附近，实施以符号 grep 锚定（文档头部已声明）；② 用户 L 批次并行改动可能与 U2 领地交叉——派发前核对工作区，L 批改动一律认知外处理；③ F7 staged 引擎副本新鲜度——U4 真机前确认（`19a5401ab` 已修 dev 启动恒重建）；④ sess_8590cc5a（subagent 通知机制）唯一未修遗留 = **pi 热路径续聊轮零通知**（旧架构 `handleChatRoundPhase` 热路径相位消费只交棒不 notify，`settleChatRoundFromResponse` 唯一调用点在冷路径续体，快续聊整条通知链不存在、record result 不落盘）——本设计 D7 轮末分流 + settle 交棒 run 应答驱动即其结构性根治（热路径整族随 U5/U6 删除），已登记为 U4 真机 S1 显式回归目标；非本批提交引入（W3 chat 域协议化时代遗漏）。
+- 残留风险：① 设计文档行号基于 commit 64e379a7c 附近，实施以符号 grep 锚定（文档头部已声明）；② 用户 L 批次并行改动可能与 U2 领地交叉——派发前核对工作区，L 批改动一律认知外处理；③ F7 staged 引擎副本新鲜度——U4 真机前确认（`19a5401ab` 已修 dev 启动恒重建）；④ sess_8590cc5a（subagent 通知机制）唯一未修遗留 = **pi 热路径续聊轮零通知**（旧架构 `handleChatRoundPhase` 热路径相位消费只交棒不 notify，`settleChatRoundFromResponse` 唯一调用点在冷路径续体，快续聊整条通知链不存在、record result 不落盘）——本设计 D7 轮末分流 + settle 交棒 run 应答驱动即其结构性根治（热路径整族随 U5/U6 删除），已登记为 U4 真机 S1 显式回归目标；非本批提交引入（W3 chat 域协议化时代遗漏）；⑤ **engine-client.ts 结构性拆分债（Gate A 验收登记，2026-09-11）**：H1 期间收割链与轮次活性承载并入后 541 行，超 max-lines override（520→545 提额放行，Gate A 唯一阻塞项修复）——eslint.config.mjs 注释既定拆分方向 = 正向请求面/反向路由面/收割面三分，随 H3 service 拆分轮处置，不在此线临时大拆（验收阶段避动红线①收割链核心面）。
 - 变更历史：
   - 2026-09-11 计划创建（来源设计 v7，双 0 收敛版）。
   - 2026-09-11 U1 开发完成 + 硬核验通过，流转 commit 被共享 pre-commit 的 C-pi-14 布局守卫拦截（守卫交付物缺失 + 本分支 205 处存量旧布局字面量，清理 sweep 在兄弟分支未合并）→ **U1 冻结升级用户**（dev-flow MANDATORY：环境冲突超出编排者裁决范围）。全流水线 packages/ 提交均被同一守卫拦截，冻结期间 doc-only 提交不受影响。

@@ -468,12 +468,13 @@ export default [
     },
   },
   // engine-client.ts：协议客户端聚合中心（spawn/握手/帧路由/崩溃重建/收割 + [W3]
-  // chat 轮次 recordId 路由面）。超限 10 行，按仓内惯例（偏差 #2 message-dispatcher
-  // 同款）登记 override，长期拆分方向：正向请求面 / 反向路由面 / 收割面。
+  // chat 轮次 recordId 路由面）。H1 chat-run 统一期间收割链与轮次活性承载并入后
+  // 541 行，按仓内惯例（偏差 #2 message-dispatcher 同款）登记 override；结构性拆分
+  // （正向请求面 / 反向路由面 / 收割面）登记为后续重构债，随 H3 service 拆分轮处置。
   {
     files: ['packages/subagent-core/src/execution/engine/client/engine-client.ts'],
     rules: {
-      'max-lines': ['warn', { max: 520, skipBlankLines: true, skipComments: true }],
+      'max-lines': ['warn', { max: 545, skipBlankLines: true, skipComments: true }],
     },
   },
   // subagent-service.ts 单列：旧位 2141 行即超 extensions 域 1000 上限（基线存量，
