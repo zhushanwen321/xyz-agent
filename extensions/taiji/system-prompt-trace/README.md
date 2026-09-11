@@ -33,7 +33,7 @@ appendEntry("xyz:system-prompt", {
 | resume | resume | 定案 |
 | fork / reload | resume | 定案（M0 探针 P2 实测：fork 档读源文件最后留痕，落盘 reason 维持 resume；执行记录见设计 §6.5） |
 
-存在任一 hash 基线（见下）时，首个 turn 写 `resume`（无论 session_start reason）。
+存在 hash 基线（见下）且 prompt 未变时，首个 turn 不写（去重）；需写时（hash 已变）恒写 `resume`（无论 session_start reason）。
 
 ## 跨重启 hash 基线三档（优先级从高到低，权威实现见 `src/trace.ts` onSessionStart）
 

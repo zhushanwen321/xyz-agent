@@ -78,7 +78,8 @@ export function isSystemPromptTraceEntryData(value: unknown): value is SystemPro
  *   缺失/未落盘/读取失败 → null 走本映射兜底）；reload 是同 session 的 extension 运行时重建——
  *   两者语义上都是「重开」而非「首建」。
  *
- * 注意：只要恢复了任一 hash 基线，首个 turn 一律写 resume（见 trace.ts），不走本映射。
+ * 注意：基线恢复且 hash 未变 → 不写（去重）；需写时（hash 已变）恒为 resume，不走本映射
+ * （见 trace.ts onTurnStart）。
  */
 export function mapReasonForFirstWrite(reason: SessionStartEvent["reason"]): TraceReason {
 	switch (reason) {
