@@ -192,7 +192,7 @@ graph TD
 | u1f | committed | 2（轮次 2 补 renderer unresponsive 接线） | 判别式 8 组合真值表 + liveness 双写 + renderer oom/crashed/熔断/unresponsive（卡死期单行+responsive 复位）；18 tests + tsc 0（编排者重跑核验） |
 | u7b | committed | 2（前任额度中断零产物 + 接替全新交付） | mirror API（epoch 重置清 hasEverReported，errs-safe）+ marker 旁路消费 + ack resolve + 协议 4 类型；32 用例 + shared 351 + runtime 5425（含 real-pi 池）全绿 + 双 typecheck 0（编排者重跑核验） |
 | u2 | committed | 2（前任额度中断 + 接替核验收口） | 20 条全状态表 + #8 absent-report 关联窗排除 + #16 计划内排除（源码实锚）+ coverage 50% 边界；30 tests + main 池 1052/1052 + tsc 0（编排者重跑核验）；max-lines 走 eslint.config.mjs override 登记 |
-| u3a | pending | — | — |
+| u3a | committed | 1 | 收集清单纯函数（双台账+日志尾部 256KB+detailPath 深查≤10+水位摘录+评估器 20 行状态表+summary.md 共 9 条目，缺文件降级不抛错）+ minimal-zip 手写容器（零新依赖；deflate+store 回退；实现反向解析 + 系统 unzip -t 双盲验证）+ IPC handler（log-retention-ipc 先例：零 rejection 三态 exported/canceled/error + 注册幂等）+ 知情文案常量三方共用（main/preload/u3b）；15 新用例 + main 池全量 1080/1080 + 三 tsconfig typecheck 0 + eslint 0（编排者重跑核验）；领地事实修正：注册行落 ipc-handlers.ts 聚集处而非 main.ts（log-retention-ipc 同例） |
 | u3b | pending | — | — |
 | u4 | committed | 2（前任限流中断产物已在盘 + 定时调度续跑编排者硬验证收口） | runtime-checkpoint 五契约（原子写 tmp+rename / corrupt→事件一次记+隔离退 lazy / 失败现场保留 3 新覆盖旧 / 隔离 rename 幂等 ENOENT=已隔离 / 不 seed 旧文件防误配对）+ main marker 三步启动序（消费残留→判可信度→写本实例）+ before-quit 成功段删除属主（killed 短路排除）+ will-quit 清 marker 与 stop 解耦 + reaper tick 搭车快照（判定路径逐字不变）；44 新用例（runtime 31 + main 13）+ 存量回归 47 绿 + 触碰文件 lint 0（编排者重跑核验） |
 | u5 | pending | — | — |

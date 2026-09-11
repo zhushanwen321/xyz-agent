@@ -68,7 +68,7 @@ export { OUTBOUND_FRAME_WARN_BYTES, OUTBOUND_FRAME_TRUNCATE_BYTES, READ_PRECHECK
 // Electron IPC 通道名 SSOT（crash-resilience u-foundation：renderer-log 上报通道 D2 /
 // image-cache 落盘通道族首成员 D6-⑨）；既有通道仍内联于 preload/main 不在此收敛，
 // 存量边界说明见 ipc-channels.ts 头注释。
-export { RENDERER_LOG, IMAGE_CACHE_WRITE, DEBUG_RUN_LOG_RETENTION } from './ipc-channels'
+export { RENDERER_LOG, IMAGE_CACHE_WRITE, DEBUG_RUN_LOG_RETENTION, DIAGNOSTICS_EXPORT_BUNDLE } from './ipc-channels'
 // renderer-log 通道 payload 类型（crash-resilience u2：preload ElectronAPI 签名与 main
 // handler 校验共用同一形态声明，防两端漂移；main 侧仍做运行时再校验，见 ipc-payloads.ts 头注释）。
 export type { RendererErrorSource, RendererMemorySnapshot, RendererLogPayload } from './ipc-payloads'
@@ -83,6 +83,15 @@ export type {
 // debug:run-log-retention 通道返回类型（crash-resilience A9② 验收调试口：preload
 // ElectronAPI 签名与 main handler 返回共用同一形态声明，防漂移）。
 export type { DebugRunLogRetentionResult } from './ipc-payloads'
+// diagnostics:export-bundle 通道契约（crash-forensics u3a：请求 payload / 三态返回类型 /
+// 知情提示文案常量——main handler、preload ElectronAPI 与 u3b renderer 确认对话框三方共用）。
+export {
+  DIAGNOSTIC_EXPORT_PRIVACY_NOTICE,
+  type DiagnosticExportBundlePayload,
+  type DiagnosticExportSummary,
+  type DiagnosticExportError,
+  type DiagnosticExportBundleResult,
+} from './ipc-payloads'
 // 崩溃台账事件 Schema SSOT（docs/design/crash-forensics-and-watchdog.md §3.3 D1，
 // 实施计划 u1a：layer/event/reason 枚举 + 字段集 + writer 接口——u1b runtime 与
 // u1c main 两 writer 共用，禁止复制定义；纯类型/常量无 node 依赖，barrel 安全）。

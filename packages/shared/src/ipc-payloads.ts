@@ -124,3 +124,72 @@ export interface DebugRunLogRetentionResult {
   /** 实际删除（mtime 超龄）的文件数。 */
   removed: number
 }
+
+// ── 诊断包导出（DIAGNOSTICS_EXPORT_BUNDLE = 'diagnostics:export-bundle' invoke 通道）
+//    [crash-forensics-and-watchdog §3.3 D6，u3a] ──────────────────────────────
+
+/**
+ * 导出确认对话框知情提示文案 SSOT [D6 隐私判定补偿]。
+ *
+ * D6 隐私裁决：诊断包**不脱敏**（本机路径与会话标识正是归因线索，脱敏摧毁诊断价值），
+ * 补偿 = 导出动作前的知情提示。常量住 shared：u3a main 侧把它写进导出结果 summary
+ * （payload 携带）与 summary.md；u3b renderer 确认对话框展示同一常量——两端共用防文案
+ * 分叉。修改文案时必须保留「本机路径」「会话标识」两个知情要素（D6 原文锚点）。
+ */
+export const DIAGNOSTIC_EXPORT_PRIVACY_NOTICE =
+  '诊断包将收集应用日志与崩溃台账，其中可能包含本机路径与会话标识信息，仅用于问题排查，请勿公开分享。'
+
+/** 诊断包导出请求 payload（renderer → main；字段全部可选，空参 invoke 合法）。 */
+export interface DiagnosticExportBundlePayload {
+  /** 保存对话框初始目录（如上次导出位置）；省略由 OS 记忆决定 */
+  defaultPath?: string
+}
+
+/** 导出包摘要元数据（渲染侧展示 + 归因首屏；知情文案随包携带）。 */
+export interface DiagnosticExportSummary {
+  /** 导出时刻（ISO 8601 UTC，main 侧权威） */
+  exportedAt: string
+  appVersion: string
+  /** pi 版本（从台账事件提取最近值；无记录为 'unknown'） */
+  piVersion: string
+  platform: string
+  /** 本次评估越线的触发条件 id（D2 状态表；空数组 = 常态无越线） */
+  trippedConditionIds: number[]
+  /** 状态表总条数（20，附录 A SSOT） */
+  evaluatedConditionCount: number
+  /** zip 内条目数（含 summary.md） */
+  entryCount: number
+  /** 降级跳过的清单项（「archivePath（原因）」人读串——缺失显式非静默） */
+  missingEntries: string[]
+  /** 知情提示文案（DIAGNOSTIC_EXPORT_PRIVACY_NOTICE，随包携带供消费方直接展示） */
+  privacyNotice: string
+}
+
+/** 打包失败明细（具体 errno，不吞成布尔——磁盘满/权限可判定可重试）。 */
+export interface DiagnosticExportError {
+  /** fs errno（如 ENOSPC / EACCES / ENOENT）；非 fs 错误归一为 EUNKNOWN */
+  code: string
+  message: string
+}
+
+/**
+ * 诊断包导出结果（DIAGNOSTICS_EXPORT_BUNDLE invoke 返回值）。
+ *
+ * **零 rejection 面**（对齐 DEBUG_RUN_LOG_RETENTION 先例）：用户取消保存对话框返回
+ * canceled；打包/写盘失败返回 error（含具体 errno）——handler 全路径不向 renderer 抛
+ * invoke rejection，调用方按 status 三态分支。
+ */
+export type DiagnosticExportBundleResult =
+  | {
+    status: 'exported'
+    /** 产物 zip 绝对路径（用户自选保存位置） */
+    path: string
+    /** zip 字节数 */
+    bytes: number
+    entryCount: number
+    /** zip 内条目名清单（与清单收集顺序一致） */
+    entryNames: string[]
+    summary: DiagnosticExportSummary
+  }
+  | { status: 'canceled' }
+  | { status: 'error'; error: DiagnosticExportError }

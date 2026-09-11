@@ -1,7 +1,7 @@
 // apps/electron/preload/preload.ts
 import { contextBridge, ipcRenderer } from 'electron'
-import type { LatestReleaseInfo, UpdateStage, UpdateSettings, UpdateErrorPayload, ProxyTestResult, LaunchResult, UpdateCheckResult, UpdateInstallResult, RendererLogPayload, ImageCacheWritePayload, ImageCacheWriteResult, DebugRunLogRetentionResult } from '@xyz-agent/shared'
-import { RENDERER_LOG, IMAGE_CACHE_WRITE, DEBUG_RUN_LOG_RETENTION } from '@xyz-agent/shared'
+import type { LatestReleaseInfo, UpdateStage, UpdateSettings, UpdateErrorPayload, ProxyTestResult, LaunchResult, UpdateCheckResult, UpdateInstallResult, RendererLogPayload, ImageCacheWritePayload, ImageCacheWriteResult, DebugRunLogRetentionResult, DiagnosticExportBundlePayload, DiagnosticExportBundleResult } from '@xyz-agent/shared'
+import { RENDERER_LOG, IMAGE_CACHE_WRITE, DEBUG_RUN_LOG_RETENTION, DIAGNOSTICS_EXPORT_BUNDLE } from '@xyz-agent/shared'
 
 export interface ElectronAPI {
   /** 监听 runtime 端口事件 */
@@ -209,6 +209,14 @@ export interface ElectronAPI {
    * 返回本次扫描统计 {scanned, removed}；永不 reject（清理扫描自身零抛错语义）。
    */
   debugRunLogRetention(): Promise<DebugRunLogRetentionResult>
+  // ── 诊断包导出（crash-forensics §3.3 D6 / u3a）─────────────────
+  /**
+   * 导出诊断包：main 先弹保存对话框（用户自选保存位置；payload.defaultPath 为初始目录），
+   * 打包双台账 + 日志尾部 + 水位摘录 + 触发状态表 + summary.md 为 zip。永不 reject——
+   * 返回三态（exported 携带产物路径与摘要含知情文案 privacyNotice / canceled 用户取消
+   * / error 携带具体 errno），调用方（u3b）按 status 分支展示。
+   */
+  exportDiagnosticBundle(payload?: DiagnosticExportBundlePayload): Promise<DiagnosticExportBundleResult>
 }
 
 contextBridge.exposeInMainWorld('electronAPI', {
@@ -347,4 +355,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   imageCacheWrite: (payload: ImageCacheWritePayload) => ipcRenderer.invoke(IMAGE_CACHE_WRITE, payload),
   // ── 验收调试口（crash-resilience A9②；通道名经 shared SSOT 常量，不进产品 UI）──
   debugRunLogRetention: () => ipcRenderer.invoke(DEBUG_RUN_LOG_RETENTION),
+  // ── 诊断包导出（crash-forensics §3.3 D6；通道名经 shared SSOT 常量）──
+  exportDiagnosticBundle: (payload?: DiagnosticExportBundlePayload) =>
+    ipcRenderer.invoke(DIAGNOSTICS_EXPORT_BUNDLE, payload),
 } satisfies ElectronAPI)
