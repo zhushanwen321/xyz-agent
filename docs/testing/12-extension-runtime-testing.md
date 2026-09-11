@@ -4,7 +4,7 @@
 >
 > **读者**：给 `extensions/subagent-workflow/`（或同类 extension）写测试、想把「降级断言」升级为运行时断言、或要做 real LLM 验证的开发者。
 >
-> **配套实证**：本文档的「档位 A worker-runtime」已落地于 `extensions/subagent-workflow/src/orchestration/__tests__/worker-script-builder-runtime.test.ts`（P3/P4 run-level model/thinkingLevel override 验证），可直接参照。
+> **配套实证**：本文档的「档位 A worker-runtime」原落地于 extensions/subagent-workflow/src/orchestration/__tests__/worker-script-builder-runtime.test.ts（P3/P4 run-level model/thinkingLevel override 验证）。该结构已在 subagent-workflow 重构中并入 host/injectors（extensions/universal/subagent-workflow/src/），现存等价覆盖见 extensions/universal/subagent-workflow/src/__tests__/workflows-e2e.test.ts，可直接参照。
 
 ---
 
@@ -214,13 +214,15 @@ PROBE_MODEL=zhipu-coding-plan-router/glm-5.2 npx playwright test e2e/workflow-th
 
 ## 附录：关键文件速查
 
+> [2026-09-11 注] 下表为 subagent-workflow 重构前结构（orchestration 层已并入 host/injectors，extensions/universal/subagent-workflow/src/ 为现行 SSOT；workflows-e2e.test.ts 现存于 src/__tests__/）。历史路径不带反引号——以现行结构为准。
+
 | 文件 | 作用 |
 |---|---|
-| `extensions/subagent-workflow/src/orchestration/worker-script-builder.ts` | 生成 worker 源码（globals/agent()/parallel 注入）|
-| `extensions/subagent-workflow/src/orchestration/__tests__/worker-script-builder.test.ts` | L0 源码字符串断言 |
-| `extensions/subagent-workflow/src/orchestration/__tests__/worker-script-builder-runtime.test.ts` | **L1 真实 Worker 运行时断言（`runWorker()` harness）** |
-| `extensions/subagent-workflow/src/orchestration/__tests__/workflows-e2e.test.ts` | L1.5 真 lifecycle + mock runner |
-| `extensions/subagent-workflow/src/execution/__tests__/helpers/spawn-mock.ts` | FakeChild + spawn mock helper（L0.5）|
+| extensions/subagent-workflow/src/orchestration/worker-script-builder.ts | 生成 worker 源码（globals/agent()/parallel 注入）|
+| extensions/subagent-workflow/src/orchestration/__tests__/worker-script-builder.test.ts | L0 源码字符串断言 |
+| extensions/subagent-workflow/src/orchestration/__tests__/worker-script-builder-runtime.test.ts | **L1 真实 Worker 运行时断言（runWorker() harness）** |
+| extensions/subagent-workflow/src/orchestration/__tests__/workflows-e2e.test.ts | L1.5 真 lifecycle + mock runner（现存于 extensions/universal/subagent-workflow/src/__tests__/）|
+| extensions/subagent-workflow/src/execution/__tests__/helpers/spawn-mock.ts | FakeChild + spawn mock helper（L0.5）|
 | `e2e/workflow-thinkinglevel-real.spec.ts` | L2/L3 real LLM E2E 模板 |
 | `e2e/fixtures/launch-app-real.ts` | real-mode Electron launch fixture |
 | `~/GitApp/pi-ecosystem/pi-mono/packages/ai/src/providers/faux.ts` | pi faux provider（mock LLM 边界）|

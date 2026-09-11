@@ -78,7 +78,7 @@ pnpm --filter @xyz-agent/electron run dev:mock
 # concurrently 起 vite + electron
 ```
 
-启动后 Electron 窗口加载 renderer，所有 `api/domains/*` 调用被 `api/mock/*` 拦截。fixture 数据在 `packages/renderer/src/api/mock/data.ts`。
+启动后 Electron 窗口加载 renderer，所有 `api/domains/*` 调用被 core mock transport（`packages/core/src/transport/mock/`）拦截。fixture 数据在 `packages/core/src/transport/mock/data.ts`。
 
 ### 2.2 E2E（Playwright，自动化回归用）
 

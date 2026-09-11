@@ -71,9 +71,9 @@ Mock 模式跳过 runtime event-adapter：`run-send-stream.ts` 直接 `pushSessi
 | `__tests__/components/gui/Card.test.ts` | Card（含嵌套） | 5 |
 | `__tests__/components/gui/Columns.test.ts` | Columns（含递归） | 3 |
 | `__tests__/components/gui/ListTree.test.ts` | ListTree（含递归+depth+status映射） | 7 |
-| `__tests__/components/GuiComponentRenderer.test.ts` | 路由 + 降级 | 10 |
+| [`packages/ui/src/rendering-protocol/__tests__/GuiComponentRenderer.test.ts`](../../packages/ui/src/rendering-protocol/__tests__/GuiComponentRenderer.test.ts) | 路由 + 降级 | 10 |
 
-运行：`cd packages/renderer && npx vitest run src/__tests__/components/gui/ src/__tests__/components/GuiComponentRenderer.test.ts`
+运行：`cd packages/ui && npx vitest run src/rendering-protocol/__tests__/GuiComponentRenderer.test.ts`
 
 ## 5. Playwright E2E 测试
 

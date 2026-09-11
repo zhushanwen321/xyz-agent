@@ -187,7 +187,7 @@ pnpm dev
 
 ### 7.2 完整 E2E 示例代码
 
-> 注意：以下代码是**范例模板**，尚未落地为 `e2e/new-task.spec.ts`（当前只有 file-tree.spec.ts）。落地时按此模板实现。
+> 注意：以下代码是**范例模板**，尚未落地为 e2e/new-task.spec.ts（当前已有 composer/file-tree/search-modal 等 spec）。落地时按此模板实现。
 
 ```typescript
 import { test, expect } from './fixtures/launch-app'
