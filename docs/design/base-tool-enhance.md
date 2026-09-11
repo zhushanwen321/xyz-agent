@@ -5,7 +5,7 @@
 - 层级声明：当前层 = extension 能力设计 → 下一层 = 可实现的接口 / 数据模型 / 技术方案（层敏感准则全适用）
 - 状态：已评审通过（7 轮对抗式审查收敛，must-fix 归零；审查报告见 `.review/design-review-base-tool-enhance-20260825*.md`）；**已实施**——M1-M6 全部落地（feat-background-bash 分支），探针 P1-P6 全部实测关闭（无一回退路径触发），unified-hooks 已标记废弃；实施后经三路设计-代码一致性对抗审查（42 核对点），全部发现已修复闭环（registry 回落限定终态 + 跨进程 kill 拒绝 + pid 复用防御 + 文档 4 处补登记 + D18 落地 README），验收 S1-S10 场景实测记录齐全（S2/S9 为审查后补录）
 - 机制演变（2026-09-01 事故后）：孤儿收殓 reaper 已下沉 runtime——extension 侧全局扫描实现（`src/reaper.ts`）删除，现行链路见 [file-lock-unification-and-reaper-sink](file-lock-unification-and-reaper-sink.md) 与 §3.5 末「设计演变记录」；registry 契约 SSOT 迁至 `@xyz-agent/extension-protocol`
-- 关联：废弃 [unified-hooks](../../../extensions/universal/unified-hooks/)；接入 [pending-notifications](../../../extensions/universal/pending-notifications/)
+- 关联：废弃 unified-hooks（已删除，git 历史即归档）；接入 [pending-notifications](../../../extensions/universal/pending-notifications/)
 
 ## 1. 背景目标
 
@@ -385,7 +385,7 @@ pending-notifications 现有语义是 **session-entry 生命周期**（sessionId
 ## 附：本次分析的关键事实源
 
 - pi 实装版：node_modules/@earendil-works/pi-coding-agent/dist/{core/tools/bash.js, core/extensions/types.d.ts, modes/rpc/rpc-mode.js, index.d.ts}
-- unified-hooks：extensions/universal/unified-hooks/src/hooks/{network,test}-timeout-guard.ts
+- unified-hooks：已删除（2026-09，ext-simplify-01），原 timeout-guard 源码 `git log --follow` 可查
 - pending-notifications：extensions/universal/pending-notifications/src/{index,state}.ts
 - goal continuation 守卫（差集消费方）：extensions/universal/goal/src/adapters/event-handlers/agent-end.ts
 - 通知先例：extensions/universal/subagent-workflow/src/execution/notifier.ts

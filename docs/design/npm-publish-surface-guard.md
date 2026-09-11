@@ -8,7 +8,7 @@
 
 ### 1.1 SCQA
 
-- **S（情境）**：本仓 29 个 npm 发布面包（28 workspace 包 + statusline 特例——u4/D6 将 deprecated 的 pi-unified-hooks 加入 changeset ignore 后的终态口径，见 §1.2）经三条路径发布——正式线（merge skill 阶段 4N 编排版本，推 `npm-*` tag 触发 release-npm.yml）、dev 预发布线（本地 npm-prerelease.sh + changeset pre，推 `dev-npm-*` 分支触发 release-npm-dev.yml）。每个包进 tarball 的内容由 package.json `files` 白名单声明。
+- **S（情境）**：本仓 29 个 npm 发布面包（28 workspace 包 + statusline 特例——u4/D6 将 deprecated 的 pi-unified-hooks 加入 changeset ignore 后的终态口径，见 §1.2；2026-09 ext-simplify-01 删包后 ignore 条目已移除；该包删前被 ignore 排除、删后不在磁盘，31 包计数不变）经三条路径发布——正式线（merge skill 阶段 4N 编排版本，推 `npm-*` tag 触发 release-npm.yml）、dev 预发布线（本地 npm-prerelease.sh + changeset pre，推 `dev-npm-*` 分支触发 release-npm-dev.yml）。每个包进 tarball 的内容由 package.json `files` 白名单声明。
 - **C（冲突）**：npm 对 `files` 白名单里磁盘上不存在的条目**静默跳过**，白名单承诺与构建产出之间没有任何一致性约束。`@zhushanwen/subagent-core` 的 `dist.bundle/`（自包含 vendoring 产物；vendoring = 消费方把产物文件整体复制进自己目录、没有 node_modules 依赖安装链的消费形态，因此产物必须内联全部运行时依赖——外部 zsw 插件 vendor `--npm` 通道依赖此产物）自 0.4.0 起从未进过 tarball——`files` 声明了它，但发布流程中 subagent-core 唯一的构建入口（smoke-core-dist.mjs）只跑 `build`（常规档）不跑 `build:bundle`（自包含档），CI 全新 checkout 后磁盘上根本没有该目录，tarball 自然缺货且零报警。
 - **Q（问题）**：如何让「files 白名单 ↔ 实际产物」的一致性从「靠人记」变成「机器门」，并保证未来新增包/新增产物档不再重演？
 - **A（答案）**：新独立守卫 `check-publish-surface.mjs`（幽灵条目拦截 + 自包含探针 + 产物目录反向覆盖，双向闭合「files ↔ 产物」两个漂移方向）挂发布门与 CI PR invariants；发布 workflow 为每个 dist 包显式声明全部构建档；补齐 dev 线同型缺口；约束登记 C-proc-11。
@@ -17,11 +17,11 @@
 
 **npm files 语义最小例子**：包 A 的 `package.json` 声明 `files: ["src/", "dist/"]`。执行 `npm pack` / `npm publish` 时只有匹配白名单的文件进 tarball。关键静默面：若磁盘上 `dist/` 目录不存在（没跑构建），npm **不报错、不警告**，直接打包一个没有 dist 的 tarball——发布者以为承诺了什么和 tarball 里实际有什么，中间隔着一层零反馈的静默。
 
-**发布面全景**（终态发布面 32 包 = pnpm workspace 内非 private 且未被 changeset ignore 的 31 包——u4/D6 将 deprecated 的 pi-unified-hooks 加入 changeset ignore 落地后的口径（此前 29 + statusline = 30）+ statusline 特例 + W5/W7 引擎三包（subagent-engine-sdk / pi-subagent-cli / zcode-subagent-cli，MF-4 批次接入守卫面），按产物形态分三类）：
+**发布面全景**（终态发布面 32 包 = pnpm workspace 内非 private 且未被 changeset ignore 的 31 包——u4/D6 将 deprecated 的 pi-unified-hooks 加入 changeset ignore 落地后的口径（此前 29 + statusline = 30；2026-09 ext-simplify-01 删包后 ignore 条目已移除；该包删前被 ignore 排除、删后不在磁盘，31 包计数不变）+ statusline 特例 + W5/W7 引擎三包（subagent-engine-sdk / pi-subagent-cli / zcode-subagent-cli，MF-4 批次接入守卫面），按产物形态分三类）：
 
 | 类别 | 包 | files 声明的产物 | 构建方式 |
 |---|---|---|---|
-| TS 源直发 | 25 个 `@zhushanwen/pi-*` extension（21 活跃 + shared 组 4 个；deprecated 的 pi-unified-hooks 已 ignore——u4/D6，不占发布面） | `src/`、`index.ts` 等 git 内源文件 | 无构建（pi 加载器直接吃 TS） |
+| TS 源直发 | 25 个 `@zhushanwen/pi-*` extension（21 活跃 + shared 组 4 个；deprecated 的 pi-unified-hooks 已 ignore——u4/D6，不占发布面；2026-09 ext-simplify-01 删包后 ignore 条目已移除；该包删前被 ignore 排除、删后不在磁盘，31 包计数不变） | `src/`、`index.ts` 等 git 内源文件 | 无构建（pi 加载器直接吃 TS） |
 | dist 发布包 | `@xyz-agent/extension-protocol` | `dist`（无尾斜杠） | tsup，正式/dev 两线均有显式 build 步骤 |
 | dist 发布包 | `@xyz-agent/session-delivery` | `dist`（无尾斜杠） | tsup，**仅正式线**有显式 build 步骤 |
 | dist 发布包 | `@zhushanwen/subagent-core` | `dist/` + `dist.bundle/`（双档） | tsup 两档（`build` / `build:bundle`），发布流程无显式步骤、由 smoke 副作用承载 |
@@ -279,3 +279,4 @@ S7 是外部消费方（zsw）真实回归，作为发布后场景登记——�
 | 2026-09-07 | v5 | 实施期 doc_errors 修订（非审查轮）：§5 实施顺序「u5 登记先行 → u1」反转为「u1 → u5 紧随」，u5 行 justification 同步——u5 执行者实测 render-constraints.mjs 实装对 authority 路径与 machine hook 做 existsSync 校验（validateAuthorityPath 行 56-61 / validateHookExists 行 47-54，渲染模式同样先校验后 exit 2），登记引用 u1 未来产出的守卫脚本必然 exit 2，「登记先行」在机器门前不可通过；「先登记再写代码」纪律改由「u1 与 u5 同批交付绑定」满足（流水线状态表兜底：u1 committed 而 u5 pending 时中断即显式可见） |
 | 2026-09-07 | v6 | 阶段 3 一致性审查（三区并行，0 unreasonable）doc_errors 修正：§3.1 失败路径 1 补指引分流说明（非 dist 前缀纯文件条目按补文件/删条目处置，守卫文案同步分流）；D2 行号引用改锚 step 名称（ci.yml 插入致行号漂移）；§5「u3（紧随 u1）」改「u3（依赖 u1）」（v5 修订残留）。README 三处内容缺陷（示例类型错误/包结构漏列/extractGui 参数语义）与守卫文案分流实现走阶段 4 修复批次 |
 | 2026-09-07 | v7 | 第 4 轮审查修复（主审 0 must-fix + 3 suggestion，全修）：① 发布面计数更新为终态口径——u4 将 pi-unified-hooks 加入 changeset ignore 后未被 ignore 的 workspace 包为 28，终态发布面 = 28 + statusline = 29（§1.1 S / §1.2 计数句 / §3.2 C 三处 30→29，§1.2 TS 源直发行 26→25 并标注已 ignore，D6「未 ignore」补 u4 落地后状态）；② 幽灵条目恢复指引从仅指 release-npm.yml 扩为三处构建段（release-npm.yml / release-npm-dev.yml / ci.yml Build dist packages——按旧指引修复会漏 dev 线与 CI 面再次红灯），守卫 fixFor 文案与 §3.1 失败路径 1 示例同批同步，单测断言锁定三处文件名；③ 守卫测试 AJV_EXEMPT_OK 注释失实修正（单/双引号混合是覆盖 REQUIRE_RE 双分支的测试设计，真实产物实测 4 处全双引号、单引号 0——fixture 本身不动） |
+| 2026-09-11 | v8 | ext-simplify-01 删包移除 ignore 条目，发布面计数不变（`.changeset/config.json` ignore 数组删除 `@zhushanwen/pi-unified-hooks` 末项——unified-hooks 整包删除后不在磁盘，删前被 ignore 排除、删后不在磁盘，31 包计数不变；§1.1 S / §1.2 全景句 / §1.2 分类表三处现行口径句同批补注记） |
