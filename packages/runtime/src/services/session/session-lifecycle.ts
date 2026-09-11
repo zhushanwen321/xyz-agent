@@ -866,7 +866,9 @@ export class SessionLifecycle implements ISessionRegistry {
     await this.attachRestoreFile(client, target, sessionId, cwdFellBack)
 
     // U2: get_state 读回 pi 生效 model + thinkingLevel（D2 设计）。
-    // switchSession 成功后 pi 已附着会话文件，get_state 返回当前生效值。
+    // switchSession 成功后 pi 已附着会话文件，get_state 返回当前生效值
+    //（pi 行为锚点 = 登记 ⑩：switch_session 永久重绑读写目标，agent-session-runtime.ts:193-209 /
+    // session-manager.ts:815-816）。
     // r3 校准：metaOverride 恒提供（读回成功/失败两路径同构），每字段独立走
     // 「读回值 → sidecar 扫描值 → ''」兜底链。restore 从不播种全局默认：空串经
     // registerSession 的 ?? 短路阻断 modelOverride/fallbackModelId，composer 按 D3

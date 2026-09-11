@@ -17,6 +17,7 @@ import {
 } from '../tool-handler.js'
 import { listRecordManifests } from '../discovery/subagents.js'
 import type { SessionMetadataProvider } from '../discovery/find.js'
+import type { DoctorDetails } from '../doctor.js'
 import {
   REAL_AGENT_DIR as REAL,
   E6,
@@ -1577,24 +1578,8 @@ describe('doFamily recursive（m3b U8 接入）', () => {
 // 全部 mkdtemp fixture 自建自删，不触碰真实数据目录。
 // ===========================================================================
 
-/** doctor details 的根表行形态（SessionRoot 透传，程序化消费面） */
-interface DoctorRootDetail {
-  kind: string
-  source: string
-  path: string
-  exists: boolean
-  fileCount?: number
-  scanMs?: number
-  cached?: boolean
-  dedupedInto?: string
-}
-
-interface DoctorDetails {
-  environment: { kind: string; distribution: string | null; dataDir?: string; evidence: string[] }
-  roots: DoctorRootDetail[]
-  leftovers: Array<{ path: string; kind: string }>
-  globBase: string
-}
+// doctor details 契约直用 doctor.ts 导出的 DoctorDetails（不再自建局部镜像——生产侧
+// 形状漂移由编译期捕捉，S-R2 同步）
 
 describe('doctor action（u8：环境判定 + 根表 + 告警 + 残留 glob + 缓存）', () => {
   let tmp: string

@@ -96,7 +96,8 @@ const doctorRootCache: SessionRootCache = {
 }
 
 /** 旧布局残留条目（§6.11 U14b doctor 侧独立 glob 探测）。 */
-interface PiLayoutLeftover {
+/** 旧布局残留探测单条命中（doctor 与 u14b 启动探测同源判据，§6.11）。 */
+export interface PiLayoutLeftover {
   path: string
   kind: 'backup' | 'unmigrated'
 }
@@ -160,6 +161,17 @@ export async function doDoctor(
   })
   const leftovers = await detectPiLayoutLeftovers(signals.agentDir)
   return renderDoctor(roots, environment, leftovers)
+}
+
+/**
+ * doctor action 的 details 契约（与兄弟 action 命名接口同构：tool-handler WorkflowDetails /
+ * search-across CrossSearchDetails 先例）——消费侧测试直 import 本类型，不再自建局部镜像。
+ */
+export interface DoctorDetails {
+  environment: DetectedEnvironment
+  roots: SessionRoot[]
+  leftovers: PiLayoutLeftover[]
+  globBase: string
 }
 
 /**
@@ -240,6 +252,11 @@ function renderDoctor(
 
   return {
     content: [{ type: 'text', text: lines.join('\n') }],
-    details: { environment, roots, leftovers: leftovers.hits, globBase: leftovers.base },
+    details: {
+      environment,
+      roots,
+      leftovers: leftovers.hits,
+      globBase: leftovers.base,
+    } satisfies DoctorDetails,
   }
 }

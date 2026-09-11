@@ -31,6 +31,7 @@
  */
 import { readFileSync, readdirSync, statSync } from 'node:fs'
 import path from 'node:path'
+import { pathToFileURL } from 'node:url'
 
 const PROJECT_ROOT = path.resolve(new URL('.', import.meta.url).pathname, '..')
 const SCAN_ROOT = path.join(PROJECT_ROOT, 'packages/runtime/src')
@@ -138,24 +139,32 @@ function scanDir(scanRoot, allowlists = {}) {
   return { violations, fileCount: files.length, lineCount }
 }
 
-// 导出面（测试消费）：scanDir 主体 + 三组正则（词边界行为直测）+ 白名单常量（收口计数断言）。不导出主流程副作用。
+// 导出面（测试消费）：scanDir 主体 + 三组正则（词边界行为直测）+ 白名单常量（收口计数断言）。
+// 主流程仅直接执行时运行（node scripts/check-provider-credential-reads.mjs），测试 import
+// 零副作用——否则测试会隐式全量扫真实仓库（结果依赖工作区状态），且守卫红时
+// process.exit(1) 会杀死 vitest worker。
 export { scanDir, IDENTIFIER_RES, GET_CONFIG_APIKEY_RE, UPSERT_CALL_RE, GUARD_A_ALLOWLIST, GUARD_B_ALLOWLIST }
 
-const { violations, fileCount, lineCount } = scanDir(SCAN_ROOT)
+// 主模块判定（pathToFileURL 归一化大小写/编码，防 argv 相对路径或 URL 转义误判）
+const isMainModule = process.argv[1] !== undefined && import.meta.url === pathToFileURL(process.argv[1]).href
 
-if (violations.length > 0) {
-  console.error(`[provider-credential-reads] 发现 ${violations.length} 处违规（C-proc-14/15）：`)
-  for (const v of violations) {
-    const fix = v.guard === 'A'
-      ? '凭据读取走唯一通道 ProviderCredentialResolver（services/auth/provider-credential-resolver.ts，接口在 services/ports/）'
-      : 'models.json 写入走防线载体（setProvider / applyProviderWritePolicy 托管的 importer 主路径）'
-    console.error(`  ✗ [守卫 ${v.guard}] packages/runtime/src/${v.file}:${v.line}  命中：${v.hit}`)
-    console.error(`    修复：${fix}；确属例外先过 review 并把文件加进本脚本白名单（附理由注释）`)
+if (isMainModule) {
+  const { violations, fileCount, lineCount } = scanDir(SCAN_ROOT)
+
+  if (violations.length > 0) {
+    console.error(`[provider-credential-reads] 发现 ${violations.length} 处违规（C-proc-14/15）：`)
+    for (const v of violations) {
+      const fix = v.guard === 'A'
+        ? '凭据读取走唯一通道 ProviderCredentialResolver（services/auth/provider-credential-resolver.ts，接口在 services/ports/）'
+        : 'models.json 写入走防线载体（setProvider / applyProviderWritePolicy 托管的 importer 主路径）'
+      console.error(`  ✗ [守卫 ${v.guard}] packages/runtime/src/${v.file}:${v.line}  命中：${v.hit}`)
+      console.error(`    修复：${fix}；确属例外先过 review 并把文件加进本脚本白名单（附理由注释）`)
+    }
+    console.error('')
+    console.error('恢复动作：按上方 ✗ 明细改走 resolver / 写入载体后重试；白名单膨胀到守卫 A >1 文件')
+    console.error('或守卫 B >8 文件 = 收口失效信号，应回到设计 docs/design/catalog-provider-field-authority.md §3.3 D3/D6 重审。')
+    process.exit(1)
   }
-  console.error('')
-  console.error('恢复动作：按上方 ✗ 明细改走 resolver / 写入载体后重试；白名单膨胀到守卫 A >1 文件')
-  console.error('或守卫 B >8 文件 = 收口失效信号，应回到设计 docs/design/catalog-provider-field-authority.md §3.3 D3/D6 重审。')
-  process.exit(1)
-}
 
-console.log(`[provider-credential-reads] OK：${fileCount} 个生产文件 / ${lineCount} 行，凭据直查（守卫 A，白名单 ${GUARD_A_ALLOWLIST.size} 文件）与 upsertProvider 直调（守卫 B，白名单 ${GUARD_B_ALLOWLIST.size} 文件）零违规`)
+  console.log(`[provider-credential-reads] OK：${fileCount} 个生产文件 / ${lineCount} 行，凭据直查（守卫 A，白名单 ${GUARD_A_ALLOWLIST.size} 文件）与 upsertProvider 直调（守卫 B，白名单 ${GUARD_B_ALLOWLIST.size} 文件）零违规`)
+}
