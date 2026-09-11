@@ -6,7 +6,9 @@
  *
  * 职责：
  * - 挂载即首拉一次（且仅一次）——首个 watch 的 immediate 承载，tab watch 无 immediate
- *   不补刀（V6-a；workflow 版曾有的冗余 tab-immediate 已删，此处「恰一次」断言即守卫）
+ *   不补刀（V6-a；workflow 版曾有的冗余 tab-immediate 已删，此处「恰一次」断言即守卫）。
+ *   V6-a 的 activeTab 非目标 tab，触发条件不重叠；裁决 5 核心场景「挂载时 tab 已激活」
+ *   由 V6-a2 直接钉死（该场景下 tab watch 若带 immediate 会叠加第二次 load）
  * - 切 tab 首拉一次（V6-b）
  * - focusedSessionId 变化 → 首拉兜底（不 clear 旧分区，切走不清 ADR-0049）
  * - landing 态（sid=null）不加载
@@ -62,8 +64,8 @@ describe.each(slots)('useListSync — $name 槽位', ({ tab, useStore, loadOf, a
   it('V6-a：挂载即首拉一次（且仅一次）——immediate 承载，tab watch 无 immediate 不补刀', async () => {
     const panel = usePanelStore()
     setPanelSession(panel, 'session-1')
-    // activeTab 默认 'sessions'，即使 tab watch 曾带 immediate 也不命中——
-    // 「恰一次」断言钉死挂载路径只有首个 watch 的 immediate 一个触发源
+    // 本用例 activeTab 停在默认 'sessions'（非目标 tab）：tab watch 即便带 immediate 也不命中，
+    // 因此只钉死「触发条件单一时恰一次」。触发条件同时成立的场景见下方 V6-a2。
     const scope = effectScope()
     scope.run(() => {
       useListSync({ tab, load: loadOf(useStore()) })
@@ -74,6 +76,29 @@ describe.each(slots)('useListSync — $name 槽位', ({ tab, useStore, loadOf, a
       expect(apiFn()).toHaveBeenCalledWith('session-1')
     })
     // microtask flush 后仍恰一次（无第二个触发源补刀）
+    await new Promise((r) => setTimeout(r, 0))
+    expect(apiFn()).toHaveBeenCalledTimes(1)
+    scope.stop()
+  })
+
+  it('V6-a2：挂载时 activeTab 已是目标 tab 仍首拉恰一次（裁决 5 核心场景）', async () => {
+    const panel = usePanelStore()
+    const sidebar = useSidebarStore()
+    setPanelSession(panel, 'session-1')
+    // 挂载前即处于目标 tab：首个 watch 的 immediate 与 tab watch 的触发条件同时成立。
+    // tab watch 若无 immediate（现状）到此只发生一次 load；加回 immediate 则挂载瞬间叠加第二次
+    // ——本用例的回归敏感性即来自此处。
+    sidebar.activeTab = tab
+
+    const scope = effectScope()
+    scope.run(() => {
+      useListSync({ tab, load: loadOf(useStore()) })
+    })
+
+    // immediate 同步触发：现状恰一次，tab watch 带 immediate 时为 2
+    expect(apiFn()).toHaveBeenCalledTimes(1)
+    expect(apiFn()).toHaveBeenCalledWith('session-1')
+    // microtask flush 后仍恰一次（确认无异步补刀）
     await new Promise((r) => setTimeout(r, 0))
     expect(apiFn()).toHaveBeenCalledTimes(1)
     scope.stop()
