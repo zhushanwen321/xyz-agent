@@ -815,3 +815,81 @@ describe('workspace 地址块（needsWorkspace 条件渲染 + 输入上抛）', 
     expect(wrapper.find('[data-testid="quota-workspace-block"]').exists()).toBe(false)
   })
 })
+
+// ══ R4 review 增量补口：事件上抛分支（开关 / 输入草稿 / 重选类型 / 更新 Cookie）════════════
+
+/**
+ * R4 coverage Gate 复跑实测的 6 条未覆盖行，全部是事件 handler 分支：开关 update:enabled、
+ * cookie / 专属 Key 草稿输入、「更新 Cookie」清空、onSelectFetcher 守卫 + 上抛。此前只有
+ * 渲染断言没有交互断言——handler 未被调用 = 「输入上抛 → 父组件写草稿」链路的回归盲区。
+ */
+describe('R4 补口：事件上抛分支（开关 / 输入草稿 / 重选类型 / 更新 Cookie）', () => {
+  it('拨动启用开关 → emit update:enabled(false)（D4 纯配置位上抛，$event === true 布尔窄化）', async () => {
+    wrapper = mountSection({ enabled: true })
+    await flushPromises()
+
+    const sw = wrapper.find('[data-testid="quota-enabled-switch"]')
+    expect(sw.exists()).toBe(true)
+    await sw.trigger('click')
+    // reka Switch 点击翻转 true → false，窄化后上抛 false（非原始 unknown）
+    expect(wrapper.emitted('update:enabled')?.at(-1)).toEqual([false])
+  })
+
+  it('cookie 草稿输入 → emit update:cookieInput（D7 草稿即真相，原文上抛父组件）', async () => {
+    wrapper = mountSection({ isCookieAuth: true, fetcherId: 'mimo' })
+    await flushPromises()
+
+    await wrapper.find('[data-testid="quota-cookie-input"]').setValue('draft-cookie')
+    expect(wrapper.emitted('update:cookieInput')?.at(-1)).toEqual(['draft-cookie'])
+  })
+
+  it('专属 Key 草稿输入 → emit update:apiKeyInput（密文不回显，只上抛草稿原文）', async () => {
+    wrapper = mountSection({ credentialSource: 'exclusive' })
+    await flushPromises()
+
+    await wrapper.find('[data-testid="quota-apikey-input"]').setValue('sk-draft')
+    expect(wrapper.emitted('update:apiKeyInput')?.at(-1)).toEqual(['sk-draft'])
+  })
+
+  it('失败态点「更新 Cookie」→ emit update:cookieInput(\'\')（清空草稿引导重贴，非清盘）', async () => {
+    wrapper = mountSection({
+      testStatus: 'error',
+      testFailReason: 'unauthorized',
+      authKinds: ['cookie'],
+      isCookieAuth: true,
+      cookieInput: 'stale-cookie',
+    })
+    await flushPromises()
+
+    await wrapper.find('[data-testid="quota-update-cookie-btn"]').trigger('click')
+    expect(wrapper.emitted('update:cookieInput')?.at(-1)).toEqual([''])
+  })
+
+  it('类型下拉重选 → onSelectFetcher 守卫放行字符串并 emit update:fetcherId', async () => {
+    wrapper = mountSection({
+      fetcherId: undefined,
+      readiness: { ready: false, missing: ['type'] },
+      fetcherOptions: [
+        { value: 'alpha', label: 'Alpha Plan' },
+        { value: 'beta', label: 'Beta Plan' },
+      ],
+    })
+    await flushPromises()
+
+    // reka Select 触发器 pointerdown 打开（happy-dom 需显式 dispatch，同 renderer
+    // system-page-rename-model.test.ts 交互模式），选项经 SelectPortal 落 body
+    const trigger = wrapper.find('[data-testid="quota-type-select"]').element as HTMLElement
+    trigger.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }))
+    trigger.click()
+    await flushPromises()
+
+    const target = Array.from(document.body.querySelectorAll('[role="option"]'))
+      .find((el) => (el.textContent ?? '').includes('Beta Plan'))
+    expect(target).toBeTruthy()
+    target!.dispatchEvent(new PointerEvent('pointerup', { bubbles: true }))
+    target!.click()
+    await flushPromises()
+
+    expect(wrapper.emitted('update:fetcherId')?.at(-1)).toEqual(['beta'])
+  })
+})

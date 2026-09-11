@@ -1085,3 +1085,101 @@ describe('M3b 接线：测试连接分组结果与模型发现门控（应用级
     expect(wrapper.find('[data-testid="provider-test-hints"]').text()).toContain('settings.providerEdit.testHintNoModelsCustom')
   })
 })
+
+// ══ 场景 ⑩：R4 review 增量补口（coverage Gate 复跑实测 4 行未覆盖）════════════════════
+
+/**
+ * R4 补口（实测 uncovered 行）：custom 类型 Select 的 v-model handler、quota 事件透传
+ * （update:fetcherId / update:credentialSource → 注入 ref 回写）、providerApi computed
+ * （compat 编辑器展开时经 ModelListSection.resolveApi 惰性求值，isCatalog=false 走 form.api 分支）。
+ * 三视角：黑盒 = 交互后用户可见状态 / payload；白盒 = 注入 state ref 回写断言（不窥组件内部）；
+ * 观察者 = 全部 DOM / payload / 注入 stub 断言，无组件内部 spy。
+ */
+describe('R4 补口：类型 Select / quota 事件接线 / compat providerApi', () => {
+  /** reka Select 交互（happy-dom 需显式 pointer 事件；同 renderer rename-model 测试模式） */
+  async function pickSelectOption(triggerEl: HTMLElement, label: string): Promise<void> {
+    triggerEl.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }))
+    triggerEl.click()
+    await flushPromises()
+    const target = Array.from(document.body.querySelectorAll('[role="option"]'))
+      .find((el) => (el.textContent ?? '').includes(label))
+    expect(target).toBeTruthy()
+    target!.dispatchEvent(new PointerEvent('pointerup', { bubbles: true }))
+    target!.click()
+    await flushPromises()
+  }
+
+  it('custom 类型 Select 可改：选 openai-responses → dirty → payload.type 跟随', async () => {
+    wrapper = mountBody(CUSTOM_P)
+    await flushPromises()
+
+    const trigger = wrapper
+      .find('[data-testid="provider-edit-type-field"] [role="combobox"]')
+      .element as HTMLElement
+    await pickSelectOption(trigger, 'settings.providerEdit.apiOpenaiResponses')
+
+    // form.api 变更 → dirty（save-bar 出现）→ 保存 payload 携带新类型
+    expect(wrapper.find('[data-testid="provider-save-bar"]').exists()).toBe(true)
+    await wrapper.find('[data-testid="provider-save-btn"]').trigger('click')
+    await flushPromises()
+    expect(savePayload().type).toBe('openai-responses')
+  })
+
+  it('quota 类型下拉透传：CodingPlanSection 上抛 update:fetcherId → 注入 state.fetcherId 回写', async () => {
+    let state: QuotaConfigureState | undefined
+    quotaFactoryStub.mockImplementationOnce(() => {
+      state = makeQuotaState()
+      state.fetcherOptions = [
+        { value: 'alpha', label: 'Alpha Plan' },
+        { value: 'beta', label: 'Beta Plan' },
+      ]
+      return state
+    })
+    wrapper = mountBody(OAUTH_P)
+    await flushPromises()
+
+    // D8 类型未定态类型下拉也恒渲染；选中后事件经宿主 handler 回写注入 ref
+    const trigger = wrapper.find('[data-testid="quota-type-select"]').element as HTMLElement
+    await pickSelectOption(trigger, 'Beta Plan')
+
+    expect(state!.fetcherId.value).toBe('beta')
+  })
+
+  it('quota 凭证来源透传：点 exclusive 项 → 注入 state.credentialSource 回写', async () => {
+    let state: QuotaConfigureState | undefined
+    quotaFactoryStub.mockImplementationOnce(() => {
+      state = makeQuotaState()
+      return state
+    })
+    wrapper = mountBody(APIKEY_P)
+    await flushPromises()
+
+    // D8 参数区渲染前置：类型已选 + api-key 类 + 来源可用（exclusive 项可点）
+    state!.fetcherId.value = 'zhipu'
+    state!.authKinds.value = ['api-key']
+    state!.credentialSource.value = 'provider'
+    state!.providerCredentialAvailable.value = true
+    await nextTick()
+
+    await wrapper.find('[data-testid="quota-source-exclusive-btn"]').trigger('click')
+    expect(state!.credentialSource.value).toBe('exclusive')
+  })
+
+  it('compat 展开触发 providerApi 求值（custom：form.api 分支）→ CompatEditor 渲染', async () => {
+    wrapper = mountBody(CUSTOM_P)
+    await flushPromises()
+
+    // 未展开时 compat 编辑器不渲染
+    expect(wrapper.find('.compat-editor').exists()).toBe(false)
+
+    const toggle = wrapper.find('button[aria-label="settings.compat.title"]')
+    expect(toggle.exists()).toBe(true)
+    await toggle.trigger('click')
+    await flushPromises()
+
+    // 用户可见：编辑器块 + 关键字段分组标签（字段集来自 resolveApi(m.api) →
+    // providerApi（custom 走 form.api='openai-completions'）回落链）
+    expect(wrapper.find('.compat-editor').exists()).toBe(true)
+    expect(wrapper.find('.compat-editor').text()).toContain('settings.compat.essential')
+  })
+})
