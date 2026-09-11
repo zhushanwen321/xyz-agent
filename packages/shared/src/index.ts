@@ -83,6 +83,20 @@ export type {
 // debug:run-log-retention 通道返回类型（crash-resilience A9② 验收调试口：preload
 // ElectronAPI 签名与 main handler 返回共用同一形态声明，防漂移）。
 export type { DebugRunLogRetentionResult } from './ipc-payloads'
+// 崩溃台账事件 Schema SSOT（docs/design/crash-forensics-and-watchdog.md §3.3 D1，
+// 实施计划 u1a：layer/event/reason 枚举 + 字段集 + writer 接口——u1b runtime 与
+// u1c main 两 writer 共用，禁止复制定义；纯类型/常量无 node 依赖，barrel 安全）。
+export type {
+  CrashJournalLayer,
+  CrashJournalEventName,
+  CrashJournalReason,
+  CrashJournalMemPressure,
+  CrashJournalEvent,
+  CrashJournalFileRole,
+  CrashJournalWriterOptions,
+  CrashJournalWriter,
+} from './crash-journal-schema'
+export { CRASH_JOURNAL_LAYERS, CRASH_JOURNAL_EVENTS, CRASH_JOURNAL_KNOWN_REASONS } from './crash-journal-schema'
 // 出站 env 契约 SSOT + 子进程 env 构建器（纯常量/纯函数无 node 依赖，renderer barrel 安全）。
 // main 进程 safe-env 薄封装与 runtime infra/spawn-env.ts 门面均经此消费。
 export type { BuildOutboundChildEnvOptions, SpawnEnvForwardEntry } from './spawn-env-contract'

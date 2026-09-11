@@ -165,7 +165,7 @@ graph TD
 
 | Unit | 状态 | 轮次 | 证据指针 |
 |------|------|------|----------|
-| u1a | pending | — | — |
+| u1a | committed | 1 | schema 21 值枚举 + 覆盖锁；shared vitest 17 passed + typecheck 绿（编排者重跑核验） |
 | u1b | pending | — | — |
 | u1c | pending | — | — |
 | u1d1 | pending | — | — |
