@@ -4,7 +4,7 @@
 > 「约束（摘要）」列仅导航，非权威表述；约束内容的唯一权威源 = 「权威源」列指向的文档。
 > scope 为 `global` 的条目每次 CR 必载；其余按改动路径前缀命中（`node scripts/select-constraints.mjs --base main`）。
 
-共 97 条（生成于 2026-09-10）。
+共 98 条（生成于 2026-09-11）。
 
 ## pi 关系（外部依赖边界）
 
@@ -24,6 +24,7 @@
 | C-pi-12 | pi 能力事实单点（能力注册表）：模型全等 id / reasoning / 实际支持思考档位只经 runtime 能力注册表（model-capability.ts，pi-ai 同源计算 + get_available_models 在线对账）进入域内，renderer/扩展禁止本地推断档位（禁复活 resolveAvailableLevels 类影子实现），档位可用集一律消费注册表下发的 supportedLevels | packages/runtime/src/services/model-capability.ts、packages/core/**、packages/renderer/**、packages/ui/**、extensions/** | [pi-boundary-reliability](design/pi-boundary-reliability.md#d2能力注册表--runtime-单点服务面离线同源--在线对账选定) · [0064-pi-semantic-absorption-layer](adr/0064-pi-semantic-absorption-layer.md) | review: review-arch-boundary + hook: `diff-probe-thinking.mjs` |
 | C-pi-13 | 改状态 RPC 一律回 pi 实际生效值：setThinkingLevel / model.switch / plugin 通道等改状态命令 reply 禁 void，须回生效值（pi 钳制时 ≠ 请求值）；消费方禁乐观写请求值，以回执写显示态（request≠effective 窗口显示假值 = 事故 B 形态） | packages/shared/src/protocol.ts、packages/runtime/src/**、packages/core/**、packages/renderer/** | [pi-boundary-reliability](design/pi-boundary-reliability.md#d3生效回执接通并上升为协议约束选定) · [0064-pi-semantic-absorption-layer](adr/0064-pi-semantic-absorption-layer.md) | review: review-type-safety |
 | C-pi-14 | mutation 类 RPC reply 强制含生效值字段（XxxMutationReply 命名约定）：shared 协议类型层编译期必需 + runtime 契约测试（mutation-reply-contract.test.ts）枚举全部 mutation RPC 逐一断言，新增 mutation 不入清单即红。乐观/回执裁决标准：后端可变换请求值的 mutation（pi 钳制/pattern 换模）禁乐观写、回执生效值唯一写 store 路径；后端原样存储的 mutation（preset CRUD 等 runtime 自有数据）允许乐观写 + reply 权威覆盖 + 失败回滚——C-pi-13 人肉纪律的机器化（裁决标准与新 mutation 接入检查单见 ADR-0065） | packages/shared/src/protocol.ts、packages/runtime/src/**、packages/core/**、packages/renderer/** | [state-truth-sync-architecture](design/state-truth-sync-architecture.md#d8改状态回执裁决标准--协议层机器强制c4选定) · [0065-mutation-reply-effective-value](adr/0065-mutation-reply-effective-value.md) | review: review-type-safety |
+| C-pi-15 | 引擎任务子进程生命周期上报契约（引擎协议 v1.x 反向通道）：任务子进程 spawn 时上报 host/childSpawned、退出/被杀/崩溃时上报 host/childStateChanged，payload {pid, recordId, state: running\|exited, killed 必含（类型层 required）, exitCode?, signal?}。宿主双依赖：①core 镜像 recordStateChanged（置死镜像项——hasLiveProcessHandle/isResumable/收割判据源）②SR-4 dialog 取消（notifyChildProcessExited 摘除该 pid 挂起 dialog，否则占串行位至 30min 队列超时）。缺失后果 = 镜像活态残留（单写者判据失真）+ dialog 假占位。引擎自身崩溃前的末次上报为尽力而为（已由宿主崩溃分诊兜底） | packages/subagent-engine-sdk/src/protocol/**、packages/pi-subagent-cli/src/**、packages/subagent-core/src/execution/engine/client/mirror.ts、packages/subagent-core/src/execution/dialog-queue.ts | [subagent-engine-protocolization](../docs/design/subagent-engine-protocolization.md) · [chat-domain-v1x-liveness-governance](../docs/design/chat-domain-v1x-liveness-governance.md) | review: review-business-logic |
 
 ## 数据治理（单一数据拥有者体系）
 

@@ -2037,6 +2037,30 @@
       ]
     },
     {
+      "id": "C-pi-15",
+      "summary": "引擎任务子进程生命周期上报契约（引擎协议 v1.x 反向通道）：任务子进程 spawn 时上报 host/childSpawned、退出/被杀/崩溃时上报 host/childStateChanged，payload {pid, recordId, state: running|exited, killed 必含（类型层 required）, exitCode?, signal?}。宿主双依赖：①core 镜像 recordStateChanged（置死镜像项——hasLiveProcessHandle/isResumable/收割判据源）②SR-4 dialog 取消（notifyChildProcessExited 摘除该 pid 挂起 dialog，否则占串行位至 30min 队列超时）。缺失后果 = 镜像活态残留（单写者判据失真）+ dialog 假占位。引擎自身崩溃前的末次上报为尽力而为（已由宿主崩溃分诊兜底）",
+      "scope": [
+        "packages/subagent-engine-sdk/src/protocol/**",
+        "packages/pi-subagent-cli/src/**",
+        "packages/subagent-core/src/execution/engine/client/mirror.ts",
+        "packages/subagent-core/src/execution/dialog-queue.ts"
+      ],
+      "authority": [
+        "../docs/design/subagent-engine-protocolization.md",
+        "../docs/design/chat-domain-v1x-liveness-governance.md"
+      ],
+      "dimensions": [
+        "arch-boundary",
+        "test-coverage"
+      ],
+      "enforcement": [
+        {
+          "type": "review",
+          "agent": "review-business-logic"
+        }
+      ]
+    },
+    {
       "id": "C-data-18",
       "summary": "对账机制三分处置框架：renderer 副本 vs runtime/pi 真值的对账机制按「对抗外部异步真值（保留）/ 同构重复 ≥3 处（收编共享原语）/ 根修后失去存在理由（删除）」裁决——in-flight 去重族收编 createInflightDedup()、KV 单键族收编 createKVSlot()（均 core foundation，新增对账禁再手写同构实现），FR-15 perCwd 默认预设特性全链随本设计 U9 删除（零消费死链）；新增/修改对账机制须过三分裁决并在 impl-plan 处置表登记",
       "scope": [

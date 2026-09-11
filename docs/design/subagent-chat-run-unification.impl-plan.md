@@ -68,7 +68,7 @@ graph TD
 
 | Unit | 状态 | 轮次 | 证据指针 |
 |------|------|------|---------|
-| U1 | **blocked（环境冲突冻结）** | 1 | 开发完成且硬核验通过（SDK 7 文件 + 12 用例；重跑 152 passed）；改动已 staged 未 commit——被共享 pre-commit 的 C-pi-14 布局守卫拦截（`.bare/hooks/pre-commit` 跨 worktree 全局生效；本分支缺 `scripts/check-layout-literals.mjs` 交付物，且实测本分支存量 205 处旧布局字面量，其清理 sweep 在兄弟分支 `fix-session-reader-session-not-found` d484b3dac 单提交 72 文件）。**升级用户裁决：port sweep / 调整合并序 / 守卫豁免，三选一** |
+| U1 | committed | 1 | commit bc9322d05：SDK 7 文件 + resume-schema.test.ts 12 用例；重跑 152 passed；typecheck exit 0；读端三包零改动。解冻前置 = C-pi-14 守卫落地（e7740ca39，过渡豁免 104 文件） |
 | U2 | pending | 0 | — |
 | U3 | pending | 0 | — |
 | U4 | pending | 0 | — |
@@ -82,3 +82,5 @@ graph TD
 - 变更历史：
   - 2026-09-11 计划创建（来源设计 v7，双 0 收敛版）。
   - 2026-09-11 U1 开发完成 + 硬核验通过，流转 commit 被共享 pre-commit 的 C-pi-14 布局守卫拦截（守卫交付物缺失 + 本分支 205 处存量旧布局字面量，清理 sweep 在兄弟分支未合并）→ **U1 冻结升级用户**（dev-flow MANDATORY：环境冲突超出编排者裁决范围）。全流水线 packages/ 提交均被同一守卫拦截，冻结期间 doc-only 提交不受影响。
+  - 2026-09-11 **解冻（用户裁决「cherry pick」后发现新事实修正为守卫+豁免路线）**：完整 cherry-pick d484b3dac 时发现其携带方案 B 数据布局迁移（`<dataDir>/pi/agent` → `<dataDir>/agent`，含 migrate-pi-layout-v2 迁移脚本，属未合并的 session-reader 分支 U18）——把未合并的布局迁移拖进 H1 基座超出授权，已 abort。改行**守卫落地 + 过渡豁免**路线（e7740ca39）：守卫脚本+单测从 sweep 分支原样引入，3 个方案 B 交付物专属豁免条目剔除（随其合并再回），104 个含 pi/ 字面量文件登记过渡豁免（统一理由：本分支尚为 pi/ 子层布局，方案 B 合并时随 sweep 清理后回收）；R2 放行 fixture 换本分支既有豁免文件。守卫复跑 0 命中（2699 文件/112 豁免）、单测 19/19 绿。
+  - 2026-09-11 **L 组 session 遗留收尾**（用户指令 sess_47c1bc22 完整处理）：① f6-third-site-wip stash 已消失，其内容经取证被 HEAD 的 F6 提交（d647b289e + 5186f6356）覆盖，无残留；剩余 3 条 stash 均属其他分支工作（dev-0.9.14 / cw/scoped-model / dev-0.9.5），不在本分支融合范围、未动。② childStateChanged 行为契约已登记 **C-pi-15**（constraints.json + constraints.md 再生，98 条）——引擎任务子进程 spawn/退出必须上报 host/childSpawned/childStateChanged（killed 类型层必含），宿主镜像置死 + SR-4 dialog 取消双依赖。
