@@ -23,9 +23,9 @@
 //   - onCompromised 语义随保活 touch 一并移除（无保活则无 compromise 检测）：
 //     锁目录被外部删除时 release 静默成功（ENOENT 容忍，见 lock-core.ts removeLock）
 //
-// 契约：fn 内禁止任何 I/O / 再次对本文件加锁（嵌套取锁 ELOCKED → 重试耗尽 →
-// 抛错）；持锁范围应为「读文件 + 纯内存变更 + 原子写」，毫秒级（必须远小于
-// stale 30s——无保活 touch，超时持锁会被对端夺取）。
+// 契约：fn 内仅做既定读改写（读目标文件 + 纯内存变更 + 原子写），禁其他 I/O /
+// 再次对本文件加锁（嵌套取锁 ELOCKED → 重试耗尽 → 抛错），毫秒级完成（必须
+// 远小于 stale 30s——无保活 touch，超时持锁会被对端夺取）。
 
 import { acquireLockSync, DEFAULT_STALE_MS } from "./lock-core";
 
