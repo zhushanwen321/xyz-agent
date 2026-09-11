@@ -32,9 +32,7 @@ const goalStateArb = fc.record({
 	timeStartedAt: fc.integer({ min: 0 }),
 	timeUsedSeconds: fc.nat(),
 	budget: fc.record({ tokenBudget: fc.option(fc.integer({ min: 0 })) }),
-	lastProgressTurn: fc.nat(),
 	budgetLimitSteeringSent: fc.boolean(),
-	objectiveUpdatedAt: fc.integer({ min: 0 }),
 	lastBlockerReason: fc.option(fc.string(), { nil: null }), // string | null
 	tokenWarning70Sent: fc.boolean(),
 	tokenWarning90Sent: fc.boolean(),
@@ -59,9 +57,7 @@ const FULL_DATA: Record<string, unknown> = {
 	timeStartedAt: 1000,
 	timeUsedSeconds: 0,
 	budget: {},
-	lastProgressTurn: 0,
 	budgetLimitSteeringSent: false,
-	objectiveUpdatedAt: 1000,
 	lastBlockerReason: null,
 	tokenWarning70Sent: false,
 	tokenWarning90Sent: false,
@@ -108,6 +104,32 @@ describe("deserializeState — 严格解析（缺必填 throw）", () => {
 		const data = { ...FULL_DATA };
 		delete data.tokenWarning70Sent;
 		expect(() => deserializeState(data)).toThrow();
+	});
+});
+
+describe("deserializeState — legacy entry 含已删字段（P-m14-1，D2 白名单兼容）", () => {
+	// ext-simplify-03 D2：lastProgressTurn/objectiveUpdatedAt 已从 GoalRuntimeState 一步删除。
+	// 0.13.0 形状 entry 仍携带这两个字段——deserializeState 是白名单模式（只对已知 key 逐个
+	// req()/可选解析，从不遍历 entry 全部 key，与 tasks 字段先例同一机制），entry 多出的
+	// 字段天然被忽略：不 throw、state 完整重建（G3：旧数据加载兼容）。
+	const LEGACY_0_13: Record<string, unknown> = {
+		...FULL_DATA,
+		lastProgressTurn: 3,
+		objectiveUpdatedAt: 2000,
+	};
+
+	it("0.13.0 形状 entry（含已删两字段）→ 不 throw，返回完整 state", () => {
+		const state = deserializeState(LEGACY_0_13);
+		expect(state.goalId).toBe("g1");
+		expect(state.objective).toBe("test");
+		expect(state.status).toBe("active");
+		expect(state.budgetLimitSteeringSent).toBe(false);
+	});
+
+	it("已删字段被白名单忽略：返回对象不含 lastProgressTurn/objectiveUpdatedAt", () => {
+		const state = deserializeState(LEGACY_0_13);
+		expect(state).not.toHaveProperty("lastProgressTurn");
+		expect(state).not.toHaveProperty("objectiveUpdatedAt");
 	});
 });
 

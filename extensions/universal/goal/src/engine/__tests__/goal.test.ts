@@ -56,7 +56,6 @@ describe("createGoalState", () => {
 			tokensUsed: 0,
 			timeUsedSeconds: 0,
 			currentTurnIndex: 0,
-			lastProgressTurn: 0,
 			lastTurnTokensUsed: 0,
 			budgetLimitSteeringSent: false,
 			tokenWarning70Sent: false,

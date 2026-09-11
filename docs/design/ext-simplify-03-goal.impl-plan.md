@@ -60,8 +60,8 @@ graph TD
 
 | Unit | 状态 | 轮次 | 证据指针 |
 |---|---|---|---|
-| u1 | pending | 0 | — |
-| u2 | pending | 0 | — |
+| u1 | committed | 1 | `df0e752b4`；401 passed；红队红/绿证据齐 |
+| u2 | committed | 2 | `93272f0a9`；typecheck 0 错；401 passed；deviation：领地扩展授权删 event-adapter.ts:13 断链行（R1） |
 | u3 | pending | 0 | — |
 | u4 | pending | 0 | — |
 | u5 | pending | 0 | — |
