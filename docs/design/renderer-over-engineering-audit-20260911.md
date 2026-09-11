@@ -52,12 +52,12 @@
 
 # 候选 5｜ui/table 整目录 + ui/form 全套 + vee-validate 双运行时依赖
 
-- 位置：`components/ui/table/`（7 文件约 107 行，全仓零引用含测试）；`components/ui/form/`（6 文件约 103 行，唯一消费方 `RenameSessionDialog.vue:53-59` 校验一个字段）；`package.json:19,43,47`（@vee-validate/zod + vee-validate + zod 三个依赖）
+- 位置：`components/ui/table/`（7 文件 97 行 [校准 2026-09-11 阶段 3，原记「约 107 行」]，全仓零引用含测试）；`components/ui/form/`（7 文件 116 行 [校准，原记「6 文件约 103 行」漏计 index.ts]）；`package.json:19,43,47`（@vee-validate/zod + vee-validate + zod 三个依赖）
 - 复杂度来源：table 是「未来会有表格需求」的预留（用量明细表等实际全部手写布局）；form 是为单字段（label: min1/max60/无换行）引入 vee-validate + 四层上下文链（Field slotProps → componentField → FormControl → useFormField inject），而全仓其他表单全部手写校验（UpdatePage、SystemLlmRetrySection、ImportSessionDialog）——赌注被现有代码惯例反向证伪。
 - 简化方案：删 ui/table 整目录；删 ui/form 整目录 + vee-validate/@vee-validate/zod 依赖（renderer 内 zod 仅 RenameSessionDialog 一处 import），RenameSessionDialog 改直连 Input + 3 行内联校验。顺带删 `ui/popover/PopoverListItem.vue` + `PopoverActionItem.vue`（零消费陈旧副本，活版本在 ui 包且已出现 import 路径漂移）。
 - 功能取舍：RenameSessionDialog 校验逻辑重写（约 10 行，行为等价）；失去「未来表格/表单库」的预留（从未兑现）。
 - 核心价值影响：重命名会话对话框行为不变；包体积与供应链面下降。
-- 三段论证：小取舍=一个对话框改写内联校验｜大简化=删 15 文件约 260 行 + 3 个 npm 依赖（概念数：删掉「vee-validate slot 约定」「form 上下文链」「table 原语」三套读者本无需理解的概念）｜核心无损锚=调用方证据（table/popover 副本 0 调用；form 全仓惯例已是手写校验）
+- 三段论证：小取舍=一个对话框改写内联校验（10 行 validateLabel [校准]）｜大简化=删 20 文件 320 行（form 116 + table 97 + popover 107，numstat 实测 [校准，原记「15 文件约 260 行」]）+ 3 个 npm 依赖（概念数：删掉「vee-validate slot 约定」「form 上下文链」「table 原语」三套读者本无需理解的概念）｜核心无损锚=调用方证据（table/popover 副本 0 调用；form 全仓惯例已是手写校验）
 - 推荐强度：Worth exploring
 - 评分：投机 3｜热度 1｜收益代价差 2
 
@@ -101,7 +101,7 @@
 - 简化方案：颜色映射并入 `AggregatedData` 返回值（或由调用方从 perProvFull 派生），删模块级可变态。注：此条本质是「欠考虑的状态归属」而非投机抽象，因 leaky 契约实锤列为低分候选。
 - 功能取舍：无行为变化（usage 家族 8 文件改从结果对象取色）。
 - 核心价值影响：配色逻辑不变，仅归属层移动。
-- 三段论证：小取舍=usage 家族 8 文件的取色调用点机械改动｜大简化=消除「必须先 aggregate() 再取色」的未成文契约 + 多实例覆盖隐患｜核心无损锚=替代路径（颜色派生数据已在返回值内）
+- 三段论证：小取舍=5 个有取色调用的组件机械改动（UsagePage/UsageDetailTable/UsageDailyChart/UsageModelRank/UsageProjectRank；UsageLedger/UsageCacheMix/UsageHeatCalendar 无取色逻辑、零改动 [校准 2026-09-11 阶段 3，原记「usage 家族 8 文件」]）｜大简化=消除「必须先 aggregate() 再取色」的未成文契约 + 多实例覆盖隐患｜核心无损锚=替代路径（颜色派生数据已在返回值内）
 - 推荐强度：Worth exploring
 - 评分：投机 2｜热度 1｜收益代价差 1
 
@@ -166,7 +166,7 @@
 8. `useSubagentListSync`/`useWorkflowListSync` 的 `{ immediate: true }` 漂移注释裁决（随候选 10 前置）
 9. `useExtensionHostBridge.ts:283-293` initExtensionHostBridge 返回 9 字段对象生产恒丢弃 → 瘦身 void 或 `__testing` 命名空间（4 个 `__*ForTest` 后门同批归整）
 10. `stores/panel.ts:28,33-35` + `shared/src/panel.ts:8-13` PanelLeaf 单成员判别字段与 `panels` merge 兼容残迹（真实消费仅 useMessageEffects.ts:80 一处；需连带 core api-port.ts:79 端口签名）
-11. `aggregate.ts:44,183` newMetrics/AggregatedData 投机导出去 export（随候选 9 一并）
+11. `aggregate.ts:44,183` newMetrics/AggregatedData 投机导出去 export（随候选 9 一并）；[校准 2026-09-11 阶段 3] 实际落地：`AggregatedData` 已去 export，`newMetrics` 因 4→5 个测试文件真实 import 保留（偏差 D2/D8）
 12. `useCompactQueue.ts` 与 core `CompactQueueLike` 双契约注释互指（结构类型 seam，不合并）
 
 # 附录：语义层四问记录

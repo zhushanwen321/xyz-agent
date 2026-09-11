@@ -42,9 +42,8 @@
 | u08 | 清理点#9：useExtensionHostBridge 返回对象瘦身 + `__*ForTest` 后门归整 | R/composables/shell/useExtensionHostBridge.ts（:283-293）；关联测试文件（grep `ForTest` 定位，≤2 文件） | 无 | plain | 既有测试绿；生产调用方无需改动（grep main.ts/App.vue 核对） |
 | u09 | 清理点#10：PanelLeaf 单成员判别字段与 panels merge 兼容残迹清理（跨包） | packages/shared/src/panel.ts；R/stores/panel.ts；packages/core/src/domain/session/api-port.ts；R/composables/panel/useMessageEffects.ts（:80 消费方同步） | 无 | plain | renderer+core+shared typecheck 绿；runtime 相关测试不受影响（shared 改动跑 shared 测试） |
 | u10 | 组C：aggregate.ts PROVIDER_COLORS 并入 AggregatedData + #11 去 export | R/components/settings/usage/aggregate.ts | 无 | plain | typecheck 绿；颜色映射数据随返回值可取（测试或类型证明） |
-| u11 | 组C：usage 消费组件取色迁移 批次1 | R/components/settings/usage/UsagePage.vue、UsageLedger.vue、UsageDetailTable.vue、UsageCacheMix.vue | u10 | plain | typecheck 绿；V4（配色与改前一致） |
-| u12 | 组C：usage 消费组件取色迁移 批次2 | R/components/settings/usage/UsageDailyChart.vue、UsageHeatCalendar.vue、UsageModelRank.vue、UsageProjectRank.vue | u10 | plain | 同 u11 |
-| u13 | 组D1：RenameSessionDialog 直连改写 + 删 ui/form 整目录 | R/components/sidebar/RenameSessionDialog.vue；R/components/ui/form/（6 文件整目录） | 无 | plain | V5 校验行为等价（空/超60/换行拒绝、合法成功）；grep vee-validate 在 renderer 内零 import |
+| u11 | 组C：usage 消费组件取色迁移 批次1 | R/components/settings/usage/UsagePage.vue、UsageDetailTable.vue（UsageLedger.vue、UsageCacheMix.vue 经阶段 3 核实零取色调用、零改动 [校准]） | u10 | plain | typecheck 绿；V4（配色与改前一致） || u12 | 组C：usage 消费组件取色迁移 批次2 | R/components/settings/usage/UsageDailyChart.vue、UsageModelRank.vue、UsageProjectRank.vue（UsageHeatCalendar.vue 零取色调用、零改动 [校准]） | u10 | plain | 同 u11 |
+| u13 | 组D1：RenameSessionDialog 直连改写 + 删 ui/form 整目录 | R/components/sidebar/RenameSessionDialog.vue；R/components/ui/form/（7 文件整目录 [校准 阶段 3]） | 无 | plain | V5 校验判定等价（空/超60/换行拒绝、合法成功）；错误可见时机差异=已登记偏差 D7；grep vee-validate 在 renderer 内零 import |
 | u14 | 组D2：删 ui/table + popover 旧副本 + package.json 依赖清理 | R/components/ui/table/（7 文件整目录）；R/components/ui/popover/PopoverListItem.vue、PopoverActionItem.vue；packages/renderer/package.json；pnpm-lock.yaml | u13 | plain | build 成功且产物无 vee-validate；grep 零残留引用 |
 | u15 | 组E1：listSync 孪生合并（裁决5：删 workflow 版冗余 immediate 后归一） | R/composables/features/chat/useSubagentListSync.ts、useWorkflowListSync.ts（合并为单参数化模块）；R/components/sidebar/Sidebar.vue（:281-282 调用点）；R/__tests__/composables/useSubagentListSync.test.ts | 无 | plain | V6（挂载首拉一次、切 tab 首拉一次）；测试绿（断言 immediate 行为对齐后形态） |
 | u16 | 组E2：fork 通知链路收敛（模块级单例 + 删镜像层/多播 Set/'waiting' 死分支）+ #1 fork 域符号顺带收窄 | R/composables/features/fork-handoff/useForkBranchNotify.ts；R/composables/effects/useForkNoticeEffect.ts；useForkBranchBadges 及直接消费方（执行时定位，≤3 文件）；#1 fork 符号（ApplyDeltaFn、FinalizeStreamFn、SetMessagesFn、BackgroundTask*）定义文件 | 无 | plain | V7（角标产生/清除等价）；fork 相关既有测试绿 |
@@ -108,6 +107,8 @@ graph TD
 | D4 | u20 合并后文件若超 300 行，以 split-justified 登记放行 | 组 G 设计的组成部分（规则层豁免通道） | 预登记 |
 | D5 | usage 域 u10（类型面）与 u11/u12（消费面）同批 commit——全包 typecheck 门禁要求类型与消费点同编译单元落地，独立 commit 必红；u15 已核验待 commit，排在 u10 域自洽后 | 单元独立 commit 让位于可编译性门禁；域内批 commit 不改变领地互斥与逐单元核验 | 2026-09-11 登记 |
 | D6 | 阶段 3 审查确认的合理偏差（3 区报告聚合去重，共 20 条并入本表） | 见下方「阶段 3 合理偏差聚合」小节 | 2026-09-11 登记 |
+| D7 | RenameSessionDialog 错误可见时机：新实现「输入即显示」vs 旧 vee-validate「blur/提交后显示」 | 校验判定结果四类边界逐条等价，仅反馈时机提前（清空输入框即刻提示）；补 blur 门需新增 touched 状态与测试改写，成本高于收益——设计 §4 裁决 6 | 2026-09-11 登记 |
+| D8 | newMetrics 保留 export（#11 原计划去 export） | 4→5 个测试文件真实 import（含新建 UsageProjectRank.test.ts），符合 D2 精神；AggregatedData 已按计划去 export | 2026-09-11 登记 |
 
 ### 阶段 3 合理偏差聚合（3 区报告去重后）
 
@@ -118,6 +119,8 @@ graph TD
 **C. 接缝与门禁（u17-u20，分区 4 R1-R8）**：u19 豁免通道正反 12 场景实测全过（含 501/520 拦截、空域/窗口外/非注释语境/跨行未闭合拦截、无标记 301 文案与基线逐字一致）；u18 接缝登记与 9 个新增转发函数签名 1:1（与 lib/ipc.ts:247-283 逐字对照）；V9 达成（useAppUpdate 10 IPC 函数全经本层，@/lib/ipc 零残留）；#2 挪移只改暴露面不改运行时路径；u20 五个合并点逐字对照等价、五语义域红线未碰（command-popover 三文件改动系 u04 授权的 export 收窄）、D4 判断正确（script 267 行 ≤300）；u17 缺失被计划层如实登记（非静默丢失）。
 
 **D. 补充登记（分区 1 U2 / 分区 4 U2）**：u04 实改 8 文件超 5 文件预算（11 符号分布 8 个定义文件、每处 1 行 export 改动，未切批）；u18 实改 5 个测试文件超预估 4（机械 mock 目标迁移）。两条均低风险、无行为影响，按 D2 精神补录本表。
+
+**E. usage/表单域（u10-u14，分区 3 R1-R6）**：u10 颜色归属机制完整落地（模块级可变 PROVIDER_COLORS 删除、buildProviderColors 纯函数、getProviderColor 双参纯化、aggregate 无隐藏副作用——V4「双实例互相覆盖」结构性不可能）；消费方迁移完整（全仓 getProviderColor 仅 5 个真实消费组件、全部经 UsagePage 传 prop）；V4 有组件级 DOM 断言（9 文件 74 tests 实跑绿）；u13 校验规则与旧 zod schema 逐条等价（min1/max60/换行）、旧「schema 副本双轨测试」升级为挂载组件 DOM 断言（漂移面消除）；u14 三类删除零消费方（ui/table 与 popover 副本 grep 零命中、活版本在 packages/ui 未触碰）；lock 自洽（importer 40 键双向一致，zod 转 optional peer 非孤儿）。
 
 ### 阶段 3 unreasonable 修复清单（待配额恢复后派发）
 
@@ -167,4 +170,6 @@ graph TD
   - 2026-09-11 核验漏洞登记（自纠）：u07 实际改动含 `packages/core/src/domain/chat/use-chat-types.ts`（清理点 #12 的 CompactQueueLike 契约对端注释，属 u07 task 授权的「core 侧注释（若互指需要）」），但该文件未列入其 files_changed 汇报；主 agent 核验时 grep 过滤过窄（仅匹配 MessageStream 相关文件名）未捕获，commit d5f35c82a 因此遗漏该文件——改动仍完好留在工作区，待补 commit。教训：属地 diff 核验必须用 `git status --short` 全量集合比对 files_changed，禁止 grep 过滤后比对。
   - 2026-09-11 当前工作区未提交改动盘存（2 组，均被环境阻塞①拦截）：① u17 三文件（adapter + 新测试 + core mock 补 listModels）；② u07 补漏一文件（use-chat-types.ts 注释）。
   - 2026-09-11 u17 状态：dev 已完成并核验通过（renderer typecheck 0 + 21 tests + core mock 105 tests），含 1 处追认的领地外改动（core mock model 域补 listModels——被 adapter 原直连 real WS 掩盖的缺口）；改动在工作区待 commit（被环境阻塞①拦截）。
+  - 2026-09-11 阶段 3 分区 3（usage/表单域）完成：reasonable 6 条（已并入 §5 D6-E 段）；unreasonable 2 条（U1 Medium=错误可见时机→主 agent 裁决为合理偏差 D7 + 测试注释校准修-4；U2 Low=CollapsibleTrigger.vue:12 悬空注释→修-4）；doc_errors 5 条（D1-D4 已由主 agent 修订设计/审计/计划三处文档：newMetrics 保留、form 6→7 文件、usage 8→5 组件、行数 260→320；D5 Info 级=u14 commit message 测试数不可复现，登记为后续 commit 证据须写可复现命令）。
+  - 2026-09-11 阶段 4 修复批次执行：修-1（悬空注释 3 处，6f59a0587）、修-2（V6-a2 断言 + 回归敏感性验证，1ae64409c）、修-3（accordion 14 用例 + 反向验证，69eb21b05）、修-4（测试注释校准 + CollapsibleTrigger 注释，见本批 commit）。全部带证据核验后提交。
   - 2026-09-11 u01 完成：① 偏差登记——useCommandRegistry.test.ts 超领地整删（计划快照遗漏该死代码自测文件，:15 import 被删文件必挂，与已列 3 个配套测试同构，接受）；section-kind.test.ts 整删（任务预留分支，core search.test.ts 有等价覆盖）。② 观察项登记——core AppCommandActionsPort（search-ports.ts）随 app-commands 删除后在 core 内零消费方，属 #1 收窄语义域，待后续批次/阶段 3 裁决。③ u03 观察项兑现——IMPORT_* 四常量有真实引用（ImportSessionDialog + 2 测试文件），审计「三常量零引用」与实况不符，D2 偏差按预期兜住

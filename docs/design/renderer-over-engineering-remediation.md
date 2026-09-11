@@ -34,11 +34,11 @@ Out-of-scope：审计「已核实非过度」清单（见审计报告同名节�
 
 ### 2.3 组 C：usage 颜色归属（候选 9 + #11）
 
-`components/settings/usage/aggregate.ts` 的模块级可变 `PROVIDER_COLORS` 并入 `AggregatedData` 返回值（派生数据已在返回值内），usage 家族消费组件改从结果对象取色；`newMetrics`/`AggregatedData` 投机导出去 export（#11）。
+`components/settings/usage/aggregate.ts` 的模块级可变 `PROVIDER_COLORS` 并入 `AggregatedData` 返回值（派生数据已在返回值内），5 个有取色调用的消费组件（UsagePage/UsageDetailTable/UsageDailyChart/UsageModelRank/UsageProjectRank）改从结果对象取色；`AggregatedData` 投机导出去 export（#11 落地）；`newMetrics` [修正 2026-09-11 阶段 3] 保留 export——执行时核实 4 个（改造后 5 个）测试文件真实 import，符合偏差登记表 D2/§5 D8，非漏做。
 
 ### 2.4 组 D：依赖与表单库退役（候选 5）
 
-删 `components/ui/table/` 整目录（7 文件，全仓零引用）、`components/ui/form/` 整目录（6 文件）、`components/ui/popover/PopoverListItem.vue` 与 `PopoverActionItem.vue`（零消费陈旧副本）；`RenameSessionDialog.vue` 改直连 Input + 约 10 行内联校验（行为等价：label min1/max60/无换行）；`package.json` 删 `vee-validate`、`@vee-validate/zod`（zod 若 renderer 内无其他 import 一并删）+ lock 更新。
+删 `components/ui/table/` 整目录（7 文件 97 行，全仓零引用）、`components/ui/form/` 整目录（7 文件 116 行 [修正 2026-09-11 阶段 3] 原记「6 文件」漏计 index.ts barrel）、`components/ui/popover/PopoverListItem.vue` 与 `PopoverActionItem.vue`（零消费陈旧副本，107 行）；`RenameSessionDialog.vue` 改直连 Input + 10 行内联校验（判定结果等价：label min1/max60/无换行；错误可见时机差异见 §4 裁决 6/偏差 D7）；`package.json` 删 `vee-validate`、`@vee-validate/zod`（zod 若 renderer 内无其他 import 一并删）+ lock 更新。
 
 ### 2.5 组 E：孪生/镜像收敛（候选 6、10 + #8）
 
@@ -82,6 +82,7 @@ Gate A = 全量测试（`cd packages/renderer && pnpm test` + 受影响包测试
 3. **候选 4 mock 旁路**：接回门面三元——mock 模式下 settings 域走 mock。前置可行性已核实：`api/index.ts:47` 已有 `settings` 三元且 `mockApi.settings` 实现存在（门面注释「两套实现签名一致」）
 4. **组 A 二选一**（主 agent 机械判定，非用户裁决）：renderer `useAppCommands.ts` 被 `useSidebar.ts:295` 真实调用（活）；core `app-commands.ts` 生产引用 0、测试引用 0（仅 `domain/new-task-search/index.ts:24` re-export）——**删 core 版**。若未来 search 域彻底绞杀归 core，届时按需重迁（YAGNI）
 5. **immediate 漂移裁决**（主 agent git 考古判定）：`useWorkflowListSync` tab watch 的 `{ immediate: true }` 创建即带（commit 704013b52）且有注释论证，但其触发场景（挂载时 tab=workflows 且 sid 存在）被首个 watch 的 immediate 完全覆盖——判定为冗余而非有意行为差异。对齐方向：删 workflow 版冗余 immediate（subagent 版无 immediate 的行为是完备的），归一后合并
+6. **RenameSessionDialog 错误可见时机**（主 agent 阶段 3 裁决）：改写后错误改为「输入即显示」（`(label !== initialValue || submitAttempted) && validationError`），旧 vee-validate 实现是 blur/提交后才显示（`touched && !valid`）。**校验判定结果完全等价**（空/超 60/换行/合法四类边界逐条一致），仅反馈时机提前——判定为正向 UX 变化（用户清空输入框即刻得到「不能为空」提示），登记为合理偏差 D7。不补 blur 门（引入额外 touched 状态与测试改写成本高于收益）；vite 测试注释已按新语义校准（修-4）。
 
 ## 5 执行约束
 
