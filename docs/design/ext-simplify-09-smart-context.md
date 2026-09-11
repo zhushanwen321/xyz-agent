@@ -254,7 +254,7 @@ if (config.enabled !== true || currentModelId === "" || config.excludedModels.in
 | `src/__tests__/pure.test.ts` | 改 | E2：新增口径断言用例（toolCall-only / thinking-only 消息 > 0） |
 | `src/__tests__/tool.test.ts` | 不动 | E1-E4 均不触达（T2 移交项触达时由 code-simplify 同步 ：93 断言） |
 
-不变量守护：`SmartContextDetails`（compaction entry details）、`SameModelCallResult` 判别联合、D13-5 缓存对齐约束（llm.ts 头注）、R2 降级态时序——全部不动。文档同步（C-proc-10）：删除符号（BeforeCompactLikeEvent 等）已 grep docs/ 零引用；`ext-simplify-index.md:19` **部分需实施时同步**——同行「C12 estimateShadowedTokens→SDK estimateTokens」是设计编号描述不受影响，但同行的裁决摘要「Like\*Event×5（contested→裁决：导入 SDK 类型+边界断言）」与本文档最终结论漂移（边界断言已被 §5.1 修正为「不可达、无需保留」），实施时将该行裁决摘要更新为「SDK 直标/省略标注推断、边界断言不可达」并顺带更新「待设计」状态；`docs/extensions/smart-context/design.md:296` D13-1 语义描述（「摘要 tokens ≥ 被压段 tokens」）在新口径下不变，无需回写；`node scripts/check-doc-symbol-drift.mjs` 由 pre-commit 把关。
+不变量守护：`SmartContextDetails`（compaction entry details）、`SameModelCallResult` 判别联合、D13-5 缓存对齐约束（llm.ts 头注）、R2 降级态时序——全部不动。文档同步（C-proc-10）：删除符号（BeforeCompactLikeEvent 等）已 grep docs/ 零引用；`ext-simplify-index.md` 的「09 号行」**部分需实施时同步**（行号无关锚点：09 号行位于「设计文档清单」表第 9 数据行）——同行「C12 estimateShadowedTokens→SDK estimateTokens」是设计编号描述不受影响，但同行的裁决摘要「Like\*Event×5（contested→裁决：导入 SDK 类型+边界断言）」与本文档最终结论漂移（边界断言已被 §5.1 修正为「不可达、无需保留」），实施时将该行裁决摘要更新为「SDK 直标/省略标注推断、边界断言不可达」并顺带更新「待设计」状态；`docs/extensions/smart-context/design.md:296` D13-1 语义描述（「摘要 tokens ≥ 被压段 tokens」）在新口径下不变，无需回写；`node scripts/check-doc-symbol-drift.mjs` 由 pre-commit 把关。
 
 ## 7. 验收（真实场景，非单测非 mock）
 
@@ -315,3 +315,4 @@ if (config.enabled !== true || currentModelId === "" || config.excludedModels.in
 - v3（2026-09-12）：第 2 轮审查-修复循环（聚焦复审 R1 suggestion 闭合）。输入 = `.review/ext-simplify-09-impact.md` 影响面聚焦复审 R1（0 must-fix / 1 suggestion）。逐条对账：
   - **S-1（§8.3 fixture 数值等价句）**：「content 单 text 块」隐含前提升格为 fixture 形态约束（makeEvent 默认 assistant 必填字段补齐仅限标量字段、content 数组锁定单 text 块、实施者不得自行追加 thinking/toolCall 块，偏离须重核本等价声明）；「既有用例数值断言不变」收窄为实测准确表述（现有用例全部为行为断言、无一例断言具体 token 数值；唯一数值敏感的收缩校验用例 compact-handler.test.ts:143-154 自行 override 被压段于 :146，不依赖 makeEvent 默认 assistant 值）。
   - 联动自查：局部声明修正，无机制改动；§5.6 E2 / §6 文件地图对 fixture 的既有描述与本约束一致（E2 的「assistant content 改合法 block 数组」即本约束来源形态，口径断言用例自建消息不受锁定影响），无联动点。
+- v4（2026-09-12）：实施后一致性审查（阶段 3）doc_errors 修正：§6 的「ext-simplify-index.md:19」行号锚点错误（该行自文件创建起即在第 20 行），改为行号无关锚点「09 号行」；实施已按内容定位落在正确行，功能未受影响。

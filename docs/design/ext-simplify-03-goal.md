@@ -176,7 +176,7 @@ M14 涉及的持久化数据流（字段在链上的位置）：
 | E2 | M15 | 执行 | message_end 类型统一 SDK `MessageEndEvent`：删 `MessageEndLikeEvent`（message-end.ts:15-23），index.ts/message-end.ts 标注 SDK 类型；**保留** `toMessageEndData` 运行时守卫与 applyEvent 的 `unknown` 边界（service 零 Pi import 的架构纯粹性 + no-unsafe-cast + 「pi 适配层不信任外部格式」三重依据） | adapters/event-handlers/message-end.ts、index.ts |
 | E3 | M16 | 执行 | UiPort 显式声明 `readonly theme: ThemeLike`；`ThemeLike` 定义上移 ports.ts（接口层拥有形状）；adapters/ports.ts 构造 `theme: { fg, bold }` 嵌套成员（fg 的 string→ThemeColor 断言留在 adapter 包装）；删 `as UiPort` 整体断言 + widget.ts `asTheme` 及其 4 个消费点改 `uiPort.theme` | ports.ts、adapters/ports.ts、projection/widget.ts、adapters/event-handlers/before-agent-start.ts（测试连带见 §9.3） |
 | E4 | M17 | 执行 | SessionPort 删 `getContextUsage`/`signal`（ports.ts:79-80 + adapters/ports.ts:105-112 实现 + 测试 fake 同步） | ports.ts、adapters/ports.ts（测试连带 5 文件见 §9.3） |
-| E5 | low（budget） | 执行 | 删 `BudgetDimension` 类型与全部 `dimension` 字段（BudgetDecision/BudgetCheckResult.terminal/checkBudgetOnResume 返回值/3 处生产字面量）；budget.test.ts 4 处断言同步删字段 | engine/budget.ts、engine/__tests__/budget.test.ts |
+| E5 | low（budget） | 执行 | 删 `BudgetDimension` 类型与全部 `dimension` 字段（BudgetDecision/BudgetCheckResult.terminal/checkBudgetOnResume 返回值/4 处生产字面量）；budget.test.ts 4 处断言同步删字段 | engine/budget.ts、engine/__tests__/budget.test.ts |
 | E6 | low（formatBudget） | 执行 | 删 `formatBudget` 分发层与 `BudgetFormatStyle`；`formatBudgetPercent`/`formatBudgetLine` 转导出，2 个调用点直调；prompts.test.ts 改直测两函数；「FR-3.4 唯一收敛出口」注释随决策推翻一并删除 | projection/prompts.ts、projection/__tests__/prompts.test.ts |
 | E7 | low（双通道惯例） | 执行 | doc-right：adapters/ports.ts 头注补惯例声明「port 对象仅用于传入 service/session 的实参；handler 自用的 UI/日志直呼 ctx」——把口头知识成文，不改调用代码 | adapters/ports.ts（头注） |
 
@@ -306,3 +306,4 @@ M14 涉及的持久化数据流（字段在链上的位置）：
   - **S-1（主审 P1-8，§5.4 E1 守卫段）**：已知边界句补漏报面声明——威胁模型显式定为「守卫防 F1 的无意模仿、不防蓄意绕过」，解构赋值目标/`??=`/`||=`/括号访问/Object.assign 五类结构性绕过不在防线上、归 code review 层；并指明扫描粒度为整文件内容（`\s*` 白名单前瞻须能跨行匹配才能排除跨行白名单赋值形态，逐行实现会误报）。
   - **S-2（影响面 P0-20 交叉，§9.3 测试连带面说明）**：「测试不经 typecheck」判定基石补重审触发条件登记（extensions/tsconfig.json 纳入 `__tests__` 或 CI 新增 extensions 测试 typecheck 通路时，本节判定等级按编译视角重估），并登记翻转冲击有限的实测依据（必改 5 文件两前提下行动不变；「预期不动」组被 `as unknown as`/`as UiPort` 断言兜住；实测记录见 `.review/ext-simplify-03-impact.md` 聚焦复审 R1）。
   - 联动自查：两处均为局部声明补充（威胁模型 + 触发条件登记），无机制改动；数据流图/错误规格/决策总表/§8 验收场景不受触及，无联动点。
+- v4（2026-09-12）：实施后一致性审查（阶段 3）doc_errors 修正：§5.4 E5 行「3 处生产字面量」实为 4 处（checkBudgetOnTurnEnd 3 处 + checkBudgetOnResume 1 处，budget.ts 实读），实现按「全部 dimension 字段」权威表述已删 4 处（一致）。

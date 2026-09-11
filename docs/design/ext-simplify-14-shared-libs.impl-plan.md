@@ -48,17 +48,24 @@ graph TD
 
 ## 5 合理偏差登记表
 
-（初始为空）
+| # | Unit | 偏差 | 定性 | 依据 |
+|---|---|---|---|---|
+| 1 | u1 | pnpm-lock.yaml 零变化（消费方均 workspace:* 协议） | 合理（预案未触发） | u1 汇报 |
+| 2 | u1 | external-removal.test.ts 第二用例注释按 sync 语义补强一句 | 合理（§7.4 ① 预期内） | u1 汇报 |
+| 3 | u1 | worktree-registry.ts 对齐目标列举补 extension 侧 pi-file-lock | 合理（列举补全） | u1 汇报 |
+| 4 | u1 | 连带：scripts/check-layout-literals.mjs 登记 bundled session-reader 探测证据文案豁免（守卫恢复动作 3，存量源码字面量经 bundle 同步首次入扫域） | 合理（守卫指引路径） | commit 5cebdd5e7 |
+| 5 | u2 | fingerprint.test.ts 15→14 用例：diffFingerprints(fp(), null) 分支经 buildProbeEntry 公有面不可达，语义由多字段变化用例等价承载 | 合理（设计给定改法的自然结果） | u2 汇报 |
 
 ## 6 状态表
 
 | Unit | 状态 | 轮次 | 证据指针 |
 |---|---|---|---|
-| u1 | pending | 0 | — |
-| u2 | pending | 0 | — |
-| u3 | pending | 0 | — |
+| u1 | committed | 1 | `5cebdd5e7`；V5-① 归零/③ 1+2 行；file-lock 17 + bte 242 + parity 4 绿；deviation：lock 零变化（workspace:*）+ external-removal 注释按 sync 语义补强 + worktree-registry 对齐目标列举补 extension 侧；连带：layout-literals 豁免登记（bundled session-reader 探测证据文案，守卫指引恢复动作 3） |
+| u2 | committed | 1 | `13fcd0730`；V5-② 归零；cache-probe 22 + extension-logger 32 + llm-shared 52 绿；deviation：fingerprint.test 15→14 用例（diff null 分支经公有面不可达，语义由多字段变化用例等价承载）；lock 零变化 |
+| u3 | committed（登记确认） | 0 | E11 未实施（移交 code-simplify）；登记载体 = 设计文档 §5.5 E11 行；无代码改动 |
 
 ## 7 残留风险与变更历史
 
 - 残留风险：①file-lock-external-removal.test.ts 改 sync 后断言形态以测试绿确认（§7.4 ①）；②worker 改 sync 竞争时序等价性由 V1 终值断言兜底（§7.4 ②）；③版本 bump 后 pnpm-lock.yaml 若因 workspace 协议需要更新，随单元 commit 带上。
 - 变更历史：2026-09-12 初版（来源设计 v4，双审查 0 must-fix 证据齐）。
+| 6 | u1/u2 | V2（pi CLI 实测 permission/rename-session 保存链路）与 V4（cache-probe 采集 + analyze.py）无实跑证据 | 待执行（阶段 5 Gate B 统一补跑，不静默跳过） | 14 区审查 unreasonable #2（medium） |

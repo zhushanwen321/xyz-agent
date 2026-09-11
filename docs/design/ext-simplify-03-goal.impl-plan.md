@@ -54,7 +54,14 @@ graph TD
 
 ## 5 合理偏差登记表
 
-（初始为空）
+| # | Unit | 偏差 | 定性 | 依据 |
+|---|---|---|---|---|
+| 1 | u2 | 领地扩展：event-adapter.ts:13 barrel re-export 单行删除（删 MessageEndLikeEvent 的必然联动） | 合理（协调者授权 a） | u2 轮 2 汇报；u5 整删零冲突 |
+| 2 | u4 | E7 头注惯例随 u4 顺带落地（计划原排 u5，但文件在 u4 领地） | 合理（领地错位消除） | u4 汇报 deviations |
+| 3 | u4 | goal-control-rpc.test.ts:47-49 头注（getContextUsage/signal 被 buildPorts 读取）E4 后失准，未清（不在任何单元领地） | 阶段 3 定性 = 本次清扫，修复组 A 执行中 | u4 汇报 deviations |
+| 4 | u5 | prompts.test.ts 补 1 个 formatBudgetLine 空态用例（对称补齐） | 合理 | u5 汇报 deviations |
+| 5 | u5 | 领地外 9 处注释级 "event-adapter" 悬空提及未清扫（service.ts:63,158,240,243、adapters/ports.ts:4,52、ports.test.ts:49、circuit-breaker.test.ts:14、event-adapter.test.ts:2 头注——第 9 处为阶段 3 审查补充） | 阶段 3 定性 = 本次清扫（C-proc-10），修复组 A 执行中 | u5 汇报 + 03 区审查 unreasonable #3 |
+| 6 | u5 | dimension 生产字面量实删 4 处（任务描述 3 处），以设计「全部」权威表述为准 | 合理 | u5 汇报 deviations |
 
 ## 6 状态表
 
@@ -62,9 +69,9 @@ graph TD
 |---|---|---|---|
 | u1 | committed | 1 | `df0e752b4`；401 passed；红队红/绿证据齐 |
 | u2 | committed | 2 | `93272f0a9`；typecheck 0 错；401 passed；deviation：领地扩展授权删 event-adapter.ts:13 断链行（R1） |
-| u3 | pending | 0 | — |
-| u4 | pending | 0 | — |
-| u5 | pending | 0 | — |
+| u3 | committed | 1 | `b15c591af`；404 passed；typecheck 绿；P-m14-1/2 用例落地；生产 grep 0 |
+| u4 | committed | 1 | `783338e14`；goal tsc 0 错；404 passed；SessionPort 仅剩 getEntries；E7 顺带落地（领地错位消除） |
+| u5 | committed | 1 | `135669ae0`；405 passed；lint/typecheck 绿；双删确认 |
 
 ## 7 残留风险与变更历史
 

@@ -164,7 +164,7 @@ README.md 同样写「跳跃 = 中间有无变化 turn 或漏记」。消费端�
 
 | # | 包 | 位置 | 改动内容 | 性质 |
 |---|---|---|---|---|
-| E1 | file-lock | src/file-lock.ts | 删 async 面 7 个符号（D1 清单）+ 头注释 sync-only 化（删 ：9-11 async 理由段、:24-26 退避协议行，契约段改「禁 I/O」sync 口径）+ **:141-142 withFileLockSync JSDoc 去「与 async 版锁同一把 lockfile / sync/async API 磁盘同一协议」对照段**（async 版删除后该对照失效，改述「与 runtime 侧 sync 实现同协议」） | D1 直接执行 |
+| E1 | file-lock | src/file-lock.ts | 删 async 面 7 个符号（D1 清单）+ 头注释 sync-only 化（删 ：9-11 async 理由段、:24-26 退避协议行，契约段改 sync 口径：「fn 内仅做既定读改写（读目标文件 + 纯内存变更 + 原子写），禁其他 I/O / 再次对本文件加锁」）+ **:141-142 withFileLockSync JSDoc 去「与 async 版锁同一把 lockfile / sync/async API 磁盘同一协议」对照段**（async 版删除后该对照失效，改述「与 runtime 侧 sync 实现同协议」） | D1 直接执行 |
 | E2 | file-lock | src/index.ts | 去 withFileLock/FileLockOptions import 与导出、删双 Options re-export（收敛后入口仅 `export { withFileLockSync }`——三 parity 常量不进入口，见 §4） | D1/D3 直接执行 |
 | E3 | file-lock | src/lock-core.ts | LockCoreOptions 去 export（:53）+ **:230-231 acquireLock JSDoc「重试编排属消费方：包入口 async 退避 / sync busy-wait」更新**（本包 async 退避删除后失效，改为「消费方编排：extension 侧 sync busy-wait（file-lock.ts）/ runtime 侧 async 退避（utils/file-lock.ts）」） | D3 直接执行 |
 | E4 | file-lock | package.json | description 去「exponential-backoff retries」表述 | doc-right 直接执行 |
@@ -188,7 +188,7 @@ README.md 同样写「跳跃 = 中间有无变化 turn 或漏记」。消费端�
 
 | # | 场景 | 回溯目标 | 真实流程/数据/路径 | 通过标准 |
 |---|---|---|---|---|
-| V1 | 两真实进程抢同一文件锁 | 目标 4（sync 锁零回归） | 改造后的 file-lock.test.ts「真实跨进程互斥」用例（D5a 形态）：两个真实 node 子进程（--experimental-strip-types 跑本包源码）并发对同一 JSON 各 RMW 50 次，真实文件系统、真实进程竞争 | 两子进程 exit 0，目标文件终值精确 100（零丢失）；`<target>.lock` 目录测试结束后无残留 |
+| V1 | 两真实进程抢同一文件锁 | 目标 4（sync 锁零回归） | 改造后的 file-lock.test.ts「真实跨进程互斥」用例（D5a 形态）：两个真实 node 子进程（--experimental-strip-types 跑本包源码）并发对同一 JSON 各 RMW 50 次，真实文件系统、真实进程竞争 | 两子进程 exit 0，目标文件终值精确 100（零丢失）；锁释放语义由同文件 sync describe 的「finally 释放语义/可再锁」用例承载（跨进程用例 tmp 目录整体清理，无独立 lock 残留断言） |
 | V2 | pi CLI 实测扩展侧 sync 调用方 | 目标 4（生产链路） | 本地 pi CLI 按 AGENTS.md 强制形态实测：`pi --mode rpc --session-dir <tmp> --extension extensions/universal/permission`（其命令回调经 llm-shared saveConfig→withFileLockSync 写 permission 配置文件）触发一次保存；另跑 rename-session 同法一次 | 配置文件正确写入（新字段落盘）；对应 `<config>.lock` 无残留；无 ELOCKED 报错日志 |
 | V3 | runtime 侧不受影响 | 目标 4（已核实面） | 跑 runtime 侧 `file-lock-parity.test.ts` 与 runtime 自身测试（auth-storage/provider-extras 相关）：runtime 代码零改动，仅注释变更（utils/file-lock.ts :56-60 + parity 测试头注释 ：5，E5） | parity 测试绿（两侧默认常量相等断言过）；runtime 测试绿；`git diff` 确认 runtime 侧仅上述注释变更 |
 | V4 | cache-probe 采集 + 归因脚本 | 目标 2（声明修正后链路完整） | pi CLI 带 cache-probe 本地源码跑真实 session（2-3 turn，其中一 turn 修改 skill 文件制造指纹变化）→ 读 session JSONL 的 cache-probe entry；再跑 `python3 analyze.py ~/.pi/agent/sessions` | entry 含 baseline/normal 形态、seq 字段仍在；analyze.py 五部分输出正常（脚本本就不读 seq，证明声明修正无消费缺口） |
@@ -287,3 +287,4 @@ V1/V2 是本设计的验收主场景（锁是正确性敏感面）；V5 同时�
   - **联动同步（五处）+ 主审 3 条 INFO 顺手修**：§2 in-scope 扩 parity 测试注释行 · §3.2 F4 补四处同款扫描结论 · §5.4 D4③ 四处同款（E5+E12①）· §5.5 E5（第四处+扫描定案）/E12（① 涵盖 ：42-44 + ② 扩 :114）/E14（守卫叙事）/E15（INFO-3 验收归属）· §6 V5 全节重写（① 域+正则+基线 48 行 7 文件：file-lock 包 43 = file-lock.ts 14/index.ts 4/三测试 25 + bte 3 + worktree-registry 2；③ 双断言基线 1 行/8 行；sleep 豁免）· §7.1 M1 验收扩「worktree-registry 零残留」· §6 V3 行同步（runtime 侧「仅注释变更」扩含 parity 头注释）· §7.3 文件地图（新增 parity 行、worktree-registry/data-source-registry 两行更新）· §7.4 ③ 升格。主审 INFO：开篇执行项计数括注消除「14 vs 15 行」推导歧义 · V5-① 基线归因句随域扩展重写（原「全部属 E1/E6/E12/E14」中 E12 两文件不在旧域，现 E12① 两行已入域）· E13 引用设计文档补 `.md` 全称（对齐 lock-core.ts 头注释先例）。
 - v4（2026-09-12）：影响面聚焦复审 R2（**0 must-fix** + 1 suggestion），当轮修复，循环收敛：
   - **R2 S-1（sleep 豁免登记恢复路径枚举不全）**：登记漏列实锤在场的机器信号——`pnpm extensions:lint`（`npx eslint extensions/`，根 eslint.config.mjs 继承 taste-lint 配置）的 `@typescript-eslint/no-unused-vars` 为 error 级（taste-lint/base.mjs:69，仅 `^_` 前缀豁免；2026-09-12 复核实证），对「删调用留定义残留」方向即红。sleep 豁免兜底链补全为四层：E1 删除清单 + typecheck（调用残留红）+ **extensions:lint（定义残留红）** + code-simplify 死代码扫描；豁免裁决本身经复审维持不变。联动：§6 V5 行同步。
+- v5（2026-09-12）：实施后一致性审查（阶段 3）文档侧修正：①E1 契约段「禁 I/O」文案修正为「仅既定读改写」（原文案与「读文件 + 原子写」持锁范围自相矛盾，实现照抄致 file-lock.ts:33 注释字面矛盾，代码侧随修复批次同批改）；②V1 通过标准第三子句「lock 无残留」改述为如实描述（承载用例 tmp 整体清理，无独立 lock 残留断言，释放语义由 sync describe 用例承载）；③补登记实施期连带：scripts/check-layout-literals.mjs 豁免登记 bundled session-reader 探测证据文案（commit 5cebdd5e7，extensions 重新 bundle 使存量产物字面量首次入扫域，守卫恢复动作 3）。
