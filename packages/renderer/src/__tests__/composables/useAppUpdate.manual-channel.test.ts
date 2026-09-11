@@ -9,7 +9,7 @@
  *    版本显示对齐（其他字段保留）；version 相同/缺失 → 不动 latestRelease
  *
  * Mock 策略（同 useAppUpdate.w3-acceptance.test.ts 结构）：
- *  - vi.mock('@/lib/ipc') 桩 update 方法，onUpdateError 捕获 cb 供手动触发
+ *  - vi.mock('@/api/domains/settings') 桩 update 方法，onUpdateError 捕获 cb 供手动触发
  *  - vi.mock('@/i18n') t 返回 key（追加文案断言 key 本身即可，文案正确性由
  *    update-manual-channel.test.ts 的真实 zh-CN 文案断言守卫）
  *  - effectScope 包 useAppUpdate（onScopeDispose 依赖活跃 scope）
@@ -38,7 +38,7 @@ const hoisted = vi.hoisted(() => {
   }
 })
 
-vi.mock('@/lib/ipc', () => ({
+vi.mock('@/api/domains/settings', () => ({
   checkForUpdate: vi.fn(() => Promise.resolve({ info: null, rateLimited: false })),
   updateDownload: vi.fn(() => Promise.resolve({ downloaded: false })),
   updateInstall: hoisted.updateInstall,

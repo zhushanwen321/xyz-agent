@@ -12,11 +12,11 @@
  * - PENDING-TC8（I#9）：initAutoCheck 完整启动序列——先同步触发 restorePendingUpdate，30s 后触发 checkForUpdate
  *
  * 测试设计：直接调 restorePendingUpdate（绕过 initAutoCheck 的 30s 定时器，避免 fake timer
- * 与 async/await mock promise 的交互复杂度）。restorePendingUpdate 在 useAppUpdate 返回值中暴露
+ * 与 async/await mock promise 的交互复杂度）。restorePendingUpdate 经 __testing 命名空间暴露
  * 供测试调用，运行时由 initAutoCheck 内部触发。
  *
  * Mock 策略（对齐 useAppUpdate.test.ts）：
- * - vi.mock('@/lib/ipc') 桩 update 相关方法（两阶段 updateDownload/updateInstall +
+ * - vi.mock('@/api/domains/settings') 桩 update 相关方法（两阶段 updateDownload/updateInstall +
  *   预下载 getPreloaded + pending getPendingUpdate + checkForUpdate 等）。getPreloaded 默认
  *   null → initAutoCheck 先 restorePreloadedUpdate 无果，再走 restorePendingUpdate 路径
  * - vi.mock('@/composables/logic/markdown') 桩 renderMarkdown 避免 shiki WASM
@@ -54,7 +54,7 @@ const hoisted = vi.hoisted(() => {
   }
 })
 
-vi.mock('@/lib/ipc', () => ({
+vi.mock('@/api/domains/settings', () => ({
   checkForUpdate: hoisted.checkForUpdate,
   performUpdate: hoisted.performUpdate,
   updateDownload: hoisted.updateDownload,
@@ -71,7 +71,7 @@ vi.mock('@/composables/logic/markdown', () => ({
   renderMarkdown: hoisted.renderMarkdown,
 }))
 
-import { useAppUpdate, _resetForTest } from '@/composables/features/settings/useAppUpdate'
+import { useAppUpdate, __testing, _resetForTest } from '@/composables/features/settings/useAppUpdate'
 
 /** 构造测试用 LatestReleaseInfo */
 function makeRelease(version = '0.9.0'): LatestReleaseInfo {
@@ -122,7 +122,7 @@ describe('useAppUpdate 功能1：持久化升级提醒标志', () => {
     hoisted.getPendingUpdate.mockResolvedValue(makeRelease('0.9.0'))
     const { result, stop } = setupUseAppUpdate()
 
-    await result.restorePendingUpdate()
+    await __testing.restorePendingUpdate()
 
     expect(result.state.state).toBe('available')
     expect(result.state.latestRelease?.version).toBe('0.9.0')
@@ -138,7 +138,7 @@ describe('useAppUpdate 功能1：持久化升级提醒标志', () => {
     hoisted.getPendingUpdate.mockResolvedValue(null)
     const { result, stop } = setupUseAppUpdate()
 
-    await result.restorePendingUpdate()
+    await __testing.restorePendingUpdate()
 
     expect(result.state.state).toBe('idle')
     expect(result.state.latestRelease).toBeNull()
@@ -149,7 +149,7 @@ describe('useAppUpdate 功能1：持久化升级提醒标志', () => {
     // 1. 恢复 pending
     hoisted.getPendingUpdate.mockResolvedValue(makeRelease('0.9.0'))
     const { result, stop } = setupUseAppUpdate()
-    await result.restorePendingUpdate()
+    await __testing.restorePendingUpdate()
     expect(result.state.state).toBe('available')
 
     // 2. 模拟 30s 后联网检测失败（网络断开）
@@ -166,7 +166,7 @@ describe('useAppUpdate 功能1：持久化升级提醒标志', () => {
     // 1. 恢复 pending
     hoisted.getPendingUpdate.mockResolvedValue(makeRelease('0.9.0'))
     const { result, stop } = setupUseAppUpdate()
-    await result.restorePendingUpdate()
+    await __testing.restorePendingUpdate()
     expect(result.state.state).toBe('available')
 
     // 2. 模拟 30s 后联网检测无新版（null）
@@ -183,7 +183,7 @@ describe('useAppUpdate 功能1：持久化升级提醒标志', () => {
     // 1. 恢复的 pending 是 v0.9.0
     hoisted.getPendingUpdate.mockResolvedValue(makeRelease('0.9.0'))
     const { result, stop } = setupUseAppUpdate()
-    await result.restorePendingUpdate()
+    await __testing.restorePendingUpdate()
     expect(result.state.latestRelease?.version).toBe('0.9.0')
 
     // 2. 联网检测到更新的 v0.9.5
@@ -200,7 +200,7 @@ describe('useAppUpdate 功能1：持久化升级提醒标志', () => {
     // 无 pending → pendingRestored 保持 false
     hoisted.getPendingUpdate.mockResolvedValue(null)
     const { result, stop } = setupUseAppUpdate()
-    await result.restorePendingUpdate()
+    await __testing.restorePendingUpdate()
     expect(result.state.state).toBe('idle')
 
     // 联网检测失败
@@ -219,7 +219,7 @@ describe('useAppUpdate 功能1：持久化升级提醒标志', () => {
     const { result, stop } = setupUseAppUpdate()
 
     // restorePendingUpdate 是 best-effort：catch 后不 re-throw，state 不变
-    await expect(result.restorePendingUpdate()).resolves.toBeUndefined()
+    await expect(__testing.restorePendingUpdate()).resolves.toBeUndefined()
 
     // state 保持初始 idle，latestRelease 未被污染
     expect(result.state.state).toBe('idle')

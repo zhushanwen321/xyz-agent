@@ -20,7 +20,8 @@
  * 错误双通路去重：onUpdateError 为 SSOT（已收到则设 errorHandled=true），
  * performDownload/performInstall 的 catch 仅在 !errorHandled 时兜底置 error（避免覆盖更精确的 onUpdateError 信息）。
  *
- * 依赖方向：lib/ipc（renderer→main 唯一适配点）+ composables/logic/markdown（releaseNotes 渲染）。
+ * 依赖方向：api/domains/settings（settings 域 IPC 测试 mock 接缝层，转发 @/lib/ipc）
+ * + composables/logic/markdown（releaseNotes 渲染）。
  */
 import { onScopeDispose, reactive } from 'vue'
 import type { LatestReleaseInfo, UpdateState, UpdateErrorPayload } from '@xyz-agent/shared'
@@ -37,7 +38,7 @@ import {
   onUpdateError,
   getLaunchResult as ipcGetLaunchResult,
   openUpdateFallbackUrl as ipcOpenUpdateFallbackUrl,
-} from '@/lib/ipc'
+} from '@/api/domains/settings'
 import { renderMarkdown } from '@/composables/logic/markdown'
 import { useToast } from '@/composables/useToast'
 import i18n, { getLocale } from '@/i18n'
@@ -782,11 +783,17 @@ export function useAppUpdate() {
     performInstall,
     openFallbackUrl,
     initAutoCheck,
-    // restorePendingUpdate/restorePreloadedUpdate 暴露供测试直接调用（绕过 initAutoCheck 的 30s 定时器），
-    // 运行时由 initAutoCheck 内部触发，组件通常不需要直接调。
-    restorePendingUpdate,
-    restorePreloadedUpdate,
   }
+}
+
+/**
+ * 测试后门（形态对齐 useExtensionHostBridge.__testing）：restore* 仅测试消费——
+ * 绕过 initAutoCheck 的 30s 定时器直调；运行时由 initAutoCheck 内部触发，
+ * 组件不需要直接调，故不进生产返回对象。
+ */
+export const __testing = {
+  restorePendingUpdate,
+  restorePreloadedUpdate,
 }
 
 /**
