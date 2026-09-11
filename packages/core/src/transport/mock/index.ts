@@ -26,6 +26,7 @@ import type {
   ProviderSource, ProviderImportPreview, ProviderImportResult, ProviderImportedItem,
   SkillCacheInvalidatedPayload,
   ProviderId,
+  QuotaConfigurePayload,
 } from '@xyz-agent/shared'
 import { recommendedExtensions } from '@xyz-agent/shared'
 import { createSession, fixtureMessages, fixtureSessions, e2eTestSession } from './data'
@@ -1313,7 +1314,9 @@ export const quota = {
   async refreshQuota(_providerId: string) {
     return { data: null, lastFetchAt: null }
   },
-  async configure(_providerId: string, _enabled: boolean, _cookie?: string, _fetcher?: string, _apiKey?: string, _workspace?: string) {
+  // 签名与 real 轨（api/domains/quota.ts）同构：M2 契约收敛后为单一 payload（项目约定，
+  // 非编译强制——门面三元只在有人经门面调 configure 时生效；同构由 mock-domains.test.ts 头注释守）
+  async configure(_payload: QuotaConfigurePayload) {
     return { ok: true }
   },
 }

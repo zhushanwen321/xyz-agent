@@ -11,7 +11,7 @@
  * 再用 isValidPiExtension() 验证是否为有效 pi extension。
  * 不硬编码 scope 或前缀 —— dependencies 本身就是白名单。
  *
- * settings 扫描：读取 ~/.xyz-agent/pi/agent/settings.json 的 packages[]，
+ * settings 扫描：读取 <dataDir>/agent/settings.json 的 packages[]，
  * 定位 ~/.xyz-agent/npm/node_modules/ 下的扩展目录。全量返回，不过滤 disabled。
  */
 import { existsSync, readdirSync, statSync, readFileSync } from 'node:fs'
@@ -48,7 +48,7 @@ export interface SourceMap {
 export interface ResolverOptions {
   /** 打包模式下的 npm 扫描搜索路径（默认用 process.cwd()） */
   npmResolvePaths?: string[]
-  /** 用户 settings 目录，默认 ~/.xyz-agent/pi/agent */
+  /** 用户 settings 目录，默认 <dataDir>/agent */
   settingsDir?: string
   /** 第三方 extensions 目录，默认 ~/.xyz-agent/extensions */
   thirdPartyDir?: string
@@ -191,8 +191,8 @@ export class ExtensionResolver implements IExtensionResolver {
    * 分流（源码 .ts vs bundle .js）。这属「builtin 源集合界定」（静态定义），非
    * disabled/enabled/tier 运行时策略过滤（后者归 extension-filter）。
    *
-   * [HISTORICAL] dev 模式历经三阶段：(1) 读 repoRoot/resources/pi/agent/extensions/
-   *（仅含 bridge，isValidPiExtension 返回 false，恒返回空）；(2) 改读 staged bundle
+   * [HISTORICAL] dev 模式历经三阶段：(1) 读 repoRoot 资源树 bundled extensions
+   *（resources/pi 下 agent 资源层的 extensions/，仅含 bridge，isValidPiExtension 返回 false，恒返回空）；(2) 改读 staged bundle
    *（apps/electron/resources/extensions/@zhushanwen/），但 dev/build 同源导致改源码需跑
    * prepare-builtin-extensions.sh 全量 bundle ~40s + 重启 dev；(3) 现行 dev 读源码，
    * 彻底消除 dev 的 bundle 成本。

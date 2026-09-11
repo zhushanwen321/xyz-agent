@@ -34,19 +34,19 @@ function makeRecords(extOverride?: { discoverEngines?: () => string[] }): Sessio
 }
 
 function writeJson(rel: string, v: unknown): void {
-  const p = path.join(tmpDataRoot, 'pi/agent/subagents', rel)
+  const p = path.join(tmpDataRoot, 'agent/subagents', rel)
   fs.mkdirSync(path.dirname(p), { recursive: true })
   fs.writeFileSync(p, JSON.stringify(v, null, 2))
 }
 
 function readConfigJson(): Record<string, unknown> {
   return JSON.parse(
-    fs.readFileSync(path.join(tmpDataRoot, 'pi/agent/subagents/config.json'), 'utf8'),
+    fs.readFileSync(path.join(tmpDataRoot, 'agent/subagents/config.json'), 'utf8'),
   ) as Record<string, unknown>
 }
 
 function configPath(): string {
-  return path.join(tmpDataRoot, 'pi/agent/subagents/config.json')
+  return path.join(tmpDataRoot, 'agent/subagents/config.json')
 }
 
 beforeEach(() => {

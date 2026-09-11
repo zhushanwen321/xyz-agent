@@ -47,7 +47,7 @@ function buildFileSnapshot(): ServerMessageMap['session.traceEntries'] {
   return {
     sessionId: SID,
     source: 'file',
-    filePath: `/pi/sessions/${SID}.jsonl`,
+    filePath: `/data/agent/sessions/${SID}.jsonl`,
     header: { type: 'session', version: 1, id: 'h0', cwd: '/w/demo' },
     entries: [
       { type: 'custom', id: 'sp1', parentId: 'h0', customType: 'xyz:system-prompt', data: { version: 2, reason: 'resume', hash: 'aabbcc', charCount: 12702 } },

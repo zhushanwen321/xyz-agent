@@ -14,6 +14,7 @@ import { mkdtempSync, writeFileSync, mkdirSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { ConfigService } from '../config-service.js'
+import { ProviderCredentialResolver } from '../auth/provider-credential-resolver.js'
 import type { IConfigStore, ConfigModelsConfig } from '../ports/config.js'
 import type { AuthStorage } from '../auth/auth-storage.js'
 import builtinData from '../../generated/builtin-providers.json'
@@ -24,7 +25,7 @@ let dataDir: string
 
 beforeEach(() => {
   dataDir = mkdtempSync(join(tmpdir(), 'overlay-integration-'))
-  mkdirSync(join(dataDir, 'pi', 'agent'), { recursive: true })
+  mkdirSync(join(dataDir, 'agent'), { recursive: true })
   vi.stubEnv('XYZ_AGENT_DATA_DIR', dataDir)
 })
 
@@ -42,7 +43,13 @@ function makeService(opts: { models?: ConfigModelsConfig['providers']; authIds?:
     listCredentialIds: vi.fn(() => opts.authIds ?? []),
     hasCredentialSync: vi.fn(() => true),
   } as unknown as Pick<AuthStorage, 'remove' | 'hasOAuth' | 'hasOAuthSync' | 'set' | 'hasCredentialSync' | 'listCredentialIds'>
-  return new ConfigService('/tmp/project', store, auth)
+  // M2fg 恒注入形态：凭据判定经 resolver 批量 sync 版（同源于上方 auth/store mock）
+  const resolver = new ProviderCredentialResolver({
+    authService: { getCredential: async () => undefined },
+    authStorage: auth,
+    configStore: store,
+  })
+  return new ConfigService('/tmp/project', store, auth, undefined, undefined, resolver)
 }
 
 function writeOwnCache(entries: unknown): void {

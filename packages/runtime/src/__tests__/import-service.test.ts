@@ -99,7 +99,7 @@ afterAll(() => {
   rmSync(fixturesRoot, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
   // [HISTORICAL] 2026-09-02 会话丢失事故修复：此处原有 rmSync(getSessionsDir(), { recursive: true })——
   // 删除共享推导路径（落在哪个 dataDir 由 env 决定，env 异常时等于删用户真实会话目录，
-  // 当日即删光 ~/.xyz-agent/pi/sessions 致三个 pi 进程 ENOENT 崩溃）。ImportService 的
+  // 当日即删光当时 sessions 推导路径（旧布局 pi/ 子层）致三个 pi 进程 ENOENT 崩溃）。ImportService 的
   // 落盘目标在 globalSetup 注入的 tmp dataDir 下，由 global-setup teardown 统一回收。
 })
 

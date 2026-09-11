@@ -44,7 +44,7 @@ function readAuthRaw(): Record<string, unknown> {
 
 beforeEach(() => {
   dir = mkdtempSync(join(tmpdir(), 'legacy-migration-step1-'))
-  agentDir = join(dir, 'pi', 'agent')
+  agentDir = join(dir, 'agent')
   mkdirSync(agentDir, { recursive: true })
   process.env.XYZ_AGENT_DATA_DIR = dir
   setModelsPath(join(agentDir, 'models.json'))

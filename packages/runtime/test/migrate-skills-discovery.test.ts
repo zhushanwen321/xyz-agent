@@ -23,7 +23,7 @@ let piAgentDir: string
 
 beforeEach(async () => {
   tmpDir = await mkdtempP(join(tmpdir(), 'migrate-skill-test-'))
-  piAgentDir = join(tmpDir, 'pi', 'agent')
+  piAgentDir = join(tmpDir, 'agent')
   mkdirSync(piAgentDir, { recursive: true })
   setSettingsPath(join(piAgentDir, 'settings.json'))
   setDiscoveryPath(join(piAgentDir, 'discovery.json'))

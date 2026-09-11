@@ -23,7 +23,10 @@ vi.mock('@/api', () => ({
 }))
 
 vi.mock('@/composables/features/chat/useChat', () => ({
-  useChat: () => ({ abort: vi.fn() }),
+  // clearDeferFlushRetryTimer：session-dead D3 起 createUseChat 返回面新增（onForceQuitSession
+  // 成功路径清 1s 重投 timer + 失败计数），mock 面须与真实返回结构对齐；
+  // clearQueueState：session-dead G1 起新增（成功路径清 pi queue_update 快照残留）
+  useChat: () => ({ abort: vi.fn(), clearDeferFlushRetryTimer: vi.fn(), clearQueueState: vi.fn() }),
 }))
 
 vi.mock('@/composables/useToast', () => ({

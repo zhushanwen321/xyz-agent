@@ -28,6 +28,7 @@ const QUOTA_FAIL_REASON_KEYS: Record<QuotaFetchFailureReason, string> = {
   'no-subscription': 'panel.context.quotaFailNoSubscription',
   parse: 'panel.context.quotaFailParse',
   not_configured: 'panel.context.quotaFailNotConfigured',
+  'no-credential': 'panel.context.quotaFailNoCredential',
 }
 
 // i18n.global.t 的类型窄化 cast（对齐 useChat/useConnection 的非 setup composable 模式）：

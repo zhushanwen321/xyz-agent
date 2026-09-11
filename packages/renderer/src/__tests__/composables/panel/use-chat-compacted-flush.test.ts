@@ -18,7 +18,7 @@
  *
  * 运行：cd packages/renderer && npx vitest run src/__tests__/composables/panel/use-chat-compacted-flush.test.ts
  */
-import { describe, it, expect, beforeEach, vi } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'
 import { effectScope } from 'vue'
 import type { EffectScope } from 'vue'
@@ -92,6 +92,11 @@ beforeEach(() => {
     useCompactQueue()
   })
   useCompactQueue()._clearAllForTest()
+})
+
+afterEach(() => {
+  // [session-dead 第三环] TC11c 用 fake timers 驱动 1s 重投脉冲；异常路径也不能把假时钟漏给后续用例
+  vi.useRealTimers()
 })
 
 /** 向被测 useChat 订阅的 handler 注入一条 ServerMessage */
@@ -229,5 +234,62 @@ describe('useChat occupancy 全 idle → flush 触发（session-occupancy u5b）
     await vi.waitFor(() => {
       expect(apiMock.send).toHaveBeenCalledWith('c-i', marked('q', entryI.id), undefined, { clientUuid: entryI.id })
     })
+  })
+
+  // ── [session-dead 第三环] 连续 busy 拒绝（拒绝风暴）→ 熔断 + 可操作提示 ─────────────
+
+  it('TC11c: 连续 busy 拒绝达阈值 → 熔断 timer 重投 + 恰一次可操作提示（真实 zh-CN 文案）', async () => {
+    // 事故形态（runtime 日志：90s 内 82 次拒绝，1 秒 1 次）：flush 每次被 S1 busy 拒 →
+    // resolve false → arm 1s timer → 无限重投，用户零感知。本次改动在阈值处熔断 timer 通路。
+    vi.useFakeTimers()
+    const { compact } = useChat()
+    await compact('c-cb') // 建立会话订阅（emit 依赖 streamSubscribe handler）
+    const entry = useCompactQueue().enqueue('c-cb', 'q')
+    // 持续 busy：每次 flush 的 send 都广播 send.rejected（回带条目 id → S1 判定留队，不丢条目）
+    apiMock.send.mockImplementation(async () => {
+      dispatchSession('c-cb', {
+        type: 'send.rejected',
+        payload: { sessionId: 'c-cb', reason: 'busy', message: 'Agent 正在处理', clientUuid: entry.id },
+      })
+    })
+
+    // occupancy 全 idle 帧 → 第 1 次 flush（失败 → 计 1 → arm 1s timer）
+    emit({ type: 'session.occupancy', payload: { sessionId: 'c-cb', turn: 'idle', compacting: false, bash: false } })
+    await vi.advanceTimersByTimeAsync(0)
+    expect(apiMock.send).toHaveBeenCalledTimes(1)
+
+    // timer 自驱动重投：第 2..5 次（恰第 5 次达阈值）
+    for (const expected of [2, 3, 4, 5]) {
+      await vi.advanceTimersByTimeAsync(1000)
+      expect(apiMock.send).toHaveBeenCalledTimes(expected)
+    }
+    // 熔断：其后 10s 无第 6 次投递（不再是 1 秒 1 次的拒绝风暴）；条目留队不丢
+    await vi.advanceTimersByTimeAsync(10000)
+    expect(apiMock.send).toHaveBeenCalledTimes(5)
+    expect(useCompactQueue().count('c-cb')).toBe(1)
+
+    // 用户可见断言：提示恰一次 + 真实 zh-CN 文案（i18n 未 mock）= 说明卡死嫌疑 + 可操作指引
+    expect(toastSpy.warning).toHaveBeenCalledTimes(1)
+    const copy = toastSpy.warning.mock.calls[0]![0] as string
+    expect(copy.length).toBeGreaterThan(0)
+    expect(copy).toContain('pi')
+    expect(copy).toContain('可能已卡住')
+    expect(copy).toContain('强制退出该会话')
+    // 非错误级（error 面保持干净：busy 拒绝不产生错误 toast）
+    expect(toastSpy.error).not.toHaveBeenCalled()
+  })
+
+  it('TC11d: composable.deferFlushStalled 中英双语语义一致（均含卡死嫌疑 + 侧栏强制退出指引）', async () => {
+    const zhCN = (await import('@/i18n/locales/zh-CN/composable')).default
+    const enUS = (await import('@/i18n/locales/en-US/composable')).default
+    // zh-CN：pi 仍在处理 / 可能已卡住 + 可操作指引（侧栏右键强制退出）
+    expect(zhCN.deferFlushStalled).toContain('pi 仍在处理')
+    expect(zhCN.deferFlushStalled).toContain('可能已卡住')
+    expect(zhCN.deferFlushStalled).toContain('侧栏右键强制退出该会话')
+    // en-US：同一语义（still processing / stuck + sidebar 右键 force quit）
+    expect(enUS.deferFlushStalled).toContain('still processing')
+    expect(enUS.deferFlushStalled).toContain('stuck')
+    expect(enUS.deferFlushStalled).toMatch(/[Rr]ight-click the session in the sidebar/)
+    expect(enUS.deferFlushStalled).toMatch(/force quit/i)
   })
 })

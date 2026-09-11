@@ -70,10 +70,16 @@ interface MockOpts {
 }
 
 function makeMocks(opts: MockOpts = {}) {
+  const isBashRunning = opts.isBashRunning ?? false
+  const isGenerating = opts.isGenerating ?? false
+  const isCompacting = opts.isCompacting ?? false
+  // [u3b 预检改读 occupancy] sendPrompt 预检输入源改为 occupancy 投影（sendBash 预检仍读
+  // 三布尔不动）。fixture 镜像真实链路的原子同步（原语「合并 + 派生」双写合一）。
   const session = makeMockSession({
-    isBashRunning: opts.isBashRunning ?? false,
-    isGenerating: opts.isGenerating ?? false,
-    isCompacting: opts.isCompacting ?? false,
+    isBashRunning,
+    isGenerating,
+    isCompacting,
+    occupancy: { turn: isGenerating ? 'generating' : 'idle', compacting: isCompacting, bash: isBashRunning },
   })
 
   const bashFn = opts.bashResult

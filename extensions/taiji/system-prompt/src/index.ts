@@ -73,8 +73,8 @@ const GLOBAL_AGENTS_CANDIDATES = ['AGENTS.md', 'AGENTS.MD', 'CLAUDE.md', 'CLAUDE
  *
  * Priority:
  *  1. `process.env.XYZ_AGENT_DATA_DIR` (explicit)
- *  2. `path.resolve(process.env.PI_CODING_AGENT_DIR ?? '', '..', '..')`
- *     (PI_CODING_AGENT_DIR == <dataDir>/pi/agent, two levels up == dataDir)
+ *  2. `path.resolve(process.env.PI_CODING_AGENT_DIR ?? '', '..')`
+ *     (PI_CODING_AGENT_DIR == <dataDir>/agent, one level up == dataDir)
  *
  * Re-read on every handler invocation so env changes between turns/sessions
  * take effect without reloading the extension.
@@ -83,7 +83,7 @@ function resolveDataDir(): string {
   if (process.env.XYZ_AGENT_DATA_DIR) {
     return process.env.XYZ_AGENT_DATA_DIR
   }
-  return path.resolve(process.env.PI_CODING_AGENT_DIR ?? '', '..', '..')
+  return path.resolve(process.env.PI_CODING_AGENT_DIR ?? '', '..')
 }
 
 /**

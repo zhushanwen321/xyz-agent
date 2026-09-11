@@ -133,7 +133,7 @@ describe('ExtensionResolver', () => {
   })
 
   describe('scanSettingsExtensions', () => {
-    const settingsDir = '/home/user/.xyz-agent/pi/agent'
+    const settingsDir = '/home/user/.xyz-agent/agent'
 
     beforeEach(() => {
       // Phase 1 路径迁移：npmDir 已从 settingsDir 子树迁出到 dataDir 根层，
@@ -490,7 +490,7 @@ describe('ExtensionResolver', () => {
       // dev 模式 bundled 走源码目录（projectRoot/../../extensions），join mock 不解析 ..
       const bundledDir = '/project/../../extensions'
       const home = process.env.HOME ?? '/home/user'
-      const settingsDir = `${home}/.xyz-agent/pi/agent`
+      const settingsDir = `${home}/.xyz-agent/agent`
       const settingsPath = `${settingsDir}/settings.json`
 
       vi.stubEnv('HOME', home)
@@ -503,7 +503,7 @@ describe('ExtensionResolver', () => {
         // bundled dir exists
         if (p === bundledDir) return true
         // third-party dir exists
-        if (p === `${home}/.xyz-agent/pi/agent/extensions`) return true
+        if (p === `${settingsDir}/extensions`) return true
         // settings.json exists
         if (p === settingsPath) return true
         // user extension dir exists
@@ -523,7 +523,7 @@ describe('ExtensionResolver', () => {
         // dev 源码目录一层是分组目录（对齐分组两层磁盘布局），goal 在 universal/ 下
         if (p === bundledDir) return ['taiji', 'universal'] as string[]
         if (p === `${bundledDir}/universal`) return ['goal'] as string[]
-        if (p === `${home}/.xyz-agent/pi/agent/extensions`) return ['ext-c'] as string[]
+        if (p === `${settingsDir}/extensions`) return ['ext-c'] as string[]
         return [] as string[]
       }) as unknown as typeof readdirSync)
 
@@ -577,7 +577,7 @@ describe('ExtensionResolver', () => {
       const home = '/home/user'
       vi.stubEnv('HOME', home)
 
-      const thirdPartyDir = `${home}/.xyz-agent/pi/agent/extensions`
+      const thirdPartyDir = `${home}/.xyz-agent/extensions`
 
       mockedExistsSync.mockImplementation((p: unknown) => {
         if (typeof p !== 'string') return false
@@ -883,7 +883,7 @@ describe('ExtensionResolver', () => {
     it('resolve integrates discovery source with priority (discovery > settings)', () => {
       const home = '/home/user'
       vi.stubEnv('HOME', home)
-      const settingsDir = `${home}/.xyz-agent/pi/agent`
+      const settingsDir = `${home}/.xyz-agent/agent`
       const settingsPath = `${settingsDir}/settings.json`
 
       setSettingsPath(settingsPath)

@@ -31,9 +31,9 @@ function makeCredentialWriter(authStorage: AuthStorage): CredentialWriter {
 let dir: string
 let agentDir: string
 
-/** 真实结构：<dataDir>/pi/agent/（getPiAgentDir = getConfigDir()/pi/agent） */
+/** 真实结构：<dataDir>/agent/（getPiAgentDir = getConfigDir()/agent） */
 function realAgentDir(): string {
-  return join(dir, 'pi', 'agent')
+  return join(dir, 'agent')
 }
 
 /** 写 models.json。providers 形如 { openai: { enabled: true, ... } }。 */

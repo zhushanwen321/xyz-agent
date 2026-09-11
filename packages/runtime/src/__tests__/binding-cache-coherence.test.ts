@@ -37,7 +37,7 @@ function sessionHeaderLine(id: string): string {
 
 /**
  * 创建隔离的数据目录夹具：XYZ_AGENT_DATA_DIR 指向独立 tmpdir（getSessionsDir()
- * 经 <data>/pi/sessions 解析），模块级两层缓存清零。返回 createSessionFile 工厂与
+ * 经 <data>/agent/sessions 解析），模块级两层缓存清零。返回 createSessionFile 工厂与
  * cleanup（env 恢复 + 缓存清零 + rmSync，放 try/finally 保证断言失败也能清理）。
  */
 function setupFixture(prefix: string): {
@@ -47,7 +47,7 @@ function setupFixture(prefix: string): {
   const dir = mkdtempSync(join(tmpdir(), prefix))
   const origDataDir = process.env.XYZ_AGENT_DATA_DIR
   process.env.XYZ_AGENT_DATA_DIR = dir
-  const sessionsDir = join(dir, 'pi', 'sessions')
+  const sessionsDir = join(dir, 'agent', 'sessions')
 
   return {
     // mkdir 放工厂内：不需要建文件的用例（暂无）也不会留空目录歧义

@@ -25,18 +25,15 @@ export function createSettingsTransport(): SettingsTransport {
     setProvider: (id, data) => config.setProvider(id as ProviderId, data),
     setScopedModels: (models) => config.setScopedModels(models),
     discoverModels: async (req: DiscoverModelsRequest): Promise<DiscoverModelsResponse> => {
-      // core DiscoverModelsRequest（baseUrl? / providerType 必）与 @/api config.discoverModels
-      // （baseUrl 必 / providerType?）形状互补；实际调用方（use-provider-edit runDiscover）
-      // 总是传 baseUrl。此处显式 guard：baseUrl 缺失时短路返失败，不做 silent cast。
-      if (!req.baseUrl) {
+      // core DiscoverModelsRequest 与 @/api config.discoverModels 字段已对齐（baseUrl 协议必填），
+      // 此处只补协议缺省语义（mode 缺省 discover）后原样透传。
+      // 模式感知 guard：discover 模式 baseUrl 缺失时短路返失败，不做 silent cast；
+      // test 模式端点回落链（模型级 → provider 级 → catalog 网关）归 runtime，不校验 baseUrl。
+      const mode = req.mode ?? 'discover'
+      if (mode !== 'test' && !req.baseUrl) {
         return { success: false, error: 'baseUrl is required for model discovery' }
       }
-      return config.discoverModels({
-        baseUrl: req.baseUrl,
-        apiKey: req.apiKey,
-        providerType: req.providerType,
-        providerId: req.providerId,
-      })
+      return config.discoverModels({ ...req, mode })
     },
     setSkillDirs: (dirs) => config.setSkillDirs(dirs),
     setAgentDirs: (dirs) => config.setAgentDirs(dirs),

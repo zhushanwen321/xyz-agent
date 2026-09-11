@@ -55,7 +55,7 @@ vi.mock('../infra/pi/pi-paths.js', async (importOriginal) => {
   return {
     ...actual,
     getSessionsDir: () => '/mock/home/.xyz-agent/sessions',
-    getPiAgentDir: () => '/mock/home/.xyz-agent/pi/agent',
+    getPiAgentDir: () => '/mock/home/.xyz-agent/agent',
   }
 })
 
@@ -108,7 +108,7 @@ describe('RpcClient 出站 env 契约（U3：deny 剥除 + 基座保全）', () 
     expect(env.PATH).toBe('/usr/bin:/bin')
     expect(env.HOME).toBe('/mock/home')
     // 必备注入键：pi 子树数据隔离根目录
-    expect(env.PI_CODING_AGENT_DIR).toBe('/mock/home/.xyz-agent/pi/agent')
+    expect(env.PI_CODING_AGENT_DIR).toBe('/mock/home/.xyz-agent/agent')
     expect(env.XYZ_AGENT_DATA_DIR).toBe('/mock/home/.xyz-agent')
   })
 

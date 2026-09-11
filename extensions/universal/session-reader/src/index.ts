@@ -1,8 +1,9 @@
 import type { ExtensionAPI, ExtensionContext } from '@earendil-works/pi-coding-agent'
-import { getAgentDir } from '@earendil-works/pi-coding-agent'
+import { getAgentDir, SessionManager } from '@earendil-works/pi-coding-agent'
 import { StringEnum } from '@earendil-works/pi-ai'
 import { Type } from 'typebox'
-import { handleSessionRead, type SessionReadParams } from './tool-handler.js'
+import type { SessionMetadataProvider } from './discovery/find.js'
+import { handleSessionRead, type SessionReadParams, type SessionReadSignals } from './tool-handler.js'
 import { createHashAutocompleteProvider } from './tui/hash-provider.js'
 import { createSessionCommand } from './tui/session-command.js'
 
@@ -32,16 +33,17 @@ const SessionReadSchema = Type.Object({
       'extract',
       'workflow',
       'result',
+      'doctor',
     ],
     {
       description:
-        'Action to perform: find (locate session), family (fork/subagent/workflow relations; recursive=true returns nested execution tree), outline (turn-level overview), expand (single-turn entries), detail (full text of turns), search (full-text grep), export (materialize to file), extract (pull user messages / commands / files / commits / tool results by type), workflow (workflow run overview: status/budget/steps; requires session, optional runId focuses one run; step call sessionId jumps to outline/detail), result (fetch a subagent session final result text — same content as its completion notice; session = single id or comma-separated batch of at most 10, optional limit caps chars per item).',
+        'Action to perform: find (locate session), family (fork/subagent/workflow relations; recursive=true returns nested execution tree), outline (turn-level overview), expand (single-turn entries), detail (full text of turns), search (full-text grep, single session or cross-session over a comma-separated id list), export (materialize to file), extract (pull user messages / commands / files / commits / tool results by type), workflow (workflow run overview: status/budget/steps; requires session, optional runId focuses one run; step call sessionId jumps to outline/detail), result (fetch a subagent session final result text — same content as its completion notice; session = single id or comma-separated batch of at most 10, optional limit caps chars per item), doctor (show detected host environment and session-root diagnostics).',
     },
   ),
   session: Type.Optional(
     Type.String({
       description:
-        'Session id, uuid fragment (e.g. e6c96), subagent record id (sa-xxx, precise lookup), or absolute .jsonl path (~ or ~/ allowed). Required for family/outline/expand/detail/search/export/extract/workflow/result. result also accepts a comma-separated list of up to 10 ids. # prefix auto-stripped.',
+        'Session id, uuid fragment (e.g. e6c96), subagent record id (sa-xxx, precise lookup), or absolute .jsonl path (~ or ~/ allowed). Required for family/outline/expand/detail/search/export/extract/workflow/result. result also accepts a comma-separated list of up to 10 ids. search also accepts a comma-separated list of up to 10 full ids (from find output) for cross-session search. # prefix auto-stripped.',
     }),
   ),
   query: Type.Optional(
@@ -103,6 +105,10 @@ const SessionReadSchema = Type.Object({
   ),
   limit: Type.Optional(
     Type.Number({
+      // minimum:1 在 schema 校验层拒绝 limit:0 等退化输入（不落入 find F1 的
+      // 「无匹配 session」措辞面）；result 消费侧的 resolveResultLimit 防御保留
+      //（可单测绕过 schema 的调用形态）。
+      minimum: 1,
       description:
         'find/search: max results. Default 20. result: max chars per item, default 8000 (overlong text truncated with a pointer to the full file).',
     }),
@@ -132,6 +138,12 @@ const SessionReadSchema = Type.Object({
         'family action: return nested execution tree (arbitrary-depth subagent↔workflow-call nesting, precise parentRecordId chain with flat-fallback for legacy records). Default false (flat family).',
     }),
   ),
+  includeSubagents: Type.Optional(
+    Type.Boolean({
+      description:
+        'doctor action: also scan the subagent session root (adds its file count). Default false (path and existence only).',
+    }),
+  ),
 })
 
 // ---- guidelines（注入 LLM，design §3.4）----
@@ -145,11 +157,12 @@ const guidelines = [
   "workflow action to see workflow run overviews (status/budget/steps). Each step's call sessionId can jump to outline/detail for deep reading.",
   "result action to fetch a subagent's final result text (same content as its completion notice): session takes a single sa-id/uuid/path or a comma-separated batch of at most 10; optional limit caps chars per item (default 8000, truncated items carry a pointer to the full file).",
   'Errors carry a 👉 recovery hint—follow it to retry in one step.',
+  'Unsure about the host environment (pure pi vs xyz-agent) or where session roots live? Run action:"doctor" first—it prints the detected environment and every candidate session root.',
 ]
 
 // ---- 工具 description（design §3.4，照搬措辞）----
 
-const description = `Read pi session files (conversation history) by semantic structure instead of raw bytes. Use when you need to review another session, trace a fork/subagent/workflow family, or locate a past decision. Ten actions: find (locate by name/uuid fragment), family (fork/subagent/workflow relations), outline (turn-level overview, ~1500 token), expand (single-turn entry list), detail (full text of turns), search (full-text grep across a session), export (materialize to file), extract (pull user messages / commands / files / commits / tool results by type), workflow (workflow run overview: status/budget/steps, step call sessionId jumps to outline/detail), result (fetch a subagent session final result text, same content as its completion notice; single id or comma-separated batch ≤10, optional limit chars per item default 8000). Progressive reading: outline → expand → detail. Do NOT use for the current session (the host provides current-session access) or to edit sessions (pi has /resume /fork).`
+const description = `Read pi session files (conversation history) by semantic structure instead of raw bytes. Use when you need to review another session, trace a fork/subagent/workflow family, or locate a past decision. Eleven actions: find (locate by name/uuid fragment), family (fork/subagent/workflow relations), outline (turn-level overview, ~1500 token), expand (single-turn entry list), detail (full text of turns), search (full-text grep across a session, or cross-session over a comma-separated id list ≤10 from find output), export (materialize to file), extract (pull user messages / commands / files / commits / tool results by type), workflow (workflow run overview: status/budget/steps, step call sessionId jumps to outline/detail), result (fetch a subagent session final result text, same content as its completion notice; single id or comma-separated batch ≤10, optional limit chars per item default 8000), doctor (show detected host environment and session-root diagnostics). Progressive reading: outline → expand → detail. Do NOT use for the current session (the host provides current-session access) or to edit sessions (pi has /resume /fork).`
 
 /**
  * 已注册过 TUI provider/command 的 pi 实例集合。
@@ -168,6 +181,13 @@ const registeredPis = new WeakSet<ExtensionAPI>()
 let currentCwdSessionDir: string | null = null
 
 export default function sessionReaderExtension(pi: ExtensionAPI): void {
+  // u11（design 2026-09-10 §6.6）：标题元数据走 pi 的 SessionManager.listAll(dir)——
+  // session_info name 提取、首消息采集与并发解析由 pi 维护。注入范式同 §6.2 信号包：
+  // pi 类型只在本层出现（SessionInfo 对发现层 SessionMetadataEntry 结构兼容，直接透传），
+  // 发现层只见注入函数，零 pi 依赖。调用成本由三条调用策略约束（惰性/窄化/缓存，
+  // 缓存在 tool-handler 注入边界包装），listAll 实装语义「扫一层平铺目录 + 每文件
+  // 全量解析」决定了不得对含子目录根调用（hash-provider.ts:158 空参灾难同源教训）。
+  const metadataProvider: SessionMetadataProvider = async (dir) => SessionManager.listAll(dir)
   pi.registerTool({
     name: 'session_read',
     label: 'Session Reader',
@@ -179,14 +199,33 @@ export default function sessionReaderExtension(pi: ExtensionAPI): void {
       params: SessionReadParams,
       signal: AbortSignal | undefined,
       _onUpdate: unknown,
-      _ctx: ExtensionContext,
+      ctx: ExtensionContext | undefined,
     ) {
       // 错误路径直接 throw：pi 契约只有 throw 才置 isError:true（tool_execution_end /
       // ToolResultMessage），handler 抛的 Error 文案（含 👉 恢复提示）原样成为
       // toolResult content，模型仍可读到。曾用 return {isError:true}——被 agent-loop
       // 丢弃，错误轮被标成功（W4 修复）。
       // signal 仅 search 消费（MF-5：长扫描可中断，Esc 不再挂死）；其余 action 有界不接
-      return handleSessionRead(params, getAgentDir(), signal)
+      // 信号包采集（design §7B）：可选链逐层降级——ctx===undefined（存量单测五参形态）、
+      // sessionManager 缺字段、getSessionDir 方法缺失，任一层不成立即 liveSessionDir=undefined
+      //（发现层走 [default]+[legacy]+[subagent] 三根降级）；方法调用抛错可选链兜不住，try/catch
+      // 同样降级——宿主异常不得变成工具内部 TypeError。env/bundleUrl 由 u8 补采（doctor
+      // 环境判定/发行形态需要，design §6.2/§6.4）。
+      let liveSessionDir: string | undefined
+      try {
+        liveSessionDir = ctx?.sessionManager?.getSessionDir?.()
+      } catch {
+        liveSessionDir = undefined
+      }
+      const signals: SessionReadSignals = {
+        agentDir: getAgentDir(),
+        liveSessionDir,
+        env: process.env,
+        bundleUrl: import.meta.url,
+      }
+      // u11：标题元数据 provider 随信号包注入（provider 抛错由发现层单目录降级，
+      // 不会变成工具错误——宿主 listAll 异常不得打断 find 的「能找到 session」底线）。
+      return handleSessionRead(params, signals, signal, metadataProvider)
     },
   })
 

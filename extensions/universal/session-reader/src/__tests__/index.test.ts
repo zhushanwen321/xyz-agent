@@ -1,4 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { mkdtemp, mkdir, writeFile, rm } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import type { ExtensionAPI } from '@earendil-works/pi-coding-agent'
 import { Check } from 'typebox/value'
 
@@ -13,19 +16,26 @@ import { Check } from 'typebox/value'
  * 4. typeof ctx.ui.addAutocompleteProvider 运行时守卫（ui 缺方法 → 跳过，不崩）
  * 5. registerCommand + addAutocompleteProvider 组装（tui 模式下各注册一次）
  * 6. TypeBox schema 与 SessionReadParams 对齐：合法 params 过、非法 action/scope 拒
+ * 7. U3 信号包采集降级：sessionManager 缺 getSessionDir 方法 / getSessionDir 抛错 →
+ *    liveSessionDir 降级 undefined，find 正常返回不抛（ctx===undefined 形态由 1 覆盖）
  *
  * 不触碰真实文件系统：getAgentDir mock 固定假路径（execute 用例只触发 F5 抛错路径，
  * 不读盘）。
  */
 
 // vi.mock 在 import 前 hoist；SessionManager stub 仅防 session-command/hash-provider
-// 模块加载期缺导出（本文件用例不调用它）
+// 模块加载期缺导出（本文件用例不调用它）。u11：state/listAll 经 vi.hoisted 可控——
+// getAgentDir 可指向真实 tmp fixture，listAll 为 spy，供 execute 接线断言。
+const piMocks = vi.hoisted(() => {
+  const state = { agentDir: '/tmp/pi-session-reader-test-agent' }
+  const listAll = vi.fn(async (_dir: string) => [] as Array<Record<string, unknown>>)
+  return { state, listAll }
+})
+
 vi.mock('@earendil-works/pi-coding-agent', () => ({
-  getAgentDir: () => '/tmp/pi-session-reader-test-agent',
+  getAgentDir: () => piMocks.state.agentDir,
   SessionManager: class {
-    static async listAll(): Promise<never[]> {
-      return []
-    }
+    static listAll = piMocks.listAll
   },
 }))
 
@@ -96,6 +106,119 @@ describe('sessionReaderExtension - execute 契约', () => {
     await expect(
       toolDef.execute('tc-1', { action: 'find' }, undefined, undefined, undefined),
     ).rejects.toThrow(/👉/)
+  })
+})
+
+describe('sessionReaderExtension - execute 信号包采集（U3：ctx 全形态降级）', () => {
+  type ExecFn = (
+    toolCallId: string,
+    params: unknown,
+    signal: AbortSignal | undefined,
+    onUpdate: unknown,
+    ctx: unknown,
+  ) => Promise<{ content: Array<{ type: string; text: string }> }>
+
+  let execute: ExecFn
+
+  beforeEach(() => {
+    const fake = makeFakePi()
+    sessionReaderExtension(fake.pi as unknown as ExtensionAPI)
+    execute = (fake.registerTool.mock.calls[0][0] as { execute: ExecFn }).execute
+  })
+
+  // find 零匹配不抛（返回提示文本）——用例只断言「正常返回」降级语义，不碰真实数据目录
+  //（mock agentDir = /tmp/pi-session-reader-test-agent 及其派生根均不存在，扫描瞬时零文件）
+  const FIND_NO_MATCH = { action: 'find', query: 'zzznoindexmatch' } as const
+
+  it('sessionManager 存在但缺 getSessionDir 方法 → 降级 liveSessionDir=undefined，find 正常返回不抛', async () => {
+    const ctx = { mode: 'tui', sessionManager: {} }
+    const r = await execute('tc-u3-1', FIND_NO_MATCH, undefined, undefined, ctx)
+    expect(r.content[0]?.type).toBe('text')
+  })
+
+  it('getSessionDir 调用抛错 → 同样降级不抛（可选链只防缺失，调用抛错由 try/catch 兜住）', async () => {
+    const ctx = {
+      mode: 'tui',
+      sessionManager: {
+        getSessionDir: () => {
+          throw new Error('boom')
+        },
+      },
+    }
+    const r = await execute('tc-u3-2', FIND_NO_MATCH, undefined, undefined, ctx)
+    expect(r.content[0]?.type).toBe('text')
+  })
+
+  it('ctx 提供正常 getSessionDir → 信号被采集（调用一次）且 find 正常返回', async () => {
+    const getSessionDir = vi.fn(() => '/tmp/pi-session-reader-test-live-dir')
+    const ctx = { mode: 'tui', sessionManager: { getSessionDir } }
+    const r = await execute('tc-u3-3', FIND_NO_MATCH, undefined, undefined, ctx)
+    expect(getSessionDir).toHaveBeenCalledTimes(1)
+    expect(r.content[0]?.type).toBe('text')
+  })
+
+  it('u8：doctor 经 execute 走通——env/bundleUrl 补采 + ctx===undefined 降级仍出环境判定与根表', async () => {
+    // mock agentDir（/tmp/pi-session-reader-test-agent）及其派生根均不存在 → 根表全空仍渲染；
+    // 残留 glob 基点 = /tmp，只读 readdir（无写操作），不触碰任何真实数据目录。
+    const r = await execute('tc-u8-1', { action: 'doctor' }, undefined, undefined, undefined)
+    const text = r.content[0]?.text as string
+    expect(text).toContain('环境判定：')
+    // bundleUrl 信号已采集：测试内 import.meta.url 为仓库源码路径 → dev（非打包资源目录）
+    expect(text).toContain('发行形态：dev')
+    expect(text).toContain('会话根（按优先级）')
+  })
+
+  it('u11：execute 构造 metadataProvider 接 SessionManager.listAll——keyword 标题命中端到端', async () => {
+    // fixture：平铺 main 根（xyz-agent 形态），session 首消息不含 query，标题经 mock listAll 注入
+    const tmp = await mkdtemp(join(tmpdir(), 'index-u11-'))
+    try {
+      const agentDir = join(tmp, 'agent')
+      const liveDir = join(agentDir, 'sessions')
+      await mkdir(liveDir, { recursive: true })
+      const id = 'm-wire-0001'
+      await writeFile(
+        join(liveDir, 'a.jsonl'),
+        [
+          JSON.stringify({ type: 'session', id, cwd: '/demo' }),
+          JSON.stringify({
+            type: 'message',
+            id: `${id}-m1`,
+            message: { role: 'user', content: [{ type: 'text', text: '完全无关的首消息' }] },
+          }),
+        ].join('\n') + '\n',
+      )
+      piMocks.state.agentDir = agentDir
+      piMocks.listAll.mockResolvedValue([
+        {
+          path: join(liveDir, 'a.jsonl'),
+          id,
+          cwd: '/demo',
+          name: '接线标题命中',
+          modified: new Date(),
+          firstMessage: '完全无关的首消息',
+          created: new Date(),
+          messageCount: 1,
+          allMessagesText: '完全无关的首消息',
+        },
+      ])
+      const ctx = { mode: 'rpc', sessionManager: { getSessionDir: () => liveDir } }
+      const r = await execute('tc-u11-1', { action: 'find', query: '接线标题' }, undefined, undefined, ctx)
+      // provider 已接线：listAll 被调，且实参恒为非空串（永传非空串 guard）
+      expect(piMocks.listAll).toHaveBeenCalledTimes(1)
+      expect(piMocks.listAll.mock.calls[0][0]).toBe(liveDir)
+      expect(piMocks.listAll.mock.calls[0][0].length).toBeGreaterThan(0)
+      // 标题命中路径端到端：文本与 details 都带 name
+      const text = r.content[0]?.text as string
+      expect(text).toContain('接线标题命中')
+      const d = r.details as { matches: Array<{ sessionId: string; name?: string }> }
+      expect(d.matches[0]?.sessionId).toBe(id)
+      expect(d.matches[0]?.name).toBe('接线标题命中')
+    } finally {
+      // 还原 mock 态，不污染同文件其他用例
+      piMocks.state.agentDir = '/tmp/pi-session-reader-test-agent'
+      piMocks.listAll.mockReset()
+      await rm(tmp, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
+    }
   })
 })
 
@@ -236,5 +359,34 @@ describe('sessionReaderExtension - TypeBox schema 与 SessionReadParams 对齐',
     // recursive 非 boolean 被拒
     expect(Check(schema, { action: 'family', session: 'x', recursive: 'yes' })).toBe(false)
     expect(Check(schema, { action: 'family', session: 'x', recursive: 1 })).toBe(false)
+  })
+
+  it('limit 退化输入：minimum:1 在 schema 校验层拒绝 0/负数（不落入 find F1「无匹配」措辞面）', () => {
+    const fake = makeFakePi()
+    sessionReaderExtension(fake.pi as unknown as ExtensionAPI)
+    const toolDef = fake.registerTool.mock.calls[0][0] as { parameters: unknown }
+    const schema = toolDef.parameters
+
+    // 0/负数被 schema 拒绝（minimum:1），不会进入 find/F1 输出「无匹配 session」
+    expect(Check(schema, { action: 'find', query: 'x', limit: 0 })).toBe(false)
+    expect(Check(schema, { action: 'find', query: 'x', limit: -3 })).toBe(false)
+    // 正数合法；result 消费同一 limit 字段（正数合法）
+    expect(Check(schema, { action: 'find', query: 'x', limit: 1 })).toBe(true)
+    expect(Check(schema, { action: 'result', session: 'sa-x', limit: 100 })).toBe(true)
+    // 不传 limit 向后兼容（缺省语义不变）
+    expect(Check(schema, { action: 'find', query: 'x' })).toBe(true)
+  })
+
+  it('TC-u8-schema-doctor：action enum 含 doctor + includeSubagents optional boolean', () => {
+    const fake = makeFakePi()
+    sessionReaderExtension(fake.pi as unknown as ExtensionAPI)
+    const toolDef = fake.registerTool.mock.calls[0][0] as { parameters: unknown }
+    const schema = toolDef.parameters
+
+    expect(Check(schema, { action: 'doctor' })).toBe(true)
+    expect(Check(schema, { action: 'doctor', includeSubagents: true })).toBe(true)
+    expect(Check(schema, { action: 'doctor', includeSubagents: false })).toBe(true)
+    expect(Check(schema, { action: 'doctor', includeSubagents: 'yes' })).toBe(false)
+    expect(Check(schema, { action: 'doctor', includeSubagents: 1 })).toBe(false)
   })
 })

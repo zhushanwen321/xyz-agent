@@ -33,15 +33,15 @@ import { isDestructiveAllowed, isRealDataDir } from '../../test/fs-guard-impl.js
 describe('fs-guard 判定（纯函数）', () => {
   it('真实数据目录等值与其内任意深度路径一律拒绝', () => {
     expect(isRealDataDir(join(homedir(), '.xyz-agent'))).toBe(true)
-    expect(isRealDataDir(join(homedir(), '.xyz-agent', 'pi', 'sessions'))).toBe(true)
-    expect(isDestructiveAllowed(join(homedir(), '.xyz-agent', 'pi', 'sessions', 'x.jsonl'))).toBe(false)
+    expect(isRealDataDir(join(homedir(), '.xyz-agent', 'agent', 'sessions'))).toBe(true)
+    expect(isDestructiveAllowed(join(homedir(), '.xyz-agent', 'agent', 'sessions', 'x.jsonl'))).toBe(false)
   })
 
   it('白名单成员（tmpdir / dev 数据目录）及其内路径放行', () => {
     expect(isDestructiveAllowed(tmpdir())).toBe(true)
     expect(isDestructiveAllowed(join(tmpdir(), 'some-fixture-abc', 'a.jsonl'))).toBe(true)
     expect(isDestructiveAllowed(join(homedir(), '.xyz-agent-dev'))).toBe(true)
-    expect(isDestructiveAllowed(join(homedir(), '.xyz-agent-dev', 'pi', 'sessions', 'x.jsonl'))).toBe(true)
+    expect(isDestructiveAllowed(join(homedir(), '.xyz-agent-dev', 'agent', 'sessions', 'x.jsonl'))).toBe(true)
   })
 
   it('tmp 的 realpath 形式放行（macOS /var → /private/var symlink，fixture 路径经 realpathSync 后形态）', () => {
@@ -74,7 +74,7 @@ describe('fs-guard 切面端到端（本文件 import 的 fs 已是 wrapper）',
     expect(() => rmSync(join(homedir(), '.xyz-agent'), { recursive: true, maxRetries: 5, retryDelay: 20 })).toThrow(/vitest-fs-guard/)
     let caught: Error | undefined
     try {
-      writeFileSync(join(homedir(), '.xyz-agent', 'pi', 'sessions', 'probe.txt'), 'x')
+      writeFileSync(join(homedir(), '.xyz-agent', 'agent', 'sessions', 'probe.txt'), 'x')
       expect.unreachable('expected fs-guard to block write into real data dir')
     } catch (e) {
       caught = e as Error
@@ -98,19 +98,19 @@ describe('fs-guard 写句柄入口（fd/流写路径防线）', () => {
 
   it('真实数据目录 openSync("w") 被拦（绕道 fd 写不可达）', () => {
     expect(() =>
-      openSync(join(homedir(), '.xyz-agent', 'pi', 'sessions', 'probe-fd.txt'), 'w'),
+      openSync(join(homedir(), '.xyz-agent', 'agent', 'sessions', 'probe-fd.txt'), 'w'),
     ).toThrow(/vitest-fs-guard/)
   })
 
   it('真实数据目录 createWriteStream 被拦（打开发生在流构造时，wrapper 先校验）', () => {
     expect(() =>
-      createWriteStream(join(homedir(), '.xyz-agent', 'pi', 'sessions', 'probe-stream.txt')),
+      createWriteStream(join(homedir(), '.xyz-agent', 'agent', 'sessions', 'probe-stream.txt')),
     ).toThrow(/vitest-fs-guard/)
   })
 
   it('fs/promises open 写真实数据目录被拦（FileHandle 写句柄唯一入口）', () => {
     expect(() =>
-      fspOpen(join(homedir(), '.xyz-agent', 'pi', 'sessions', 'probe-fh.txt'), 'w'),
+      fspOpen(join(homedir(), '.xyz-agent', 'agent', 'sessions', 'probe-fh.txt'), 'w'),
     ).toThrow(/vitest-fs-guard/)
   })
 

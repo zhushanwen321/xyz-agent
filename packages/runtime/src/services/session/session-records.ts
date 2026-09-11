@@ -295,7 +295,7 @@ export class SessionRecords {
   }
 
   async getSubagents(sessionId: string): Promise<SubagentRecord[]> {
-    // 找主 session 文件路径（scanSessions 扫 pi/sessions/，含 cwd-encoded 子目录）。
+    // 找主 session 文件路径（scanSessions 扫 <agentDir>/sessions/，含 cwd-encoded 子目录）。
     // wave:perf-w26（plan M-3）：路径解析消费方 force 旁路 TTL（刚落盘 session 的
     // subagent 面板在窗口内不静默返回空）。
     const target = this.deps.sessionStore.scanSessions({ force: true }).find((s) => s.id === sessionId)
@@ -319,7 +319,7 @@ export class SessionRecords {
 
     if (!record.sessionFile) return []
 
-    // 路径穿越校验：sessionFile 必须严格落在 piAgentDir 下（~/.xyz-agent/pi/agent/）。
+    // 路径穿越校验：sessionFile 必须严格落在 piAgentDir 下（<dataDir>/agent/）。
     // record.sessionFile 由 subagent-extractor 从 JSONL 文本提取，不可信——攻击者构造的
     // session JSONL 可塞入任意路径（如 /etc/passwd），不校验直接读会泄露任意文件内容。
     if (!isStrictlyUnder(getPiAgentDir(), record.sessionFile)) return []

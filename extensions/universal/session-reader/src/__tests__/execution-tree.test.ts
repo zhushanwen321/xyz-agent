@@ -18,7 +18,7 @@ import { buildExecutionTree, formatExecutionTreeText, type ExecutionTreeNode } f
  * - TC-m3b-cycle-detection：workflow 指针环（A→B→A），visited Set 防环
  * - TC-m3b-single-node：单节点树（无后代，ES5）
  * - TC-m3b-source-priority：parentRecordId 三级数据源优先级（manifest>identity>flat，DM4）
- * - TC-m3b-real-data-guard：本机真实数据 flat 回退（旧机制，skipIf CI 无数据）
+ * - TC-m3b-real-data-guard：本机真实语料解析不抛错、root 定位正确（skipIf CI 无数据）
  */
 
 // ---- fixture 常量（uuid 特征，互不为子串，满足 extractSessionIdFromFilename）----
@@ -692,17 +692,18 @@ describe('buildExecutionTree - fixture', () => {
 // ============================================================
 
 describe.skipIf(!HAS_REAL)('buildExecutionTree - 真实数据守卫', () => {
-  it('TC-m3b-real-data-guard：本机旧机制数据 flat 回退，不抛错，totalNodes>1', async () => {
+  it('TC-m3b-real-data-guard：本机真实语料解析不抛错，root 定位正确', async () => {
     // 取一个真实存在的 main session（FAM 是 fork 家族根）
     const FAM = '019fe620-8ae1-78a7-b76a-43a1ba4cc3c7'
     const tree = await buildExecutionTree(FAM, REAL_AGENT_DIR)
-    // 旧机制：sourceMode='flat-fallback'（全无 parentRecordId）
-    expect(tree.sourceMode).toBe('flat-fallback')
-    // 有 subagent 后代（本机 3610 record，FAM 树非空）
-    expect(tree.totalNodes).toBeGreaterThan(1)
-    // 不抛错（已隐含：到这行说明成功）
+    // [HISTORICAL] 只断言与宿主数据纪元无关的不变量：sourceMode / totalNodes 取决于 FAM
+    // 家族在 subagents/**/records 下的 manifest 存量，会被 pi GC 清空（2026-09-11 实测该
+    // 家族 records/ 已空 → related=[] → sourceMode='precise'、totalNodes=1，原 flat-fallback
+    // + totalNodes>1 断言随数据演化假红）。flat-fallback 语义由 fixture 用例
+    // TC-m3b-flat-fallback 确定性覆盖，不依赖本机可变语料。
     expect(tree.root.type).toBe('main')
     expect(tree.root.sessionId).toBe(FAM)
+    expect(tree.totalNodes).toBeGreaterThanOrEqual(1)
   }, 60000)
 })
 

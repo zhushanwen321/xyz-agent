@@ -70,7 +70,7 @@ export class ExtensionInstallError extends Error {
 }
 
 export interface ExtensionServiceOptions {
-  /** Agent 配置目录（~/.xyz-agent/pi/agent，由 index.ts 经 configStore 注入） */
+  /** Agent 配置目录（<dataDir>/agent，由 index.ts 经 configStore 注入） */
   settingsDir: string
   /** 项目根目录（用于 resolver npm 扫描） */
   projectRoot?: string
@@ -111,7 +111,7 @@ export class ExtensionService {
   /** discovery.json SSOT 访问 port（读 extensionDirs）。可选，测试可不注入。 */
   private readonly configStore?: IConfigStore
 
-  /** npm install 串行锁——多个扩展共享同一 --prefix 目录（~/.xyz-agent/pi/agent/npm/），
+  /** npm install 串行锁——多个扩展共享同一 --prefix 目录（<dataDir>/npm/），
    * npm 不支持对同一 prefix 的并发安装，并发会损坏 node_modules。
    * 所有写操作（install/uninstall/upgrade/autoUpgrade）走此锁串行化。 */
   private installChain: Promise<void> = Promise.resolve()
@@ -592,7 +592,7 @@ export class ExtensionService {
     const results: Array<{ name: string; upgraded: boolean; from?: string; to?: string; error?: string }> = []
 
     // 串行执行是有意为之：多个 extension 的 npm install 共享同一个 --prefix 目录
-    // （~/.xyz-agent/pi/agent/npm/），npm 不支持对同一 prefix 的并发安装，
+    // （<dataDir>/npm/），npm 不支持对同一 prefix 的并发安装，
     // 并发会导致 node_modules 损坏。故不能改成 Promise.allSettled 并发。
     // 注：此处不自行加锁——每次 upgradeExtension 自身走 withInstallLock，
     // 既序列化了本次 auto-upgrade 内部的多次升级，也与外部并发调用（install/uninstall/upgrade）互斥。

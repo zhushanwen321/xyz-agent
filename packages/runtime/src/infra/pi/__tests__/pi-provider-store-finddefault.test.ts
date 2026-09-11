@@ -5,23 +5,25 @@
  * 运行命令：cd packages/runtime && npx vitest run src/infra/pi/__tests__/pi-provider-store-finddefault.test.ts
  *
  * 策略：真实文件系统（临时目录 + setModelsPath/setSettingsPath + XYZ_AGENT_DATA_DIR env），
- * 与 pi-provider-store.test.ts 同模式。mock 经真实文件 + readSettings/readModels/readAuthCredentials。
+ * 与 pi-provider-store.test.ts 同模式。凭据判定经注入的 resolver（M2c 链 3；原私有裸读已删）。
  * 覆盖 design TC6：catalog 兜底遍历 builtin 时跳过被 enabledModels 禁用的 provider。
  */
-import { describe, it, expect, beforeEach, afterEach } from 'vitest'
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { findValidDefaultModel, setModelsPath } from '../pi-provider-store.js'
+import { findValidDefaultModel, initProviderCredentialResolver, readModels, getProviderConfig, setModelsPath } from '../pi-provider-store.js'
 import { setSettingsPath, invalidateSettingsCache } from '../pi-settings-store.js'
+import { ProviderCredentialResolver } from '../../../services/auth/provider-credential-resolver.js'
+import { AuthStorage } from '../../../services/auth/auth-storage.js'
 import builtinData from '../../../generated/builtin-providers.json'
 
 let dir: string
 let agentDir: string
 
-/** 真实结构：<dataDir>/pi/agent/（getPiAgentDir = getConfigDir()/pi/agent） */
+/** 真实结构：<dataDir>/agent/（getPiAgentDir = getConfigDir()/agent） */
 function realAgentDir(): string {
-  return join(dir, 'pi', 'agent')
+  return join(dir, 'agent')
 }
 
 function writeModels(providers: Record<string, unknown>): void {
@@ -44,16 +46,27 @@ function writeAuth(credentials: Record<string, unknown>): void {
   writeFileSync(join(agentDir, 'auth.json'), JSON.stringify(credentials, null, 2))
 }
 
+/** 注入链 3 生产形态 resolver（M2c）：auth.json 经真实 AuthStorage（无缓存，读实时文件）。 */
+function initResolver(): void {
+  initProviderCredentialResolver(new ProviderCredentialResolver({
+    authService: { getCredential: async () => undefined },
+    authStorage: new AuthStorage(join(agentDir, 'auth.json')),
+    configStore: { readModels, getProviderConfig },
+  }))
+}
+
 beforeEach(() => {
   dir = mkdtempSync(join(tmpdir(), 'provider-store-finddefault-'))
   agentDir = realAgentDir()
   mkdirSync(agentDir, { recursive: true })
-  // readAuthCredentials 经 getPiAgentDir() 实时读 env；models/settings 经 setPath 注入
+  // auth.json 经注入的 AuthStorage（路径 = agentDir/auth.json）；models/settings 经 setPath 注入
   process.env.XYZ_AGENT_DATA_DIR = dir
   setModelsPath(join(agentDir, 'models.json'))
   setSettingsPath(join(agentDir, 'settings.json'))
   invalidateSettingsCache()
   writeAuth({})
+  // 生产组合根 init 装配的等价形态：装配完成先于任何 findValidDefaultModel 调用
+  initResolver()
 })
 
 afterEach(() => {
@@ -234,5 +247,56 @@ describe('A6: findValidDefaultModel 对 auth.json-only catalog provider（D3 修
 
     expect(r.result).toEqual({ provider: 'custom-x', modelId: 'm-x' })
     expect(r.wasFixed).toBe(true)
+  })
+})
+
+// ══════════════════════════════════════════════════════════════════
+// M2c（D3 链 3 接线 / 检查点 5）：模块级 init 注入 + 装配序契约。
+// 「装配完成先于任何 findValidDefaultModel 调用」在组合根由 index.ts 的调用位置保证；
+// 本组用例锁定两侧行为契约：未注入 = 安全降级（视为无凭据，不抛错），注入后同一数据生效。
+// ══════════════════════════════════════════════════════════════════
+describe('M2c 装配序：init 注入先于 findValidDefaultModel 的行为差异', () => {
+  const zaiModels = (builtinData.providers ?? []).find(p => p.id === 'zai-coding-cn')?.models ?? []
+  const firstZaiModelId = zaiModels[0]?.id as string
+
+  it('未注入（init 前）：凭据不可见 → catalog 兜底返回 null，不抛错（安全降级的差异侧）', () => {
+    // 模拟「装配未完成就调用」：清空注入，auth.json 中明明有凭据也不参与判定
+    initProviderCredentialResolver(undefined)
+    writeModels({})
+    writeSettings({ enabledModels: [] })
+    writeAuth({ openai: { type: 'api_key', key: 'ko' } })
+
+    let r: ReturnType<typeof findValidDefaultModel> | undefined
+    expect(() => { r = findValidDefaultModel() }).not.toThrow()
+    expect(r!.result).toBeNull()
+  })
+
+  it('对照（注入后）：同一份数据可选出 catalog provider——差异即装配序契约的语义后果', () => {
+    writeModels({})
+    writeSettings({ enabledModels: [] })
+    writeAuth({ openai: { type: 'api_key', key: 'ko' } })
+    initResolver()
+
+    const r = findValidDefaultModel()
+
+    expect(r.result?.provider).toBe('openai')
+  })
+
+  it('副路径（auth.json-only catalog provider）经 resolver.hasProviderCredential 判定（spy 命中）', () => {
+    writeModels({ 'custom-x': { models: [{ id: 'm-x' }] } })
+    writeSettings({ defaultProvider: 'zai-coding-cn', defaultModel: firstZaiModelId, enabledModels: [] })
+    writeAuth({})
+    const hasProviderCredential = vi.fn((id: string) => id === 'zai-coding-cn')
+    initProviderCredentialResolver({
+      hasProviderCredential,
+      listCredentialBackedProviderIds: () => new Set<string>(),
+      resolveProviderCredential: async () => undefined,
+    })
+
+    const r = findValidDefaultModel()
+
+    expect(hasProviderCredential).toHaveBeenCalledWith('zai-coding-cn')
+    expect(r.result).toEqual({ provider: 'zai-coding-cn', modelId: firstZaiModelId })
+    expect(r.wasFixed).toBe(false)
   })
 })

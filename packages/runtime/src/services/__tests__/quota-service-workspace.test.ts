@@ -17,18 +17,28 @@ import { mkdtempSync, mkdirSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { ProviderQuotaFetcher, QuotaFetcherConfig, QuotaFetchOutcome } from '@xyz-agent/shared'
+import type { IProviderCredentialResolver } from '../ports/provider-credential-resolver.js'
 import { QuotaService } from '../quota-service.js'
 import { XyzProviderStore } from '../provider-extras-store.js'
 import { QUOTA_FETCHERS } from '../quota-providers/index.js'
 
 vi.mock('../../infra/pi/pi-provider-store.js', () => ({
   getProviderConfig: vi.fn(() => undefined),
-  getApiKeyForProvider: vi.fn(() => null),
 }))
 // logger 落盘隔离（不依赖真实 dataDir）
 vi.mock('../../infra/logger.js', () => ({
   logger: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
 }))
+
+/**
+ * 恒注入形态的 resolver 替身（M2fg：QuotaService 构造必需）。本文件 fetcher 均为
+ * cookie 形态，resolver 不参与 cookie 段——miss 形态即可。
+ */
+const stubResolver: IProviderCredentialResolver = {
+  hasProviderCredential: () => false,
+  listCredentialBackedProviderIds: () => new Set<string>(),
+  resolveProviderCredential: async () => undefined,
+}
 
 let dir: string
 let agentDir: string
@@ -59,12 +69,13 @@ function makeService(): QuotaService {
     // fetcher 路由：getFetcherForProvider 读 ProviderInfo.quota.fetcher（非 extrasStore），
     // 测试统一注入指向假 fetcher
     getProviderInfo: () => ({ quota: { fetcher: 'fake-cookie-fetcher' } }),
+    providerCredentialResolver: stubResolver,
   })
 }
 
 beforeEach(() => {
   dir = mkdtempSync(join(tmpdir(), 'quota-service-workspace-'))
-  agentDir = join(dir, 'pi', 'agent')
+  agentDir = join(dir, 'agent')
   mkdirSync(join(agentDir, 'config'), { recursive: true })
   process.env.XYZ_AGENT_DATA_DIR = dir
   extrasStore = new XyzProviderStore(join(agentDir, 'config', 'providers.json'))
@@ -82,21 +93,21 @@ afterEach(() => {
 describe('QuotaService.configure · workspace 三态（D1-1/P1-1）', () => {
   it('完整 URL 归一化为规范 URL 落盘', async () => {
     const svc = makeService()
-    const result = await svc.configure('p1', true, undefined, undefined, undefined, 'https://opencode.ai/workspace/wrk_abc/go')
+    const result = await svc.configure({ providerId: 'p1', enabled: true, workspace: 'https://opencode.ai/workspace/wrk_abc/go' })
     expect(result).toEqual({ ok: true })
     expect(readQuotaRaw()?.workspace).toBe('https://opencode.ai/workspace/wrk_abc/go')
   })
 
   it('裸 wrk_ id 归一化为规范 URL 落盘（P1-1 两形态）', async () => {
     const svc = makeService()
-    const result = await svc.configure('p1', true, undefined, undefined, undefined, 'wrk_bareid9')
+    const result = await svc.configure({ providerId: 'p1', enabled: true, workspace: 'wrk_bareid9' })
     expect(result).toEqual({ ok: true })
     expect(readQuotaRaw()?.workspace).toBe('https://opencode.ai/workspace/wrk_bareid9/go')
   })
 
   it('非法输入 → ok:false 不落盘（fail-fast，不写半成品配置）', async () => {
     const svc = makeService()
-    const result = await svc.configure('p1', true, undefined, undefined, undefined, 'https://evil.example.com/workspace/wrk_abc/go')
+    const result = await svc.configure({ providerId: 'p1', enabled: true, workspace: 'https://evil.example.com/workspace/wrk_abc/go' })
     expect(result.ok).toBe(false)
     expect(result.error).toContain('opencode.ai')
     // 清除之外的非法输入不落任何 workspace
@@ -105,19 +116,19 @@ describe('QuotaService.configure · workspace 三态（D1-1/P1-1）', () => {
 
   it('空字符串 = 清除（quota 块无 workspace 字段，恢复未配置态）', async () => {
     const svc = makeService()
-    await svc.configure('p1', true, undefined, undefined, undefined, 'wrk_abc')
+    await svc.configure({ providerId: 'p1', enabled: true, workspace: 'wrk_abc' })
     expect(readQuotaRaw()?.workspace).toBe('https://opencode.ai/workspace/wrk_abc/go')
 
-    const cleared = await svc.configure('p1', true, undefined, undefined, undefined, '  ')
+    const cleared = await svc.configure({ providerId: 'p1', enabled: true, workspace: '  ' })
     expect(cleared).toEqual({ ok: true })
     expect(readQuotaRaw()?.workspace).toBeUndefined()
   })
 
   it('未传 workspace（undefined）= 继承既有值不被清掉', async () => {
     const svc = makeService()
-    await svc.configure('p1', true, undefined, 'fake-cookie-fetcher', undefined, 'wrk_keep77')
+    await svc.configure({ providerId: 'p1', enabled: true, fetcher: 'fake-cookie-fetcher', workspace: 'wrk_keep77' })
     // 只改 enabled 不传 workspace
-    await svc.configure('p1', false)
+    await svc.configure({ providerId: 'p1', enabled: false })
     expect(readQuotaRaw()?.workspace).toBe('https://opencode.ai/workspace/wrk_keep77/go')
     expect(readQuotaRaw()?.enabled).toBe(false)
   })
@@ -126,9 +137,9 @@ describe('QuotaService.configure · workspace 三态（D1-1/P1-1）', () => {
 describe('QuotaService.doFetch · workspace 注入与 not_configured 透传（D1-2/D1-3）', () => {
   it('providers.json 读出的 workspace 经 config.workspaceUrl 注入 fetcher', async () => {
     const svc = makeService()
-    await svc.configure('p1', true, undefined, 'fake-cookie-fetcher', undefined, 'wrk_inject1')
+    await svc.configure({ providerId: 'p1', enabled: true, fetcher: 'fake-cookie-fetcher', workspace: 'wrk_inject1' })
     // 写 cookie 凭证（cookie 文件）保证 resolveCredential 命中
-    await svc.configure('p1', true, 'cookie-value')
+    await svc.configure({ providerId: 'p1', enabled: true, cookie: 'cookie-value' })
 
     nextOutcome = { ok: true, data: { label: 'L', wins: [{ pct: 1, resetSec: null }, { pct: null, resetSec: null }, { pct: null, resetSec: null }] } }
     const result = await svc.refresh('p1')
@@ -139,7 +150,7 @@ describe('QuotaService.doFetch · workspace 注入与 not_configured 透传（D1
 
   it('未配置 workspace → 注入 undefined，fetcher 报 not_configured 原样透传（D1-3）', async () => {
     const svc = makeService()
-    await svc.configure('p1', true, 'cookie-value', 'fake-cookie-fetcher')
+    await svc.configure({ providerId: 'p1', enabled: true, cookie: 'cookie-value', fetcher: 'fake-cookie-fetcher' })
 
     const result = await svc.refresh('p1')
 
@@ -150,7 +161,7 @@ describe('QuotaService.doFetch · workspace 注入与 not_configured 透传（D1
 
   it('fetcher 报 not_configured 不写缓存（getCached 携带 reason 供 UI 失败态）', async () => {
     const svc = makeService()
-    await svc.configure('p1', true, 'cookie-value', 'fake-cookie-fetcher')
+    await svc.configure({ providerId: 'p1', enabled: true, cookie: 'cookie-value', fetcher: 'fake-cookie-fetcher' })
     await svc.refresh('p1')
 
     const cached = svc.getCached('p1')

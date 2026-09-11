@@ -12,6 +12,7 @@
  */
 import { describe, it, expect, vi } from 'vitest'
 import { ConfigService } from '../config-service.js'
+import { ProviderCredentialResolver } from '../auth/provider-credential-resolver.js'
 import { deriveEnabled } from '../provider-catalog.js'
 import type { IConfigStore, ConfigModelsConfig } from '../ports/config.js'
 import type { AuthStorage } from '../auth/auth-storage.js'
@@ -46,7 +47,14 @@ function makeService(opts: MakeOpts = {}): ConfigService {
     listCredentialIds: vi.fn(() => authIds),
     hasCredentialSync: vi.fn((id: string) => hasCredential(id)),
   } as unknown as FullAuthPick
-  return new ConfigService('/tmp/project', store, auth)
+  // M2fg 恒注入形态：凭据判定经 resolver 批量 sync 版（auth.json ∪ models.json），
+  // 与旧内联判定（auth.json 集合）同源于上方 auth/store mock。
+  const resolver = new ProviderCredentialResolver({
+    authService: { getCredential: async () => undefined },
+    authStorage: auth,
+    configStore: store,
+  })
+  return new ConfigService('/tmp/project', store, auth, undefined, undefined, resolver)
 }
 
 /** listProviders 结果按 id 索引，便于断言。 */

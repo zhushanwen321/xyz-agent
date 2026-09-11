@@ -66,6 +66,21 @@ cat > "$GIT_HOOKS_DIR/pre-commit" << 'HOOK_EOF'
 
 set -e
 
+# ── [HISTORICAL] 自保护：先复制自身再 exec ──────────────────────────────────
+# bare repo + worktree 布局下 pre-commit 是**共享单槽**资源（<bare>/hooks/pre-commit）：
+# 任何 worktree 的 `pnpm install`（prepare → install-hooks.sh）都会按**该分支的模板**重写
+# 它。若重写恰好发生在某个正在执行的 hook 中间，bash 按字节偏移懒读脚本会读到错位内容，
+# 报出与真实代码无关的随机错误（2026-09-11 实测：`line 871: syntax error near unexpected
+# token 'then'`、`line 140: cho: command not found`；同一 commit 重试时两次命中，三个不同
+# 字节数 65100/66987/67901 对应三个 worktree 的模板，且每份单独 `bash -n` 均通过）。
+# 复制成私有副本再 exec，运行中的字节流不再受后续重写影响；副本退出时自删。
+if [ "${XYZ_PRE_COMMIT_REEXEC:-0}" != "1" ]; then
+    _xyz_self_copy="$(mktemp -t xyz-pre-commit.XXXXXX)"
+    cp "$0" "$_xyz_self_copy"
+    XYZ_PRE_COMMIT_REEXEC=1 exec bash "$_xyz_self_copy" "$@"
+fi
+trap 'rm -f "$0"' EXIT
+
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
@@ -175,6 +190,21 @@ if [ -n "$FRONTEND_FILES" ]; then
             fi
 
             echo -e "${GREEN}[OK] vue-tsc 类型检查通过${NC}"
+
+            # 测试 tsconfig（tsconfig.typecheck-test.json）：vitest 测试文件被默认 tsconfig
+            # 的 exclude 挡在门外，只有此处纳入 include——测试桩与生产契约漂移的唯一编译期
+            # 拦截点（残留风险 8：该脚本此前从未被任何 gate 执行，3 个测试文件的基线漂移
+            # 因此长期无信号）。
+            echo -e "${BLUE}[INFO] 执行测试类型检查（tsconfig.typecheck-test.json）...${NC}"
+
+            if ! (cd packages/renderer && npx vue-tsc --noEmit -p tsconfig.typecheck-test.json 2>&1); then
+                echo ""
+                echo -e "${RED}[ERROR] vue-tsc 测试类型检查失败（测试桩与生产契约漂移）${NC}"
+                echo -e "${RED}[原则] 无论是否本次改动引入的问题，都必须正面修复解决，不允许跳过。${NC}"
+                exit 1
+            fi
+
+            echo -e "${GREEN}[OK] vue-tsc 测试类型检查通过${NC}"
         else
             echo -e "${GREEN}[OK] 无 .vue/.ts 文件变更${NC}"
         fi
@@ -1428,6 +1458,69 @@ else
 fi
 
 # ============================================================================
+# Provider 凭据读取单通道守卫（C-proc-14/15，catalog-provider-field-authority §3.3 D3/D6）
+#   packages/runtime/src 有变更时触发：scripts/check-provider-credential-reads.mjs
+#   守卫 A——凭据直查禁令（getApiKeyForProvider / readAuthCredentials /
+#   getProviderConfig(...).apiKey，白名单 = resolver 唯一通道本体）；守卫 B——
+#   upsertProvider 直调清单（白名单 = 写入载体 / importer / 迁移链 / IConfigStore
+#   实现，堵防线载体被旁路的复发通道）。
+#   注：不设独立 SKIP_* 开关（R1 后惯例，总闸 SKIP_ALL_CHECKS 兜底）。
+# ============================================================================
+
+PROVIDER_CRED_READS_CHECKER="scripts/check-provider-credential-reads.mjs"
+
+if [ "$SKIP_ALL_CHECKS" != "1" ]; then
+    if echo "$STAGED_FILES" | grep -q "^$RUNTIME_SRC/"; then
+        print_section "[Provider 凭据读取单通道守卫]"
+        echo -e "${BLUE}[INFO] runtime 源码有变更，扫描凭据直查与 upsertProvider 直调...${NC}"
+
+        if [ ! -f "$PROVIDER_CRED_READS_CHECKER" ]; then
+            echo -e "${RED}[ERROR] 找不到 $PROVIDER_CRED_READS_CHECKER${NC}"
+            echo -e "${RED}[原则] 无论是否本次改动引入的问题，都必须正面修复解决，不允许跳过。${NC}"
+            exit 1
+        fi
+
+        node "$PROVIDER_CRED_READS_CHECKER"
+        EXIT_CODE=$?
+
+        if [ $EXIT_CODE -ne 0 ]; then
+            echo -e "${RED}[原则] 无论是否本次改动引入的问题，都必须正面修复解决，不允许跳过。${NC}"
+            exit 1
+        fi
+    else
+        echo -e "${GREEN}[OK] runtime 源码无变更，跳过 Provider 凭据读取守卫${NC}"
+    fi
+fi
+
+# ============================================================================
+# 数据布局字面量守卫（C-pi-14，设计 §10 U18）
+#   staged 命中守卫范围（packages/ apps/ scripts/ 源码 + AGENTS.md +
+#   docs/troubleshooting.md + 守卫脚本自身）时触发：
+#   scripts/check-layout-literals.mjs —— 旧布局 pi/ 兄弟层字面量（join 形态
+#   'pi','agent'|'sessions' 与路径形态 pi/agent|pi/sessions，显式排除 .pi 前缀）
+#   回流即拦截。合法持有（bundled 资源布局/迁移语义/历史证据）集中登记在
+#   守卫的 LAYOUT_LITERAL_EXEMPT 常量表（file 级 + 理由）。
+#   全量扫描毫秒级，无增量模式。不设独立 SKIP_* 开关（R1 后惯例，总闸兜底）。
+# ============================================================================
+
+LAYOUT_STAGED=$(git diff --cached --name-only -- packages/ apps/ scripts/ AGENTS.md docs/troubleshooting.md scripts/check-layout-literals.mjs)
+if echo "$LAYOUT_STAGED" | grep -qE "^(packages/|apps/|scripts/)|^AGENTS\.md$|^docs/troubleshooting\.md$"; then
+    print_section "[数据布局字面量守卫]"
+    if [ ! -f "scripts/check-layout-literals.mjs" ]; then
+        echo -e "${RED}[ERROR] 找不到 scripts/check-layout-literals.mjs（C-pi-14 守卫交付物缺失）${NC}"
+        exit 1
+    fi
+    if ! node scripts/check-layout-literals.mjs; then
+        echo -e "${RED}[ERROR] 数据布局字面量守卫未通过——旧布局 pi/ 兄弟层引用回流（C-pi-14），按上方 ✗ 明细与恢复动作处理${NC}"
+        echo -e "${RED}[原则] 无论是否本次改动引入的问题，都必须正面修复解决，不允许跳过。${NC}"
+        exit 1
+    fi
+    echo -e "${GREEN}[OK] 数据布局字面量守卫通过（C-pi-14）${NC}"
+else
+    echo -e "${GREEN}[OK] 无守卫范围变更，跳过数据布局字面量守卫${NC}"
+fi
+
+# ============================================================================
 # 全部通过
 # ============================================================================
 
@@ -1482,7 +1575,7 @@ echo -e "${BLUE}======================================${NC}"
 echo ""
 echo -e "${CYAN}已安装的检查项目:${NC}"
 echo -e "  ${GREEN}[+]${NC} 前端 ESLint 代码检查"
-echo -e "  ${GREEN}[+]${NC} vue-tsc 类型检查（全量，与 CI 等价）"
+echo -e "  ${GREEN}[+]${NC} vue-tsc 类型检查（全量 + 测试 tsconfig，与 CI 等价）"
 echo -e "  ${GREEN}[+]${NC} pi extensions ESLint + tsc 类型检查（extensions/ 目录）"
 echo -e "  ${GREEN}[+]${NC} pi extensions manifest & convention 检查（禁废弃 namespace / 禁 console.log / pi manifest 字段）"
 echo -e "  ${GREEN}[+]${NC} extension 结构一致性检查（分组/role/依赖台账/一层路径残留）"
@@ -1510,6 +1603,8 @@ echo -e "  ${GREEN}[+]${NC} subagent-core 依赖闭包守卫（D9-① 闭包 + �
 echo -e "  ${GREEN}[+]${NC} 文档-代码符号漂移守卫（C-proc-10：设计文档引用已删除/改名符号即拦截）"
 echo -e "  ${GREEN}[+]${NC} 消息流滚动跟随链路守卫（C-state-11：滚动到底唯一原语 + 禁 findItemIndex(scrollSize) 模式）"
 echo -e "  ${GREEN}[+]${NC} 测试 flake 卫生检查（F5 scripts.test --no-bail + F3 recursive 删除 maxRetries）"
+echo -e "  ${GREEN}[+]${NC} Provider 凭据读取单通道守卫（runtime 变更时触发：凭据直查禁令 + upsertProvider 直调清单，C-proc-14/15）"
+echo -e "  ${GREEN}[+]${NC} 数据布局字面量守卫（C-pi-14：pi/ 兄弟布局引用回流拦截，豁免集中 LAYOUT_LITERAL_EXEMPT）"
 echo ""
 echo -e "${CYAN}Hook 脚本位置:${NC} .githooks/"
 echo ""

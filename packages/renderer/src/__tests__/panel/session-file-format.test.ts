@@ -16,7 +16,7 @@ import { formatShortSessionFile } from '@/composables/logic/session-file-format'
 describe('formatShortSessionFile', () => {
   it('U1: 标准格式取 uuidv7 前 8 位', () => {
     const path =
-      '/Users/u/.xyz-agent/pi/agent/sessions/cwd-hash/2026-07-09T11-16-46-632Z_019f4698-2fa8-791c-858f-d02ba39d9676.jsonl'
+      '/Users/u/.xyz-agent/agent/sessions/cwd-hash/2026-07-09T11-16-46-632Z_019f4698-2fa8-791c-858f-d02ba39d9676.jsonl'
     expect(formatShortSessionFile(path)).toBe('019f4698.jsonl')
   })
 
@@ -38,7 +38,7 @@ describe('formatShortSessionFile', () => {
   it('U5: 路径含多个下划线只匹配最后一个 _xxx.jsonl', () => {
     // cwd hash 目录名含下划线，不能误匹配目录段
     const path =
-      '/Users/u/.xyz-agent/pi/agent/sessions/--Users-u-Code-proj_workspace--/2026-07-09T11-16-46-632Z_019f4698-2fa8-791c.jsonl'
+      '/Users/u/.xyz-agent/agent/sessions/--Users-u-Code-proj_workspace--/2026-07-09T11-16-46-632Z_019f4698-2fa8-791c.jsonl'
     expect(formatShortSessionFile(path)).toBe('019f4698.jsonl')
   })
 })

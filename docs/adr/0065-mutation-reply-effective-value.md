@@ -2,7 +2,7 @@
 
 - 状态：Accepted
 - 日期：2026-09-08
-- 关联：[state-truth-sync-architecture.md](../design/state-truth-sync-architecture.md) §3.3 D8（本文的权威源）· [ADR-0064](0064-pi-semantic-absorption-layer.md)（生效回支柱二，登记 C-pi-13——本文是其人肉纪律的机器化）· [constraints.json](../constraints.json) C-pi-14（本 ADR 的约束登记）· 事故 B（2026-08-27，见 ADR-0064 背景）
+- 关联：[state-truth-sync-architecture.md](../design/state-truth-sync-architecture.md) §3.3 D8（本文的权威源）· [ADR-0064](0064-pi-semantic-absorption-layer.md)（生效回支柱二，登记 C-pi-13——本文是其人肉纪律的机器化）· [constraints.json](../constraints.json) C-pi-15（本 ADR 的约束登记）· 事故 B（2026-08-27，见 ADR-0064 背景）
 
 ## 背景
 
@@ -84,7 +84,7 @@
 3. **分支一**：handler 内 set→读回生效值→reply 生效字段；shared 协议具名 `XxxMutationReply`（生效值字段必需不 optional）；ReplyPayloadMap 登记 payload 消费型（禁 void）；消费侧禁乐观写，reply 是唯一写 store 路径。
 4. **分支二**：reply 携带回显字段（落盘权威态）；若确需 ack 型，必须在豁免清单登记理由（参照上表豁免项）；消费侧乐观写 + reply 权威覆盖 + 失败回滚。
 5. **入清单**：到 `packages/runtime/src/__tests__/mutation-reply-contract.test.ts` 的 `MUTATION_RPC_REGISTRY` 登记条目（type / branch / 契约 / 理由）——漏登记测试即红，这一步是强制的最后一道闸。
-6. **过 C-pi-14 review**（review-type-safety）：检查单 1-5 的执行情况。
+6. **过 C-pi-15 review**（review-type-safety）：检查单 1-5 的执行情况。
 
 ## 后果
 

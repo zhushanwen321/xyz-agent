@@ -26,7 +26,7 @@
 //
 // agentDir 探测顺序（对齐 xyz-agent 运行时注入语义）：
 //   1. 环境变量 PI_CODING_AGENT_DIR
-//   2. ~/.xyz-agent/pi/agent 存在性（xyz-agent 生产布局，rpc-client 注入源）
+//   2. ~/.xyz-agent/agent 存在性（xyz-agent 生产布局，rpc-client 注入源）
 //   3. ~/.pi/agent（pi 核心缺省）
 
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
@@ -56,8 +56,8 @@ const outDir = parseOutDir(process.argv);
 function resolveAgentDir() {
   const viaEnv = process.env.PI_CODING_AGENT_DIR;
   if (viaEnv) return { dir: resolve(viaEnv), via: "env PI_CODING_AGENT_DIR" };
-  const xyzAgentDir = join(homedir(), ".xyz-agent", "pi", "agent");
-  if (existsSync(xyzAgentDir)) return { dir: xyzAgentDir, via: "~/.xyz-agent/pi/agent existence" };
+  const xyzAgentDir = join(homedir(), ".xyz-agent", "agent");
+  if (existsSync(xyzAgentDir)) return { dir: xyzAgentDir, via: "~/.xyz-agent/agent existence" };
   return { dir: join(homedir(), ".pi", "agent"), via: "~/.pi/agent (pi default)" };
 }
 

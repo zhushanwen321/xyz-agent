@@ -27,6 +27,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createSessionDeliveryRegistry } from '../../services/session/session-delivery-registry.js'
 import { createCompletionBackflow } from '../../services/session/completion-backflow.js'
+import { applySessionOccupancyTransition } from '../../services/session/event-interpreter.js'
 import type { IManagedSessionView } from '../../services/session/types.js'
 import { PiSessionStore } from '../../infra/pi/session-store.js'
 import { spawnPiFixture, REAL_PI_READY, REAL_PI_SKIP_REASON, type PiFixture } from './pi-fixture.js'
@@ -103,7 +104,7 @@ describe.skipIf(!REAL_PI_READY)(`completion backflow e2e real pi${REAL_PI_READY 
       // 父侧仅维护 isGenerating 信号（D7 置位后由父 settled 复位），供内核 isIdle gate。
       const settledCbs: Array<(sid: string) => void> = []
       void parentFx.waitForEvent((e) => e.type === 'agent_settled', { timeoutMs: STEP_TIMEOUT_MS * 3 })
-        .then(() => { parentView.isGenerating = false })
+        .then(() => { applySessionOccupancyTransition(parentView, null, 'idle') })
         .catch(() => {})
 
       // registry：真实实现；ensureActive(父) 返回父 pi 的最小 client adapter

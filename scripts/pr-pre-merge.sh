@@ -8,10 +8,10 @@
 #   bash scripts/pr-pre-merge.sh                          # 默认：typecheck(仅 extensions) + lint
 #                                                         #        + 三线测试全跑
 #   bash scripts/pr-pre-merge.sh --skip-tests             # static gate（流程阶段 1.1）：
-#                                                         #   typecheck 三处 + lint；测试步全跳过，
+#                                                         #   typecheck 四处 + lint；测试步全跳过，
 #                                                         #   result 反映 typecheck + lint
 #   bash scripts/pr-pre-merge.sh --test-result PASS|FAIL  # 终局 gate（流程阶段 3a）：
-#                                                         #   typecheck 三处 + lint + test:runtime 实跑
+#                                                         #   typecheck 四处 + lint + test:runtime 实跑
 #                                                         #   （无插桩、不设 XYZ_SKIP_REAL_PI，real-pi
 #                                                         #   义务原位承接）；test:extensions/renderer
 #                                                         #   不执行，以注入值计入 result
@@ -36,7 +36,7 @@ usage() {
 用法:
   bash scripts/pr-pre-merge.sh                          # 默认：typecheck(仅 extensions) + lint + 三线测试全跑
   bash scripts/pr-pre-merge.sh --skip-tests             # static gate：typecheck 三处 + lint，测试全跳过
-  bash scripts/pr-pre-merge.sh --test-result PASS|FAIL  # 终局 gate：typecheck 三处 + lint + test:runtime 实跑，
+  bash scripts/pr-pre-merge.sh --test-result PASS|FAIL  # 终局 gate：typecheck 四处 + lint + test:runtime 实跑，
                                                         # 其余测试线以注入值计入 result
 通用参数: --quiet（只输出最终结果，等价 PR_PRE_MERGE_QUIET=1）
           --base <ref>（注入值产物的 base 口径，默认 main；stacked PR（base≠main）必须传与
@@ -179,12 +179,17 @@ MARKER
 
 # ── Step 1: typecheck（extensions 独立 tsconfig + 项目层）
 # extensions/ 有独立 tsconfig.json（noEmit），项目层暂无全局 typecheck script
-# 默认模式仅 extensions（向后兼容）；--skip-tests / --test-result 扩展为三处
-# （runtime / renderer 的 package.json 均声明 typecheck script：tsc / vue-tsc --noEmit）
+# 默认模式仅 extensions（向后兼容）；--skip-tests / --test-result 扩展为四处
+# （runtime / renderer 的 package.json 均声明 typecheck script：tsc / vue-tsc --noEmit；
+#  renderer 测试 tsconfig 走 typecheck:test——默认 tsconfig exclude 掉测试文件，
+#  测试桩与生产契约的漂移只有该 tsconfig 能编译期拦截）
 run_step "typecheck:extensions" bash -c 'cd "$0" && npx tsc --noEmit' extensions
 if [[ "$MODE" != "default" ]]; then
     run_step "typecheck:runtime" bash -c 'cd packages/runtime && pnpm run typecheck'
     run_step "typecheck:renderer" bash -c 'cd packages/renderer && pnpm run typecheck'
+    # 测试 tsconfig（tsconfig.typecheck-test.json）：vitest 测试文件被默认 tsconfig 的 exclude
+    # 挡在门外，只有此脚本纳入 include——测试桩与生产契约漂移的唯一编译期拦截点。
+    run_step "typecheck:renderer-tests" bash -c 'cd packages/renderer && pnpm run typecheck:test'
 fi
 
 # ── Step 2: lint（根 eslint 覆盖全局含 extensions）

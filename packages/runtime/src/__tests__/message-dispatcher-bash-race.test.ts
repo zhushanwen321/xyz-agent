@@ -12,6 +12,7 @@
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { MessageDispatcher } from '../services/session/message-dispatcher.js'
+import { applySessionOccupancyTransition } from '../services/session/event-interpreter.js'
 import type { IDispatcherSessionOps } from '../services/session/session-internal.js'
 import type { IManagedSessionView } from '../services/session/types.js'
 import type { IMessageBus } from '../services/message-bus/message-bus.js'
@@ -187,7 +188,8 @@ describe('MessageDispatcher —— W3 compact busy 预检', () => {
 
   it('W3a: isBashRunning=true 时 compact → throw + 零 compaction 广播（M4 事件驱动）+ 不调 client.compact', async () => {
     const { dispatcher, compactFn, broadcasts, session } = makeRaceMocks()
-    session.isBashRunning = true
+    // 经原语置位（u3c readonly 收口；publish null 与改前直写一致零广播）
+    applySessionOccupancyTransition(session, null, 'bash-start')
 
     await expect(dispatcher.compact('s1')).rejects.toThrow(/bash running/)
 
@@ -204,7 +206,7 @@ describe('MessageDispatcher —— W3 compact busy 预检', () => {
 
   it('W3b: isGenerating=true 时 compact → throw + 零 compaction 广播 + 不调 client.compact', async () => {
     const { dispatcher, compactFn, broadcasts, session } = makeRaceMocks()
-    session.isGenerating = true
+    applySessionOccupancyTransition(session, null, 'generating')
 
     await expect(dispatcher.compact('s1')).rejects.toThrow(/generating/)
 

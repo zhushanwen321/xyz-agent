@@ -557,3 +557,57 @@ describe('useCompactQueue 富内容管道（defer segments 化 / D-A1）', () =>
     void e1
   })
 })
+
+// ── [session-dead 结构性修复 D3] forceQuit 整队回收（drain）：唯一允许动已提交条目的
+//    出口（前提 = pi 已死、在途确认永不再来），文本按序交还用户（回 Composer 草稿）。
+//    编排接线见 __tests__/sidebar/force-quit-queue-recovery.test.ts，草稿可见 + 追加
+//    的组件层断言见 __tests__/panel/force-quit-draft-recovery-dom.test.ts。──
+describe('useCompactQueue 整队回收（session-dead D3 drain）', () => {
+  it('DR1: 取出全部条目（含已提交在途）+ 队列清空；回收后 flush 空队 no-op 不重发', async () => {
+    const chat = useChatStore()
+    const queue = useCompactQueue()
+    const m1 = queue.enqueue('s1', 'm1')
+    const m2 = queue.enqueue('s1', 'm2')
+    // 一轮 flush 全部提交（队首 send、其余 steer，CD2 同款）——mode 已写的在途条目
+    // remove 动不了（TC2b），drain 是 forceQuit 语义下的唯一整队出口
+    await expect(queue.flush('s1')).resolves.toBe(true)
+    expect(queue.peek('s1').map((m) => m.mode)).toEqual(['send', 'steer'])
+    expect(chat.getInflight('s1')).toBe(1)
+
+    const drained = queue.drain('s1')
+    // 快照按序返回（含 id/text/mode 完整字段），队列清空
+    expect(drained.map((m) => m.id)).toEqual([m1.id, m2.id])
+    expect(drained.map((m) => [m.text, m.mode])).toEqual([['m1', 'send'], ['m2', 'steer']])
+    expect(queue.count('s1')).toBe(0)
+    expect(queue.hasPending('s1')).toBe(false)
+
+    // 回收后空队 flush：no-op true，无任何 RPC（已回收条目不重发）
+    await expect(queue.flush('s1')).resolves.toBe(true)
+    expect(apiMock.send).toHaveBeenCalledTimes(1)
+  })
+
+  it('DR2: 空队列 drain 返回空数组；per-session 隔离——drain s1 不影响 s2', () => {
+    const queue = useCompactQueue()
+    expect(queue.drain('s-empty')).toEqual([])
+
+    queue.enqueue('s1', 'a')
+    queue.enqueue('s2', 'b')
+    expect(queue.drain('s1').map((m) => m.text)).toEqual(['a'])
+    expect(queue.count('s1')).toBe(0)
+    expect(queue.count('s2')).toBe(1)
+    expect(queue.peek('s2')[0]!.text).toBe('b')
+  })
+
+  it('DR3: drain 返回快照副本——回收后入队的新条目不混入已取出的数组（对齐 peek 契约）', () => {
+    const queue = useCompactQueue()
+    queue.enqueue('s1', 'a')
+    const drained = queue.drain('s1')
+    expect(drained.map((m) => m.text)).toEqual(['a'])
+    expect(queue.count('s1')).toBe(0)
+
+    // 回收后新入队条目进分区新数组，与已取出的快照互不影响
+    queue.enqueue('s1', 'b')
+    expect(drained.map((m) => m.text)).toEqual(['a'])
+    expect(queue.peek('s1').map((m) => m.text)).toEqual(['b'])
+  })
+})

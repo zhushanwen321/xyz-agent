@@ -5,7 +5,8 @@
  * - getCached / fetchQuota / refreshQuota 三 RPC 的 payload 形状（type + providerId）
  *   与 reply 解包（data / lastFetchAt / reason）——reason 是本 PR 新增透传字段，
  *   失败态渲染（CodingPlanSection failMessage）依赖它
- * - configure 的 payload 携带（providerId/enabled/cookie/fetcher/apiKey）
+ * - configure 的单一 payload 整对象透传（providerId/enabled/fetcher/credentialSource/cookie/apiKey）
+ *   ——M2 契约收敛后不再是 6 个位置参数（coding-plan-quota-config-ux §7.1）
  *
  * mock 策略：对齐 preset-domain.test.ts——mock core ws-client（捕获 send payload）+
  * core pending 源文件相对路径（返回可控 reply），测 domains/quota 真实实现（不 mock @/api）。
@@ -108,17 +109,25 @@ describe('quotaApi.refreshQuota', () => {
 })
 
 describe('quotaApi.configure', () => {
-  it('payload type=quota.configure 携带全量配置字段；reply 解包 ok/error', async () => {
+  it('payload type=quota.configure 携带全量配置字段（含 D3 credentialSource）；reply 解包 ok/error', async () => {
     pendingMock.register.mockResolvedValueOnce({ ok: true })
 
-    const result = await configure('kimi-coding', true, 'ck=1', 'kimi-coding', 'sk-own')
+    const result = await configure({
+      providerId: 'kimi-coding',
+      enabled: true,
+      fetcher: 'kimi-coding',
+      credentialSource: 'exclusive',
+      cookie: 'ck=1',
+      apiKey: 'sk-own',
+    })
 
     expect(transportMock.sent[0]!.type).toBe('quota.configure')
     expect(transportMock.sent[0]!.payload).toEqual({
       providerId: 'kimi-coding',
       enabled: true,
-      cookie: 'ck=1',
       fetcher: 'kimi-coding',
+      credentialSource: 'exclusive',
+      cookie: 'ck=1',
       apiKey: 'sk-own',
     })
     expect(result).toEqual({ ok: true })
