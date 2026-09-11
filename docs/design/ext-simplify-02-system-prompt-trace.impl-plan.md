@@ -146,7 +146,7 @@ graph TD
 |---|---|---|---|
 | u0-probe | resolved（门失败已回炉） | 1 | **A0-3（P2）门判定失败**：pi 0.84.4 createBranchedSession hasAssistant 条件 flush——常态 /fork（position=before）session_start 时点 fork 新文件未落盘，直读 null。已按降级路径回炉设计：D2 回退方案 A（fork 档读 previousSessionFile，恢复现状语义），设计 v5/v5.1 经 r5/r4 聚焦复审通过。A0-1/A0-2/A0-4/A0-5 PASS（reload/直启档直读前提成立，且 fork 事件 previousSessionFile 恒在 + 源文件已落盘含 fullText——方案 A 前提已被同次探针证实）；A0-6 按门纪律停止派发。u0 不重跑：修订方案的全部 pi 行为前提已在本轮探针覆盖，P2 终态段（方案 A 断言）归 u2/A2-9 合入前执行 | ⛔→✅ 门已处理 |
 | u1-types | committed | 1 | 59cd0f320（编排方核验：领地 7 文件吻合 + 包测试 38 绿重跑 + 根 typecheck 绿）。A1-1..A1-7 全过。deviations 2 条越界已接受（见 §5）+ 划界声明 1 条 |
-| u2-mechanism | in-progress | — | 已派发（后台） |
+| u2-mechanism | committed | 1 | 编排方核验（领地 7 文件吻合 + 包测试 38 绿 + typecheck 绿 + 删除面零残留重跑）。A2-1..A2-9 全过：V1-V6 真实场景统一环境执行（V6 决定性实证：未 flush fork 文件直读 null → 首 turn 零新增 = fork 档读 previousSessionFile 命中源 v2）；dev agentDir runtime-spawn 复跑零写动作。deviations 5 条合理（V6 change 断言 CLI 不可构造由单测承载=设计 v5.1 口径 / V2 V3 CLI 等价链路 / A2-8 spawn 形态对齐 / 判据笔误 3 处修正 / tmp 凭据清理） |
 | u4-registry | pending | — | M3；紧随 u2 连续 commit（偏差 D-2）；含 checker 绿门 |
 
 ## 7 残留风险与变更历史
