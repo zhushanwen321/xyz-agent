@@ -54,6 +54,8 @@ graph TD
 | W1 | 领地外 +1（已批） | `packages/shared/src/subagent.ts` SubagentRecord 增 `origin?`——renderer 过滤 composable 消费 shared 跨进程契约，契约无字段则 vue-tsc/测试构造失败；只加 origin 不加 parentRunId（renderer W1 无下钻消费面，W3 需要时再加） |
 | W1 | 实施口径两处 | ① TUI `/subagents` 补全与 overlay 经 `queries.collectRecords` 缺省自动继承过滤，subagents.ts 零改动即达成 D1④（设计预期改该文件，实际无需）；② 子文件 identity 通路（scanFile/buildRecord）不携带 origin——origin 只活在主 session 自描述 entry，identity 是否携带来源留待 W2 executeWorkflowAgent 接线时决策 |
 | W2 | 设计口径纠偏（dev 实证） | 设计 D3「现状 SAR 委托 executeAndAwait」表述与 H1 终态不符——SAR 已直调 engine.run、无 record；dev 按设计 §3.5 终态数据流以 executeWorkflowAgent 为写入方实现，行为与目标一致（D3 的「路由/预检先于 acquire」结论不受影响） |
+| W3 | 领地外 +4（均上报有据） | orchestration/models/ports.ts（LifecycleDeps.workflowAgentDispatch 注入面）/ models/types.ts（删 ExecutionTraceNode.live——D2 字面要求，grep 验收范围含此文件）/ extension index.ts（组合根装配）/ interface/commands.ts（views liveRecords 查询注入——task 明文允许 interface 层最小新增） |
+| W3 | 返工 1 轮（must-fix） | 主审复核抓出 streaming 静默退化：dev 误读 D2「既有通道承载」为参数占位而非效果保持（旧 pump:790 deps.streamSink 构造是真实 TUI 打字机行为）；修复 = runWorkflowEngineTask 在 stream 缺省时内构 createBackgroundStream（与 kickOffChatRound :2780 同款），三形态断言（TUI 发/GUI+relay 停发/空 sink 不崩）+ 内构保活用例，core 2932 全绿 |
 
 ## 6 状态表
 
@@ -61,6 +63,7 @@ graph TD
 |------|------|------|---------|
 | W1 | committed | 1 | f57d1a687（16 文件：字段 + 持久化链三环 + collectRecords includeWorkflow/collectRecordsByParentRunId + 四投影过滤 + 治理面零过滤）；测试 core 2905 / renderer 22 / extension 910 全绿 + tsc/vue-tsc/extensions:lint exit 0；红锚验证 = 移除 readEntryOriginFields 透传后 record-origin.test.ts 转红 2 failed |
 | W2 | committed | 1 | （W1 commit 后）9 文件 +1280/-90：executeWorkflowAgent :1823 + runWorkflowEngineTask :1909（八步迁移落地，⑥提公共 run-signals.ts）/ D7 顶部分支 :2657 / D6 漏斗 gate :131 / adopt 豁免 :2482+:2542 + domain "workflow" 域 / superseded 候选过滤 :332；测试 core 2926 全绿 + tsc EXIT=0 + D5 不动面零 diff 自查 + 红锚（D7 分支下移→'user-close' 分叉转红）；新增 21 用例（workflow-agent-dispatch 14 + round-supervisor-workflow-origin 7） |
+| W3 | committed | 2（1 返工） | （W2 登记后）21 文件 +1095/-414：pump 切 workflowAgentDispatch 注入 + 旁路 record 族整删（createRecord/updateFromEvent/SubagentStream/node.live/run-snapshot strip）+ ExecutionTraceNode.live 字段删除 + views store 订阅（task 标签+startedAt 最近邻配对；七字段双路径对齐测试）+ streaming 返工（runWorkflowEngineTask 内构 createBackgroundStream，三形态断言）；core 2932 + ext 919 全绿 + 双侧 tsc EXIT=0 + D5/W2 冻结面零 diff（返工例外 = service 单方法，显式授权）；record↔node 映射 = task 匹配+最近邻贪心，parallel 孪生匹配任一（两行均实时形态） |
 | W2 | pending | — | — |
 | W3 | pending | — | — |
 | W4 | pending | — | — |
