@@ -16,7 +16,6 @@
     "@lucide/vue": "^1.21.0",
     "@shikijs/langs": "^4.3.1",
     "@shikijs/themes": "^4.3.1",
-    "@vee-validate/zod": "^4.15.1",
     "@vueuse/core": "^11.3.0",
     "@xterm/addon-fit": "^0.10.0",
     "@xterm/addon-search": "^0.15.0",
@@ -40,11 +39,9 @@
     "reka-ui": "^2.9.10",
     "shiki": "^4.2.0",
     "tailwind-merge": "^3",
-    "vee-validate": "^4.15.1",
     "virtua": "^0.50.0",
     "vue": "^3.5",
-    "vue-i18n": "^10",
-    "zod": "^3.25.76"
+    "vue-i18n": "^10"
   },
   "devDependencies": {
     "@vitejs/plugin-vue": "^6",
