@@ -32,6 +32,10 @@ ALLOWED_MODULES = {
     "pi-paths",
     "git-status-parser",
     "ignore-parser",
+    # crash-journal：崩溃台账 writer（crash-forensics-and-watchdog 设计 D1），logger 类横切
+    # 关注点——无业务语义、process-wide 单例、best-effort 决策点双写（写失败不抛进业务链），
+    # 2026-09-11 随 E 组取证链落地列入（同 logger「为它定义 port 只会增加无意义的间接层」裁决）
+    "crash-journal",
     # 现状基线（2026-08-22，待专项治理收编或正式豁免）
     "session-file-utils",
     "session-entry-mapper",

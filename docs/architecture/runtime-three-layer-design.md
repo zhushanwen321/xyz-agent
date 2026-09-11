@@ -197,7 +197,11 @@ infra/      ← pi 适配（实现 ports，连接 + 翻译合并）
 | `services/git-service.ts` | 21 | `parseGitStatus`, `deriveCounts`, `parseNumstat`, `parseNumstatByFile` |
 | `services/file-service.ts` | 21-22 | `IgnoreMatcher`(type), `compileIgnoreRules`, `matchPath` |
 
-> **新增 services→infra import 时的判断准则**：logger 类横切关注点（无业务语义、process-wide 单例）可直接 import；kernel 类纯函数（无状态、无副作用、无 IO，与 shared 同性质）——含 pi-paths 路径解析、git-status-parser/ignore-parser 等纯解析/匹配函数——可直接 import。其余 infra 模块——含 pi 协议类型、RPC 子进程、有状态/有 IO 的文件操作、安装器等——一律经 port 访问，不得直接 import。
+#### ③b crash-journal —— 跨切面取证日志设施（2026-09-11 增补）
+
+`infra/crash-journal.ts` 是统一崩溃台账 writer（[crash-forensics-and-watchdog](../design/crash-forensics-and-watchdog.md) 设计 D1）：append-only JSONL + 10MB×3 段轮转，与 ① logger 完全同类——**无业务语义、process-wide 单例、best-effort**（写失败降级不抛进业务链）。services 层在死亡/自愈决策点双写台账行（crash/deleted/reaped/reclaimed 等），为它定义 port 并注入只会复制 logger 裁决已否定的无意义间接层。归受控例外（合规），`.githooks/check_services_infra_import.py` 白名单同名登记。
+
+> **新增 services→infra import 时的判断准则**：logger 类横切关注点（无业务语义、process-wide 单例）可直接 import——含 logger 与 crash-journal（取证台账，2026-09-11 增补）；kernel 类纯函数（无状态、无副作用、无 IO，与 shared 同性质）——含 pi-paths 路径解析、git-status-parser/ignore-parser 等纯解析/匹配函数——可直接 import。其余 infra 模块——含 pi 协议类型、RPC 子进程、有状态/有 IO 的文件操作、安装器等——一律经 port 访问，不得直接 import。
 
 #### ④ node:fs / node:child_process 直用 —— 基线债登记（非合规例外，R3 收编）
 
