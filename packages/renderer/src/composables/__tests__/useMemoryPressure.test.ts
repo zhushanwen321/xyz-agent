@@ -22,9 +22,11 @@ import { dispatchGlobal } from '@xyz-agent/core/transport/api'
 import type { ServerMessage, WatchdogMemoryPressurePayload } from '@xyz-agent/shared'
 import {
   useMemoryPressure,
+  LRU_RELIEF_MAX_SESSIONS,
   _setMemoryReliefActionForTest,
   _resetMemoryPressureForTest,
 } from '../useMemoryPressure'
+import { getLruMaxSessions } from '@xyz-agent/core'
 import { useChatStore } from '@/stores/chat'
 
 /** 构造 watchdog:memoryPressure 帧（payload 契约 = WatchdogMemoryPressurePayload）。 */
@@ -122,13 +124,26 @@ describe('useMemoryPressure（A5 通知消费断言）', () => {
     expect(action).toHaveBeenCalledTimes(1)
   })
 
-  it('默认收紧动作：真实 chat store 的 evictIfNeeded 被调用（领地内最大安全动作）', () => {
+  it('默认收紧动作（#28②）：压窗到 LRU_RELIEF_MAX_SESSIONS(4) + evictIfNeeded 驱逐一轮', () => {
     const store = useChatStore()
     const evictSpy = vi.spyOn(store, 'evictIfNeeded')
     const scope = effectScope()
     scope.run(() => useMemoryPressure())
     dispatchGlobal(pressureMsg('warn'))
     expect(evictSpy).toHaveBeenCalledTimes(1)
+    // 压窗生效：core lru 生效上限从默认 8 收到 4（#28② 的「真收紧」语义）
+    expect(getLruMaxSessions()).toBe(LRU_RELIEF_MAX_SESSIONS)
+    scope.stop()
+  })
+
+  it('恢复语义（D4 未指明，登记裁决）：压窗不自动恢复默认（协议 normal 不广播，无消退信号）', () => {
+    const scope = effectScope()
+    scope.run(() => useMemoryPressure())
+    dispatchGlobal(pressureMsg('warn'))
+    expect(getLruMaxSessions()).toBe(LRU_RELIEF_MAX_SESSIONS)
+    // 不存在「消退」帧；后续任意帧（仍为压力态）不回弹默认
+    dispatchGlobal(pressureMsg('warn'))
+    expect(getLruMaxSessions()).toBe(LRU_RELIEF_MAX_SESSIONS)
     scope.stop()
   })
 

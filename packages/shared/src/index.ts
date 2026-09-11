@@ -15,6 +15,7 @@ export type {
   RollingRestartState, RollingRestartReason, RollingRestartInflightSummary,
   RollingRestartDeferredPayload, RollingRestartCountdownPayload, RollingRestartForcedPayload,
   RollingRestartStatusPayload,
+  ReattachDeferReason, ReattachDeferredPayload,
 } from './protocol'
 export { isMessage, isSessionSummary, isSubagentRecord } from './protocol'
 export type {

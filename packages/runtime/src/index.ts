@@ -1143,9 +1143,12 @@ async function main(): Promise<void> {
   // 冷启动无 checkpoint（clean exit 已删 / 首次启动）→ read() 返回 undefined → 编排零动作
   // （A3b 冷启动维持 lazy）。restore 走 lifecycle registerSession 汇聚点（onSessionRegistered
   // 挂点随附触发）。内部全容错不抛；外层 .catch 是防御兜底（对齐上方 fire-and-forget 形态）。
+  // 偏差 #27：onDeferredBroadcast = 高水位延迟进入/缓解的 reattach:deferred WS 推送出口
+  // （u7c 滚动重启 broadcast 注入同形态；renderer 横幅腿 = useRollingRestartStatus）。
   void runStartupReattach({
     restore: (sessionId) => sessionService.restoreSession(sessionId),
     waitForOrphanReap: () => orphanReapChain,
+    onDeferredBroadcast: (payload) => server.broadcast({ type: 'reattach:deferred', payload }),
   }).catch((e) => {
     console.error('[runtime] reattach orchestration failed unexpectedly:', e)
   })

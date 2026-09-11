@@ -890,6 +890,10 @@ export type ServerMessageType =
   // 全局推送（Server→Client 冒号 camelCase，对齐 rollingRestart:deferred 规则；越线期每
   // 采样拍重发，payload 见 WatchdogMemoryPressurePayload）。
   | 'watchdog:memoryPressure'
+  // reattach 域（crash-forensics-and-watchdog §3.3 D3 高水位延迟，偏差 #27）：deferred =
+  // 启动 reattach 高水位延迟推送（Server→Client 冒号 camelCase；进入单发 + 缓解退出单发，
+  // payload 见 ReattachDeferredPayload）。
+  | 'reattach:deferred'
 
 /** skill 缓存失效广播的作用域：global=全局 skill 变动，project=某项目 cwd 的 skill 变动。 */
 export type SkillCacheScope = 'global' | 'project'
@@ -1087,6 +1091,45 @@ export interface RollingRestartStatusPayload {
   inflight: RollingRestartInflightSummary
   /** deferred/countdown 态的推迟上限到点时刻（ms epoch）；其余态缺省。 */
   deferDeadlineAt?: number
+}
+
+// ── reattach 域（crash-forensics-and-watchdog §3.3 D3 高水位延迟，偏差 #27）────
+//
+// reattach:deferred = 启动 reattach 高水位延迟的全局推送（Server→Client 冒号 camelCase，
+// 对齐 rollingRestart:deferred 命名规则；无 sessionId——窗口级全局态，非 session 级消息，
+// 不受「session 级消息必带 sessionId」约束）。生产方 = startup-reattach 高水位轮询循环
+// （u5 交付，#27 补广播半腿：进入单发 + 缓解退出单发——广播形态选择见
+// ReattachDeferredPayload 注释）；消费方 = renderer useRollingRestartStatus（reattach
+// 延迟横幅腿，与滚动重启横幅共用窗口级容器——两种延迟态时域不相交：reattach 延迟只在
+// runtime 启动后短窗口，滚动重启推迟只在运行期，互斥不冲突）。无只读拉取 RPC（D3 高
+// 水位延迟是启动期瞬态，非持续态；滚动重启的「持续态必须可拉取」教训按状态生命周期
+// 区分适用）。
+
+/**
+ * reattach 高水位延迟原因（D3：崩溃本身由内存高压诱发时，集中 spawn 会诱发二次崩溃——
+ * 「恢复→再崩→退避」循环的缓解；当前唯一成因 = 系统级 memPressure 越限，开放枚举预留）。
+ */
+export type ReattachDeferReason = 'high-memory'
+
+/**
+ * reattach:deferred 的 payload。active=true 进入延迟 / active=false 压力缓解恢复执行。
+ *
+ * **广播形态裁决（单次进入 + 单次退出，非延迟中每拍重发）**：每拍重发对「窗口内重连」
+ * 自愈更快，但缓解退出帧两种形态都是单发——重连错过退出帧的陈旧态残留窗口等价，重发
+ * 只增冗余帧；且 reattach 延迟只存在于启动后短窗口（收割等待 + 高水位轮询），无只读
+ * 拉取面（协议面仅本事件）。残余窗口 = 「进入帧后断连、退出帧也错过后重连」的低概率
+ * 组合，接受并登记。
+ *
+ * **预计恢复语义**：高压复查周期 pollMs 随帧携带——恢复无总上限（D3：高压持续则逐拍
+ * 复查至缓解；总时长不可预估），横幅文案据此不承诺恢复时刻；手动 lazy 恢复恒可用。
+ */
+export interface ReattachDeferredPayload {
+  /** true = 进入延迟（高压，reattach spawn 暂停）；false = 压力缓解，恢复执行。 */
+  active: boolean
+  /** 延迟成因（当前唯一 'high-memory'）。 */
+  reason: ReattachDeferReason
+  /** 高压复查周期 ms（生产方 DEFAULT_HIGH_WATER_POLL_MS，缺省 30s——逐拍复查至缓解）。 */
+  pollMs: number
 }
 
 // ── 看门狗协议面（crash-forensics-and-watchdog §3.3 D4，u6）────────────────
@@ -1895,6 +1938,11 @@ export interface ServerMessageMapBase {
   // memoryPressure：内存压力全局推送（u6 看门狗生产；renderer useMemoryPressure 消费——
   // warn 及以上收紧 renderer 侧 LRU；字段语义见 payload 类型）。
   'watchdog:memoryPressure': WatchdogMemoryPressurePayload
+
+  // ── reattach 域（crash-forensics-and-watchdog §3.3 D3 高水位延迟，偏差 #27）──
+  // deferred：启动 reattach 高水位延迟推送（u5 生产；renderer useRollingRestartStatus
+  // 消费——高压延迟横幅腿；active 进入/缓解退出两态，字段语义见 payload 类型）。
+  'reattach:deferred': ReattachDeferredPayload
 }
 
 /**

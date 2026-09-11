@@ -31,6 +31,7 @@ import { CHECKPOINT_FILENAME, RuntimeCheckpointStore } from '../session/runtime-
 import type { RuntimeCheckpointEntry } from '../session/runtime-checkpoint.js'
 import type { MemPressureSample } from '../../infra/mem-pressure.js'
 import {
+  DEFAULT_HIGH_WATER_POLL_MS,
   REATTACH_SKIP_REAP_TIMEOUT,
   REATTACH_SKIP_RESTORE_FAILED,
   REATTACH_SKIP_STALENESS,
@@ -626,3 +627,71 @@ function makeBgDeps(onOrphanReapChainScheduled?: (completion: Promise<void>) => 
     ...(onOrphanReapChainScheduled ? { onOrphanReapChainScheduled } : {}),
   }
 }
+// ─────────────────────────────────────────────────────────────────────────────
+// #27 reattach:deferred 广播挂点（高水位延迟进入/缓解退出，u7d 承接的横幅半腿）
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('#27 reattach:deferred 广播（进入单发 + 缓解退出单发）', () => {
+  it('高压两拍后缓解：进入帧（active=true）与退出帧（active=false）各一次，含 pollMs 与 reason（fake timers 走默认 30s 节拍）', async () => {
+    const h = makeHarness()
+    seed(h, [entry({ piSessionId: 'a', lastActivityAt: T0 - MIN })])
+    h.settleHarvest()
+    const samples = [highSample, highSample, calmSample]
+    const queryMemPressure = vi.fn(async () => samples.shift() ?? calmSample)
+    const onDeferredBroadcast = vi.fn()
+    // 不注入 delay → 走默认真实 setTimeout（30s 节拍），用 fake timers 推进轮询循环
+    const overrides: Partial<StartupReattachOptions> = { queryMemPressure }
+    vi.useFakeTimers()
+    try {
+      const pendingReport = runStartupReattach(makeDeps(h, { onDeferredBroadcast }), makeOptions(h, { queryMemPressure }))
+      await vi.advanceTimersByTimeAsync(DEFAULT_HIGH_WATER_POLL_MS)
+      await vi.advanceTimersByTimeAsync(DEFAULT_HIGH_WATER_POLL_MS)
+      const report = await pendingReport
+      expect(report.highWaterWaits).toBe(2)
+      expect(h.restore).toHaveBeenCalledTimes(1) // 缓解后恢复执行（广播不阻塞编排链）
+      expect(onDeferredBroadcast).toHaveBeenCalledTimes(2)
+      expect(onDeferredBroadcast).toHaveBeenNthCalledWith(1, {
+        active: true, reason: 'high-memory', pollMs: DEFAULT_HIGH_WATER_POLL_MS,
+      })
+      expect(onDeferredBroadcast).toHaveBeenNthCalledWith(2, {
+        active: false, reason: 'high-memory', pollMs: DEFAULT_HIGH_WATER_POLL_MS,
+      })
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('判定时刻无高压 → 零广播（常态路径不产生任何帧）', async () => {
+    const h = makeHarness()
+    seed(h, [entry({ piSessionId: 'a', lastActivityAt: T0 - MIN })])
+    h.settleHarvest()
+    const onDeferredBroadcast = vi.fn()
+    await runStartupReattach(makeDeps(h, { onDeferredBroadcast }), makeOptions(h))
+    expect(onDeferredBroadcast).not.toHaveBeenCalled()
+  })
+
+  it('广播出口抛错（契约违背的防御面）→ 异常被吞、进入/退出两帧都尝试、编排照常完成', async () => {
+    const h = makeHarness()
+    seed(h, [entry({ piSessionId: 'a', lastActivityAt: T0 - MIN })])
+    h.settleHarvest()
+    const samples = [highSample, calmSample]
+    const onDeferredBroadcast = vi.fn(() => { throw new Error('broadcast boom') })
+    const report = await runStartupReattach(makeDeps(h, { onDeferredBroadcast }), makeOptions(h, {
+      queryMemPressure: async () => samples.shift() ?? calmSample,
+    }))
+    expect(onDeferredBroadcast).toHaveBeenCalledTimes(2) // 进入帧与退出帧都未被异常中断
+    expect(report.restored).toEqual(['a'])
+    expect(report.checkpointDeleted).toBe(true)
+  })
+
+  it('组合根接线（#27）：index.ts 的 runStartupReattach 调用带 onDeferredBroadcast → server.broadcast reattach:deferred', () => {
+    const candidates = [
+      join(process.cwd(), 'src/index.ts'),
+      join(process.cwd(), 'packages/runtime/src/index.ts'),
+    ]
+    const srcFile = candidates.find((p) => existsSync(p))
+    if (!srcFile) throw new Error(`index.ts not found from cwd=${process.cwd()}`)
+    const src = readFileSync(srcFile, 'utf-8')
+    expect(src).toContain("onDeferredBroadcast: (payload) => server.broadcast({ type: 'reattach:deferred', payload })")
+  })
+})

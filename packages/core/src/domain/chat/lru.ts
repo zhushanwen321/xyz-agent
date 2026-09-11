@@ -34,6 +34,32 @@ import { deleteMessages } from './mutations'
 export const LRU_MAX_SESSIONS = 8
 
 /**
+ * 运行时可变上限覆盖（memory-relief 压窗，crash-forensics §3.3 D4 / 偏差 #28②）。
+ * null = 未压窗，按默认 LRU_MAX_SESSIONS；number = 压窗值（ relief 期间生效）。
+ *
+ * 并发/边界（单线程 JS 无真并发，本注记登记交错语义）：
+ * - setter 幂等，重复设置同值无副作用；null 恢复默认（读面 getLruMaxSessions 单点消费，
+ *   evictIfNeeded 每次调用现读——压窗后已被驱逐的 session 不回补，恢复默认只影响后续判定）；
+ * - 下限钳制 ≥1：压到 0 = 全量驱逐会让「切回重进」从兜底变常态路径（违反「兜底不进正常路径」）；
+ * - 非整数向下取整（防御性；调用方传整数时不产生差异）。
+ */
+let lruMaxOverride: number | null = null
+
+/** 设置 LRU 运行时上限（null = 恢复默认 LRU_MAX_SESSIONS）。memory-relief 消费点用。 */
+export function setLruMaxSessions(max: number | null): void {
+  if (max === null) {
+    lruMaxOverride = null
+    return
+  }
+  lruMaxOverride = Math.max(1, Math.floor(max))
+}
+
+/** 读当前生效上限（默认 LRU_MAX_SESSIONS 或压窗覆盖值）。 */
+export function getLruMaxSessions(): number {
+  return lruMaxOverride ?? LRU_MAX_SESSIONS
+}
+
+/**
  * session 访问时序记录（模块级，跨 store 实例共享）。
  * key = sessionId，value = 最后访问时间戳。
  * Map 的插入顺序天然反映首次访问顺序，但 LRU 需要按最后访问排序，
@@ -113,6 +139,8 @@ export interface LruEvictDeps {
  * session 变为 streaming 状态）。
  */
 export function evictIfNeeded(deps: LruEvictDeps): void {
+  // 每次调用现读生效上限（默认 8 或 relief 压窗覆盖值，#28②）。
+  const maxSessions = getLruMaxSessions()
   // 收集可驱逐的候选（有 messages + 非 virtual + 非豁免 + 有访问记录）
   // [W7] 经 getter 读当前 messages Map（非构造时快照），防 deleteMessageKey 替换 Map 后迭代旧引用。
   const candidates: Array<{ sid: string; lastAccessed: number }> = []
@@ -125,11 +153,11 @@ export function evictIfNeeded(deps: LruEvictDeps): void {
   }
 
   // 不超阈值，无需驱逐
-  if (candidates.length <= LRU_MAX_SESSIONS) return
+  if (candidates.length <= maxSessions) return
 
   // 按访问时间升序（最久未访问在前），驱逐超出的
   candidates.sort((a, b) => a.lastAccessed - b.lastAccessed)
-  const toEvict = candidates.slice(0, candidates.length - LRU_MAX_SESSIONS)
+  const toEvict = candidates.slice(0, candidates.length - maxSessions)
 
   for (const { sid } of toEvict) {
     // SR8 竞态防护：驱逐前 double-check 豁免状态
@@ -178,10 +206,11 @@ export function evictSessionWithVirtual(sessionId: string, deps: LruEvictDeps): 
 }
 
 /**
- * 测试辅助：重置 LRU 时序记录。
+ * 测试辅助：重置 LRU 时序记录 + 可变上限覆盖（压窗值跨用例残留会让阈值类用例互相污染）。
  */
 export function _resetLruForTest(): void {
   sessionLastAccessed.clear()
+  setLruMaxSessions(null)
 }
 
 /**

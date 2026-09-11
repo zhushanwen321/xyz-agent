@@ -38,7 +38,7 @@
  * 双通道收敛）；高水位等待期间不删（等待中再崩 → checkpoint 保留 → 下次 runtime 重试）。
  */
 import { existsSync, unlinkSync } from 'node:fs'
-import type { CrashJournalWriter } from '@xyz-agent/shared'
+import type { CrashJournalWriter, ReattachDeferredPayload } from '@xyz-agent/shared'
 import { DEFAULT_PI_RECLAIM_IDLE_MS, DEFAULT_PI_RECLAIM_VIEWED_WINDOW_MS } from '@xyz-agent/shared'
 import {
   DEFAULT_MEM_PRESSURE_THRESHOLDS,
@@ -127,7 +127,21 @@ export interface StartupReattachDeps {
    * 契约：永不 reject（内部全 catch）。live 孤儿未收割完不 spawn（P9 消灭双持）。
    */
   waitForOrphanReap: () => Promise<void>
+  /**
+   * reattach:deferred 广播出口（偏差 #27 横幅腿的 runtime 半边；缺省无动作 = 纯逻辑单测
+   * 与无 WS 形态零依赖）。组合根注入 server.broadcast 包装（u7c 滚动重启 broadcast 同形态）。
+   *
+   * **广播形态选择（进入单发 + 缓解退出单发，非延迟中每拍重发）**：两种形态对「renderer
+   * 重连错过退出帧」的陈旧态残留窗口等价（退出帧都是单发），每拍重发只增冗余帧；且 D3
+   * 高水位延迟只存在于启动后短窗口，协议面无只读拉取 RPC（「持续态必须可拉取」教训按状态
+   * 生命周期区分适用——延迟是瞬态不是持续态）。残余窗口（进入后断连、退出也错过后重连）
+   * 低概率，接受并已登记在 shared ReattachDeferredPayload 注释。
+   */
+  onDeferredBroadcast?: ReattachDeferredBroadcast
 }
+
+/** reattach:deferred 广播出口签名（payload 契约 = shared SSOT）。 */
+export type ReattachDeferredBroadcast = (payload: ReattachDeferredPayload) => void
 
 export interface StartupReattachOptions {
   /** 时钟注入（测试）；缺省 Date.now。 */
@@ -182,6 +196,21 @@ function defaultDelay(ms: number): Promise<void> {
   })
 }
 
+/** reattach:deferred 广播（best-effort：出口注入缺陷/WS 故障只告警，不破坏编排链）。 */
+function broadcastDeferredSafely(
+  broadcast: ReattachDeferredBroadcast | undefined,
+  payload: ReattachDeferredPayload,
+): void {
+  if (!broadcast) return
+  try {
+    broadcast(payload)
+  } catch (e: unknown) {
+    // best-effort 降级：广播是横幅告知面（非正确性面），失败只告警不传播——reattach
+    // 编排链（恢复用户会话）不得被旁路设施故障阻塞；影响面 = renderer 少一条横幅。
+    console.warn('[reattach] deferred broadcast failed (ignored):', e)
+  }
+}
+
 /**
  * 执行 reattach 编排（一次性；组合根 listen 后 fire-and-forget 调用）。
  * 本函数不抛（内部逐步容错），返回编排报告供日志与测试断言。
@@ -200,6 +229,7 @@ export async function runStartupReattach(
   const highWaterPollMs = options.highWaterPollMs ?? DEFAULT_HIGH_WATER_POLL_MS
   const fileExists = options.fileExists ?? ((path: string) => existsSync(path))
   const delay = options.delay ?? defaultDelay
+  const onDeferredBroadcast = deps.onDeferredBroadcast
   const thresholds: MemPressureThresholds = { ...DEFAULT_MEM_PRESSURE_THRESHOLDS, ...options.memPressureThresholds }
   const queryPressure = options.queryMemPressure ?? (() => queryMemPressure())
 
@@ -261,6 +291,9 @@ export async function runStartupReattach(
   }
 
   // ⑤ 高水位延迟（D3：即时系统级查询，无采样环历史依赖；高压持续则轮询等待至缓解）。
+  // 偏差 #27：进入延迟 / 缓解退出各广播一次 reattach:deferred（形态选择见
+  // ReattachDeferredBroadcast 注释）；best-effort——广播故障不破坏编排链。
+  let deferredAnnounced = false
   for (;;) {
     let high = false
     try {
@@ -274,11 +307,18 @@ export async function runStartupReattach(
     report.highWaterWaits++
     if (report.highWaterWaits === 1) {
       console.warn(`[reattach] system memory pressure high — deferring reattach spawn (re-check every ${highWaterPollMs}ms; manual lazy restore unaffected)`)
+      deferredAnnounced = true
+      broadcastDeferredSafely(onDeferredBroadcast, { active: true, reason: 'high-memory', pollMs: highWaterPollMs })
     }
     await delay(highWaterPollMs)
   }
   if (report.highWaterWaits > 0) {
     console.log(`[reattach] memory pressure cleared after ${report.highWaterWaits} poll(s), resuming reattach`)
+    if (deferredAnnounced) {
+      // 进入拍广播过才发退出帧（零延迟常态不产生任何帧）；查询抛错按「可恢复」break 的
+      // 防御形态同样收到缓解帧——与「进入帧已发出」配对，不留无退出信号的悬挂态。
+      broadcastDeferredSafely(onDeferredBroadcast, { active: false, reason: 'high-memory', pollMs: highWaterPollMs })
+    }
   }
 
   // ⑥ 分批 restore（并发上限；Promise.allSettled 结构性保证单 session 失败不阻断批次，

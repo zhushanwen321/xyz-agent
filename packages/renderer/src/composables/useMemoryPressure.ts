@@ -1,18 +1,21 @@
 /**
  * useMemoryPressure —— runtime 内存看门狗通知消费（crash-forensics-and-watchdog.md
- * §3.3 D4，实施单元 u6）。
+ * §3.3 D4，实施单元 u6；relief 真实动作随 u7d / 偏差 #28② 收口）。
  *
  * 通道归属（D4 原文）：runtime 看门狗 → WS 广播（watchdog:memoryPressure）→ 本 composable
  * 消费——memory-relief 降级的 renderer 半边：收到 warn 及以上 → 收紧 renderer 侧 LRU 缓存。
- * 目标对象 = chat store 的 messages 分区 LRU（core lru.ts，LRU_MAX_SESSIONS 窗口内的
- * messages/hydrated 均为可重建缓存——驱逐重进走 hydrate 全量重放，用户无感，代价是切回
- * 延迟；与 D4「可回收物全部自动重建」语义一致）。
+ * 目标对象 = chat store 的 messages 分区 LRU（core lru.ts，生效窗口内的 messages/hydrated
+ * 均为可重建缓存——驱逐重进走 hydrate 全量重放，用户无感，代价是切回延迟；与 D4「可回收
+ * 物全部自动重建」语义一致）。
  *
- * [领地登记] 「收紧」的完整语义 = 运行时把保留窗口从 LRU_MAX_SESSIONS(8) 压到更小档，
- * 需要 core/domain/chat/lru.ts 暴露可变上限 API（当前为编译期常量，领地外）。本文件
- * 当前最大安全动作 = 默认 reliefAction 调 chat store 公开 evictIfNeeded()（按既有 8 上限
- * 执行一轮驱逐，幂等；压力持续期 runtime 每采样拍重发通知 → 每拍都有驱逐机会）。真实
- * 收紧 API 交付后仅需替换 reliefAction 默认实现，消费通道（本文件其余部分）不变。
+ * 收紧语义（#28② 已收口）：defaultReliefAction = 压窗到 LRU_RELIEF_MAX_SESSIONS(4) +
+ * evictIfNeeded 立即驱逐一轮（压力持续期 runtime 每采样拍重发通知 → 每拍都有驱逐机会，
+ * 压窗值幂等重设无副作用）。
+ * - **压窗值裁决**：D4 未钉数值（Gate W 校准清单可调），取默认窗一半（8→4）——「收紧」
+ *   的最小有效档，避免过激驱逐把「切回重进」变常态路径。
+ * - **恢复语义裁决（D4 未指明，登记）**：压窗一次**不自动恢复默认**。协议面 'normal'
+ *   不广播（renderer 无「压力消退」信号可消费），自动恢复无从触发；已驱逐的 session
+ *   不回补（恢复默认只影响后续判定），应用重启后 LRU 模块态归零天然复位。
  *
  * 状态形态：窗口级单例（非 per-session）——内存压力是全局信号，与 useCrashRecoveryNotice
  * 同款「窗口级单例状态，ADR-0049 Map 分区范式不适用」判定（无 sidRef、无 per-session
@@ -23,11 +26,18 @@
  */
 import { ref, shallowRef, onScopeDispose, type Ref } from 'vue'
 import * as events from '@xyz-agent/core/transport/api'
+import { setLruMaxSessions } from '@xyz-agent/core'
 import type { WatchdogMemoryLevel, WatchdogMemoryPressurePayload } from '@xyz-agent/shared'
 import { useChatStore } from '@/stores/chat'
 
 /** 压力级别（含消费侧常态 'normal'——协议只在越线时广播，缺省态即 normal）。 */
 export type MemoryPressureLevel = 'normal' | WatchdogMemoryLevel
+
+/**
+ * memory-relief 压窗值（D4 收紧档）。D4 未钉数值（Gate W 校准入口），取默认窗
+ * LRU_MAX_SESSIONS(8) 的一半——最小有效收紧档（见文件头压窗值裁决）。
+ */
+export const LRU_RELIEF_MAX_SESSIONS = 4
 
 /**
  * memory-relief 收紧动作签名（level + 完整 payload 透传，供未来分档收紧策略使用）。
@@ -46,14 +56,18 @@ let refCount = 0
 let unsubscribe: (() => void) | null = null
 
 /**
- * 收紧动作（可注入：测试 spy / 未来真实「可变上限收紧」API 的替换点）。
- * 默认实现见 defaultReliefAction 注释（领地登记）。
+ * 收紧动作（可注入：测试 spy）。默认实现见 defaultReliefAction（#28② 压窗 + 驱逐）。
  */
 let reliefAction: MemoryReliefAction = defaultReliefAction
 
-/** 默认收紧动作：chat store 公开 evictIfNeeded（既有 8 上限内执行一轮驱逐，幂等）。 */
+/**
+ * 默认收紧动作（#28②）：压窗到 LRU_RELIEF_MAX_SESSIONS + evictIfNeeded 立即驱逐一轮。
+ * setLruMaxSessions 幂等（压力持续期每拍重设同值无副作用）；不自动恢复默认（见文件头
+ * 恢复语义裁决——'normal' 不广播，无消退信号）。
+ */
 function defaultReliefAction(): void {
   try {
+    setLruMaxSessions(LRU_RELIEF_MAX_SESSIONS)
     useChatStore().evictIfNeeded()
   } catch (e) {
     // best-effort：pinia 未就绪（极端早到通知）/ store 异常时降级为静默——renderer 侧
@@ -119,4 +133,6 @@ export function _resetMemoryPressureForTest(): void {
   level.value = 'normal'
   lastPayload.value = null
   reliefAction = defaultReliefAction
+  // 默认动作会写 core lru 模块级压窗值（跨用例残留会污染阈值类用例）
+  setLruMaxSessions(null)
 }
