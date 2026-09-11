@@ -70,7 +70,7 @@ graph TD
 
 | Unit | 状态 | 轮次 | 证据指针 |
 |------|------|------|---------|
-| R0 | pending | - | |
+| R0 | in_flight | - | dev 已派发（基线绿核对 → 纯移动分区 → 三清单 r0-inventory.md → 两条机械对账） |
 | R1 | pending | - | |
 | R2 | pending | - | |
 | R3 | pending | - | |
