@@ -81,25 +81,36 @@ graph TD
 
 ## 5 合理偏差登记表
 
-（初始为空；执行期合理不一致在此登记）
+| 单元 | 偏差 | 理由 | 裁决 |
+|------|------|------|------|
+| u4 | 领地外新建 `packages/runtime/src/services/session/session-rename-fanout.ts`（D4 处理体从 index.ts 抽出，index.ts 仅留依赖注入接线） | index.ts 文件尾 `main().catch(...)` import 即执行、接线闭包不可直测（index.ts 既有注释明言；`agent-settled-fanout.ts` 为 PR #189 review 同因提取先例）；新文件与并行单元领地零交集 | 接受（2026-09-12）：领地白名单目的在防冲突，测试可达性优先；引用方 grep 验证仅 index.ts + 自身测试 |
+| u4 | 空串 name（≠ undefined）原样透传不改写（`??` 只捕 undefined） | pi trim 归一后空串本不该出现，出现也不静默译码（TC2b 钉住） | 接受：与设计 D4「undefined 回落」语义一致，更保守 |
+| u1 | execute 守卫的 isError 经 **throw** 产生（设计 D3 字面「返回 isError」） | pi 0.84.4 实装核证：agent-loop.js executePreparedToolCall 将 execute 正常返回包成 {result, isError:false}，返回值的 isError 字段被丢弃，throw 才产生 isError 状态 | 接受（2026-09-12）：throw 是「返回 isError」在 pi API 下的正确映射；design-code-sync 阶段同步校准设计 D3 措辞 |
+| u1 | 验收④ grep PI_RENAME 按生产代码口径（src 非测试文件 0 命中；测试文件 12 处 = 负面用例 vi.stubEnv 必需引用） | 验收②（env 删除负面用例）与④（0 命中）字面冲突，负面用例必然引用被删键名字面量 | 接受：生产口径达成，测试引用是删除行为的证明而非残留 |
+| u5 | 领地外扩张 4 文件：interfaces.ts（IConfigService +两方法声明）、config-service.ts（委托实现）、packages/shared/src/index.ts（RenameMode 导出）、worktree/worktree-service.test.ts（mock stub） | settings 通路结构必需的接线链（handler→接口→service→helper），形态逐点对齐 getRenameModel 先例；impl-plan 领地清单定时未核查接口链，非 dev 越权 | 接受（2026-09-12）：扩张件计入 u5 files_changed；接口扩展引发的其余 mock stub 一并允许（逐个列明） |
+| u2 | run-all.mjs 注册 A6/A7（超出领地 8 文件清单） | 派发时预告允许（不注册则 runner 缺场景，契约断裂） | 接受：已列 deviations |
 
 ## 6 状态表
 
 | Unit | 状态 | 轮次 | 证据指针 |
 |------|------|------|----------|
-| u1 | pending | 0 | — |
-| u2 | pending | 0 | — |
-| u3 | pending | 0 | — |
-| u4 | pending | 0 | — |
-| u5 | pending | 0 | — |
-| u6 | pending | 0 | — |
+| u1 | committed | 1 | dcc189dc4：P1/P2 探针双过（pi 0.84.4 实测留证）+ 领地 190/191 绿（唯一红 = startup-config-declaration，DAG U1→U2 预期交接，修复归 u2）（2026-09-12 核验） |
+| u2 | committed | 0 | 37b7c9887：包内 202/202 绿（u1 交接红转绿）+ README 附录 A 指针 + A6/A7 脚本断言落位 + v0.8.0（2026-09-12 核验） |
+| u3 | committed | 0 | f70dfd602：render --check 98 条绿 + 双登记 + path-encoding JSDoc（2026-09-12 核验） |
+| u4 | committed | 0 | cbf6b5894：runtime 458 文件/5190 用例绿 + 定向 25/25 复核；P3 单测级闭环（帧序归 Gate B）（2026-09-12 核验） |
+| u5 | committed | 1 | 0df724a2c：runtime 459/5202 全绿 + tsc 绿 + 定向 34 复核；三处默认值收敛；领地扩张 4 接线文件（三任 = 二任实现全保留 + 核验闭环）（2026-09-12 核验） |
+| u6 | committed | 0 | 681fcd4e2：renderer 384/4181 + core 120/1951 + 根 lint + vue-tsc 全绿；定向 11 复核；i18n 新键删旧键 0 残留（2026-09-12 核验） |
+
+阶段 2 收口（2026-09-12）：6/6 单元 committed（u1 dcc189dc4 / u2 37b7c9887 / u3 f70dfd602 / u4 cbf6b5894 / u5 0df724a2c / u6 681fcd4e2）；速率限制致 u1 一任中断（接替成功）与 u5 两任中断（三任核验型接替闭环）。
 
 ## 7 残留风险与变更历史
 
 **残留风险**：
-- 探针 P1-P3 未执行（⛔ 实施期门，u1 开工首日闭环；否决设计假设即停工上报）
-- e2e harness 对 message_end 事件的监听能力待确认（设计 §5.4：现有 harness 只订阅既有事件面，可能需扩展白名单——u2 实施时确认）
-- GUI「跟随会话模型」文案与既有 RenameModelNotSet i18n 键的关系（复用改义 or 新键，u6 实施时按 i18n 键管理惯例定）
+- 探针 P1-P3 已全部闭环（P1/P2 = u1 实测通过零降级，dcc189dc4；P3 = u4 单测级通过同步调用安全，帧序归 Gate B V4/V5）
+- e2e/README.md（不在任何单元领地）仍写 A1-A5 计数，与新场景集 A1-A7 不一致——Gate B 真实跑后随 RESULTS.md 一起回写，或阶段 3 一致性审查裁决归属
+- run-a3.mjs 内部 countLlmRequests/countSessionInfos 与 harness 新导出（countLlmRequestLogs/countSessionInfoEntries）同构并存——后续触及 a3 的单元顺手收敛，不阻塞
+- CHANGELOG.md 条目归 merge/release 流程（项目惯例）
+- GUI「跟随会话模型」文案与既有 RenameModelNotSet i18n 键的关系（复用改义 or 新键，u6 实施时按 i18n 键管理惯例定）——未闭环
 - V10 场景需 GUI dev 双 session + 模式切换实操，依赖 u5/u6 完成后联调（Gate B 收口）
 
 **变更历史**：
