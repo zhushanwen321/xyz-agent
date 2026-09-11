@@ -4,7 +4,8 @@ import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { mkdtempSync, rmSync } from 'node:fs'
 import lockfile from 'proper-lockfile'
-import { getAutoRenameEnabled, setAutoRenameEnabled, getAutoRenameEnabledPath, ensureAutoRenameDefault, getRenameModel, setRenameModel, getRenameConfigPath, setRenameConfigLockTimingForTest } from './worktree-config-helper.js'
+import { getAutoRenameEnabled, setAutoRenameEnabled, getAutoRenameEnabledPath, ensureAutoRenameDefault, getRenameModel, setRenameModel, getRenameConfigPath, setRenameConfigLockTimingForTest, getRenameMode, setRenameMode } from './worktree-config-helper.js'
+import type { RenameMode } from '@xyz-agent/shared'
 
 describe('auto-rename enabled 标志文件', () => {
   let tmpRoot: string
@@ -206,6 +207,107 @@ describe('rename-session 模型配置（config/rename-session-ext-config.json）
     setRenameModel('p1/m1')
     expect(getRenameModel()).toBe('p1/m1')
     expect(readRawConfig()['enabled']).toBe(false)
+  })
+})
+
+describe('rename-session 模式配置（config/rename-session-ext-config.json 的 mode 字段，设计 D1）', () => {
+  let tmpRoot: string
+  const configPath = () => join(tmpRoot, 'pi', 'agent', 'config', 'rename-session-ext-config.json')
+
+  /** 写入原始配置 JSON（预建目录）。 */
+  function writeRawConfig(raw: unknown): void {
+    mkdirSync(dirname(configPath()), { recursive: true })
+    writeFileSync(configPath(), typeof raw === 'string' ? raw : JSON.stringify(raw, null, 2), 'utf-8')
+  }
+
+  /** 读回配置 JSON（parse 后对象）。 */
+  function readRawConfig(): Record<string, unknown> {
+    return JSON.parse(readFileSync(configPath(), 'utf-8')) as Record<string, unknown>
+  }
+
+  beforeEach(() => {
+    tmpRoot = mkdtempSync(join(tmpdir(), 'rename-mode-test-'))
+    vi.stubEnv('XYZ_AGENT_DATA_DIR', tmpRoot)
+  })
+
+  afterEach(() => {
+    vi.unstubAllEnvs()
+    rmSync(tmpRoot, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
+  })
+
+  it('getRenameMode：文件不存在返回默认 first-stop（旧 config 零迁移，与 extension normalize 同语义）', () => {
+    expect(getRenameMode()).toBe('first-stop')
+  })
+
+  it('getRenameMode：正常文件读出三值', () => {
+    writeRawConfig({ mode: 'first-prompt' })
+    expect(getRenameMode()).toBe('first-prompt')
+    writeRawConfig({ mode: 'first-stop' })
+    expect(getRenameMode()).toBe('first-stop')
+    writeRawConfig({ mode: 'agent-tool' })
+    expect(getRenameMode()).toBe('agent-tool')
+  })
+
+  it('getRenameMode：字段缺失 / 非法值回默认 first-stop', () => {
+    writeRawConfig({ enabled: true })
+    expect(getRenameMode()).toBe('first-stop')
+    writeRawConfig({ mode: 'weird-mode' })
+    expect(getRenameMode()).toBe('first-stop')
+    writeRawConfig({ mode: 123 })
+    expect(getRenameMode()).toBe('first-stop')
+  })
+
+  it('getRenameMode：坏 JSON 回默认 first-stop（不抛错）', () => {
+    writeRawConfig('{ not valid json')
+    expect(getRenameMode()).toBe('first-stop')
+  })
+
+  it('setRenameMode：读改写保留其他字段（含 model）与未知字段 + set-get 往返', () => {
+    writeRawConfig({ enabled: true, mode: 'first-stop', model: { type: 'ref', ref: 'p1/m1' }, maxTitleLength: 30, futureField: { a: 1 } })
+    setRenameMode('agent-tool')
+
+    const saved = readRawConfig()
+    expect(saved['mode']).toBe('agent-tool')
+    expect(saved['model']).toEqual({ type: 'ref', ref: 'p1/m1' })
+    expect(saved['enabled']).toBe(true)
+    expect(saved['maxTitleLength']).toBe(30)
+    expect(saved['futureField']).toEqual({ a: 1 })
+    // set-get roundtrip
+    expect(getRenameMode()).toBe('agent-tool')
+  })
+
+  it('setRenameMode：文件不存在时以默认基底建文件（三处默认值真相收敛：基底含 mode: first-stop）', () => {
+    setRenameMode('first-prompt')
+
+    expect(existsSync(configPath())).toBe(true)
+    const saved = readRawConfig()
+    expect(saved['mode']).toBe('first-prompt')
+    // 默认基底字段（与 extension DEFAULT_RENAME_CONFIG 一致，含 mode）
+    expect(saved['enabled']).toBe(false)
+    expect(saved['model']).toEqual({ type: 'ref', ref: '' })
+    expect(saved['maxTitleLength']).toBe(50)
+    expect(saved['thinkingLevel']).toBe('off')
+  })
+
+  it('setRenameMode：非法值归一为 first-stop（读侧同语义，写侧不放大坏值）', () => {
+    setRenameMode('not-a-mode' as unknown as RenameMode)
+    expect(getRenameMode()).toBe('first-stop')
+    expect(readRawConfig()['mode']).toBe('first-stop')
+  })
+
+  it('setRenameMode：坏 JSON 用默认基底覆写（与 setRenameModel 同款回退）', () => {
+    writeRawConfig('{ corrupted')
+    setRenameMode('first-prompt')
+    expect(getRenameMode()).toBe('first-prompt')
+    expect(readRawConfig()['enabled']).toBe(false)
+  })
+
+  it('mode 写锁与 model 写锁同源：setRenameMode 后无 .lock 残留且 setRenameModel 仍可写（同一把锁协议）', () => {
+    setRenameMode('agent-tool')
+    setRenameModel('p1/m1')
+    expect(existsSync(`${configPath()}.lock`)).toBe(false)
+    expect(getRenameMode()).toBe('agent-tool')
+    expect(getRenameModel()).toBe('p1/m1')
   })
 })
 
