@@ -77,7 +77,7 @@
               : 'border-[var(--border)] text-[var(--neutral-mid)] hover:border-[var(--border-strong)] hover:text-[var(--neutral-fg)]'"
             @click="toggleProvider(pid)"
           >
-            <span class="size-[9px] shrink-0 rounded-[2px]" :style="{ background: getProviderColor(pid) }" />
+            <span class="size-[9px] shrink-0 rounded-[2px]" :style="{ background: getProviderColor(agg.providerColors, pid) }" />
             <span>{{ pid }}</span>
             <span class="text-[var(--neutral-dim)]">{{ fmtProvShare(u) }}</span>
           </Button>
@@ -152,7 +152,12 @@
           <span class="text-[13px] font-medium text-[var(--neutral-fg)]">{{ t('settings.usage.sectionDaily') }}</span>
           <span class="text-[11px] text-[var(--neutral-dim)]">{{ t('settings.usage.sectionDailyMeta') }}</span>
         </div>
-        <UsageDailyChart :per-day="agg.perDay" :per-prov="agg.perProv" :metric="filter.metric" />
+        <UsageDailyChart
+          :per-day="agg.perDay"
+          :per-prov="agg.perProv"
+          :metric="filter.metric"
+          :provider-colors="agg.providerColors"
+        />
       </section>
 
       <!-- 热力日历 + 模型谱（双栏） -->
@@ -172,6 +177,7 @@
               :per-model="agg.perModel"
               :metric="filter.metric"
               :isolate="filter.isolate"
+              :provider-colors="agg.providerColors"
               @update:isolate="filter.isolate = $event"
             />
           </div>
@@ -189,6 +195,7 @@
             :projects="projectData"
             :metric="filter.metric"
             :total-metric="totalMetricVal"
+            :provider-colors="agg.providerColors"
           />
           <div>
             <div class="mb-2.5 flex items-baseline justify-between">
@@ -209,6 +216,7 @@
         <UsageDetailTable
           :groups="detailGroups"
           :tot="agg.tot"
+          :provider-colors="agg.providerColors"
         />
       </section>
 
