@@ -1,55 +1,35 @@
 // src/file-lock.ts
 //
-// 跨进程异步/同步文件锁（extension 侧共享 util，D5a/D1e，integrity-hardening.md §3.5）。
+// 跨进程同步文件锁（extension 侧共享 util，D5a/D1e，integrity-hardening.md §3.5）。
 //
 // 为什么存在：worktrees.json（多 pi 进程各一份扩展实例写）与 ext-config 家族
 // （runtime + 扩展双写）都是跨进程 RMW——Node 单线程只能保证进程内不交错，
 // 挡不住跨进程「后写者基于旧快照覆盖先写者」。
 //
-// 为什么是 async API 而非 runtime 侧的 withFileLockSync：扩展跑在 pi 子进程的
-// async hook 上下文（session_start 等），同步 busy-wait 会阻塞整个 event loop；
-// async 版用指数退避重试（本文件编排），sync 版保持同步 busy-wait。
-//
 // 锁原语：自实现 mkdir-lock（src/lock-core.ts，D1-A，零第三方依赖）。磁盘协议与
 // pi 内嵌 proper-lockfile@4.1.2 逐字段兼容（协议细节与行为边界声明见 lock-core.ts
 // 头注释——关键边界：无周期保活 touch，临界区必须远小于 stale）。本文件职责：
-// 重试编排 + 对外 API + 诊断 logger 装配（logger 本体由包入口 index.ts 注入，
-// 本文件不 import extension-logger——lock-core 的零依赖约束向上传导）。
+// sync busy-wait 重试编排 + 对外 API + 诊断 logger 装配（logger 本体由包入口
+// index.ts 注入，本文件不 import extension-logger——lock-core 的零依赖约束向上传导）。
 //
 // 锁协议（与 runtime 侧 packages/runtime/src/utils/file-lock.ts 对齐，登记表
 // docs/architecture/data-source-registry.md §6）：
 //   - lockfile 路径 = <目标文件>.lock（双方路径一致才互斥）
 //   - realpath:false —— 目标文件不存在也可锁；不解析 symlink
 //   - stale 30s：持锁进程崩溃后锁可被夺取（对齐 auth 惯例）
-//   - async 版退避重试：10 次重试 / factor 2 / 100ms~10s / randomize（公式与
-//     proper-lockfile 内部 retry 库一致，对齐 pi FileAuthStorageBackend.withLockAsync
-//     及 runtime auth-storage.ts 范本；首试 + 10 重试 = 最多 11 次 acquire）
 //   - sync 版 busy-wait 重试（25ms / 预算 1s fail-fast）：对齐 runtime 侧
 //     withFileLockSync；ext-config 家族的扩展侧写方（saveConfig）保持 sync 签名
 //     （调用链零波及），与 runtime 对端用同一把 lockfile 互斥
 //   - onCompromised 语义随保活 touch 一并移除（无保活则无 compromise 检测）：
 //     锁目录被外部删除时 release 静默成功（ENOENT 容忍，见 lock-core.ts removeLock）
 //
-// 契约：fn 内禁止任何 await / 再次对本文件加锁（嵌套取锁 ELOCKED → 重试耗尽 →
+// 契约：fn 内禁止任何 I/O / 再次对本文件加锁（嵌套取锁 ELOCKED → 重试耗尽 →
 // 抛错）；持锁范围应为「读文件 + 纯内存变更 + 原子写」，毫秒级（必须远小于
 // stale 30s——无保活 touch，超时持锁会被对端夺取）。
 
-import {
-	acquireLock,
-	acquireLockSync,
-	DEFAULT_STALE_MS,
-	type LockRelease,
-} from "./lock-core";
+import { acquireLockSync, DEFAULT_STALE_MS } from "./lock-core";
 
 export { DEFAULT_STALE_MS };
-
-/** 锁参数（默认值对齐 auth-storage.ts 范本；测试可覆盖以缩短等待）。 */
-export interface FileLockOptions {
-	/** 锁 mtime 超过该值视为持锁者已死可夺取（stale 语义）。默认 30_000ms。 */
-	staleMs?: number;
-	/** retries 重试次数（首试之外）。默认 10。 */
-	retries?: number;
-}
 
 /** sync 版锁参数（对齐 runtime withFileLockSync 默认值；测试可覆盖以缩短等待）。 */
 export interface SyncFileLockOptions {
@@ -62,16 +42,10 @@ export interface SyncFileLockOptions {
 }
 
 // 默认锁参数（sync 版导出供对照测试断言与 runtime 侧 utils/file-lock.ts 默认值相等
-// ——两侧参数漂移会破坏「同一把锁」的互斥语义；runtime 侧 test/file-lock-parity.test.ts）
-const DEFAULT_RETRIES = 10;
+// ——互斥由 lockfile 路径 + mkdir 原子协议保证，默认值对齐锚定的是两侧夺取时机
+// （stale）与失败速度（重试参数）行为一致；runtime 侧 test/file-lock-parity.test.ts）
 export const DEFAULT_RETRY_DELAY_MS = 25;
 export const DEFAULT_RETRY_BUDGET_MS = 1_000;
-
-// 退避参数（对齐 proper-lockfile 4.1.2 内部 retry 库的调用参数，即旧版
-// retries: { retries: 10, factor: 2, minTimeout: 100, maxTimeout: 10_000, randomize: true }）
-const RETRY_FACTOR = 2;
-const RETRY_MIN_TIMEOUT_MS = 100;
-const RETRY_MAX_TIMEOUT_MS = 10_000;
 
 // 诊断 logger：由包入口 index.ts 经 setFileLockLogger 注入（core 不沾 logger 依赖）。
 // 默认 no-op——不经入口直接 import 本文件的测试/工具静默无日志。
@@ -86,61 +60,13 @@ export function setFileLockLogger(log?: (msg: string) => void): void {
 }
 
 /**
- * 第 attempt 次尝试失败后的退避等待（attempt 从 0 计）。
- * 公式照抄 proper-lockfile 内部 retry 库（retry.timeouts/createTimeout）：
- *   randomize ? round((random()+1) * minTimeout * factor**attempt) capped maxTimeout
- * 倍率区间 [1, 2)，故第 attempt 次等待 ∈ [minTimeout*factor**attempt, 2*...)，上限 10s。
- */
-function backoffDelayMs(attempt: number): number {
-	const exponential = RETRY_MIN_TIMEOUT_MS * RETRY_FACTOR ** attempt;
-	return Math.min(Math.round((Math.random() + 1) * exponential), RETRY_MAX_TIMEOUT_MS);
-}
-
-/**
- * 跨进程文件锁内执行 async fn：拿不到锁时指数退避重试（100ms~10s/randomize，
- * 首试 + retries 次 = 默认最多 11 次 acquire），重试耗尽抛 code:"ELOCKED" 错误
- * （调用方决定降级路径）；unlock 放 finally（fn 抛错也释放；锁目录已被外部删除时
- * release 静默成功）。
- */
-export async function withFileLock<T>(
-	filePath: string,
-	fn: () => Promise<T>,
-	opts?: FileLockOptions,
-): Promise<T> {
-	const retries = opts?.retries ?? DEFAULT_RETRIES;
-	const staleMs = opts?.staleMs ?? DEFAULT_STALE_MS;
-
-	let release: LockRelease | undefined;
-	for (let attempt = 0; release === undefined; attempt++) {
-		try {
-			release = await acquireLock(filePath, { staleMs, log: diagnosticsLogger });
-		} catch (err) {
-			if (!isElocked(err)) throw err;
-			// 首试 + retries 次重试全部失败 → 抛 ELOCKED（对齐 retry 库 retries 次数语义）
-			if (attempt >= retries) throw err;
-			await sleep(backoffDelayMs(attempt));
-		}
-	}
-	try {
-		return await fn();
-	} finally {
-		try {
-			await release();
-		} catch (releaseErr) {
-			// release 仅在非 ENOENT 的 fs 错误（权限等）时失败——不外抛（fn 结果优先），
-			// 注入 logger 时留痕供排查
-			diagnosticsLogger?.(`[file-lock] release failed (ignorable): ${stringifyErr(releaseErr)}`);
-		}
-	}
-}
-
-/**
  * 同步跨进程文件锁内执行 fn：ELOCKED busy-wait 重试，预算耗尽抛带 ELOCKED code
  * 的错误；unlock 放 finally（fn 抛错也释放）。
  *
- * 与 async 版锁同一把 lockfile（<目标文件>.lock）——sync/async API 在磁盘上
- * 是同一协议，互斥不依赖调用形态。适用场景：调用链必须保持 sync 签名
- * （如 llm-shared saveConfig，permission/rename-session 的命令回调零波及）。
+ * 与 runtime 侧 sync 实现（packages/runtime/src/utils/file-lock.ts 的
+ * withFileLockSync）同协议——同一把 lockfile（<目标文件>.lock），互斥不依赖
+ * 实现归属。适用场景：调用链必须保持 sync 签名（如 llm-shared saveConfig，
+ * permission/rename-session 的命令回调零波及）。
  * sleep 用 Atomics.wait（真 sleep 不烧 CPU，对齐 runtime 侧实现）。
  */
 export function withFileLockSync<T>(
@@ -185,17 +111,9 @@ function isElocked(err: unknown): boolean {
 	return err instanceof Error && "code" in err && err.code === "ELOCKED";
 }
 
-function stringifyErr(err: unknown): string {
-	return err instanceof Error ? err.message : String(err);
-}
-
 /** Atomics.wait 需要一个共享内存对象作等待目标；4 字节 = 一个 Int32 元素，仅占位不被写入。 */
 const SLEEP_WAIT_BUFFER = new Int32Array(new SharedArrayBuffer(Int32Array.BYTES_PER_ELEMENT));
 
 function sleepSync(ms: number): void {
 	Atomics.wait(SLEEP_WAIT_BUFFER, 0, 0, ms);
-}
-
-function sleep(ms: number): Promise<void> {
-	return new Promise((resolve) => setTimeout(resolve, ms));
 }

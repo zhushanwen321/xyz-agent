@@ -56,7 +56,8 @@ export interface SyncFileLockOptions {
 
 /**
  * 默认锁参数（导出供对照测试断言与 extension 侧 @zhushanwen/pi-file-lock
- * 的 sync 版默认值相等——两侧参数漂移会破坏「同一把锁」的互斥语义；
+ * 的 sync 版默认值相等——互斥由 lockfile 路径 + mkdir 原子协议保证，默认值
+ * 对齐锚定的是两侧夺取时机（stale）与失败速度（重试参数）行为一致；
  * test/file-lock-parity.test.ts）。
  */
 export const DEFAULT_STALE_MS = 30_000

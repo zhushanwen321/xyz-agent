@@ -1,7 +1,7 @@
 // src/__tests__/file-lock.test.ts
 //
 // 跨进程文件锁单测（真实文件系统，不 mock fs）：
-//   - async/sync 版临界区互斥（并发不交错）
+//   - sync 版临界区互斥（并发不交错）
 //   - unlock 后可再锁（finally 释放语义）
 //   - sync 版 fail-fast（ELOCKED 预算耗尽抛错，不用默认 1s——测试覆盖盖短预算）
 //   - 真实跨进程互斥：两个 node 子进程并发 RMW 同一 JSON 文件，计数零丢失
@@ -15,80 +15,13 @@ import { fileURLToPath } from "node:url";
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { withFileLock, withFileLockSync } from "../file-lock.ts";
+import { withFileLockSync } from "../file-lock.ts";
 
 // 本文件全部用例都是真实文件系统 IO（跨进程锁、子进程 RMW），CI 慢盘上单次用例
 // 可达 7s+，统一放宽文件级预算（vitest 默认 5s）——断言强度不受影响
 vi.setConfig({ testTimeout: 20000 });
 
 const PKG_DIR = path.dirname(path.dirname(path.dirname(fileURLToPath(import.meta.url))));
-
-describe("withFileLock (async)", () => {
-	let tmpDir: string;
-	let target: string;
-
-	beforeEach(() => {
-		tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "file-lock-test-"));
-		target = path.join(tmpDir, "target.json");
-	});
-	afterEach(() => fs.rmSync(tmpDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 }));
-
-	it("并发临界区互斥：计数无交错丢失", async () => {
-		let counter = 0;
-		const inside: number[] = [];
-		const tasks = Array.from({ length: 20 }, () =>
-			withFileLock(target, async () => {
-				counter += 1;
-				inside.push(counter);
-				// 让出 event loop 制造无锁时必交错的窗口
-				await new Promise((r) => setTimeout(r, 1));
-			}),
-		);
-		await Promise.all(tasks);
-		expect(counter).toBe(20);
-		// 每个临界区进入时的 counter 单调 +1（无两个临界区读到同值）
-		expect(new Set(inside).size).toBe(20);
-	});
-
-	it("fn 抛错也释放锁（finally 语义：后续可再锁）", async () => {
-		await expect(
-			withFileLock(target, async () => {
-				throw new Error("boom");
-			}),
-		).rejects.toThrow("boom");
-		// 同一 target 立即可再锁 = 前次已释放
-		await expect(withFileLock(target, async () => "ok")).resolves.toBe("ok");
-	});
-
-	it("嵌套取锁 → ELOCKED（retries:0 首试失败即抛，带 code；外层 finally 释放后可再锁）", async () => {
-		await expect(
-			withFileLock(
-				target,
-				() =>
-					withFileLock(target, async () => "never", {
-						retries: 0,
-						staleMs: 60_000, // stale 远大于临界区，锁不会被夺取
-					}),
-			),
-		).rejects.toMatchObject({ code: "ELOCKED" });
-		// 外层 finally 已释放 → 同一 target 立即可再锁
-		await expect(withFileLock(target, async () => "ok", { retries: 0 })).resolves.toBe("ok");
-	});
-
-	it("锁内 RMW：并发各 +1 一百次，文件终值 100（丢更新=锁失效）", async () => {
-		fs.writeFileSync(target, JSON.stringify({ n: 0 }), "utf-8");
-		const bump = (): Promise<void> =>
-			withFileLock(target, async () => {
-				const cur = JSON.parse(fs.readFileSync(target, "utf-8")) as { n: number };
-				cur.n += 1;
-				fs.writeFileSync(target, JSON.stringify(cur), "utf-8");
-			});
-		await Promise.all(Array.from({ length: 100 }, bump));
-		expect((JSON.parse(fs.readFileSync(target, "utf-8")) as { n: number }).n).toBe(100);
-		// 100 次并发锁 RMW 是真实文件系统 IO 密集测试，CI 慢盘上逼近 vitest 默认 5s，
-		// 放宽时间预算不改变断言强度（终值必须精确 100）
-	}, 20000);
-});
 
 describe("withFileLockSync", () => {
 	let tmpDir: string;
@@ -139,24 +72,24 @@ describe("真实跨进程互斥（D5a/D1e 验收形态）", () => {
 	try {
 		// 子进程脚本：--experimental-strip-types 直接跑 TS 源码（Node >= 22.6），
 		// 循环 50 次锁内读-改-写。exitCode 非 0 = 子进程自身失败（锁/IO 异常）。
-		// 锁获取形态：withFileLock 传 retries:0（单次 fail-fast）+ 外层 ELOCKED 固定
-		// 20ms 间隔重试自旋、30s 预算（对齐 runtime 侧 pi-settings-store.test.ts 的
-		// acquireLikePi 修复形态）——满载下临界区持有窗口可能被 OS 抢占拉长，默认
-		// fail-fast 预算会被偶发耗尽致子进程非零退出；重试预算保证合理时间内必能
-		// 拿到锁，互斥语义（lock-core 层）不受等待形态影响。
+		// 锁获取形态：withFileLockSync 传 retryBudgetMs:0（单次 fail-fast）+ 外层
+		// ELOCKED 固定 20ms 间隔重试自旋、30s 预算（对齐 runtime 侧
+		// pi-settings-store.test.ts 的 acquireLikePi 修复形态）——满载下临界区持有
+		// 窗口可能被 OS 抢占拉长，默认 fail-fast 预算会被偶发耗尽致子进程非零退出；
+		// 重试预算保证合理时间内必能拿到锁，互斥语义（lock-core 层）不受等待形态影响。
 		const worker = `
 import * as fs from "node:fs";
-import { withFileLock } from "${PKG_DIR}/src/file-lock.ts";
+import { withFileLockSync } from "${PKG_DIR}/src/file-lock.ts";
 const target = process.argv[2];
 async function lockedRmw() {
 	const deadline = Date.now() + 30_000;
 	for (;;) {
 		try {
-			return await withFileLock(target, async () => {
+			return withFileLockSync(target, () => {
 				const cur = JSON.parse(fs.readFileSync(target, "utf-8"));
 				cur.n += 1;
 				fs.writeFileSync(target, JSON.stringify(cur), "utf-8");
-			}, { retries: 0 });
+			}, { retryBudgetMs: 0 });
 		} catch (err) {
 			if (!err || err.code !== "ELOCKED" || Date.now() >= deadline) throw err;
 			await new Promise((r) => setTimeout(r, 20));

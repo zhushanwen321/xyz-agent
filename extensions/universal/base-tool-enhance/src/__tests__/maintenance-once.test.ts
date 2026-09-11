@@ -5,7 +5,7 @@
 //  - reconcilePendingEntries 是 session 级豁免类，每 session_start 派发都执行
 //    （startup/resume/new 多派发 ×N——含 factory 二调 handler 累积的真实形态）
 //  - 触发面消失：reaper.ts 模块文件已删除（文件级断言，见首条用例）+ 维护链不再触发
-//    全局文件锁（withFileLock——原 reapOrphanedTasks 的 reaper.lock 路径）
+//    全局文件锁（原 reapOrphanedTasks 的 reaper.lock 路径随模块删除一并消失）
 //  - 入口无条件 debug 日志按派发次数出现，detail 仅含 reason（reapSkipped 字段
 //    随 reap 调用移除，S6 观测通道语义更新）
 // 断言方式：reconcile / logger / file-lock 全部间谍注入，观察调用次数与参数。
@@ -15,13 +15,12 @@ import { fileURLToPath } from "node:url";
 
 import { describe, expect, it, vi, beforeEach } from "vitest";
 
-const { reconcileMock, loggerMock, officialBashFactoryMock, dataDirRef, withFileLockMock } =
+const { reconcileMock, loggerMock, officialBashFactoryMock, dataDirRef } =
 	vi.hoisted(() => ({
 		reconcileMock: vi.fn(),
 		loggerMock: { debug: vi.fn(), warn: vi.fn(), error: vi.fn() },
 		officialBashFactoryMock: vi.fn(),
 		dataDirRef: { dir: "/tmp/bte-fake-agent-dir" },
-		withFileLockMock: vi.fn(),
 	}));
 
 vi.mock("@earendil-works/pi-coding-agent", () => ({
@@ -31,10 +30,10 @@ vi.mock("@earendil-works/pi-coding-agent", () => ({
 vi.mock("@zhushanwen/pi-extension-logger", () => ({
 	getLogger: () => loggerMock,
 }));
-// 全局扫描探针：withFileLock 是原 reapOrphanedTasks 持 reaper.lock 的唯一锁路径
-// （registry 写走的是 withFileLockSync）——维护链触发它 = 全局扫描回流
+// 守卫形态 = mock 工厂缺键：包入口已删除的 async 锁导出不在工厂注册——维护链若
+// 误回流，对已删导出的任何访问（调用与 typeof 均计）即抛错（vitest mock 缺键语义；
+// 模块导入本身不抛）。withFileLockSync 哨兵保留：registry 写路径误入维护链即抛
 vi.mock("@zhushanwen/pi-file-lock", () => ({
-	withFileLock: withFileLockMock,
 	withFileLockSync: vi.fn(() => {
 		throw new Error("unexpected registry write in maintenance chain");
 	}),
@@ -86,7 +85,6 @@ beforeEach(() => {
 		parameters: {},
 		execute: vi.fn(),
 	});
-	withFileLockMock.mockReset();
 	loggerMock.debug.mockClear();
 	loggerMock.warn.mockClear();
 	loggerMock.error.mockClear();
@@ -118,8 +116,7 @@ describe("session_start maintenance chain after reap sink (u-bte-remove)", () =>
 		expect(reconcileMock).toHaveBeenCalledTimes(3);
 		expect(reconcileMock).toHaveBeenNthCalledWith(1, expect.anything(), dataDirRef.dir, "sid-once", []);
 		expect(reconcileMock).toHaveBeenLastCalledWith(expect.anything(), dataDirRef.dir, "sid-once", []);
-		// 无全局扫描：维护链不触发原 reaper 的跨进程锁路径，也无告警
-		expect(withFileLockMock).not.toHaveBeenCalled();
+		// 无全局扫描回流：误触发已删锁导出的任何访问会被 mock 缺键直接抛错（守卫见工厂注释），无告警
 		expect(loggerMock.warn).not.toHaveBeenCalled();
 	});
 
