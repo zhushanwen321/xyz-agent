@@ -306,7 +306,6 @@ export default {
   },
   // ── Accordion inline edit (R4 · replaces ProviderEditModal) ──
   providerEdit: {
-    addTitle: 'Add Provider',
     fieldName: 'Name',
     fieldNamePlaceholder: 'My Provider',
     fieldType: 'Type',

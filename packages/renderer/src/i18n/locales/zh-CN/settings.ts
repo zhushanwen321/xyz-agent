@@ -306,7 +306,6 @@ export default {
   },
   // ── 手风琴就地编辑（R4 · 取代 ProviderEditModal）──
   providerEdit: {
-    addTitle: '添加供应商',
     fieldName: '名称',
     fieldNamePlaceholder: 'My Provider',
     fieldType: '类型',

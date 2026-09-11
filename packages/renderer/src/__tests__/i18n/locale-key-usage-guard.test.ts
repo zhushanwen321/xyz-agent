@@ -61,15 +61,7 @@ const TEST_PATH = new RegExp(`${sep}__tests__${sep}|${sep}e2e${sep}|\\.test\\.|\
  * 仅测试文件存在 `panel.sideDrawer.${k}` / `panel.trace.${k}` / `panel.context.${key}` 形式的
  * 模板拼接，而测试不是消费者，故不为它们开豁免）。
  */
-const ALLOWLIST: readonly { key: string; reason: string }[] = [
-  {
-    key: 'settings.providerEdit.addTitle',
-    reason:
-      '被遗留测试断言引用（packages/renderer/src/__tests__/settings/settings-i18n.test.ts:33,63），' +
-      '无 UI 消费方——ProviderEditModal 已被手风琴就地编辑取代。保留是保守选择：删除需同步改该' +
-      '测试断言（超出本轮「locale + i18n 测试」范围），故登记为已知残留，待清理该断言时一并删除。',
-  },
-]
+const ALLOWLIST: readonly { key: string; reason: string }[] = []
 
 /** 拍平嵌套 locale 对象为叶子 key 全路径 */
 function flattenLeaves(node: LocaleNode, prefix: string): string[] {

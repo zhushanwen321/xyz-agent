@@ -57,8 +57,8 @@ afterEach(() => {
 /**
  * 最小 props（纯展示组件，状态全由父注入）。
  * 默认 = 「已选 api-key 类类型且齐备」的常规态；各用例按需覆盖单项。
- * authKinds 默认 ['api-key']：凭证来源分段控件由 supportsExclusiveCredential(authKinds) 门控
- * （§7 残留 11），不传时默认 [] 会让 D3 用例整体失去控件。
+ * authKinds 必传（prop 无默认值）：凭证来源分段控件由 supportsExclusiveCredential(authKinds)
+ * 门控（§7 残留 11），这里给 ['api-key'] 才能让 D3 用例拥有控件。
  */
 function mountSection(props: Record<string, unknown>): ReturnType<typeof mount> {
   return mount(CodingPlanSection, {

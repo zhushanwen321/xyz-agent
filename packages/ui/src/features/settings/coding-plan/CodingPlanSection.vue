@@ -301,8 +301,10 @@ const props = withDefaults(defineProps<{
   quotaRow: NormalizedQuotaRow | null
   lastFetchAt: number | null
   isCookieAuth: boolean
-  /** 当前选中 fetcher 的凭证能力声明（B-3：含 'oauth' → Provider 来源提示区分 OAuth / API Key） */
-  authKinds?: readonly QuotaAuthKind[]
+  /** 当前选中 fetcher 的凭证能力声明（B-3：含 'oauth' → Provider 来源提示区分 OAuth / API Key）。
+   *  必传无默认：漏传 = 凭证来源分段控件 / 专属 Key 块 / oauth·cookie 分支全部静默塌缩，
+   *  必须由编译期拦截而非 [] 默认值吞掉（与 D8「未判定不可读成已配置」同一哲学）。 */
+  authKinds: readonly QuotaAuthKind[]
   /** provider 已完成 OAuth 登录（父组件 useProviderOAuth.oauthPresent） */
   oauthReady?: boolean
   configuring: boolean
@@ -316,7 +318,6 @@ const props = withDefaults(defineProps<{
   workspaceInput: '',
   needsWorkspace: false,
   testFailReason: null,
-  authKinds: () => [],
   oauthReady: false,
   // 默认选项 = QUOTA_PRESETS（内置类型），调用方一般无需传
   fetcherOptions: () => QUOTA_PRESETS.map((p) => ({ value: p.fetcher, label: p.label })),
