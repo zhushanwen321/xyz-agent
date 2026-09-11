@@ -145,6 +145,8 @@ export interface EngineHandleData {
  *     sessionRef.sessionFile —— 对照 core SpawnResumeOpts.sessionFile 的锚点面）；
  *   - host/roundLifecycle 载荷 anchor（引擎 → 宿主：轮次终态时回填当前锚点，
  *     宿主据此刷新冷续依据——pi 定位键形态同 EngineHandleData.sessionRef 注释）。
+ * [H1] 双键过渡（U1）：新增 run.params.resume 与 chat.resume 同载荷并存（载荷
+ * 不变，仅键名泛化），U6 单批切换读写端后 `chat` 键退役、本锚点仅经 resume 键携带。
  * 类型层与 EngineHandleData 定位形态的对照由测试断言（Pick 可赋值闭包）锁定。
  */
 export interface ResumeAnchor {
@@ -232,7 +234,11 @@ export type InteractAction =
   | { kind: "close"; payload?: { force: boolean } }
   | { kind: "cancel" };
 
-/** interact 的结果（失败码 = engine_session_not_resumable / engine_capability_unsupported 等）。 */
+/**
+ * @deprecated [H1] chat-run 统一退役对象（设计 docs/design/subagent-chat-run-unification.md
+ * §3.3 D5）：续聊轮统一为「新 run + resume 锚点」后 interact 方法整体退役，本应答
+ * 载荷随之 U5 删除。本单元（U1）只标注不删除——现行 chat 链路仍在消费。
+ */
 export type InteractResult =
   | { ok: true; delivered: true }
   | { ok: false; code: string; message: string };

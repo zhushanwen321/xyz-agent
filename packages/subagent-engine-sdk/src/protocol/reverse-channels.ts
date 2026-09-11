@@ -15,7 +15,11 @@ import type { UiRequest, UiResponse } from "../ui-types.ts";
 import type { AgentUsage, ResumeAnchor } from "./contract-types.ts";
 import type { ProtocolError } from "./frames.ts";
 
-/** 反向通道名联合（恰好 9 个；REVERSE_CHANNELS 常量数组与之同源互证）。 */
+/**
+ * 反向通道名联合（恰好 9 个；REVERSE_CHANNELS 常量数组与之同源互证）。
+ * [H1] `host/roundLifecycle` 成员已判退役（U5 删除；联合成员无法单独标
+ * @deprecated，载荷/判别/映射面的具名标注见下方各声明处）。
+ */
 export type ReverseChannel =
   | "host/log"
   | "host/askUser"
@@ -27,6 +31,10 @@ export type ReverseChannel =
   | "host/childStateChanged"
   | "host/roundLifecycle";
 
+/**
+ * 通道名全集（运行时顺序化枚举；与 ReverseChannel 的同源关系由测试断言）。
+ * [H1] `host/roundLifecycle` 元素已判退役（U5 删除；数组元素无法单独标 @deprecated）。
+ */
 export const REVERSE_CHANNELS = [
   "host/log",
   "host/askUser",
@@ -51,6 +59,8 @@ export const REVERSE_CHANNEL_TIMEOUT_CLASS: Record<ReverseChannel, ReverseReques
   "host/handleReady": "data-plane",
   "host/childSpawned": "data-plane",
   "host/childStateChanged": "data-plane",
+  // @deprecated [H1] chat-run 统一退役对象，U5 随通道删除（Record 字面量属性无法
+  // 单独标 JSDoc tag，登记于此）。
   "host/roundLifecycle": "data-plane",
   "host/askUser": "interaction",
   "host/permission": "interaction",
@@ -163,9 +173,16 @@ export interface HostChildStateChangedParams {
   signal?: string;
 }
 
-// ============================================================
-// [v1.x] host/roundLifecycle：轮次生命周期载荷（chat 域 v1.x 唯一新通道）
-// ============================================================
+/**
+ * [v1.x] host/roundLifecycle：轮次生命周期载荷（chat 域 v1.x 唯一新通道）。
+ * @deprecated [H1] chat-run 统一退役对象（设计 docs/design/subagent-chat-run-unification.md
+ * §3.3 D5）：续聊轮统一为「新 run + resume 锚点」后，「引擎进程跨轮长驻」赖以存在的
+ * 轮次相位机（settled/idle/failed/active × run|record 双键）整族退役，U5 删除。
+ * 本单元（U1）只标注不删除——现行 chat 链路（pi chat-session emitPhase / core
+ * handleChatRoundPhase、settled-watchdog 交棒）仍在消费。活性与 settle 交棒的替代
+ * 承载 = PR1 activity 事件（run 事件通道既有 9 变体）+ run 应答回调（D7 v5 轻形态）。
+ * ============================================================
+ */
 
 /**
  * 轮次关联键（D1-A 裁定的类型面）：run 域轮 = runId（v1 现状）；interact 续聊轮 =
@@ -228,10 +245,16 @@ export interface RoundActivePhase {
   phase: "active";
 }
 
-/** 相位联合（消费侧 switch(phase) 判别用；active = 轮内心跳，非终态）。 */
+/**
+ * 相位联合（消费侧 switch(phase) 判别用；active = 轮内心跳，非终态）。
+ * @deprecated [H1] chat-run 统一退役对象，U5 删除（见 host/roundLifecycle 通道段注释）。
+ */
 export type RoundLifecyclePhase = RoundSettledPhase | RoundIdlePhase | RoundFailedPhase | RoundActivePhase;
 
-/** host/roundLifecycle 载荷：关联键（run|record）× 相位（settled|idle|failed|active）。 */
+/**
+ * host/roundLifecycle 载荷：关联键（run|record）× 相位（settled|idle|failed|active）。
+ * @deprecated [H1] chat-run 统一退役对象，U5 删除（见 host/roundLifecycle 通道段注释）。
+ */
 export type HostRoundLifecycleParams =
   | (RoundKeyedByRun & RoundSettledPhase)
   | (RoundKeyedByRun & RoundIdlePhase)
@@ -246,6 +269,9 @@ export type HostRoundLifecycleParams =
  * roundLifecycle 载荷结构判定：关联键互斥 + phase 词表 + 各相位专属形状
  * （failed 必含 error.code/message）。引擎侧发帧前自检与 core 侧消费共用，
  * 防两侧各写一份判别（与 isHostStreamDeltaParams 同理）。
+ *
+ * @deprecated [H1] chat-run 统一退役对象，随 host/roundLifecycle 通道 U5 删除
+ * （退役依据见上方通道段注释；本单元 U1 只标注不删除）。
  */
 export function isHostRoundLifecycleParams(value: unknown): value is HostRoundLifecycleParams {
   if (typeof value !== "object" || value === null) return false;
@@ -275,6 +301,7 @@ export interface ReverseChannelParamsMap {
   "host/handleReady": HostHandleReadyParams;
   "host/childSpawned": HostChildSpawnedParams;
   "host/childStateChanged": HostChildStateChangedParams;
+  /** @deprecated [H1] chat-run 统一退役对象，U5 删除（通道段注释）。 */
   "host/roundLifecycle": HostRoundLifecycleParams;
 }
 
@@ -288,5 +315,6 @@ export interface ReverseChannelResultMap {
   "host/handleReady": { ok: true };
   "host/childSpawned": { ok: true };
   "host/childStateChanged": { ok: true };
+  /** @deprecated [H1] chat-run 统一退役对象，U5 删除（通道段注释）。 */
   "host/roundLifecycle": { ok: true };
 }

@@ -25,7 +25,10 @@ import type {
   SessionView,
 } from "./contract-types.ts";
 
-/** 正向方法名联合（恰好 10 个；PROTOCOL_METHODS 常量数组与之同源互证）。 */
+/**
+ * 正向方法名联合（恰好 10 个；PROTOCOL_METHODS 常量数组与之同源互证）。
+ * [H1] `interact` 成员已判退役（U5 删除；联合成员无法单独标 @deprecated，登记于此）。
+ */
 export type ProtocolMethod =
   | "initialize"
   | "probe"
@@ -102,6 +105,22 @@ export interface RunChatParams {
   resume?: ResumeAnchor;
 }
 
+/**
+ * [H1] run 的 resume 会话形态参数——RunChatParams 的泛化改名双键（设计
+ * docs/design/subagent-chat-run-unification.md §3.3 D3 + §5 U1 行）：载荷同形
+ * （recordId + resume 锚点，ResumeAnchor 不变），仅键名从「chat 会话形态」泛化为
+ * 「resume 续聊」。与 `chat` 键并存（U1 只加键不改读端）：
+ *   - U2-U5 过渡期：core 恒构造旧 `chat` 键，pi 引擎恒读 `ctx.chat`（现状不变）；
+ *   - U6 单批切换：core 写端与 pi 读端同批改 `resume` 键并删除 `chat` 键——
+ *     不存在「写新读旧」窗口（错配 = resume 静默失效、每轮新文件、sessionFile 被覆盖）。
+ * 同形关系由类型层 AssertMutuallyAssignable + 载荷级 runSessionParamsSchema
+ * （schema.ts，两键共用同一 schema）双重锁定。
+ */
+export interface RunResumeParams {
+  recordId: string;
+  resume?: ResumeAnchor;
+}
+
 // ============================================================
 // params / result 逐方法映射（方法名 → 载荷）
 // ============================================================
@@ -136,8 +155,16 @@ export interface RunParams {
    * [v1.x 可选增量] chat 会话形态参数（task.conversation=true 的 chat 路由承载）。
    * 缺省 = 一次性任务形态，v1 引擎/宿主语义不变（向后兼容：旧引擎忽略未知字段，
    * 帧级 schema params 不做深校验）。续聊/关断不经此参数——走既有 interact。
+   * [H1] 退役倒计时：chat-run 统一后本键整体退役（U6 删除，读/写端同批切 `resume`）。
    */
   chat?: RunChatParams;
+  /**
+   * [H1 可选增量] resume 续聊参数——`chat` 键的泛化改名双键（载荷同形，见
+   * RunResumeParams）。本单元（U1）只加键不改读端：pi 引擎继续消费 `ctx.chat`，
+   * 本键在 U6 前 core 侧恒不构造；U6 单批切换后成为唯一键。additive 可选：旧引擎
+   * 忽略未知字段，undefined 不上 wire。
+   */
+  resume?: RunResumeParams;
 }
 
 /** run 终态应答（期间事件经 event 通知；长运行方法，应答到达即终态）。 */
@@ -159,6 +186,12 @@ export interface CancelResult {
   ok: true;
 }
 
+/**
+ * @deprecated [H1] chat-run 统一退役对象（设计 docs/design/subagent-chat-run-unification.md
+ * §3.3 D5）：续聊轮统一为「新 run + resume 锚点」后，interact 控制面（message/close/cancel）
+ * 整方法退役，U5 删除。本单元（U1）只标注不删除——现行 chat 链路（core deliverChatMessage /
+ * pi ChatSessionRegistry）仍在消费，删除前置 = U2/U3 建路完成。
+ */
 export interface InteractParams {
   handle: EngineHandleData;
   action: InteractAction;
@@ -212,6 +245,7 @@ export interface ProtocolParamsMap {
   probe: ProbeParams;
   run: RunParams;
   cancel: CancelParams;
+  /** @deprecated [H1] chat-run 统一退役对象，U5 删除（见 InteractParams 注释）。 */
   interact: InteractParams;
   read: ReadParams;
   listModels: ListModelsParams;
@@ -226,6 +260,7 @@ export interface ProtocolResultMap {
   probe: ProbeReport;
   run: RunResult;
   cancel: CancelResult;
+  /** @deprecated [H1] chat-run 统一退役对象，U5 删除（载荷声明在 contract-types.ts）。 */
   interact: InteractResult;
   read: SessionView;
   listModels: ListModelsResult;

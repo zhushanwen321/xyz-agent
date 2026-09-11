@@ -21,6 +21,14 @@
 //   事件变体增量同政策（例：activity 活性信号变体）：新变体以可选载荷形态进
 //   union，旧宿主 runtime 对其 no-op（reducer default 分支安全落空 / journal
 //   豁免面不感知），协议版本维持 1、不 bump。
+//
+// [H1 双键过渡（chat-run 统一，docs/design/subagent-chat-run-unification.md §3.3
+// D3 + §5 U1 行）]：新增 run.params.resume 与既有 run.params.chat 载荷同形并存
+// （additive 可选，协议版本维持 1）。配对策略：U1 只加键——U2-U5 过渡期 core 恒
+// 构造旧 `chat` 键、pi 引擎恒读 `ctx.chat`（读端现状不变）；U6 单批同时切换写端
+// （core 构造 resume）与读端（pi 改读）并删 `chat` 键——全程不存在「写新读旧」
+// 窗口（错配 = resume 静默失效、每轮新文件、sessionFile 被覆盖）。同批退役预告：
+// host/roundLifecycle 通道与 interact 方法已标 @deprecated（U5 删除，U1 只标注）。
 
 /** 协议版本（引擎包 manifest `xyz-agent.subagentEngine.protocol` 与 initialize 应答同值）。 */
 export const ENGINE_PROTOCOL_VERSION = 1;
