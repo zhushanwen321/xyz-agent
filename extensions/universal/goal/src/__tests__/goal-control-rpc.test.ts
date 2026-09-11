@@ -47,7 +47,7 @@ interface FakeFixture {
  * 构造最小 fake pi / ctx。ctx.mode 由调用方覆盖（默认 "rpc"）。
  *
  * ports.ts 的 buildPorts 读 ctx.ui.theme.fg/bold、ctx.ui.setWidget/setStatus/notify、
- * ctx.sessionManager.getEntries、ctx.getContextUsage、ctx.signal、ctx.hasUI——全部 mock。
+ * ctx.sessionManager.getEntries、ctx.hasUI——全部 mock。
  */
 function makeFixture(mode: "rpc" | "tui" | "json" | "print" = "rpc"): FakeFixture {
 	const notifications: Array<{ text: string; level: string }> = [];

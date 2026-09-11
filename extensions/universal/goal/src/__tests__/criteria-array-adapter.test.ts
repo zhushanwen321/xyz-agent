@@ -38,8 +38,10 @@ function makeFakePorts(): ServicePorts & {
 			hasUI: true,
 			isGui: false,
 			setGuiWidget: () => {},
-			fg: (_color: string, text: string) => text,
-			bold: (text: string) => text,
+			theme: {
+				fg: (_color: string, text: string) => text,
+				bold: (text: string) => text,
+			},
 		} as UiPort,
 		messaging: {
 			sendContextMessage: () => {},
@@ -47,8 +49,6 @@ function makeFakePorts(): ServicePorts & {
 		},
 		session: {
 			getEntries: () => [],
-			getContextUsage: () => null,
-			signal: undefined,
 		},
 	};
 }

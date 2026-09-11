@@ -6,16 +6,23 @@
  *   首个 turn_start 写 initial/resume
  * - hash 去重：相同不重写；变化写 change 且 parentVersionDiffSummary 生成
  * - SessionStartEvent.reason 原生 5 值（startup/reload/new/resume/fork）的落盘映射：
- *   initial←startup/new、resume←resume 定案；fork/reload 暂按 resume（待 P2 实测定，A13 探针固化后更新）
+ *   initial←startup/new、resume←resume/fork/reload（设计 D2 v5 定案：fork 基线取源文件
+ *   最后留痕、reload 为同 session 运行时重建，均属重开语义）
  *
  * 本文件用内存 fake env（文件系统路径的跨重启恢复归 A12）。
  */
+import { createHash } from "node:crypto";
+
 import { describe, expect, it } from "vitest";
 
-import { computePromptHash, createSystemPromptTrace } from "../trace.js";
+import { createSystemPromptTrace } from "../trace.js";
 import type { SystemPromptTrace, TraceContext, TraceEnv } from "../trace.js";
 import { isSystemPromptTraceEntryData, SYSTEM_PROMPT_CUSTOM_TYPE } from "../types.js";
 import type { SystemPromptTraceEntryData, SwitchStash } from "../types.js";
+
+// trace.ts 的 computePromptHash 已收敛为包内私有（无外部消费方）；测试本地同款实现计算期望值。
+const computePromptHash = (text: string): string =>
+	createHash("sha256").update(text, "utf-8").digest("hex");
 
 const P1 = "You are a coding agent.\nFollow AGENTS.md.";
 const P2 = "You are a coding agent.\nFollow AGENTS.md.\n[Available Models] glm-5.1 / ds-flash";
@@ -34,15 +41,14 @@ function makeHarness(initialPrompt: string): Harness {
 	const entries: SystemPromptTraceEntryData[] = [];
 	let prompt = initialPrompt;
 	const stash: SwitchStash = { pending: null };
-	// A11 不涉文件路径：三路基线全部 miss，隔离验证时机/去重/映射逻辑
+	// A11 不涉文件路径：三档基线全部 miss（直读 / fork prev 文件路径均不可读），隔离验证时机/去重/映射逻辑
 	const env: TraceEnv = {
 		readLastPromptFromFile: () => null,
-		readPersistedBaseline: () => null,
-		writePersistedBaseline: () => {},
 	};
 	const ctx: TraceContext = {
 		getSystemPrompt: () => prompt,
 		getSessionId: () => "sess-a11",
+		getSessionFile: () => undefined,
 		appendEntry: (customType, data) => {
 			expect(customType).toBe(SYSTEM_PROMPT_CUSTOM_TYPE);
 			if (!isSystemPromptTraceEntryData(data)) {
@@ -140,7 +146,7 @@ describe("A11 留痕时机与去重", () => {
 		expect(h.entries[2]).toMatchObject({ version: 3, reason: "change", hash: computePromptHash(P1) });
 	});
 
-	describe("reason 5 值映射（fork/reload 待 P2 实测定）", () => {
+	describe("reason 5 值映射（设计 D2 v5 定案）", () => {
 		it("定案映射：startup/new → initial；resume → resume", () => {
 			const hStartup = makeHarness(P1);
 			hStartup.logic.onSessionStart("startup", undefined, hStartup.ctx);
@@ -156,10 +162,10 @@ describe("A11 留痕时机与去重", () => {
 			expect(hResume.entries[0]?.reason).toBe("resume");
 		});
 
-		// 【待 P2 实测定】fork/reload 的落盘 reason 暂按 resume（fork 新文件携带源 session 历史
-		// entry、版本链延续；reload 是同 session 的 extension 运行时重建——语义上都更接近「重开」）。
-		// A13 探针（pi CLI 实测 resume 链路 reason 值）固化后更新本断言与 mapReasonForFirstWrite。
-		it("暂定映射：fork/reload → resume（P2 实测后固化，届时同步更新此断言）", () => {
+		// 定案（设计 D2 v5，M0 探针回炉后）：fork/reload → resume。fork 基线取源文件最后留痕
+		// （previousSessionFile 缺失/不可读 → null 走本映射兜底）；reload 是同 session 的
+		// extension 运行时重建——两者语义上都是「重开」而非「首建」。
+		it("定案映射：fork/reload → resume（previousSessionFile 存在但 env 全 miss 时同样兜底）", () => {
 			const hFork = makeHarness(P1);
 			hFork.logic.onSessionStart("fork", "/prev/session.jsonl", hFork.ctx);
 			hFork.logic.onTurnStart(hFork.ctx);
@@ -168,14 +174,6 @@ describe("A11 留痕时机与去重", () => {
 			hReload.logic.onTurnStart(hReload.ctx);
 			expect(hFork.entries[0]?.reason).toBe("resume");
 			expect(hReload.entries[0]?.reason).toBe("resume");
-		});
-
-		it("未知 reason（untyped extension 场景）按 startup → initial", () => {
-			const h = makeHarness(P1);
-			h.logic.onSessionStart("garbage-value", undefined, h.ctx);
-			h.logic.onTurnStart(h.ctx);
-			expect(h.entries).toHaveLength(1);
-			expect(h.entries[0]?.reason).toBe("initial");
 		});
 	});
 });

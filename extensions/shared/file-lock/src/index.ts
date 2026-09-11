@@ -7,20 +7,9 @@
 
 import { getLogger } from "@zhushanwen/pi-extension-logger";
 
-import {
-	setFileLockLogger,
-	withFileLock,
-	withFileLockSync,
-	type FileLockOptions,
-	type SyncFileLockOptions,
-} from "./file-lock";
+import { setFileLockLogger, withFileLockSync } from "./file-lock";
 
 const logger = getLogger("file-lock");
 setFileLockLogger((msg) => logger.debug(msg));
 
-export {
-	withFileLock,
-	withFileLockSync,
-	type FileLockOptions,
-	type SyncFileLockOptions,
-};
+export { withFileLockSync };

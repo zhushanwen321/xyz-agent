@@ -12,7 +12,7 @@
  */
 
 import { buildSessionContext, compact as nativeCompact, convertToLlm } from "@earendil-works/pi-coding-agent";
-import type { CompactionResult, SessionEntry } from "@earendil-works/pi-coding-agent";
+import type { CompactionResult, SessionBeforeCompactEvent } from "@earendil-works/pi-coding-agent";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { createLogger } from "@zhushanwen/pi-extension-logger";
 import { resolveModel } from "@zhushanwen/pi-llm-shared";
@@ -32,37 +32,13 @@ import {
 	estimateTextTokens,
 	formatFileOperationsLike,
 	getCurrentModelId,
+	isGatingActive,
 	isSummaryInflated,
 	pickMode,
 	pickReinjectFiles,
 	type FileOpsLike,
 	type SmartContextConfig,
 } from "./pure.js";
-
-/** session_before_compact 事件的宽松形状（消费字段收窄，不依赖 pi 事件类型导出）。 */
-export interface BeforeCompactLikeEvent {
-	type: "session_before_compact";
-	preparation: {
-		firstKeptEntryId: string;
-		messagesToSummarize: ReadonlyArray<{ role: string; content?: unknown }>;
-		turnPrefixMessages: ReadonlyArray<{ role: string }>;
-		isSplitTurn: boolean;
-		tokensBefore: number;
-		previousSummary?: string;
-		fileOps: FileOpsLike;
-	};
-	branchEntries: ReadonlyArray<unknown>;
-	customInstructions?: string;
-	reason: "manual" | "threshold" | "overflow";
-	willRetry: boolean;
-	signal?: AbortSignal;
-}
-
-/** handler 返回（SessionBeforeCompactResult 子集）。 */
-export interface BeforeCompactDecision {
-	cancel?: boolean;
-	compaction?: CompactionResult;
-}
 
 /** session 级接管状态（session_start 重建闭包，规范 Session 隔离）。 */
 export interface TakeoverState {
@@ -173,7 +149,7 @@ function assembleSummary(
 async function generateSameMode(
 	pi: ExtensionAPI,
 	ctx: ExtensionContext,
-	event: BeforeCompactLikeEvent,
+	event: SessionBeforeCompactEvent,
 ): Promise<CompactionResult | null> {
 	const model = ctx.model;
 	if (!model) {
@@ -182,7 +158,7 @@ async function generateSameMode(
 	}
 	// AgentMessage[]（含 bash/custom 等扩展消息）→ 标准 Message[]（与主会话请求同源转换，
 	// convertToLlm 是 pi host 默认实现——同样的输入产生同样的输出，前缀缓存对齐的前提）
-	const fullMessages = convertToLlm(buildSessionContext(event.branchEntries as SessionEntry[]).messages);
+	const fullMessages = convertToLlm(buildSessionContext(event.branchEntries).messages);
 	const instructionMessage = {
 		role: "user" as const,
 		content: [{ type: "text" as const, text: buildSameModelInstruction(event.customInstructions) }],
@@ -238,7 +214,7 @@ async function generateSameMode(
  */
 async function generateCrossMode(
 	ctx: ExtensionContext,
-	event: BeforeCompactLikeEvent,
+	event: SessionBeforeCompactEvent,
 	config: SmartContextConfig,
 ): Promise<CompactionResult | null> {
 	const model = resolveModel(ctx, config.compactModel);
@@ -258,10 +234,8 @@ async function generateCrossMode(
 			Object.entries(auth.headers).filter((entry): entry is [string, string] => typeof entry[1] === "string"),
 		)
 		: undefined;
-	// preparation：BeforeCompactLikeEvent 的宽松形状是 nativeCompact 入参（CompactionPreparation，
-	// 含 settings 等未消费字段）的结构子集——运行时是 pi 原生事件对象，此处单层收窄断言
 	const result = await nativeCompact(
-		event.preparation as Parameters<typeof nativeCompact>[0],
+		event.preparation,
 		model,
 		auth.apiKey,
 		headers,
@@ -287,20 +261,21 @@ async function generateCrossMode(
  * session_before_compact handler 工厂。
  *
  * state 为 session 级闭包（由 src/index.ts 在 session_start 重建后传入）。
+ * 返回类型省略标注、由函数体对象字面量推断（{} / {compaction}）——SDK SessionBeforeCompactResult
+ * 不在包根导出（仅深层 dist 路径可见），显式标注该名不可 import；推断形状与 SDK 逐字段同形，
+ * 注册点 pi.on() 的 ExtensionHandler 泛型按结构兼容校验。
  */
 export function createBeforeCompactHandler(
 	pi: ExtensionAPI,
 	getState: () => TakeoverState,
 	loadConfigFn: () => SmartContextConfig,
-): (event: BeforeCompactLikeEvent, ctx: ExtensionContext) => Promise<BeforeCompactDecision> {
-	return async (event, ctx) => {
+) {
+	return async (event: SessionBeforeCompactEvent, ctx: ExtensionContext) => {
 		const config = loadConfigFn();
 		const currentModelId = getCurrentModelId(ctx.model);
 
 		// D5 门控：禁用/排除 → 空返回（pi 原生生成）
-		if (config.enabled !== true || currentModelId === "" || config.excludedModels.includes(currentModelId)) {
-			return {};
-		}
+		if (!isGatingActive(config, currentModelId)) return {};
 		const state = getState();
 
 		// D13-3 熔断：连续失败 ≥3 → 本 session 停止接管
@@ -338,7 +313,9 @@ export function createBeforeCompactHandler(
 			}
 
 			state.failStreak = 0;
-			debugLog(`takeover ok: mode=${mode} reason=${event.reason} summaryTokens=${summaryTokens}`);
+			debugLog(
+				`takeover ok: mode=${mode} reason=${event.reason} summaryTokens=${summaryTokens} shadowedTokens=${shadowedTokens}`,
+			);
 			return { compaction: result };
 		} catch (error) {
 			state.failStreak += 1;

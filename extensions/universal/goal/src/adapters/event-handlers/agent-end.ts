@@ -43,7 +43,6 @@ import { serializeState } from "../../persistence";
 import { cancelContinuationTimer, type GoalSession } from "../../session";
 import type { ServicePorts } from "../../service";
 import { buildPorts } from "../ports";
-import { makeStaleChecker } from "./shared";
 
 export async function handleAgentEnd(
 	pi: ExtensionAPI,
@@ -352,4 +351,22 @@ function deliverContinuation(ports: ServicePorts, session: GoalSession): void {
 	state.continuationsSent += 1;
 	ports.messaging.sendContextMessage(continuationPrompt(state), "followUp");
 	ports.persistence.appendState(serializeState(state));
+}
+
+/**
+ * 构造 stale-check 闭包（FR-8.2 G-020）：入口快照 goalId，后续判断是否被新 goal 覆盖。
+ *
+ * 用法（agent_end）：
+ * ```ts
+ * const checkStale = makeStaleChecker(session);
+ * // ... 长流程 ...
+ * if (checkStale()) return; // goal 被覆盖，本次 agent_end 作废
+ * ```
+ *
+ * 语义：snapshot 时 session.state 可能为 null（首次启动），此时 snapshotGoalId
+ * 为 undefined；后续若有新 goal（goalId !== undefined）即视为 stale。
+ */
+export function makeStaleChecker(session: GoalSession): () => boolean {
+	const snapshotGoalId = session.state?.goalId;
+	return () => !session.state || session.state.goalId !== snapshotGoalId;
 }

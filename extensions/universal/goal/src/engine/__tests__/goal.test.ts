@@ -6,6 +6,9 @@
  */
 import { describe, expect } from "vitest";
 import { it, fc } from "@fast-check/vitest";
+import { readdirSync, readFileSync } from "node:fs";
+import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 
 import { createGoalState, isActiveStatus, isTerminalStatus, transitionStatus } from "../goal";
 import { VALID_TRANSITIONS } from "../types";
@@ -53,7 +56,6 @@ describe("createGoalState", () => {
 			tokensUsed: 0,
 			timeUsedSeconds: 0,
 			currentTurnIndex: 0,
-			lastProgressTurn: 0,
 			lastTurnTokensUsed: 0,
 			budgetLimitSteeringSent: false,
 			tokenWarning70Sent: false,
@@ -82,5 +84,42 @@ describe("createGoalState", () => {
 		it("tokenBudget override 生效", () => {
 			expect(createGoalState("obj", { tokenBudget: 10000 }).budget.tokenBudget).toBe(10000);
 		});
+	});
+});
+
+// ── E1 守卫：状态变更唯一执行点（.status 裸赋值扫描）──
+
+describe("E1 守卫：src 内禁止 .status 裸赋值（必须走 transitionStatus 查表）", () => {
+	it("扫描 src/**/*.ts（排除 __tests__）：0 命中", () => {
+		// 正则逐字来自设计 docs/design/ext-simplify-03-goal.md §5.4「E1 守卫设计」，不得自行修改：
+		// (?![=>]) 排除 ==/===/=>（比较与箭头函数形态）；(?!\s*transitionStatus\b) 放行白名单查表赋值。
+		// 扫描粒度 = 整文件内容（非逐行）：\s* 必须能跨行吃换行，才能排除
+		// `state.status =\n transitionStatus(...)` 这类跨行白名单赋值形态，逐行实现会误报。
+		const re = /\.status\s*=(?![=>])(?!\s*transitionStatus\b)/g;
+		const srcDir = fileURLToPath(new URL("../../", import.meta.url));
+		const offenders: string[] = [];
+		const walk = (dir: string): void => {
+			for (const dirent of readdirSync(dir, { withFileTypes: true })) {
+				if (dirent.name === "__tests__") continue;
+				const abs = join(dir, dirent.name);
+				if (dirent.isDirectory()) {
+					walk(abs);
+				} else if (dirent.isFile() && dirent.name.endsWith(".ts")) {
+					const content = readFileSync(abs, "utf8");
+					let match: RegExpExecArray | null;
+					while ((match = re.exec(content)) !== null) {
+						// 行号 = 命中起点之前的换行数 + 1
+						const line = content.slice(0, match.index).split("\n").length;
+						offenders.push(`${abs}:${line}`);
+					}
+				}
+			}
+		};
+		walk(srcDir);
+		expect(
+			offenders,
+			`检测到 ${offenders.length} 处 .status 裸赋值（状态变更必须走 transitionStatus 查表，见设计 §5.4 E1 / VALID_TRANSITIONS engine/types.ts）:\n`
+				+ offenders.join("\n"),
+		).toEqual([]);
 	});
 });

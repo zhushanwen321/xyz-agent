@@ -155,7 +155,7 @@ pi.registerCommand("my-cmd", async (_args, ctx) => {
 
 ### raw stderr 污染 TUI input 区
 
-unified-hooks 在 `index.ts:43-45` 和 `tool-error-handler.ts:81-83` 的注释中明确记录：
+原 unified-hooks 包（2026-09 已删除，`git log --follow` 可查）的调试教训明确记录：
 
 > 禁止用 console.warn（raw stderr 在 TUI alternate screen 下会越过渲染层污染 input 区）
 

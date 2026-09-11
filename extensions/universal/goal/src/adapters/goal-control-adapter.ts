@@ -28,7 +28,7 @@
  *
  * executionMode: "sequential"——状态变更 tool，不可与同批其他 tool 并行执行。
  *
- * 错误处理：用 throw new Error（CLAUDE.md Tool 设计规范），不返回错误成功模式。
+ * 错误处理：用 throw new Error（extension-conventions.md Tool 设计规范），不返回错误成功模式。
  */
 
 import type { ExtensionAPI, ExtensionContext, Theme } from "@earendil-works/pi-coding-agent";

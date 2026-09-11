@@ -12,18 +12,15 @@
 
 import { createHash } from "node:crypto";
 
+import type { SessionStartEvent } from "@earendil-works/pi-coding-agent";
+
 import { getLogger } from "@zhushanwen/pi-extension-logger";
 
 const logger = getLogger("pi-system-prompt-trace");
 import { summarizePromptDiff } from "./diff.js";
-import {
-	mapReasonForFirstWrite,
-	normalizeSessionStartReason,
-	SYSTEM_PROMPT_CUSTOM_TYPE,
-} from "./types.js";
+import { mapReasonForFirstWrite, SYSTEM_PROMPT_CUSTOM_TYPE } from "./types.js";
 import type {
 	PromptBaseline,
-	SessionStartReason,
 	SwitchStash,
 	SystemPromptTraceEntryData,
 	TraceReason,
@@ -34,17 +31,21 @@ export interface TraceContext {
 	getSystemPrompt(): string;
 	appendEntry(customType: string, data: unknown): void;
 	getSessionId(): string;
+	/** 当前 session 文件路径（pi sessionManager.getSessionFile()；首条 assistant 落盘前可能 undefined）。 */
+	getSessionFile(): string | undefined;
 }
 
-/** 文件系统侧依赖（wiring 用真实 fs + agentDir；测试注入临时目录实现）。 */
+/** 文件系统侧依赖（wiring 用真实 fs；测试注入临时目录实现）。 */
 export interface TraceEnv {
 	readLastPromptFromFile(filePath: string): PromptBaseline | null;
-	readPersistedBaseline(sessionId: string): PromptBaseline | null;
-	writePersistedBaseline(sessionId: string, hash: string, version: number): void;
 }
 
 export interface SystemPromptTrace {
-	onSessionStart(reason: string, previousSessionFile: string | undefined, ctx: TraceContext): void;
+	onSessionStart(
+		reason: SessionStartEvent["reason"],
+		previousSessionFile: string | undefined,
+		ctx: TraceContext,
+	): void;
 	onSessionBeforeSwitch(reason: string, targetSessionFile: string | undefined): void;
 	onTurnStart(ctx: TraceContext): void;
 }
@@ -56,12 +57,12 @@ interface CurrentPrompt {
 	fullText: string;
 }
 
-export function computePromptHash(text: string): string {
+function computePromptHash(text: string): string {
 	return createHash("sha256").update(text, "utf-8").digest("hex");
 }
 
 export function createSystemPromptTrace(env: TraceEnv, stash: SwitchStash): SystemPromptTrace {
-	let sessionStartReason: SessionStartReason | null = null;
+	let sessionStartReason: SessionStartEvent["reason"] | null = null;
 	let baseline: PromptBaseline | null = null;
 	let current: CurrentPrompt | null = null;
 
@@ -84,18 +85,18 @@ export function createSystemPromptTrace(env: TraceEnv, stash: SwitchStash): Syst
 			data.parentVersionDiffSummary = summarizePromptDiff(parentFullText, text);
 		}
 		ctx.appendEntry(SYSTEM_PROMPT_CUSTOM_TYPE, data);
-		// 落盘成功后才刷新自持久化基线（app 重启直 spawn resume / reload 的唯一基线来源，设计 D2 路径 3）
-		env.writePersistedBaseline(ctx.getSessionId(), hash, version);
 	};
 
 	return {
 		onSessionStart(reason, previousSessionFile, ctx) {
-			sessionStartReason = normalizeSessionStartReason(reason);
+			sessionStartReason = reason;
 			current = null;
-			// 基线解析（设计 D2 跨重启四路径，优先级从高到低）：
-			// 1. session_before_switch 直读目标文件（进程内 resume；stash 为模块级单例，跨 runtime 传递）
-			// 2. fork 的 previousSessionFile 直读【暂定语义，待 P2 实测定】
-			// 3. agentDir 自持久化小文件（app 重启直 spawn resume / reload——这两种链路没有 switch 事件）
+			// 基线解析（设计 D1/D2 v5 三档，优先级从高到低）：
+			// 1. stash：session_before_switch 直读目标文件（进程内 resume；stash 为模块级单例，跨 runtime 传递）
+			// 2. fork 档：读事件 previousSessionFile（源 session 文件）最后留痕——常态 /fork 时点
+			//    fork 新文件未落盘（M0 探针实证），直读不可靠；缺失/未落盘/读取失败 → null
+			// 3. 直读档：ctx.getSessionFile() 指向当前 session 文件（覆盖 reload / 直启 resume /
+			//    new 兜底；文件不存在或无留痕 → null）
 			// 4. 全 miss → null：首个 turn 按 reason 映射写 initial/resume（resume 必写 = 兜底路径）
 			// stash 无论是否采用都消费：cancelled switch 的残留基线不允许污染下一次 session_start
 			const stashed = stash.pending;
@@ -103,10 +104,10 @@ export function createSystemPromptTrace(env: TraceEnv, stash: SwitchStash): Syst
 			if (stashed !== null && sessionStartReason === "resume") {
 				baseline = stashed;
 			} else if (sessionStartReason === "fork" && previousSessionFile !== undefined) {
-				const fromPrev = env.readLastPromptFromFile(previousSessionFile);
-				baseline = fromPrev === null ? null : { ...fromPrev, source: "previous-session-file" };
+				baseline = env.readLastPromptFromFile(previousSessionFile);
 			} else {
-				baseline = env.readPersistedBaseline(ctx.getSessionId());
+				const sessionFile = ctx.getSessionFile();
+				baseline = sessionFile === undefined ? null : env.readLastPromptFromFile(sessionFile);
 			}
 		},
 
@@ -133,10 +134,8 @@ export function createSystemPromptTrace(env: TraceEnv, stash: SwitchStash): Syst
 				}
 				// 本 session_start 周期的首个 turn_start
 				if (baseline !== null && baseline.hash === hash) {
-					// 跨重启基线命中且未变化：不写，但确立 current 供后续 turn 继续对比；
-					// 顺带刷新自持久化基线（updatedAt 续命 + 小文件丢失时自愈）
+					// 跨重启基线命中且未变化：不写，但确立 current 供后续 turn 继续对比
 					current = { version: baseline.version, hash, fullText: text };
-					env.writePersistedBaseline(ctx.getSessionId(), hash, baseline.version);
 					return;
 				}
 				// 必写：有基线 → resume（该 session 已有历史版本，这是重开点的快照，version 续接）；

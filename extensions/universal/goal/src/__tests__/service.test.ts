@@ -34,9 +34,11 @@ function makeFakePorts(): ServicePorts & {
 			setStatus: () => {},
 			notify: () => {},
 			hasUI: true,
-			// ThemeLike 直接成员（widget 经 asTheme 取出，见 projection/widget.ts）
-			fg: (_color: string, text: string) => text,
-			bold: (text: string) => text,
+			// ThemeLike 嵌套成员（UiPort.theme 显式声明，updateWidget 直读 uiPort.theme）
+			theme: {
+				fg: (_color: string, text: string) => text,
+				bold: (text: string) => text,
+			},
 		},
 		messaging: {
 			sendContextMessage: () => {},
@@ -44,8 +46,6 @@ function makeFakePorts(): ServicePorts & {
 		},
 		session: {
 			getEntries: () => [],
-			getContextUsage: () => null,
-			signal: undefined,
 		},
 	};
 }

@@ -14,14 +14,13 @@ import { describe, expect, it } from "vitest";
 
 import { createGoalState } from "../../engine/goal";
 import type { GoalRuntimeState, GoalStatus } from "../../engine/types";
-import type { UiPort } from "../../ports";
+import type { ThemeLike, UiPort } from "../../ports";
 import { createGoalSession } from "../../session";
 import { OBJECTIVE_DISPLAY_LIMIT, OBJECTIVE_TRUNCATE_KEEP } from "../../constants";
 import {
 	renderStatusLine,
 	renderTerminalStatusLine,
 	renderWidgetLines,
-	type ThemeLike,
 	toSingleLine,
 	updateWidget,
 } from "../widget";
@@ -221,8 +220,10 @@ describe("updateWidget (FR-6.6 hasUI guard)", () => {
 				calls.push({ method: "setStatus", args: [name, text] });
 			},
 			notify() {},
-			fg: (_color: string, text: string) => text,
-			bold: (text: string) => text,
+			theme: {
+				fg: (_color: string, text: string) => text,
+				bold: (text: string) => text,
+			},
 		} as UiPort;
 		return { ui, calls };
 	}
@@ -300,8 +301,10 @@ describe("updateWidget GUI 协议分支（isGui=true）", () => {
 				calls.push({ method: "setStatus", args: [name, text] });
 			},
 			notify() {},
-			fg: (_color: string, text: string) => text,
-			bold: (text: string) => text,
+			theme: {
+				fg: (_color: string, text: string) => text,
+				bold: (text: string) => text,
+			},
 		} as UiPort;
 		return { ui, calls };
 	}

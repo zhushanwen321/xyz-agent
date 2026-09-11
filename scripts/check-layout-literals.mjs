@@ -94,7 +94,7 @@ export const LAYOUT_LITERAL_EXEMPT = [
   },
   {
     file: 'apps/electron/resources/extensions/@zhushanwen/pi-session-reader/index.js',
-    reason: 'bundled 扩展产物（源 extensions/universal/session-reader，不入扫描域）——内含旧布局探测判据（AGENT_DIR_SHAPE_OLD）与迁移提示文案，职责即新旧布局兼容识别（C-pi-14 恢复动作 3）',
+    reason: 'bundled 产物内 2 处为 session-reader discovery/env.ts 布局探测的「B 前旧布局」诊断证据文案（evidence.push 描述检测到的旧布局形态，历史证据类非路径使用）；extensions/ 源码不在扫描域，产物经 bundle-extensions 与源码同步后入域',
   },
   {
     file: 'apps/electron/main/images/__tests__/image-cache.test.ts',

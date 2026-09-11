@@ -2,15 +2,16 @@
  * index.ts wiring SDK 契约测试（Gate-1.6 覆盖缺口：wiring 层 0%；round1 review「wiring 层无 SDK 契约测试」）。
  *
  * mock 边界（对齐 subagent-workflow index 测试先例）：
- * - @earendil-works/pi-coding-agent 只 mock getAgentDir（指向临时目录）——baseline.ts 走真实 fs，
- *   从而验证 wiring 把基线小文件真的落在 getAgentDir() 下
+ * - baseline.ts 走真实 fs（previousSessionFile / getSessionFile 直读路径用真实临时文件）
  * - pi 用 Proxy 假体：捕获 on 注册的 handler 与 appendEntry 落点；handler 以 SDK 双参契约
- *   (event, ctx) 驱动；ctx 只需 index.ts 实际消费的字段（getSystemPrompt + sessionManager.getSessionId）
+ *   (event, ctx) 驱动；ctx 只需 index.ts 实际消费的字段（getSystemPrompt + sessionManager 的
+ *   getSessionId / getSessionFile）
  * - @zhushanwen/pi-extension-logger mock 三导出（getLogger / createLogger / setPiHandle），
  *   setPiHandle 捕获 factory 注入（D3 接线契约），logger 方法收集供吞错断言
  * - switchStash 是模块级单例：beforeEach vi.resetModules 隔离用例；同 it 内二次 dynamic import
  *   模拟「switch 重建 extension runtime + 同进程模块缓存延续」的真实链路
  */
+import { createHash } from "node:crypto";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -19,10 +20,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
-import { BASELINE_FILENAME, readPersistedBaseline } from "../baseline.js";
-import { computePromptHash } from "../trace.js";
 import { isSystemPromptTraceEntryData, SYSTEM_PROMPT_CUSTOM_TYPE } from "../types.js";
 import type { SystemPromptTraceEntryData } from "../types.js";
+
+// trace.ts 的 computePromptHash 已收敛为包内私有（无外部消费方）；测试本地同款实现计算期望值。
+const computePromptHash = (text: string): string =>
+	createHash("sha256").update(text, "utf-8").digest("hex");
 
 const P1 = "wiring prompt\nline-1";
 const P2 = "wiring prompt\nline-1\nline-2-added";
@@ -36,12 +39,6 @@ vi.mock("@zhushanwen/pi-extension-logger", () => ({
 	createLogger: () => loggerMock,
 	setPiHandle: setPiHandleMock,
 }))
-
-const agentDirRef = vi.hoisted(() => ({ current: "" }));
-
-vi.mock("@earendil-works/pi-coding-agent", () => ({
-	getAgentDir: () => agentDirRef.current,
-}));
 
 type RecordedHandler = (event: unknown, ctx: unknown) => Promise<void> | void;
 
@@ -78,12 +75,20 @@ function createWiringHarness(): WiringHarness {
 	return { pi, handlers, entries };
 }
 
-/** ctx 最小形状（index.ts 实际消费：getSystemPrompt + sessionManager.getSessionId；cwd 是 SDK 契约字段）。 */
-function createCtx(getPrompt: () => string, sessionId: string): Record<string, unknown> {
+/** ctx 最小形状（index.ts 实际消费：getSystemPrompt + sessionManager 的 getSessionId/getSessionFile；cwd 是 SDK 契约字段）。
+ * getSessionFile 缺省 undefined（新 session 未落盘）；需要指向真实文件时传 getSessionFileOverride。 */
+function createCtx(
+	getPrompt: () => string,
+	sessionId: string,
+	getSessionFileOverride?: () => string | undefined,
+): Record<string, unknown> {
 	return {
 		cwd: "/home/user/project",
 		getSystemPrompt: getPrompt,
-		sessionManager: { getSessionId: () => sessionId },
+		sessionManager: {
+			getSessionId: () => sessionId,
+			getSessionFile: getSessionFileOverride ?? ((): string | undefined => undefined),
+		},
 	};
 }
 
@@ -121,7 +126,6 @@ let rootDir = "";
 
 beforeEach(() => {
 	rootDir = mkdtempSync(join(tmpdir(), "spt-wiring-"));
-	agentDirRef.current = rootDir;
 	vi.resetModules();
 });
 
@@ -153,7 +157,7 @@ describe("index.ts wiring SDK 契约", () => {
 		expect(injected).toBe(h.pi);
 	});
 
-	it("startup（无 previousSessionFile）→ 首 turn 写 initial v1（appendEntry 形状 + 基线落 getAgentDir）；prompt 变化写 change v2 带 diff 摘要", async () => {
+	it("startup（无 previousSessionFile、session 未落盘）→ 首 turn 写 initial v1（appendEntry 形状）；prompt 变化写 change v2 带 diff 摘要", async () => {
 		const ext = await loadExtension();
 		const h = createWiringHarness();
 		ext(h.pi);
@@ -171,10 +175,7 @@ describe("index.ts wiring SDK 契约", () => {
 			charCount: P1.length,
 			hash: computePromptHash(P1),
 		});
-		expect(readPersistedBaseline(join(agentDirRef.current, BASELINE_FILENAME), "sess-w1")).toMatchObject({
-			hash: computePromptHash(P1),
-			version: 1,
-		});
+		// 自持久化基线小文件已随 persisted 子系统删除（设计目标 2）：无 agentDir 落盘面，仅 session JSONL
 
 		prompt = P2;
 		await emit(h, "turn_start", { type: "turn_start", turnIndex: 1, timestamp: 0 }, ctx);
@@ -184,7 +185,7 @@ describe("index.ts wiring SDK 契约", () => {
 		expect(change.parentVersionDiffSummary).toContain("+1 -0 lines");
 	});
 
-	it("fork（previousSessionFile 为 string）→ 直读该文件作基线；hash 未变不写、仅刷新自持久化基线版本", async () => {
+	it("fork（previousSessionFile 为 string）→ 直读该文件最后留痕作基线（D2 v5 定案）；hash 未变不写", async () => {
 		const prevFile = join(rootDir, "prev-session.jsonl");
 		writeSessionEntry(prevFile, {
 			version: 3,
@@ -207,9 +208,38 @@ describe("index.ts wiring SDK 契约", () => {
 		await emit(h, "turn_start", { type: "turn_start", turnIndex: 0, timestamp: 0 }, ctx);
 
 		expect(h.entries).toHaveLength(0);
-		expect(
-			readPersistedBaseline(join(agentDirRef.current, BASELINE_FILENAME), "sess-w-fork"),
-		).toMatchObject({ version: 3 });
+	});
+
+	it("fork 的 previousSessionFile 三态防御：字段缺失 / 源文件未落盘 / 读取失败 → 基线 null → resume v1 兜底", async () => {
+		const ext = await loadExtension();
+		const h = createWiringHarness();
+		ext(h.pi);
+		const ctx = createCtx(() => P1, "sess-w-fork-def");
+
+		// 态 1：字段缺失（in-memory fork 且源 sessionFile 为 undefined）
+		await emit(h, "session_start", { type: "session_start", reason: "fork" }, ctx);
+		await emit(h, "turn_start", { type: "turn_start", turnIndex: 0, timestamp: 0 }, ctx);
+		// 态 2：源文件未落盘（源会话尚无 assistant 即 fork，首条 assistant 前 pi _persist 不落盘）
+		await emit(
+			h,
+			"session_start",
+			{ type: "session_start", reason: "fork", previousSessionFile: join(rootDir, "not-flushed.jsonl") },
+			ctx,
+		);
+		await emit(h, "turn_start", { type: "turn_start", turnIndex: 1, timestamp: 0 }, ctx);
+		// 态 3：读取失败（路径指向目录，readFileSync EISDIR）
+		await emit(
+			h,
+			"session_start",
+			{ type: "session_start", reason: "fork", previousSessionFile: rootDir },
+			ctx,
+		);
+		await emit(h, "turn_start", { type: "turn_start", turnIndex: 2, timestamp: 0 }, ctx);
+
+		expect(h.entries).toHaveLength(3);
+		expect(entryData(h, 0)).toMatchObject({ version: 1, reason: "resume", hash: computePromptHash(P1) });
+		expect(entryData(h, 1)).toMatchObject({ version: 1, reason: "resume" });
+		expect(entryData(h, 2)).toMatchObject({ version: 1, reason: "resume" });
 	});
 
 	it("session_before_switch（targetSessionFile 为 string）→ 模块级 stash 跨 runtime 传递；新 runtime resume + hash 未变 → 不写", async () => {

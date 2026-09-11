@@ -35,6 +35,17 @@ export interface PersistencePort {
 	appendHistory(entry: GoalHistoryEntry): void;
 }
 
+// ── ThemeLike ────────────────────────────────────────
+
+/**
+ * projection 层的 Theme 抽象。不 import Pi 的 ThemeColor。
+ * adapter 层负责把 Pi 的 theme（fg 接收 ThemeColor）适配到此签名（fg 接收 string）。
+ */
+export interface ThemeLike {
+	fg: (color: string, text: string) => string;
+	bold: (text: string) => string;
+}
+
 // ── UiPort ───────────────────────────────────────────
 
 export interface UiPort {
@@ -54,6 +65,8 @@ export interface UiPort {
 	readonly hasUI: boolean;
 	/** 是否 GUI 渲染模式（RPC → GuiComponent；TUI → 原生文本行） */
 	readonly isGui: boolean;
+	/** 终端主题能力（fg/bold 着色），widget/status 文本行渲染消费（E3 显式声明） */
+	readonly theme: ThemeLike;
 }
 
 // ── MessagingPort ────────────────────────────────────
@@ -75,7 +88,4 @@ export interface SessionEntryLike {
 
 export interface SessionPort {
 	getEntries(): SessionEntryLike[];
-	// tokens 与 Pi SDK 的 ContextUsage.tokens 对齐：number | null（null = 未知，如压缩后未到下次 LLM 响应）。
-	getContextUsage(): { tokens: number | null; contextWindow: number } | null;
-	readonly signal: AbortSignal | undefined;
 }

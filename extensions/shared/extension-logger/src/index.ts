@@ -1,16 +1,16 @@
 // src/index.ts
 //
-// 共享 extension logger —— 三层通道分类，按受众路由日志。
+// 共享 extension logger —— 双通道日志封装，按受众路由。
 //
 // 设计依据：pi 宿主层（ExtensionAPI/ExtensionContext）不提供 logger 接口。
 // extension 只能裸 console（污染 TUI raw stderr）或自组 ctx.ui.notify（刷屏）+
-// pi.appendEntry（持久化但用户不可见）。本模块封装这套三层通道，让 @zhushanwen/pi-*
+// pi.appendEntry（持久化但用户不可见）。本模块封装这套通道，让 @zhushanwen/pi-*
 // 各包统一调用，消除裸 console。
 //
-// 三层通道：
+// 三通道分类法（本模块实装其中两通道；通道 1 为 pi 原生行为，仅登记不封装）：
 //   1. AI 实时    → tool result / block reason（pi 原生，本模块不涉及）
-//   2. 事后排查   → pi.appendEntry（custom entry 不进 LLM 上下文，不显 TUI）
-//   3. 开发者调试 → 文件日志，双开关分级（写 <agentDir>/logs/，均未注入默认 no-op）：
+//   2. 事后排查   → pi.appendEntry（custom entry 不进 LLM 上下文，不显 TUI）【实装】
+//   3. 开发者调试 → 文件日志，双开关分级（写 <agentDir>/logs/，均未注入默认 no-op）【实装】：
 //        - XYZ_AGENT_DEBUG=1 → DEBUG 全量（现状语义，level 原样标注）
 //        - XYZ_AGENT_EXT_LOG=1 → INFO 级落盘（xyz 托管环境由 runtime spawn 时经
 //          buildOutboundChildEnv extras 注入，设计 file-lock-unification-and-reaper-sink
@@ -20,6 +20,10 @@
 //
 // notify（用户操作反馈）刻意不封装——它是 UI 决策，留给各 extension 在命令/视图层
 // 直接调 ctx.ui.notify。
+//
+// fileLog 单日文件无 size cap——显式豁免，依据：写入方为每 session 短命 pi 进程
+// + 7 天保留期清理 + DEBUG 档系开发者主动排障；重审触发条件见
+// docs/design/ext-simplify-14-shared-libs.md §7。
 
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
 import {
@@ -154,7 +158,7 @@ export interface PiLike {
 }
 
 /** 日志级别。debug = 开发调试；info = XYZ_AGENT_EXT_LOG 模式下 debug() 的落盘标注；warn/error = 内部降级与失败（事后排查价值）。 */
-export type LogLevel = "debug" | "info" | "warn" | "error";
+type LogLevel = "debug" | "info" | "warn" | "error";
 
 /**
  * Extension logger 接口。方法名即语义——不做运行时 level filtering（pi 不支持，
@@ -219,11 +223,12 @@ export function setPiHandle(pi: PiLike | undefined): void {
 /**
  * 创建具名 logger。
  *
- * @param extName  extension 名（如 "subagents"、"unified-hooks"），用作：
+ * @param extName  extension 名（如 "subagents"、"smart-context"），用作：
  *                  - appendEntry 的 customType 前缀（`<extName>:log`）
  *                  - 文件日志名（`<extName>-YYYY-MM-DD.log`）
  *                  - msg 前缀（`[<extName>]`，自动补）
- * @param pi       可选 pi handle；不传则用 setPiHandle 注入的全局 handle
+ * @param pi       可选 pi handle；测试隔离注入用，生产一律 setPiHandle/getLogger。
+ *                  不传则用 setPiHandle 注入的全局 handle
  * @returns        ExtensionLogger 实例（每次返回同一引用，便于模块级 const 缓存）
  */
 export function createLogger(extName: string, pi?: PiLike): ExtensionLogger {

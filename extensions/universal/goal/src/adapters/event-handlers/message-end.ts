@@ -7,27 +7,15 @@
  * 不 persist / updateWidget。
  */
 
-import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
+import type { ExtensionContext, MessageEndEvent } from "@earendil-works/pi-coding-agent";
 
 import { applyEvent } from "../../service";
 import type { GoalSession } from "../../session";
 
-export interface MessageEndLikeEvent {
-	message: {
-		role: string;
-		usage?: {
-			input?: number;
-			output?: number;
-			cacheRead?: number;
-			totalTokens?: number;
-		};
-	};
-}
-
 export async function handleMessageEnd(
 	session: GoalSession,
 	ctx: ExtensionContext,
-	event: MessageEndLikeEvent,
+	event: MessageEndEvent,
 ): Promise<void> {
 	if (!session.state) return;
 	// FR-6.7 ESC 守卫

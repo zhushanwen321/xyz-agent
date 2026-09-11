@@ -34,8 +34,6 @@ Electron + Vue 3 + Node.js Runtime 的 AI Agent 桌面工作台。架构分层�
 
 新增/删包时更新此列举与所在分组。校验：`pnpm extensions:typecheck` / `extensions:lint` / `extensions:test`。
 
-> 已废弃包：`unified-hooks`（源码保留在 `extensions/universal/unified-hooks/`，package.json 带 `deprecated` 标记，不在上方活跃列举中）——被 base-tool-enhance 整包取代（test guard → force-test 白名单自动后台；network guard 挂死保护 → 可配置前台默认超时弱承接；tool-error-handler 审计 → base-tool-enhance tool_error hook）。残留安装会与新包双重拦截 bash，用户须先卸载旧包。
-
 - **[MANDATORY] extension 改动优先在本地 pi CLI 实测**（不是 xyz-agent 桌面）：`pi --mode rpc --session-dir <dir> --model xiaomi-token-plan-cn/mimo-v2.5-pro --approve --extension <path>` + stdin JSONL 发 prompt；`XYZ_AGENT_DEBUG=1` 看 `~/.pi/agent/logs/` 扩展日志。xyz-agent 的 builtin 打包/数据隔离/runtime 中转层会掩盖版本差异
 - **structured-output 方案 A [HISTORICAL]**：workflow 模式 `PI_WORKFLOW_SCHEMA` 注入的权威 schema 是唯一校验权威，LLM 自报 schema 不参与校验（曾因校验自报 schema 致修复静默丢失）
 - 本地开发调试（live edit ↔ npm 版切换）：`.agents/skills/dev-link/`

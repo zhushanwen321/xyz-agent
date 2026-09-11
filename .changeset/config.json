@@ -17,7 +17,6 @@
     "@xyz-agent/shared",
     "@xyz-agent/ui",
     "create-xyz-plugin",
-    "xyz-agent-plugin-sdk",
-    "@zhushanwen/pi-unified-hooks"
+    "xyz-agent-plugin-sdk"
   ]
 }

@@ -71,21 +71,21 @@ describe("checkBudgetOnTurnEnd — token 阈值", () => {
 	it("token < 70% → 无预警", () => {
 		expect(checkBudgetOnTurnEnd(makeState({ tokensUsed: 600, budget: { tokenBudget: 1000 } })).warnings).toEqual([]);
 	});
-	it("token >= 70% 未发 → warning70 token", () => {
+	it("token >= 70% 未发 → warning70", () => {
 		const s = makeState({ tokensUsed: 700, budget: { tokenBudget: 1000 } });
-		expect(checkBudgetOnTurnEnd(s).warnings).toContainEqual({ type: "warning70", dimension: "token" });
+		expect(checkBudgetOnTurnEnd(s).warnings).toContainEqual({ type: "warning70" });
 	});
 	it("token >= 70% 已发 → 不重复", () => {
 		const s = makeState({ tokensUsed: 750, tokenWarning70Sent: true, budget: { tokenBudget: 1000 } });
-		expect(checkBudgetOnTurnEnd(s).warnings).not.toContainEqual({ type: "warning70", dimension: "token" });
+		expect(checkBudgetOnTurnEnd(s).warnings).not.toContainEqual({ type: "warning70" });
 	});
 	it("token >= 90% 未发 steering → shouldSendSteering", () => {
 		const s = makeState({ tokensUsed: 950, budget: { tokenBudget: 1000 } });
 		expect(checkBudgetOnTurnEnd(s).shouldSendSteering).toBe(true);
 	});
-	it("token >= 100% 已发 steering → terminal exceeded token", () => {
+	it("token >= 100% 已发 steering → terminal exceeded", () => {
 		const s = makeState({ tokensUsed: 1000, budgetLimitSteeringSent: true, budget: { tokenBudget: 1000 } });
-		expect(checkBudgetOnTurnEnd(s).terminal).toEqual({ type: "exceeded", dimension: "token" });
+		expect(checkBudgetOnTurnEnd(s).terminal).toEqual({ type: "exceeded" });
 	});
 });
 
@@ -96,9 +96,9 @@ describe("checkBudgetOnResume", () => {
 	it("无预算 → null", () => {
 		expect(checkBudgetOnResume(makeState())).toBeNull();
 	});
-	it("token 超额 → exceeded token", () => {
+	it("token 超额 → exceeded", () => {
 		const s = makeState({ tokensUsed: 1000, budget: { tokenBudget: 1000 } });
-		expect(checkBudgetOnResume(s)).toEqual({ type: "exceeded", dimension: "token" });
+		expect(checkBudgetOnResume(s)).toEqual({ type: "exceeded" });
 	});
 	it("未超额 → null", () => {
 		const s = makeState({ tokensUsed: 500, budget: { tokenBudget: 1000 } });
