@@ -109,9 +109,11 @@ export class EngineProtocolServer {
     this.reverseClock = opts.reverseClock;
     this.reverseTimeoutMs = opts.reverseTimeoutMs ?? REVERSE_TIMEOUT_DEFAULT_MS;
     this.dispatchTable = this.buildDispatchTable();
-    // [v1.x] chat 会话反向通道发射面绑定（进程生命周期级——会话跨 run 存活）：
-    // roundLifecycle 三终态 + active 轮内心跳（F3）+ 续聊轮 recordId 键 streamDelta +
-    // 会话级 askUser + 子进程退出态（SR-4：宿主镜像据此取消该 pid 的挂起 dialog）。
+    // [v1.x → U5 退役面] chat 会话反向通道发射面绑定（进程生命周期级）：U3 起
+    // ChatSessionRegistry 的注册链路已解耦（run 路径不再 startRound），本绑定仅剩
+    // registry 残余消费面（无注册即无发射），保留到 U5 随 chat-session.ts 删除：
+    // roundLifecycle 三终态 + active 轮内心跳 + recordId 键 streamDelta +
+    // 会话级 askUser + 子进程退出态（SR-4）。
     this.engine.bindHostChannels?.({
       streamDelta: (p) => {
         void this.reverseRequestInternal("host/streamDelta", p);
@@ -233,14 +235,12 @@ export class EngineProtocolServer {
 
     // pi 专有：host/askUser 两阶段等待体绑定进引擎（ui-request-queue 消费；
     // ack 后等待不计 in-flight 自灭计时——R9-2；run 结束解绑防跨 run 串扰）。
-    // chat 会话形态跳过：会话跨 run 存活，askUser 由 hostChannels 以 spawn 轮 runId
-    // 固定绑定（per-run 绑定会在 run 应答后解绑，把长驻会话的 UI 请求断流）。
-    const isChatRun = params.chat !== undefined;
-    if (!isChatRun) {
-      this.engine.bindAskUser?.((request: UiRequest) =>
-        this.reverseRequestInternal("host/askUser", { runId, request }) as Promise<UiResponse>,
-      );
-    }
+    // [H1 U3] chat 轮 = run 派发形态（每轮一进程，agent_settled 收敛即收割），
+    // 同走 per-run 绑定；「会话跨 run 存活、askUser 固定绑定」的 chat 特判随
+    // ChatSessionRegistry 解耦退役（bindHostChannels 面保留到 U5 删）。
+    this.engine.bindAskUser?.((request: UiRequest) =>
+      this.reverseRequestInternal("host/askUser", { runId, request }) as Promise<UiResponse>,
+    );
 
     // task 子集 + ctx 还原 = 本地全量 AgentCallOpts（RemoteEngine.toSdkTaskSubset 镜像）
     const fullTask: AgentCallOpts = { ...task, ...(ctx.model !== undefined ? { model: ctx.model } : {}) };
@@ -253,20 +253,20 @@ export class EngineProtocolServer {
       return { handle: r.handle.data, outcome: r.outcome };
     } finally {
       this.activeRuns.delete(runId);
-      if (!isChatRun) this.engine.bindAskUser?.(undefined);
+      this.engine.bindAskUser?.(undefined);
     }
   }
 
   /** run.chat 帧校验 + chat 能力位 gate（A6 方向防御）：recordId 非空 + conversation
    *  位 unsupported 同步拒——判据单源 = SDK assertChatConversationSupported（与 core
    *  capability-gate 同一能力位，防两侧判据漂移）。本引擎 manifest 声明 native，
-   *  此处仅防御 manifest/实装漂移。 */
+   *  此处仅防御 manifest/实装漂移。[H1] 协议键 U1-U5 维持 `chat`（U6 切 `resume`）。 */
   private assertChatRunFrame(chat: { recordId: unknown }): void {
     if (typeof chat.recordId !== "string" || chat.recordId === "") {
       throw new EngineSdkError(
         "engine_protocol_bad_frame",
         `run.chat requires a non-empty recordId (got: ${JSON.stringify(chat.recordId)})`,
-        "The host must mint a record id before dispatching a chat-form run; it keys interact routing and roundLifecycle association.",
+        "The host must mint a record id before dispatching a chat-form run; it keys the record-anchored handle (interact/close routing and child mirror frames).",
       );
     }
     assertChatConversationSupported(this.engine.id, this.engine.capabilities());

@@ -1,13 +1,16 @@
 // src/__tests__/chat-protocol.test.ts
 //
-// [v1.x] chat 会话形态的协议进程内测试：EngineProtocolServer + 真 PiEngine + 注入
-// fake spawnRunner（不 spawn 真实子进程）。断言协议帧面（验收 W2 ③）：
-//   - run chat：host/* 反向帧（poolResolved/childSpawned[recordId]/handleReady/
-//     streamDelta[runId]）+ roundLifecycle settled/idle（runId 键）→ run 应答；
-//   - interact message：recordId 键 streamDelta + settled/idle；prompt 命令带
-//     streamingBehavior；
-//   - interact cancel / close：收敛与 failed 相位；
-//   - 冷续 run chat+resume：resume 参数透传；
+// [H1 U3] chat 轮 run 派发形态的协议进程内测试：EngineProtocolServer + 真 PiEngine
+// + 注入 fake spawnRunner（不 spawn 真实子进程）。断言协议帧面（chat-run 统一，
+// 设计 docs/design/subagent-chat-run-unification.md §3.3 D6/D7）：
+//   - run chat（首轮）：host/* 反向帧（poolResolved/childSpawned[recordId]/
+//     handleReady/streamDelta[runId]）→ run 应答（handle 锚 recordId）——不经
+//     ChatSessionRegistry，无 roundLifecycle 相位帧（run 终态 = agent_settled
+//     run 应答，见 run-spawn-once.integration 的收割面）；
+//   - chat 轮 recordId 锚定的 interact 过渡兼容面（registry 解耦后走 run 域分支：
+//     message 热路径 followUp / cancel SIGTERM）；
+//   - 冷续 run chat+resume：resume 参数透传（--session 穿透）；
+//   - fork-from 形态互斥锚定（无 chat 键 = 无 chatMode）；
 //   - conversation gate 负向（A6 方向）：unsupported 引擎同步拒。
 //
 // fake host 的 write 钩子对反向帧（id: "rev-N"）自动应答 {ok:true}——反向请求两阶段
@@ -39,7 +42,7 @@ interface Frame {
   error?: { code?: string; message?: string };
 }
 
-/** fake 子进程（chat-session.test 同款最小面：stdin 记录 / kill / exit 观测）。 */
+/** fake 子进程（最小面：stdin 记录 / kill / exit 观测）。 */
 class FakeChild extends EventEmitter {
   readonly pid = 7777;
   killed = false;
@@ -142,6 +145,19 @@ function reverseFrames(frames: Frame[], method: string): Frame[] {
   return frames.filter((f) => f.method === method);
 }
 
+async function initialize(h: ReturnType<typeof makeHarness>): Promise<void> {
+  h.server.handleFrame({
+    id: 1,
+    method: "initialize",
+    params: {
+      protocolVersion: ENGINE_PROTOCOL_VERSION,
+      hostInfo: { name: "t", version: "0", dataRoot: "/tmp" },
+      engineConfig: {},
+    },
+  });
+  await flush();
+}
+
 const HANDLE = {
   v: 1 as const,
   engineId: "pi",
@@ -150,7 +166,7 @@ const HANDLE = {
   adapterVersion: "1.0.0",
 };
 
-describe("chat 会话形态协议面（进程内 server + PiEngine）", () => {
+describe("chat 轮 run 派发形态协议面（进程内 server + PiEngine）", () => {
   let h: ReturnType<typeof makeHarness>;
   beforeEach(() => {
     h = makeHarness();
@@ -160,17 +176,8 @@ describe("chat 会话形态协议面（进程内 server + PiEngine）", () => {
     resetAllEpipeFailures();
   });
 
-  it("首轮 run chat：反向帧链 + runId 键 settled/idle → run 应答（handle.recordId 锚定）", async () => {
-    h.server.handleFrame({
-      id: 1,
-      method: "initialize",
-      params: {
-        protocolVersion: ENGINE_PROTOCOL_VERSION,
-        hostInfo: { name: "t", version: "0", dataRoot: "/tmp" },
-        engineConfig: {},
-      },
-    });
-    await flush();
+  it("首轮 run chat：反向帧链（recordId 锚定）→ run 应答 handle 锚 recordId；无 roundLifecycle 相位帧", async () => {
+    await initialize(h);
     h.server.handleFrame({
       id: 2,
       method: "run",
@@ -190,46 +197,29 @@ describe("chat 会话形态协议面（进程内 server + PiEngine）", () => {
     cap.callbacks.onHandleReady?.({ sessionRef: { sessionId: "sess-chat", sessionFile: "/tmp/chat-sess.jsonl" }, poolKey: "shared" });
     cap.callbacks.onDelta?.("hello ");
     cap.callbacks.onEvent?.({ type: "message_end", usage: { input: 12, output: 6, cacheRead: 0, cacheWrite: 0 } });
-    cap.callbacks.onChatRoundEnd?.();
-    cap.callbacks.onChatAgentSettled?.();
     cap.resolve(fakeResult());
     await flush();
 
     // childSpawned 用 chat recordId 锚定（区别于一次性 run 的 runId 锚定）
     const spawned = reverseFrames(h.frames, "host/childSpawned")[0];
     expect(spawned?.params).toMatchObject({ pid: 7777, recordId: "rec-chat-1" });
-    // 首轮 streamDelta：runId 键
+    // streamDelta：per-run runId 键（与 one-shot 共用 server stream wiring）
     const delta = reverseFrames(h.frames, "host/streamDelta")[0];
     expect(delta?.params).toEqual({ runId: "run-chat-1", delta: "hello " });
-    // 轮终相位：settled（usage）→ idle（usage + anchor），runId 键
-    const phases = reverseFrames(h.frames, "host/roundLifecycle").map((f) => f.params);
-    expect(phases[0]).toMatchObject({ runId: "run-chat-1", phase: "settled", usage: { input: 12, output: 6, cacheRead: 0, cacheWrite: 0 } });
-    expect(phases[1]).toMatchObject({
-      runId: "run-chat-1",
-      phase: "idle",
-      anchor: { sessionRef: { recordId: "rec-chat-1", sessionFile: "/tmp/chat-sess.jsonl" }, poolKey: "shared" },
-    });
-    // run 应答：handle 锚定 recordId，进程保活
+    // [H1 U3] run 路径不经 registry：无 roundLifecycle 相位帧（轮终 = agent_settled
+    // 的 run 应答，收割面见 run-spawn-once.integration）
+    expect(reverseFrames(h.frames, "host/roundLifecycle")).toHaveLength(0);
+    // run 应答：handle 锚定 recordId
     const runResp = h.frames.find((f) => f.id === 2);
     expect(runResp?.error).toBeUndefined();
     const result = runResp?.result as { handle: { sessionRef: Record<string, string> }; outcome: { content: string } };
     expect(result.handle.sessionRef.recordId).toBe("rec-chat-1");
     expect(result.handle.sessionRef.sessionFile).toBe("/tmp/chat-sess.jsonl");
     expect(result.outcome.content).toBe("chat round answer");
-    expect(h.children[0].kills).toHaveLength(0);
   });
 
-  it("续聊 interact message：recordId 键 streamDelta + settled/idle；followUp 投递", async () => {
-    h.server.handleFrame({
-      id: 1,
-      method: "initialize",
-      params: {
-        protocolVersion: ENGINE_PROTOCOL_VERSION,
-        hostInfo: { name: "t", version: "0", dataRoot: "/tmp" },
-        engineConfig: {},
-      },
-    });
-    await flush();
+  it("chat 轮 interact 过渡兼容面（registry 解耦 → run 域分支）：message followUp 直写 + cancel SIGTERM", async () => {
+    await initialize(h);
     h.server.handleFrame({
       id: 2,
       method: "run",
@@ -242,11 +232,10 @@ describe("chat 会话形态协议面（进程内 server + PiEngine）", () => {
     });
     await flush();
     const cap = h.captured[0];
-    cap.callbacks.onChatRoundEnd?.();
-    cap.callbacks.onChatAgentSettled?.();
     cap.resolve(fakeResult());
     await flush();
 
+    // recordId 锚定的活跃子进程（fake executor 注册面）→ message 热路径直写
     h.server.handleFrame({
       id: 3,
       method: "interact",
@@ -258,93 +247,24 @@ describe("chat 会话形态协议面（进程内 server + PiEngine）", () => {
     await flush();
     const resp = h.frames.find((f) => f.id === 3);
     expect(resp?.result).toEqual({ ok: true, delivered: true });
-    // prompt 命令：streamingBehavior followUp（缺省 interrupt）
+    // prompt 命令：streamingBehavior followUp（缺省 interrupt——run 域投递形态）
     const cmd = JSON.parse(h.children[0].stdinWrites.at(-1)!) as { type: string; message: string; streamingBehavior?: string };
     expect(cmd).toMatchObject({ type: "prompt", message: "next round", streamingBehavior: "followUp" });
 
-    cap.callbacks.onDelta?.("round-2-delta");
-    cap.callbacks.onEvent?.({ type: "message_end", usage: { input: 5, output: 2, cacheRead: 0, cacheWrite: 0 } });
-    cap.callbacks.onChatRoundEnd?.();
-    cap.callbacks.onChatAgentSettled?.();
-    await flush();
-    // recordId 键 delta + 相位
-    const delta = reverseFrames(h.frames, "host/streamDelta").at(-1);
-    expect(delta?.params).toEqual({ recordId: "rec-chat-2", delta: "round-2-delta" });
-    const phases = reverseFrames(h.frames, "host/roundLifecycle").map((f) => f.params);
-    expect(phases.at(-2)).toMatchObject({ recordId: "rec-chat-2", phase: "settled", usage: { input: 5, output: 2, cacheRead: 0, cacheWrite: 0 } });
-    expect(phases.at(-1)).toMatchObject({ recordId: "rec-chat-2", phase: "idle" });
-  });
-
-  it("interact cancel（轮进行中）：受理 → SIGTERM → failed(aborted) 相位收敛", async () => {
-    h.server.handleFrame({
-      id: 1,
-      method: "initialize",
-      params: {
-        protocolVersion: ENGINE_PROTOCOL_VERSION,
-        hostInfo: { name: "t", version: "0", dataRoot: "/tmp" },
-        engineConfig: {},
-      },
-    });
-    await flush();
-    h.server.handleFrame({
-      id: 2,
-      method: "run",
-      params: {
-        runId: "run-chat-3",
-        task: { prompt: "hi", conversation: true },
-        ctx: { poolKey: "shared", cwd: "/tmp", model: "p/m" },
-        chat: { recordId: "rec-chat-3" },
-      },
-    });
-    await flush();
-    // 首轮完成后开一轮续聊（round 进行中）再 cancel
-    const cap = h.captured[0];
-    cap.callbacks.onChatRoundEnd?.();
-    cap.callbacks.onChatAgentSettled?.();
-    cap.resolve(fakeResult());
-    await flush();
-    h.server.handleFrame({
-      id: 3,
-      method: "interact",
-      params: { handle: { ...HANDLE, sessionRef: { recordId: "rec-chat-3" } }, action: { kind: "message", payload: "work" } },
-    });
-    await flush();
-
+    // cancel：run 域分支 = SIGTERM（无 registry 收敛等待）
     h.server.handleFrame({
       id: 4,
       method: "interact",
-      params: { handle: { ...HANDLE, sessionRef: { recordId: "rec-chat-3" } }, action: { kind: "cancel" } },
+      params: { handle: { ...HANDLE, sessionRef: { recordId: "rec-chat-2" } }, action: { kind: "cancel" } },
     });
     await flush();
-    const resp = h.frames.find((f) => f.id === 4);
-    expect(resp?.result).toEqual({ ok: true, delivered: true });
+    const cancelResp = h.frames.find((f) => f.id === 4);
+    expect(cancelResp?.result).toEqual({ ok: true, delivered: true });
     expect(h.children[0].kills).toContain("SIGTERM");
-    const failed = reverseFrames(h.frames, "host/roundLifecycle").map((f) => f.params ?? {}).find((p) => p.phase === "failed");
-    expect(failed).toMatchObject({ recordId: "rec-chat-3" });
-    expect((failed as { error: { code: string } }).error.code).toBe("engine_round_aborted");
-    // 会话消亡：后续 message 冷拒绝
-    h.server.handleFrame({
-      id: 5,
-      method: "interact",
-      params: { handle: { ...HANDLE, sessionRef: { recordId: "rec-chat-3" } }, action: { kind: "message", payload: "again" } },
-    });
-    await flush();
-    const cold = h.frames.find((f) => f.id === 5);
-    expect((cold?.result as { ok: boolean; code: string }).ok).toBe(false);
-    expect((cold?.result as { code: string }).code).toBe("engine_session_not_resumable");
   });
 
   it("冷续 run chat+resume：resume 锚点透传 executor（--session 续写）", async () => {
-    h.server.handleFrame({
-      id: 1,
-      method: "initialize",
-      params: {
-        protocolVersion: ENGINE_PROTOCOL_VERSION,
-        hostInfo: { name: "t", version: "0", dataRoot: "/tmp" },
-        engineConfig: {},
-      },
-    });
-    await flush();
+    await initialize(h);
     h.server.handleFrame({
       id: 2,
       method: "run",
@@ -361,8 +281,6 @@ describe("chat 会话形态协议面（进程内 server + PiEngine）", () => {
     await flush();
     expect(h.captured[0].params.resumeSessionFile).toBe("/tmp/old-session.jsonl");
     expect(h.captured[0].params.chatMode).toBe(true);
-    h.captured[0].callbacks.onChatRoundEnd?.();
-    h.captured[0].callbacks.onChatAgentSettled?.();
     h.captured[0].resolve(fakeResult());
     await flush();
     const resp = h.frames.find((f) => f.id === 2);
@@ -373,16 +291,7 @@ describe("chat 会话形态协议面（进程内 server + PiEngine）", () => {
     // 链路定位：宿主 run 帧 task.forkSource（remote-engine toSdkTaskSubset 映射产物）→
     // PiEngine run → SpawnRunParams.forkSource → buildSpawnArgs `--fork <path>`（后者
     // 已有 spawn-args.test 专项直测）。fork-from 是一次性 run 形态（无 chat 键）。
-    h.server.handleFrame({
-      id: 1,
-      method: "initialize",
-      params: {
-        protocolVersion: ENGINE_PROTOCOL_VERSION,
-        hostInfo: { name: "t", version: "0", dataRoot: "/tmp" },
-        engineConfig: {},
-      },
-    });
-    await flush();
+    await initialize(h);
     h.server.handleFrame({
       id: 2,
       method: "run",
@@ -404,7 +313,7 @@ describe("chat 会话形态协议面（进程内 server + PiEngine）", () => {
   });
 });
 
-describe("chat 会话形态 gate 负向（A6 方向）", () => {
+describe("chat 轮 gate 负向（A6 方向）", () => {
   it("conversation unsupported 的引擎：run chat 同步拒 engine_capability_unsupported；一次性 run 不受影响面（gate 只拦 chat）", async () => {
     const frames: Frame[] = [];
     // 结构化委托形态（spread 会丢 class 原型方法）：只覆写 capabilities.conversation

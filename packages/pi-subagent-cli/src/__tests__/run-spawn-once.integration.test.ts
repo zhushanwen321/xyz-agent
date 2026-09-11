@@ -11,7 +11,8 @@
 //   - message_end stopReason=aborted → record.lastError → success=false（stale 分诊）；
 //   - abort signal → SIGTERM → 128+signal 折算退出码；
 //   - spawn 失败（relay node 不存在路径，真实 ENOENT）→ 失败终态 + 可诊断 error（F4）；
-//   - chatMode：agent_end 不 kill、agent_settled resolve（exit 0，进程保活）；
+//   - chatMode（[H1 U3] run 派发形态）：agent_end 不 kill、agent_settled resolve
+//     （exit 0）+ 杀链收割（每轮一进程，续聊 = 新 run + resume）；
 //   - model 缺失 → prepare 期抛错（不 spawn）。
 //
 // fake pi 脚本落 mkdtemp 临时目录；process.argv[1] 临时指向它（getPiInvocation
@@ -105,7 +106,7 @@ rl.on("line", (line) => {
   send({ type: "message_end", message: { usage: { input: 11, output: 7, cacheRead: 2, cacheWrite: 3, cost: { total: 0.42 } }, stopReason: "stop" } });
   send({ type: "agent_end", willRetry: false, reason: "end_turn" });
   send({ type: "agent_settled" });
-  // 一次性模式：宿主 agent_end → SIGTERM 收割；chatMode：settled resolve 后进程保活
+  // 一次性模式：宿主 agent_end → SIGTERM 收割；chatMode：settled resolve 后杀链收割（U3 每轮一进程）
 });
 `;
 
@@ -372,7 +373,7 @@ describe("runSpawnOnce 集成（fake pi 子进程）", () => {
     }
   }, 15_000);
 
-  it("chatMode：agent_end 不 kill；agent_settled resolve（exit 0）且进程保活", async () => {
+  it("chatMode（[H1 U3] run 派发形态）：agent_end 不 kill；agent_settled resolve（exit 0）并收割子进程", async () => {
     const h = await makeHarness("success");
     let roundEnded = 0;
     let settled = 0;
@@ -394,15 +395,12 @@ describe("runSpawnOnce 集成（fake pi 子进程）", () => {
       // agent_settled 消费面按轮重置 turnCount（SP-9：chat 续聊轮独立预算）
       expect(result.turns).toBe(0);
 
-      // 进程保活：agent_settled resolve 后未收割（chat-session 长驻语义的 runner 半边）
-      const child = getActiveChild("rec-int-1");
-      expect(child).toBeDefined();
-      expect(child!.killed).toBe(false);
-      expect(h.stateChanges.map((s) => s.state)).toEqual(["running"]);
-
-      // 收尾清理（fake pi 进程）
-      child!.kill("SIGTERM");
-      await waitFor(() => child!.exitCode !== null || child!.signalCode !== null);
+      // [H1 U3] agent_settled resolve 后杀链收割（每轮一进程——续聊 = 新 run +
+      // resume 锚点；不再保活）：active-children 注销 + exited 镜像上报（killed）
+      await waitFor(() => h.stateChanges.some((s) => s.state === "exited"));
+      const exited = h.stateChanges.find((s) => s.state === "exited")!;
+      expect(exited.killed).toBe(true);
+      expect(getActiveChild("rec-int-1")).toBeUndefined();
     } finally {
       restoreHarness(h);
     }

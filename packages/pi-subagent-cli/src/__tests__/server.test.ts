@@ -9,8 +9,8 @@
 //   ③ run 协议载荷还原：ctx.model 合回 task / ctxModel canonical 词形解析 /
 //      streamMode onDelta → host/streamDelta / 事件通知 seq 单调 / cancel abort /
 //      onChildSpawned 记录键锚定（非 chat = runId，chat = recordId）；
-//   ④ pi 专有通道：bindAskUser 两阶段绑定体（非 chat 才绑定 + run 结束解绑 +
-//      chat 跳过——会话级 askUser 走 bindHostChannels）、bindHostChannels 构造期
+//   ④ pi 专有通道：bindAskUser 两阶段绑定体（run 前绑定 + run 结束解绑；[H1 U3]
+//      chat 轮 = run 派发形态同走 per-run 绑定）、bindHostChannels 构造期
 //      三分通道接线、run.chat recordId 前置校验 + conversation 能力位 gate；
 //   ⑤ 反向请求客户端：rev-N 帧形状 / {ack:true} 两阶段第一段只 ack 不终结等待
 //      （R9-2，zcode 姊妹包无此语义）/ result+error 应答落位 / 超时兜底（fake timers）。
@@ -546,8 +546,14 @@ describe("bindAskUser 两阶段绑定体（pi 专有）", () => {
     expect(vi.mocked(engine.bindAskUser)).toHaveBeenLastCalledWith(undefined);
   });
 
-  it("chat run：跳过 per-run 绑定（会话跨 run 存活，askUser 走 bindHostChannels 固定绑定）", async () => {
-    const engine = makeEngine();
+  it("chat run：同走 per-run 绑定（[H1 U3] 每轮一进程，run 结束解绑）；recordId 锚定镜像帧", async () => {
+    let release!: (value: EngineRunResult) => void;
+    const engine = makeEngine({
+      run: vi.fn((_task: AgentCallOpts, _ctx: RunContext): Promise<EngineRunResult> =>
+        new Promise<EngineRunResult>((resolve) => {
+          release = resolve;
+        })),
+    });
     const { server, sink } = makeServer(engine);
     await request(server, sink, 1, "initialize", INIT_PARAMS);
 
@@ -561,16 +567,23 @@ describe("bindAskUser 两阶段绑定体（pi 专有）", () => {
         chat: { recordId: "rec-chat-9" },
       },
     });
-    const resp = await sink.waitFor(
-      (f) => f.id === 2 && (f.result !== undefined || f.error !== undefined),
-      "run response",
-    );
-    expect(resp.error).toBeUndefined();
-    expect(vi.mocked(engine.bindAskUser)).not.toHaveBeenCalled();
+    await vi.waitFor(() => expect(vi.mocked(engine.bindAskUser)).toHaveBeenCalledTimes(1));
+    const handler = vi.mocked(engine.bindAskUser).mock.calls[0]![0]!;
+    expect(handler).toBeTypeOf("function");
 
-    // chat run：onChildSpawned 以 chat recordId 锚定（区别于一次性 run 的 runId 锚定）
+    // chat 轮 ctx.chat 透传（引擎读端锚定 recordId）
     const ctx = (engine.run as Mock).mock.calls[0]![1] as RunContext;
     expect(ctx.chat).toEqual({ recordId: "rec-chat-9" });
+
+    // run 期间 askUser 等待体可用（per-run 绑定与 one-shot 同构——chat 轮短命 run）
+    const req: UiRequest = { method: "select", id: "ui-2", title: "选一个" };
+    const answerP = handler(req);
+    const ask = await sink.waitFor((f) => f.method === "host/askUser", "chat askUser frame");
+    expect(ask.params).toEqual({ runId: "run-chat", request: req });
+    server.handleFrame({ id: ask.id, result: { value: "B" } });
+    await expect(answerP).resolves.toEqual({ value: "B" });
+
+    // chat run：onChildSpawned 以 chat recordId 锚定（区别于一次性 run 的 runId 锚定）
     ctx.onChildSpawned?.({ pid: 777, killed: false });
     const spawned = await sink.waitFor((f) => f.method === "host/childSpawned", "childSpawned");
     expect(spawned.params).toEqual({ pid: 777, recordId: "rec-chat-9" });
@@ -581,6 +594,11 @@ describe("bindAskUser 两阶段绑定体（pi 专有）", () => {
     expect(exitedChat.params).toEqual({
       pid: 777, recordId: "rec-chat-9", state: "exited", killed: true,
     });
+
+    // run 结束（finally）：bindAskUser(undefined) 解绑，防跨 run 串扰
+    release({ handle: { data: { ...HANDLE } }, outcome: { ...FAKE_OUTCOME } });
+    await sink.waitFor((f) => f.id === 2 && f.result !== undefined, "run response");
+    expect(vi.mocked(engine.bindAskUser)).toHaveBeenLastCalledWith(undefined);
   });
 
   it("run.chat 空 recordId → engine_protocol_bad_frame（前置校验，run 不进引擎）", async () => {

@@ -106,12 +106,14 @@ export interface SpawnRunCallbacks {
   onDelta?: (delta: string) => void;
   /**
    * [chatMode] agent_end（非 willRetry，队列排空）到达：本轮收敛。不 kill 子进程
-   * （长驻），由调用方（chat-session）上报 roundLifecycle settled 相位。
+   * （等 agent_settled——pi 的 compact/收尾在 agent_end 后执行），由调用方
+   * （chat-session，U5 退役面）上报 roundLifecycle settled 相位。
    */
   onChatRoundEnd?: () => void;
   /**
-   * [chatMode] agent_settled（真空闲边界）到达：run 在此 resolve（exit 0 口径），
-   * 进程保活。调用方（chat-session）据此上报 idle 相位（usage + anchor）。
+   * [chatMode] agent_settled（真空闲边界）到达：run 在此 resolve（exit 0 口径）并
+   * 收割子进程（runSpawnOnce 内建，见 SpawnRunParams.chatMode 注释）。回调本体仅剩
+   * chat-session 会话管理器的 idle 相位上报消费（U5 退役面）。
    */
   onChatAgentSettled?: () => void;
 }
@@ -155,9 +157,13 @@ export interface SpawnRunParams {
   /** resume 目标 session 文件（冷续写：--session 续写原文件）。 */
   resumeSessionFile?: string;
   /**
-   * [v1.x chat 会话形态] 长驻模式：agent_end（非 willRetry）不 kill 子进程（轮收敛
-   * 交 callbacks.onChatRoundEnd 上报），agent_settled（真空闲）resolve run（exit 0
-   * 口径，进程保活——对齐 inproc chatMode「进程长驻」语义）。缺省 = 一次性 run。
+   * [H1 U3 chat 轮 run 形态]（设计 docs/design/subagent-chat-run-unification.md
+   * §3.3 D7）：agent_end 不 kill（pi 的 compact/收尾在 agent_end 后执行，提前 kill
+   * 截断收尾截断 session 文件），agent_settled（真空闲）resolve run（exit 0 口径）
+   * **并收割子进程**——每轮一进程，续聊 = 新 run + resume 锚点（--session 续写），
+   * 进程不再保活（ChatSessionRegistry 长驻语义随 U3 解耦退役，registry 本体 U5 删）。
+   * run 的 resolve 与 kill 均以 agent_settled 为准。缺省 = 一次性 run（agent_end 即
+   * 终态）。字段名保留 chat-session 会话管理器的构造面（startRound 传 chatMode:true）。
    */
   chatMode?: boolean;
 }
@@ -351,10 +357,14 @@ function buildTranslatorOpts(
     ...(chatMode
       ? {
         onAgentSettled: () => {
-          // 相位上报先于 run resolve（idle 帧先于 run 应答帧——协议事件流时序）
+          // [H1 U3] agent_settled（真空闲）= chat 轮 run 的 resolve 与收割边界（D7）：
+          // 相位回调先于 run resolve（协议事件流时序——idle 帧先于 run 应答帧），
+          // resolveChatRun settle exitPromise（run 应答不等收割），随后 fire-and-forget
+          // 杀链收割子进程——续聊 = 新 run + resume 锚点，进程不再保活。
           runEnd.endedCleanly = true;
           callbacks.onChatAgentSettled?.();
           runEnd.resolveChatRun?.(0);
+          killChild("agent_settled reap");
         },
       }
       : {}),
