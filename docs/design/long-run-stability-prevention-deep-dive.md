@@ -154,7 +154,7 @@ pi 内存 entry 树（常驻，~198MB 级）
 | O3-D | renderer | WS 入站大小守卫 | 短期 | 无 | 异常帧打爆 renderer | 批次 2 |
 | O2-B | runtime | fallback 逆序分块化 | 长期 | 无 | 大文件全量读内存尖峰 | 批次 3 |
 | O2-A | runtime | history 分页预算协议 | 长期 | 无 | 9/9 OOM 直接机制链 | 批次 3（最大单项） |
-| O3-A/B/C | renderer | entryStates 截断 / images 落盘 / 截断反转 | 长期 | 无 | renderer 驻留无界 | 批次 3 |
+| O3-A/B/C | renderer | entryStates 截断 / images 落盘 / 截断反转（**O3-C 已 superseded-by**：截断反转不再实施——其针对的「白名单外工具在 renderer 无界」问题被 crash-resilience u7 交付的 entryStates 64KB 条目截断（apply-entry-utils.ts，live/reload 共用同一截断层）结构性覆盖，再反转 display 层白名单只是显示层一致性收益且引入双截断体系维护成本；裁决依据 [crash-forensics-and-watchdog.md](crash-forensics-and-watchdog.md) §3.3 D9） | 长期 | 无 | renderer 驻留无界 | 批次 3 |
 | O4-A | 进程 | 空闲 pi 回收 | 长期（独立设计） | 无 | 30 天进程足迹只增不减 | 批次 4（独立 tech-design） |
 | O4-B | 进程 | dev/prod 隔离护栏 | 短期 | 无 | dev 写穿隔离 | 批次 1 |
 | — | renderer | markdown 增量扫描 | 长期（体验） | 无 | CPU 热点（非崩溃源） | 择机（taiji-renderer-optimize） |

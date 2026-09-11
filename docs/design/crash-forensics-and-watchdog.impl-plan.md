@@ -164,6 +164,10 @@ graph TD
 | 10 | u9 领地事实修正：relay-tee.ts 未改（计划假设其含 tee 落盘） | 实测 relay-tee.ts 是 WS 帧翻译层（无 fs import）；relay 形态 tee 文件落点 = logger.ts createPiRelayLog（relay-registry.ts:389 消费），与 createPiSessionLog 共享 createPiStreamWriter——轮转做在共享工厂自动覆盖两形态，符合设计 D7「复刻点」原意 | 实施期登记 |
 | 11 | u9 旋段形态选单代 `.1`（保留末 2 段）而非台账的多段级联 | 设计 D7 原文即 `.jsonl` → `.jsonl.1` 保留末 2 段（A5 通过标准「`.1` 段存在」同证）；与本仓主日志既有单代形态对齐。台账（D1）仍是 10MB×3 段级联，两者不混同 | 实施期登记 |
 | 12 | u1b 私有复刻 endAndAwait（~35 行，logger.ts 同名函数模块私有且属他人领地）+ 新增 close()/closeCrashJournal() 收口 API（暂未接线） | 领地锁定约束下的取舍；close API 是设计 D5 shutdown 链的将来挂点（u7c 接线）。**阶段 3 一致性审查项**：评估 endAndAwait 双实现是否值得抽公共 util（真差异 = 字节计数起点取盘上真实 size，属有意修正非复制走样） | 实施期登记 |
+| 13 | u10b O3-C 注记落 deep-dive.md（计划领地误写 stale-ctx-audit.md）；stale-ctx-audit.md 补登 4 包（system-prompt/ask-user/todo/ext-guards，逐包源码实锚判定排除） | 计划领地笔误；补登是守卫首跑暴露的真实普查表漏登（26 包 exit 0 真实绿），按 blocker 裁决「补登不削弱」处理 | 实施期登记 |
+| 14 | u7a 契约面增补 ack 常量 + 初始上报时点实现为 session_start（设计原文「extension 加载完成」在 pi 0.84.4 无 ctx 可用） | ack 使 fire-and-forget 的「送达 vs 超时」可判定（D5 errs 语义前提）；session_start = 设计「session 就绪、非懒触发」的真实意图，factory 阶段拿不到 ctx 是 pi 0.84.4 事实约束。u7b 承接 ack resolve | 实施期登记 |
+| 15 | u7a 领地实际 16 文件（含 6 测试）超出 ≤5 粒度线；subagent-core/src/index.ts barrel 导出属领地字面外 | 发射点接线是出口的必要件（session-runner/pi-engine 在 execution/engine/ 领地内）；barrel 是壳层消费的唯一通路（exports 面已收窄）且无其他单元认领。拆分成本 > 一致性收益，事后追认 | 实施期登记 |
+| 16 | extensions:test 1 个失败与本流水线无关：session-reader TC-m3b-real-data-guard 硬编码本机 FAM session id 静态断言，本机数据演化致过期 | 非本次改动引入（u10b 未改任何 extension 源码）；但会挡 Gate A 全绿——派独立小修（fixture 化），登记为流水线外债 | 实施期登记 |
 
 ## 6 状态表
 
@@ -189,7 +193,7 @@ graph TD
 | u8 (Gate W) | blocked-on-data（非代码门，不阻塞交付） | — | — |
 | u9 | committed | 1 | createPiStreamWriter 轮转（默认 50MB 可注入）+ `.1` 单代 + pi- 前缀 + closeLogger 等待在途轮转 + 旧裁决 [HISTORICAL] 推翻登记；vitest 4 passed（含 A5 PASS）+ typecheck 绿（编排者重跑核验） |
 | u10a | pending | — | — |
-| u10b | pending | — | — |
+| u10b | committed | 2（1 次 blocker 补登） | 守卫脚本真实绿（26 包全登记 exit 0）+ 四包排除判定源码实锚 + O3-C superseded-by 注记 + extensions:lint 前置挂接；编排者重跑 exit 0 |
 
 ## 7 残留风险与变更历史
 
