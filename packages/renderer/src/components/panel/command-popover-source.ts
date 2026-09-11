@@ -11,7 +11,7 @@ import type { InjectionKey } from 'vue'
 import type { SlashCommandLike, ResolvedSlashCommand } from '@xyz-agent/core'
 
 /** slash 命令合并源（registry 声明 ∪ commandStore pi 真源）。 */
-export interface SlashCommandSource {
+interface SlashCommandSource {
   resolveSlashCommands(piCommands: SlashCommandLike[]): ResolvedSlashCommand[]
 }
 

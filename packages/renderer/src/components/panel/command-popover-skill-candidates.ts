@@ -25,7 +25,7 @@ interface SkillCommandLike {
 }
 
 /** skill 候选项（CommandPopover items 的 skill 分支返回形状） */
-export interface SkillCandidate {
+interface SkillCandidate {
   id: string
   name: string
   displayName: string
@@ -45,7 +45,7 @@ export function bareSkillCommandName(name: string): string {
 }
 
 /** skill 候选源（CommandPopover props 的结构子集，直接透传） */
-export interface SkillCandidateSource {
+interface SkillCandidateSource {
   sessionId?: string
   globalSkills?: SkillInfo[]
   projectSkills?: SkillInfo[]

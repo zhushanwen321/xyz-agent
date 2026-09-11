@@ -24,7 +24,7 @@ import {
 /** 目标 trace 加载等待上限（selectSession 后 getTraceEntries RPC 往返 + 首渲染）。 */
 const TRACE_READY_TIMEOUT_MS = 10_000
 
-export type TraceJumpResult =
+type TraceJumpResult =
   | { ok: true; targetSessionId: string }
   | { ok: false; reason: 'target_not_found' | 'load_failed' }
 
