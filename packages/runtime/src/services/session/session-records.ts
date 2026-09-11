@@ -20,7 +20,7 @@
  * 不变，transport/index.ts 组合根经 Facade 委托到达——u-s5 同款形态）。
  */
 import { readFileSync } from 'node:fs'
-import { join, sep } from 'node:path'
+import { join } from 'node:path'
 import type { SubagentRecord, WorkflowRunRecord } from '@xyz-agent/shared'
 import { SUBAGENT_RECORD_CUSTOM_TYPE, WORKFLOW_RECORD_CUSTOM_TYPE } from '@xyz-agent/shared'
 import type { SubagentEngineConfigView, SubagentEnginesFile } from '@xyz-agent/extension-protocol'
@@ -31,6 +31,9 @@ import { getDataDir } from '@xyz-agent/shared/paths'
 import type { IProcessManager, IPiEngine } from '../ports/pi-engine.js'
 import { getHistoryFromFilePath, type HistoryFileReadResult } from '../session-history.js'
 import { extractSubagentsFromSessionFile, scanSubagentEntries } from './subagent-extractor.js'
+// subagent-workflow 路径判定（launch-params 纯函数族 SSOT——spawn 注入判定与安装目录
+// 定位共用同一谓词，防两处口径漂移）
+import { isSubagentWorkflowExtensionPath } from './launch-params.js'
 import {
   extractRecordEngine,
   readEngineSubagentHistory,
@@ -377,7 +380,7 @@ export class SessionRecords {
   private async readDeclaredEnginesFallback(): Promise<string[]> {
     try {
       const paths = await this.deps.getExtensionPaths()
-      const swDir = paths.find((p) => p.endsWith('subagent-workflow') || p.includes(`${sep}subagent-workflow`))
+      const swDir = paths.find(isSubagentWorkflowExtensionPath)
       if (!swDir) return ['pi']
       const pkg = JSON.parse(readFileSync(join(swDir, 'package.json'), 'utf8')) as {
         'xyz-agent'?: { subagentEngines?: unknown }

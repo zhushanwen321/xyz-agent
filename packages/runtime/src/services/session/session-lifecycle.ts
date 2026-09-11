@@ -30,8 +30,12 @@ import { getImageCacheDir } from '@xyz-agent/shared/paths'
 import type { IProcessManager, IPiEngine } from '../ports/pi-engine.js'
 import type { ILifecycleSessionOps, ISessionRegistry, ISessionRegisterDeps, IManagedSessionRecord } from './session-internal.js'
 import type { IManagedSessionView, ScannedSession } from './types.js'
-import { buildPresetClientOptions, warnLaunchEffectiveMismatch } from './launch-params.js'
+import { buildPresetClientOptions, hasSubagentWorkflowExtension, warnLaunchEffectiveMismatch } from './launch-params.js'
 import type { PresetClientOptions } from './launch-params.js'
+// D5 在途镜像（crash-forensics §3.3 D5 ①）：registerSession 汇聚点按本次 spawn 注入列表
+// 写 injected（presetZero 订阅在 session-service，本处只写注入态——两写方字段互不触碰，
+// 见 inflight-mirror.ts 文件头装配顺序说明）。
+import { inflightMirror } from './inflight-mirror.js'
 import type { PresetResolution } from '../preset-service.js'
 import type { IConfigStore } from '../ports/config.js'
 import type { ISessionStore } from '../ports/session.js'
@@ -286,12 +290,19 @@ export class SessionLifecycle implements ISessionRegistry {
    * （Staging Mode ADR-0056）；不传时 fallback configStore.getDefaultModel()。
    * 注意 pi 进程的模型在 createSession 时已由 pi client options 的 model 字段设定，
    * 此参数只补齐 session 元数据层的缺口。
+   *
+   * spawnExtensionPaths：本次 spawn 实际注入 pi 的 extension 路径列表（getExtensionPaths
+   * / preset 解析结果，D5 ① per-session 可用性判定的输入）。缺省 = 未注入（测试/历史
+   * 注册点）。五 spawn 形态（新 session / respawn / reattach / lazy restore / fork）全部
+   * 经本汇聚点，injected 随之天然覆盖。
    */
   async registerSession(
     id: string, client: IPiEngine, cwd: string, label: string, sessionFilePath?: string, hidden?: boolean,
     parentSession?: string, forkEntryId?: string, modelOverride?: string,
     /** U2: restore/create get_state 读回的生效值播种，优先级高于 modelOverride/全局默认。 */
     metaOverride?: { modelId?: string; thinkingLevel?: string },
+    /** D5 ①：本次 spawn 的 extension 注入列表（见方法 docstring）。 */
+    spawnExtensionPaths?: readonly string[],
   ): Promise<IManagedSessionRecord> {
     const send = (msg: ServerMessage) => {
       // wave:perf-w09（02 文档 D1-2）：session 级消息单通道——payload 带 sessionId 的消息
@@ -366,6 +377,19 @@ export class SessionLifecycle implements ISessionRegistry {
       type: 'session.occupancy',
       payload: { sessionId: id, turn: 'idle', compacting: false, bash: false },
     })
+    // D5 ① injected 接线（crash-forensics §3.3 D5）：injected = 该 session 装有会上报
+    // in-flight 的 extension（subagent-workflow），errsShape 的 absent-report 形态以此
+    // 为先决——未注入 ⇒ 无 pi 引擎 subagent 能力 ⇒ 判「无在途」（正确语义而非 errs）。
+    // 按本次 spawn 列表整值覆写（跨 epoch 不继承 stale-true）；与 presetZero 顺序无关
+    //（presetZero 不触碰 injected，见 inflight-mirror.ts 文件头）。独立 try 隔离：
+    // mirror 是 errs 判别的旁路设施，判定异常绝不外抛——外抛会打断 registerSession
+    // 主链，把旁路故障放大成创建/恢复失败（与 session-service 侧 presetZero 挂点同型）。
+    try {
+      inflightMirror.setInjected(id, hasSubagentWorkflowExtension(spawnExtensionPaths ?? []))
+    } catch (e: unknown) {
+      // best-effort 降级：injected 写失败仅退化为 errsShape 判「无在途」（errs-safe 方向），不打断注册主链。
+      console.error(`[session-lifecycle] mirror setInjected failed (sessionId=${id}):`, e)
+    }
     // 注册事件同步直发（sessions.set 之后——订阅者可经 Registry 读到条目）：S3 期订阅者
     // = Facade（组装根接线），按迁移前体内顺序执行 registerReplicatedStates →
     // ensureRecordEntriesCache → reconciler 对账（fire-and-forget）。
@@ -466,7 +490,7 @@ export class SessionLifecycle implements ISessionRegistry {
     }
 
     const session = await this.registerCreateSession(
-      id, client, sessionCwd, label, sessionFilePath, options, presetClientOptions, createMetaOverride,
+      id, client, sessionCwd, label, sessionFilePath, options, presetClientOptions, createMetaOverride, allExtPaths,
     )
 
     // W1 → A'：仅语义性命名（options.persistLabel=true：handoff/agent-managed）持久化；
@@ -595,6 +619,7 @@ export class SessionLifecycle implements ISessionRegistry {
     options: CreateOptions | undefined,
     presetClientOptions: PresetClientOptions,
     createMetaOverride: EffectiveMetaOverride | undefined,
+    spawnExtensionPaths: readonly string[],
   ): Promise<IManagedSessionView> {
     try {
       // Staging Mode（ADR-0056）：透传 effectiveModel（presetClientOptions.model，已含 C-RL-6 优先级解析）
@@ -602,7 +627,7 @@ export class SessionLifecycle implements ISessionRegistry {
       // U2: metaOverride（get_state 读回值）优先级高于 presetClientOptions.model。
       return await this.registerSession(
         id, client, sessionCwd, label ?? basename(sessionCwd), sessionFilePath, options?.hidden,
-        undefined, undefined, presetClientOptions.model, createMetaOverride,
+        undefined, undefined, presetClientOptions.model, createMetaOverride, spawnExtensionPaths,
       )
     } catch (initErr) {
       await this.safeDestroy(id)
@@ -990,7 +1015,7 @@ export class SessionLifecycle implements ISessionRegistry {
     try {
       session = await this.registerSession(
         id, client, sessionCwd, target.name ?? basename(sessionCwd), target.filePath,
-        undefined, undefined, undefined, undefined, restoreMetaOverride,
+        undefined, undefined, undefined, undefined, restoreMetaOverride, allExtPaths,
       )
     } catch (initErr) {
       await this.safeDestroy(id)
@@ -1206,7 +1231,7 @@ export class SessionLifecycle implements ISessionRegistry {
     // toSummary 输出到 SessionSummary，前端据此渲染 fork 父子关系。
     // （registerSession 失败的孤儿清理见 registerForkedSession。）
     const session = await this.registerForkedSession(
-      forkedId, client, sessionCwd, label, forkedFilePath, sourceActive, srcSessionId, resolvedEntryId, presetClientOptions,
+      forkedId, client, sessionCwd, label, forkedFilePath, sourceActive, srcSessionId, resolvedEntryId, presetClientOptions, allExtPaths,
     )
 
     // W1 → A'：fork 显式 label（用户显式命名，语义性）持久化；当前前端恒不传 label
@@ -1419,6 +1444,7 @@ export class SessionLifecycle implements ISessionRegistry {
     srcSessionId: string,
     resolvedEntryId: string,
     presetClientOptions: PresetClientOptions,
+    spawnExtensionPaths: readonly string[],
   ): Promise<IManagedSessionView> {
     const parentSessionKey = sourceActive?.sessionFilePath ?? srcSessionId
     try {
@@ -1426,7 +1452,7 @@ export class SessionLifecycle implements ISessionRegistry {
       // 元数据 modelId 反映实际启动模型（override > 源 preset.modelOverride）。
       return await this.registerSession(
         forkedId, client, sessionCwd, label ?? basename(sessionCwd), forkedFilePath,
-        undefined, parentSessionKey, resolvedEntryId, presetClientOptions.model,
+        undefined, parentSessionKey, resolvedEntryId, presetClientOptions.model, undefined, spawnExtensionPaths,
       )
     } catch (initErr) {
       // L5: registerSession 失败时清理孤儿 fork 文件（已写出但 session 未进 Map）

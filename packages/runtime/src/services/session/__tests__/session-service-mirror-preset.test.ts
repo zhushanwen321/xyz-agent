@@ -7,8 +7,9 @@
  *   形态经 registerSession 收敛）→ query 返回预置形态 inFlight=0 + hasEverReported=false
  *   + injected=false（新 reporting epoch）。
  * - errsShape 断言口径（u7b 语义核实）：presetZero 不触碰 injected——新条目 injected=false
- *   → errsShape=null（判「无在途」，非 errs）；'absent-report' 只在 spawn 执行者
- *   setInjected(true) 之后、首报到达之前呈——首报（含 count=0 初始帧）到达即回 null。
+ *   → errsShape=null（判「无在途」，非 errs）；'absent-report' 只在注入列表含
+ *   subagent-workflow（registerSession 汇聚点按 spawnExtensionPaths 判定，D5 ①）之后、
+ *   首报到达之前呈——首报（含 count=0 初始帧）到达即回 null。
  * - detach（removeSessionEntry 汇聚点）→ 条目摘除（query 回 undefined 口径）。
  * - respawn 重注册 = 新 epoch：曾上报条目经 detach + 重注册回预置 0。
  * - reclaim 成功 → 条目摘除；reclaim 返回 false（未回收）→ 条目保留（与 checkpoint 同语义）。
@@ -189,5 +190,37 @@ describe('SessionService × in-flight mirror（D5 预置 0 / detach / reclaim �
 
     expect(inflightMirror.query(FORK_SID)).toEqual(PRESET_ZERO)
     expect(inflightMirror.query(SID)).toEqual(PRESET_ZERO)
+  })
+})
+
+describe('injected 接线（D5 ①：registerSession 汇聚点按 spawn 注入列表判定）', () => {
+  it('注入列表含 subagent-workflow：注册即 injected=true → errsShape=absent-report（presetZero 后、首报前）', async () => {
+    const { service } = createSetup()
+
+    // staged 布局（npm 名 pi-subagent-workflow）+ dev 源码目录两种真实路径形态
+    await service.initializeManagedSession(
+      SID, {} as unknown as IPiEngine, '/project', 'label', '/project/s.jsonl',
+      undefined, undefined, undefined, undefined, undefined,
+      ['/apps/electron/resources/extensions/@zhushanwen/pi-subagent-workflow', '/repo/extensions/universal/subagent-workflow'],
+    )
+
+    // 同一注册汇聚点双写：presetZero（订阅体）置新 epoch + injected（registerSession
+    // 体内）置 true——顺序无关，presetZero 不触碰 injected
+    expect(inflightMirror.query(SID)).toEqual({ ...PRESET_ZERO, injected: true })
+    // 已注入且本 epoch 从未上报 → errs 推迟形态（rolling-restart 的 absent-report 判别）
+    expect(inflightMirror.errsShape(SID)).toBe('absent-report')
+  })
+
+  it('注入列表不含 subagent-workflow：injected=false → errsShape 保持 null（判「无在途」，非 errs）', async () => {
+    const { service } = createSetup()
+
+    await service.initializeManagedSession(
+      SID, {} as unknown as IPiEngine, '/project', 'label', '/project/s.jsonl',
+      undefined, undefined, undefined, undefined, undefined,
+      ['/apps/electron/resources/extensions/@zhushanwen/pi-session-manager', '/repo/extensions/universal/plan'],
+    )
+
+    expect(inflightMirror.query(SID)).toEqual(PRESET_ZERO)
+    expect(inflightMirror.errsShape(SID)).toBeNull()
   })
 })

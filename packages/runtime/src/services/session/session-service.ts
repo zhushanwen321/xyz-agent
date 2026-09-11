@@ -1260,8 +1260,10 @@ export class SessionService implements ISessionService, ILifecycleSessionOps, ID
   async initializeManagedSession(
     id: string, client: IPiEngine, cwd: string, label: string, sessionFilePath?: string, hidden?: boolean,
     parentSession?: string, forkEntryId?: string, modelOverride?: string,
+    metaOverride?: { modelId?: string; thinkingLevel?: string },
+    spawnExtensionPaths?: readonly string[],
   ): Promise<IManagedSessionView> {
-    return this.lifecycle.registerSession(id, client, cwd, label, sessionFilePath, hidden, parentSession, forkEntryId, modelOverride)
+    return this.lifecycle.registerSession(id, client, cwd, label, sessionFilePath, hidden, parentSession, forkEntryId, modelOverride, metaOverride, spawnExtensionPaths)
   }
 
   // ── 私有协作者 ────────────────────────────────────────────────

@@ -107,8 +107,10 @@ const PERCENT_SCALE = 100
  *
  * 顺序契约（D5 退出链）：首步 = 取消推迟定时器（app 级退出 / 86 执行中不得再入滚动
  * 重启）；引擎池 dispose 在 server.stop 之后、closeLogger 之前（杀链期间日志与 stderr
- * tee 要经 logger 落盘，closeLogger 先行则现场丢失）。中间步骤与 index.ts 既有链
- * 逐行同序（只加打点，不重排）。
+ * tee 要经 logger 落盘，closeLogger 先行则现场丢失）；close-crash-journal 在
+ * closeLogger 之前（台账尾部行——server.stop→destroyAll 触发的 shutdown/deleted 行经
+ * 异步缓冲——必须等落盘后才能 process.exit，且台账 close 自身的降级日志仍能经 logger
+ * 落盘）。中间步骤与 index.ts 既有链逐行同序（只加打点，不重排）。
  */
 export const SHUTDOWN_STEP_SEQUENCE = [
   'cancel-rolling-restart',
@@ -122,6 +124,7 @@ export const SHUTDOWN_STEP_SEQUENCE = [
   'deinit-relay-server',
   'server-stop',
   'engine-pool-dispose',
+  'close-crash-journal',
   'close-logger',
 ] as const
 

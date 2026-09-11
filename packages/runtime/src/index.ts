@@ -17,7 +17,7 @@ import { initLogger, closeLogger, logger, captureMemorySnapshot, formatMemoryWat
 // initLogger 同形态：模块级单例 + 未初始化 no-op）——不初始化则 getCrashJournal()
 // 恒返回 no-op，pi-respawn / message-bus 守卫 / session 生命周期的全部 runtime 侧
 // 事件静默丢弃（crashes/runtime.jsonl 永不创建）。close 挂点属 shutdown 链（u7c）。
-import { initCrashJournal } from './infra/crash-journal.js'
+import { initCrashJournal, closeCrashJournal } from './infra/crash-journal.js'
 import { isContainedStreamError } from './infra/system/uncaught-policy.js'
 
 import { ProcessManager } from './infra/pi/process-manager.js'
@@ -969,6 +969,13 @@ async function main(): Promise<void> {
     } catch (e) {
       console.error('[runtime] error during shutdown:', e)
     }
+    // D1 台账 flush（crash-forensics §3.3 D1）：closeCrashJournal 等 runtime.jsonl 的
+    // 在途轮转与 WriteStream 缓冲落盘——server.stop→destroyAll 触发的 pi 层 shutdown/
+    // deleted 行（#16 计划内排除归因依赖的行）经异步缓冲写入，process.exit 不等待即丢
+    // 尾部。挂点在 closeLogger 之前：台账 close 自身的降级日志（轮转失败 warn 等）仍能
+    // 经 logger 落盘。幂等（重复 close no-op），未初始化时直接 resolve。
+    shutdownStep('close-crash-journal')
+    await closeCrashJournal()
     // D10-1（perf W30）：退出 flush——closeLogger 现在需要 await（end 主日志 + 全部 pi
     // session 写流并等待落盘）。process.exit 立即终止进程不等待异步 IO，必须在 flush
     // 完成后才退出，否则缓冲窗口内尾部日志丢失（pi 卡死诊断证据，见 logger.ts 头部）。
