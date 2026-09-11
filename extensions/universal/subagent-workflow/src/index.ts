@@ -20,7 +20,10 @@ import { getLogger, setPiHandle } from "@zhushanwen/pi-extension-logger";
 // ═══ core 宿主端口接线（subagent-core 包抽离 u0-wire；实现见 src/host/pi-host.ts） ═══
 import { configureCore } from "@zhushanwen/subagent-core";
 import { configureNotifyDomain } from "@zhushanwen/subagent-core";
+import { setInFlightListener } from "@zhushanwen/subagent-core";
 import { createPiHostServices, createPiNotifyDomainPorts } from "./host/pi-host.ts";
+// [u7a D5] 壳层在途上报出口：core 状态迁移 → 本出口 → select 通道（marker 帧）→ runtime。
+import { createInFlightReporter } from "./host/inflight-reporter.ts";
 
 import { bestEffort } from "@zhushanwen/subagent-core";
 // ═══ execution/ 层（subagents 核心 + 运行时） ═══
@@ -143,6 +146,13 @@ export default function subagentsWorkflowExtension(pi: ExtensionAPI): void {
   // [P3 引擎接线] 登记 'zcode'（幂等同上）。惰性工厂：不触发 CLI/凭据探测，引擎被
   // 实际选用（P4 路由或显式 getEngine('zcode')）才解析 deps。
   registerZcodeEngine();
+
+  // [u7a D5] 在途聚合上报接线：core 状态迁移（spawn/close/arm/disarm）→ 出口回调 →
+  // 本 reporter 经 select 通道推绝对计数帧。出口为进程级单监听（在途记账本身是 pi
+  // 进程级模块状态），后注册覆盖先注册（jiti 重载幂等）；回调同步 void，不进任何
+  // 生命周期 await 链（D5 接线约束①）。ctx 由 session_start 注入（factory 阶段无 ui）。
+  const inflightReporter = createInFlightReporter();
+  setInFlightListener(inflightReporter.onInFlightChanged);
 
   // [U7b] 引擎列表在 extension 模块加载时即同步 engines.json（不等 session_start——
   // 用户体验拍板 2026-08-25：xyz-agent 打开后激活任意 session 的第一时间（含 TUI 等价
@@ -286,6 +296,10 @@ export default function subagentsWorkflowExtension(pi: ExtensionAPI): void {
   // ════════════════════════════════════════════════════════════
   pi.on("session_start", async (_event: SessionStartEvent, ctx: ExtensionContext) => {
     lsRef.lastSessionId = ctx.sessionManager.getSessionId();
+    // [u7a D5] 初始上报（count=当下绝对计数）：触发时点 = extension 加载完成 / session
+    // 就绪（factory 无 ctx/ui，session_start 是最早带 ctx 的钩子——plugin-bridge 同款
+    // 事实）。fire-and-forget 在 await 装配链之前发起，不阻塞也不被阻塞。
+    inflightReporter.attachSession(ctx);
     const result = await setupSessionLifecycle(pi, ctx, makeLifecycleDeps());
     sessionState.set(result.sessionId, result);
   });
@@ -409,6 +423,10 @@ export default function subagentsWorkflowExtension(pi: ExtensionAPI): void {
   pi.on("session_shutdown", async (_event: SessionShutdownEvent, _ctx: ExtensionContext) => {
     // ── subagents 域：dispose SubagentService ──
     getSubagentService()?.dispose();
+
+    // [u7a D5] 在途上报通道随 session 终结：摘 ctx + 停重试（session 已死，重试直至
+    // 成功的语义只对活 session 成立；进程级出口监听保留——后续 /new 重新 attach）。
+    inflightReporter.detachSession();
 
     // ── workflow 域：terminate 所有 running run + store 收尾 + 清理 temp files ──
     // H-5: 遍历所有 sessionState 条目清理（而不只 lastSessionId——

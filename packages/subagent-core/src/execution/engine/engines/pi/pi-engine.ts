@@ -53,6 +53,7 @@ import {
   DEFAULT_IDLE_TIMEOUT_MS,
   disarmIdleTimer,
 } from "../../../lifecycle-manager.ts";
+import { notifyInFlightChanged } from "../../inflight-snapshot.ts";
 import { bestEffort } from "../../../best-effort.ts";
 import {
   clearEpipeFailure,
@@ -400,6 +401,11 @@ export class PiEngine implements EnginePort {
   ): Promise<void> {
     // 新 turn，disarm idle timer（防 turn 期间误杀活进程，V2 决策 4）
     disarmIdleTimer(record.id);
+    // [u7a D5] 在途记账迁移点：disarm 后该 record（若进程活）从「保活」回到「正在
+    // 执行」——热路径续聊的非在途→在途翻转就发生在这一行，推最新绝对计数给壳层
+    // （同步 fire-and-forget，不进投递 await 面）。冷路径（进程死）此迁移无计数
+    // 变化，后续 resume spawn 的注册迁移点照常上报。
+    notifyInFlightChanged();
     const child = getChildByRecord(record.id);
     if (child && !child.killed) {
       // 热路径：进程活（running/idle 都可能是热路径——V2 进程长驻，idle 态进程仍在内存）
@@ -513,6 +519,10 @@ export class PiEngine implements EnginePort {
         return;
       }
     }
+    // [u7a D5] 在途记账迁移点：re-arm 已把该 record 置回保活（非在途），推最新绝对
+    // 计数给壳层（与入口 disarm 的上报对称；同步 fire-and-forget，本方法在 catch
+    // 链内、出口异常已由出口侧吸收）。
+    notifyInFlightChanged();
     logger.warn(
       `[subagents] deliverPrompt hot path failed for ${record.id}; idle timer re-armed to keep process recovery bounded`,
       { detail },

@@ -97,6 +97,16 @@ export { registerPiEngine } from "./execution/engine/engines/pi/registration.ts"
 export { killAllSpawnedChildren } from "./execution/engine/engines/pi/session-runner.ts";
 export { registerZcodeEngine } from "./execution/engine/engines/zcode/registration.ts";
 
+// 在途事件出口（u7a，D5）：壳层（subagent-workflow host/inflight-reporter）注册
+// 监听 + 求值绝对计数快照——core→壳回调出口的 barrel 消费面（exports 面收窄后
+// 壳侧生产消费必须经 barrel，无深路径豁免）。
+export {
+  setInFlightListener,
+  getInFlightSnapshot,
+  type InFlightSnapshot,
+  type InFlightListener,
+} from "./execution/engine/inflight-snapshot.ts";
+
 // pi session-runner 内核件（merge 裁决：dev 侧旧深路径 execution/session-runner.ts
 // 终态已不存在，符号随 u-2a 迁移至 engine/engines/pi/session-runner.ts）：
 // maxTurnsToWatchdogMs 为 maxTurns→watchdog 毫秒换算（U3/U4 / D7，floor 语义

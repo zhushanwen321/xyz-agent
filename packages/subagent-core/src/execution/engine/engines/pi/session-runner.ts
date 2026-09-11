@@ -18,6 +18,7 @@ import { getLogger } from "../../../../core/logger.ts";
 import { bestEffort } from "../../../best-effort.ts";
 import { disposeEngines } from "../../registry.ts";
 import { armIdleTimer, DEFAULT_IDLE_TIMEOUT_MS } from "../../../lifecycle-manager.ts";
+import { notifyInFlightChanged } from "../../inflight-snapshot.ts";
 import {
   listActivePendingFromSessionFile,
   prunePendingCursor,
@@ -525,6 +526,9 @@ export function killAllSpawnedChildren(signal: NodeJS.Signals = "SIGTERM"): numb
   // 不 clear 则下次 dispose 会重复向已 kill 的 child 发信号——虽然已确认死亡者被
   // 跳过，但 Map 无限增长泄漏内存）。
   spawnedChildren.clear();
+  // [u7a D5] 在途记账清零迁移点：clear 后非 idle 句柄数必变 0，推最新绝对计数给壳层
+  //（同步 fire-and-forget，dispose 快速返回契约不受影响）。
+  notifyInFlightChanged();
   return n;
 }
 
@@ -556,6 +560,9 @@ export function getChildByRecord(recordId: string): ChildProcess | undefined {
 function removeChildRegistration(recordId: string, child: ChildProcess): void {
   if (spawnedChildren.get(recordId) === child) {
     spawnedChildren.delete(recordId);
+    // [u7a D5] 在途记账迁移点：close/error 摘除后推最新绝对计数给壳层（同步
+    // fire-and-forget——close handler 本就是异步事件回调，不阻塞任何链）。
+    notifyInFlightChanged();
   }
 }
 
@@ -571,6 +578,9 @@ export function registerSpawnedChildForRecord(recordId: string, child: ChildProc
   spawnedChildren.set(recordId, child);
   child.once("close", () => removeChildRegistration(recordId, child));
   child.once("error", () => removeChildRegistration(recordId, child));
+  // [u7a D5] 在途记账迁移点：注册后推最新绝对计数给壳层（非 pi 引擎经
+  // RunContext.onChildSpawned 到达本入口，与 pi runSpawn 内联路径同一出口）。
+  notifyInFlightChanged();
 }
 
 // ============================================================
@@ -1633,6 +1643,11 @@ function createSpawnEventHandlers(state: SpawnRunState): (raw: SdkEvent) => void
         bestEffort(fallbackErr, "armIdleTimer fallback (agent_settled chatMode)", "error");
       }
     }
+    // [u7a D5] 在途记账迁移点：armIdleTimer 已把该 record 置为 Path A 保活（timer
+    // armed → 非在途），推最新绝对计数给壳层。同步 fire-and-forget（本出口为同步
+    // void 回调分发，壳层内部自行异步推送）——**不 await 进 agent_settled handler
+    // 链**（该链有时序保护约束 armIdleTimer 先于 notify，D5 接线约束①）。
+    notifyInFlightChanged();
     // [SP-9] chatMode 每轮 reset turn-limiter：新一轮开始（续聊）时，
     // maxTurns/graceTurns 不跨轮累计（续聊本质是无限轮，累计上限违背 G1）。
     // reset steered/aborted 标志 + turnCount 归零，下一轮独立计数。
@@ -2404,6 +2419,9 @@ function setupFreshChild(
   // [C1] track 子进程供 dispose 兜底 kill（sync + background 均注册——sync 无 controller，
   // abortRunningControllers 跳过它，靠本 Map 兜底）。close/error 后按句守卫移除（已退出无需再 kill）。
   spawnedChildren.set(record.id, child);
+  // [u7a D5] 在途记账迁移点：注册后推最新绝对计数给壳层（pi runSpawn 内联注册路径；
+  // 同步 fire-and-forget，不进 spawn 主链 await 面）。
+  notifyInFlightChanged();
   // [V2 决策 3] spawn 后 child.pid 同步立即可得，记录到 record 内存（lifecycle-manager
   // 孤儿扫描用，Step 5 接入持久化）。resume spawn 时此处同样覆盖更新（pid 可能已变）。
   if (child.pid !== undefined) record.pid = child.pid;
