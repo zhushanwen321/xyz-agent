@@ -22,11 +22,12 @@
 import type { ProviderInfo, ModelInfo, ProviderId } from '@xyz-agent/shared'
 import type { IModelService, ISessionService, IConfigService, IMessageBroker } from '../interfaces.js'
 import type { IModelSource } from './ports/model.js'
+// port 类型从本源导入（ports 文件头自述消费模式；infra 仅作实现侧 re-export 不作类型消费源）
 import type {
   ConnectionTestRequest,
   ConnectionTestResult,
   IModelConnectionTester,
-} from '../infra/model-connection-tester.js'
+} from './ports/model-connection-tester.js'
 import { toErrorMessage } from '../utils/errors.js'
 import { toModelInfo } from './model-mapper.js'
 import { isCatalogProvider } from './provider-catalog.js'

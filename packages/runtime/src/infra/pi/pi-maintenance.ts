@@ -65,7 +65,12 @@ export function syncBundledResources(): void {
     ['skills', join(piAgentDir, 'skills')],
   ] as const) {
     const src = join(bundledAgentDir, subDir)
-    if (existsSync(src) && !existsSync(destDir)) {
+    if (!existsSync(src)) {
+      // 打包产物 bundled 源缺失从静默跳过变可观测（缺目录 = 打包链断裂信号，排查入入口）
+      console.warn(`[provider-store] bundled source missing, skip sync: ${src}`)
+      continue
+    }
+    if (!existsSync(destDir)) {
       try {
         cpSync(src, destDir, { recursive: true })
         console.log(`[provider-store] synced bundled ${subDir} → ${destDir}`)

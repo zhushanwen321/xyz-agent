@@ -1279,6 +1279,8 @@ interface MetadataCacheEntry {
 }
 
 const metadataCache = new Map<string, MetadataCacheEntry>()
+// §7.5 豁免（development-guide.md「纯性能缓存豁免」）：TTL 纯性能缓存，jiti 双路径加载
+// 分裂成两份仅多一次 miss 重扫，无正确性影响，不升级 globalThis 单例。
 
 /**
  * 标题缓存 TTL（秒级，§6.6 策略 ③）。量级与 doctor 根扫描缓存同档（DOCTOR_CACHE_TTL_MS），

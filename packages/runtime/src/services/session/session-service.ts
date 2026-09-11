@@ -69,6 +69,7 @@ import type { ForceQuitSource, UserStoppedMarkStore } from './types.js'
 
 /**
  * userStopped 标记宿主（session-dead-structural-fixes D4）：sessionId 键控的模块级独立 Map。
+ * 数据源登记 = 主表 #30（docs/architecture/data-source-registry.md，2026-09-10 u3b 补登）。
  *
  * 为什么是模块级、为什么独立于 ManagedSession：forceQuit 尾步 removeSessionEntry 会删
  * sessions Map 条目、销毁 session 对象，而标记必须存活到后续 restore（用户点开 dead session

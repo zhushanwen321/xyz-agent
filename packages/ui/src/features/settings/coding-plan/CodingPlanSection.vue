@@ -256,6 +256,7 @@ import { Button, Switch, Label, Textarea, Input, Select, SelectTrigger, SelectVa
 import { computed, ref } from 'vue'
 import { Loader2, CheckCircle2, AlertCircle, ExternalLink } from '@lucide/vue'
 import { useI18n } from 'vue-i18n'
+import { formatQuotaTimeAgo } from './format-time-ago'
 
 import type { NormalizedQuotaRow, QuotaAuthKind, QuotaCredentialSource, QuotaFetchFailureReason } from '@xyz-agent/shared'
 import { QUOTA_PRESETS, supportsExclusiveCredential } from '@xyz-agent/shared'
@@ -347,12 +348,6 @@ function onSelectFetcher(value: unknown): void {
 }
 
 const { t } = useI18n()
-
-// ── 时间换算常量 ──
-const MS_PER_SEC = 1000
-const SEC_PER_MIN = 60
-const MIN_PER_HOUR = 60
-const HOUR_PER_DAY = 24
 
 /** 三窗口标签（i18n 化，与 QuotaWins 顺序对齐：5h / 本周 / 本月）。 */
 const windowLabels = [
@@ -494,16 +489,8 @@ function formatAbsoluteTime(ts: number): string {
   return new Date(ts).toLocaleString()
 }
 
-/** 格式化时间戳为相对时间（i18n 化）。 */
+/** 格式化时间戳为相对时间（纯函数见 format-time-ago.ts，S-16 提取使边界可测）。 */
 function formatTimeAgo(ts: number): string {
-  const diff = Date.now() - ts
-  const sec = Math.floor(diff / MS_PER_SEC)
-  if (sec < SEC_PER_MIN) return t('settings.providerEdit.quotaTimeAgoSeconds', { n: sec })
-  const min = Math.floor(sec / SEC_PER_MIN)
-  if (min < MIN_PER_HOUR) return t('settings.providerEdit.quotaTimeAgoMinutes', { n: min })
-  const hr = Math.floor(min / MIN_PER_HOUR)
-  if (hr < HOUR_PER_DAY) return t('settings.providerEdit.quotaTimeAgoHours', { n: hr })
-  const day = Math.floor(hr / HOUR_PER_DAY)
-  return t('settings.providerEdit.quotaTimeAgoDays', { n: day })
+  return formatQuotaTimeAgo(ts, Date.now(), t)
 }
 </script>

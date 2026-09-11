@@ -291,6 +291,7 @@ async function applyProviderEntry(
         reason: kind === 'catalog' ? CATALOG_CREDENTIAL_WRITER_UNAVAILABLE : 'nothing to import',
       }
     }
+    // as 断言约定见 applyProviderWritePolicy JSDoc「维护约定」（形状安全由载体字段族保证）
     upsertProvider(_sourceName, merged as PiProviderConfig)
     return { id: _sourceName, name: _sourceName, status: 'imported' }
   } catch (e) {
@@ -378,6 +379,7 @@ async function applyOrphanWithTemplate(
       oc.providerId,
     )
     if (!skipUpsert) {
+      // as 断言约定见 applyProviderWritePolicy JSDoc「维护约定」（形状安全由载体字段族保证）
       upsertProvider(oc.providerId, merged as PiProviderConfig)
       return { id: oc.providerId, name: oc.providerId, status: 'imported' }
     }

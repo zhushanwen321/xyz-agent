@@ -37,7 +37,7 @@ allowlist（ALLOWLIST）：
   docs/architecture/data-source-registry.md §4 对应条目为准，豁免闭环 = 先登记表补条目
   + 本表登记（§5 第 3 条），禁止在代码里静默绕过）。W11 曾清空为空集（三条 legacy
   直写链路 persistSessionName / persistHandedOff / patchSessionCwd 已迁移或删除）；
-  2026-09-10 收录首条：scripts/migrate-pi-layout-v2.mjs（登记表 §4 ⑬，session-reader
+  2026-09-10 收录首条：scripts/migrate-pi-layout-v2.mjs（登记表 §4 ⑭，session-reader
   布局迁移 U14a）——jsonl rename-only，writeFile 仅三件套 union tmp+rename 原子写。
   匹配语义：文件级——该文件内未落内置豁免（条件 B）的写点按本表放行，命中处以
   「文件:行」在通过报告中列出（防条目遮蔽新增写点而不可见）。
@@ -174,6 +174,25 @@ ALLOWLIST: dict[str, str] = {
     # db-isolation W5a 清理工具（dev-0.9.16 侧登记，registry §4 对应条目锚见该侧）：
     # 残留清单/操作凭证落盘两写点，原行号键 :445/:464 转文件级。
     "scripts/zcode-session-db-cleanup.mjs": "zcode 会话 db 清理工具：残留清单/操作凭证落盘两写点（原行号键 :445/:464 转文件级）",
+}
+
+# ---------------------------------------------------------------------------
+# 语句级特征登记（防线补强）：文件级键放行后，该文件内**新增**未登记写点不再被
+# 机器拦截（只落入人读通过报告）——本表为每个文件级条目登记已评审写调用语句的
+# 特征正则（按调用形态锚定，不用行号——行号键随脚本漂移永不生效，教训 impl-plan
+# D-10）。放行时写点语句匹配任一特征 = 已登记写点静默放行；不匹配 = 仍放行
+# （登记滞后不阻断提交）但输出 [WARN] 提示同步登记表与本表，防新增写点在文件级
+# 键下静默扩面。新增 ALLOWLIST 条目时应同步登记特征。
+# ---------------------------------------------------------------------------
+ALLOWLIST_STMT_PATTERNS: dict[str, tuple[re.Pattern, ...]] = {
+    # writeAtomic 内唯一写调用（fsMod.writeFileSync(tmp, content) 形态）
+    "scripts/migrate-pi-layout-v2.mjs": (
+        re.compile(r"\bfsMod\.writeFileSync\s*\("),
+    ),
+    # 残留清单/操作凭证两写点（fs.writeFileSync(...) 同形态）
+    "scripts/zcode-session-db-cleanup.mjs": (
+        re.compile(r"\bfs\.writeFileSync\s*\("),
+    ),
 }
 
 
@@ -353,6 +372,15 @@ def check_file(filepath: Path) -> tuple[list[str], list[str]]:
                 continue
             # allowlist：文件级登记例外（data-source-registry.md §4，§5 第 3 条闭环）
             if rel_str in ALLOWLIST:
+                # 语句级特征校验：匹配已登记特征 = 已评审写点静默放行；不匹配 = 新增
+                # 写点，保持文件级放行（登记滞后不阻断提交）但 WARN 可见（防静默扩面）
+                patterns = ALLOWLIST_STMT_PATTERNS.get(rel_str)
+                if patterns is not None and not any(p.search(stmt) for p in patterns):
+                    errors.append(
+                        f"[WARN] {rel_str}:{lineno}: allowlist 文件级放行，但写点语句不匹配"
+                        f"已登记特征（{label}）——若为新增写点，请同步 {REGISTRY_DOC} §4 条目"
+                        f"与本脚本 ALLOWLIST_STMT_PATTERNS"
+                    )
                 consumed.append(f"{rel_str}:{lineno}")
                 continue
             # B② 非 sessions 目标（tmpdir / xyz 自有目录推导，语句无 sessions 痕迹）
@@ -400,7 +428,7 @@ def main() -> int:
         print("\033[0;31m[原则] 无论是否本次改动引入的问题，都必须正面修复解决，不允许跳过。\033[0m")
         return 2
 
-    if not all_errors:
+    if not has_error:
         hits = ", ".join(sorted(consumed_allowlist)) if consumed_allowlist else "无（W11 已清空）"
         print(
             f"[OK] R1 pi session 直写检查通过：扫描 {scanned} 文件，"

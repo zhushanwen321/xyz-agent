@@ -3,6 +3,7 @@
  * 每个命令映射一个 runtime config.* 消息，逻辑单一真值源在 ConfigService。
  */
 import { readFileSync } from 'node:fs'
+import type { ConnectionTestResultRow } from '@xyz-agent/shared'
 import { getSettingsPath } from '../infra/pi/pi-paths.js'
 import { rpc } from './ws-client.js'
 
@@ -209,7 +210,9 @@ async function runDiscoverModels(flags: Record<string, string | boolean>, json: 
 
 /** `discover-models --mode test --name <provider-id>`：per-协议真实最小请求结果（排障入口）。 */
 async function runTestConnections(flags: Record<string, string | boolean>, json: boolean): Promise<string> {
-  const providerId = flags.name as string
+  // flags 值类型是 string | boolean：--name 缺值时是 true，显式收窄为空串走下方 Usage 报错
+  // （比 as string 断言准确 —— true 透传进 RPC payload 的误导性错误信息不会出现）
+  const providerId = typeof flags.name === 'string' ? flags.name : ''
   if (!providerId) {
     throw new Error('Usage: xyz-settings discover-models --mode test --name <provider-id> [--json]')
   }
@@ -217,7 +220,7 @@ async function runTestConnections(flags: Record<string, string | boolean>, json:
   const reply = await rpc<{
     success?: boolean
     error?: string
-    results?: Array<{ api: string; modelId: string; ok: boolean; error?: string }>
+    results?: ConnectionTestResultRow[]
   }>('config.discoverModels', { baseUrl: '', providerId, mode: 'test' })
   if (reply.success === false) {
     throw new Error(reply.error ?? 'connection test failed')

@@ -260,6 +260,32 @@ describe('M1b: applyProviderWritePolicy 防线②③', () => {
   })
 })
 
+describe('S15: custom provider oauth 清理失败 warn（I9 清理① 降级可观测）', () => {
+  it('authStorage.remove reject → console.warn 指明清理失败，主写路径不受阻', async () => {
+    const upsertProvider = vi.fn((_providerId: string, _merged: Record<string, unknown>) => ({}))
+    const store = {
+      getProviderConfig: vi.fn(() => undefined),
+      applyTypeTranslation: vi.fn((t: string) => t),
+      upsertProvider,
+      ensureProviderInWhitelist: vi.fn(),
+      getEnabledModels: vi.fn(() => []),
+    } as unknown as IConfigStore
+    const auth = makeAuth()
+    ;(auth.remove as ReturnType<typeof vi.fn>).mockRejectedValue(new Error('auth store locked'))
+    const svc = new ConfigService('/tmp/project', store, auth, new XyzProviderStore(extrasPath))
+
+    await svc.setProvider('p-custom', { apiKey: 'sk-new' })
+    // fire-and-forget catch 在微任务后触发，排空后再断言
+    await new Promise((resolve) => setImmediate(resolve))
+
+    expect(upsertProvider).toHaveBeenCalled()
+    expect(console.warn).toHaveBeenCalledWith(
+      '[config-service] auth.json oauth cleanup failed for p-custom (I9 清理①):',
+      expect.any(Error),
+    )
+  })
+})
+
 describe('M1b: setProvider 接线（防线②③ 经 applyProviderWritePolicy 载体消费信号）', () => {
   /**
    * 最小 mock IConfigStore（setProvider 路径：读既有条目 + 捕获 upsert 入参）+ 真实

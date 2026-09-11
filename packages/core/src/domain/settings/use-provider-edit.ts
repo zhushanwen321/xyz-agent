@@ -18,7 +18,7 @@
  * 零 '@/' import（core 零 renderer 依赖铁律）。
  */
 import { ref, reactive, watch, computed, type Ref } from 'vue'
-import type { ProviderInfo, SetProviderData } from '@xyz-agent/shared'
+import type { ProviderInfo, SetProviderData, ConnectionTestResultRow } from '@xyz-agent/shared'
 import { getSettingsStore } from './settings-store'
 import { getSettingsTransport } from './transport'
 import type { DiscoverModelsRequest, DiscoverModelsResponse } from './transport'
@@ -136,13 +136,9 @@ export type DiscoverAction = 'test' | 'discover'
 /**
  * 测试连接按协议分组的单条结果（runtime `config.discoveredModels.results` 元素，设计 §3.5 D4）：
  * 每协议一条，代表模型 + 成败 + 失败时的真实原因（HTTP 状态码与响应截断）。
+ * 形状 SSOT = shared ConnectionTestResultRow（S-9 收编，本名保留为域内语义别名）。
  */
-export interface TestConnectionResult {
-  api: string
-  modelId: string
-  ok: boolean
-  error?: string
-}
+export type TestConnectionResult = ConnectionTestResultRow
 
 /**
  * apiKey「清除」哨兵值（D18）。

@@ -18,6 +18,7 @@ import type {
   SystemPromptConfig,
   TerminalConfig,
   SetProviderData,
+  ConnectionTestResultRow,
 } from '@xyz-agent/shared'
 
 /**
@@ -48,8 +49,9 @@ export interface DiscoverModelsResponse {
   /**
    * test 模式填：按协议分组的真实连接测试结果（每协议一条：代表模型 + 成败 + 失败原因）。
    * 旧 runtime 不下发该字段时保持 undefined——消费方降级为整体反馈行（无逐协议行）。
+   * 行形状 SSOT = shared ConnectionTestResultRow。
    */
-  results?: Array<{ api: string; modelId: string; ok: boolean; error?: string }>
+  results?: ConnectionTestResultRow[]
 }
 
 /**

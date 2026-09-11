@@ -29,6 +29,7 @@ import type {
   SkillCacheInvalidatedPayload,
   ServerMessage,
   ProviderId,
+  ConnectionTestResultRow,
 } from '@xyz-agent/shared'
 import { RPC_BACKSTOP_TIMEOUT_MS } from '../pending'
 import { command } from '../request'
@@ -146,8 +147,8 @@ export interface DiscoveredModelsResult {
   models: Array<{ id: string; name?: string; contextWindow?: number }>
   success: boolean
   error?: string
-  /** test 模式填（形状与 shared/protocol.ts 的 config.discoveredModels.results 逐字一致） */
-  results?: Array<{ api: string; modelId: string; ok: boolean; error?: string }>
+  /** test 模式填（行形状 SSOT = shared ConnectionTestResultRow） */
+  results?: ConnectionTestResultRow[]
 }
 
 export function discoverModels(req: {

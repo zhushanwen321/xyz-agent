@@ -11,6 +11,7 @@ export type {
   SkillCacheScope, SkillCacheInvalidatedPayload,
   SessionTraceHeaderPayload, SessionTraceMalformedLine, SessionTraceSessionEndPayload,
   SessionViewSnapshot,
+  ConnectionTestResultRow,
 } from './protocol'
 export { isMessage, isSessionSummary, isSubagentRecord } from './protocol'
 export type {

@@ -831,6 +831,13 @@ function applyModelsWritePolicy(
  * 信号（gatewayToSet / gatewayToClear / skipUpsert）由调用方编排。函数就地更新并原样返回
  * 传入的 merged（含删键）。
  *
+ * **维护约定（S-10 登记）**：merged 形参故意宽化为 Record<string, unknown>（字段族子函数
+ * 逐字段拼装，不做整体类型收窄）；调用方（provider-importer 等）把它传给
+ * `upsertProvider(name, config: PiProviderConfig)` 时需 `as PiProviderConfig` 断言 ——
+ * 断言的安全性依赖本函数各字段族子函数只写入 PiProviderConfig 形状内的键。**新增字段族
+ * 子函数时必须保持 merged 产出与 PiProviderConfig 形状兼容**；长期方向 = 本函数返回
+ * 类型化产物（形状收编进 ProviderWritePolicyResult），届时调用方断言可删。
+ *
  * @param merged 既有条目展开后的目标对象（调用方已持有同一引用）
  * @param data 归一后的 provider 配置入参（见 ProviderWritePolicyInput）
  * @param kind 写入体系（调用方经 isCatalogProvider 派生）

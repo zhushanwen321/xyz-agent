@@ -1076,8 +1076,13 @@ export class SessionLifecycle implements ISessionRegistry {
 
   /**
    * D4（session-dead-structural-fixes）：restore-abort——userStopped 标记命中时 `await
-   * client.abort()`（对 idle pi 是无害 no-op——pi 实装对无活跃 run 幂等无副作用；对
-   * session_start 钩子补投（notify replay / scheduler）已起跑的 replay turn 是精准中止）。
+   * client.abort()`（对 idle pi 是无害 no-op——锚点核实 pi@0.84.4 实装：abort RPC 分支
+   * `dist/modes/rpc/rpc-mode.js:329-331` → `AgentSession.abort()`（`dist/core/agent-session.js:1222-1226`，
+   * 仅 abortRetry + agent.abort + waitForIdle）→ `pi-agent-core/dist/agent.js:201-204`
+   * `abort() { this.activeRun?.abortController.abort() }` 可选链——无活跃 run（`activeRun = undefined`，
+   * `:371`）时零副作用；waitForIdle 对 isIdle（`agent-session.js:620-622`，`!_isAgentRunActive`）
+   * 立即返回——幂等无副作用；对 session_start 钩子补投（notify replay / scheduler）已起跑的
+   * replay turn 是精准中止）。
    * 调用方已判定标记存在（判定点与拆分前同位置），本函数不重复判定。
    *
    * 标记不在此清：notify-ledger 有两条投递腿（session_start 恢复扫描 + settled 补发腿——

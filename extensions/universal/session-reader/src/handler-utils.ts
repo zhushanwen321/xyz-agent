@@ -13,7 +13,9 @@ const TURN_INDEX_WIDTH = 3
 
 export const pad = (n: number): string => String(n).padStart(TURN_INDEX_WIDTH, '0')
 
-/** 构造带 👉 恢复指引的 Error（handler 抛出，由 execute 闭包 catch）。 */
+/** 构造带 👉 恢复指引的 Error。契约：handler 直接 throw，execute 不 catch、原样传播给 pi；
+ * pi 外层（pi-agent-core agent-loop.js executePreparedToolCall catch，:466-471）统一转
+ * isError:true 的 error tool result——返回值上的 isError 字段会被丢弃（错误被标成功）。 */
 export function err(message: string): Error {
   return new Error(message)
 }

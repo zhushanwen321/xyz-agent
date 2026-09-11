@@ -310,4 +310,47 @@ describe('turn-progress 阈值警示与豁免（D6/D7，u4 验收②③）', () 
     expect(sut.snapshot.value?.active).toBe(true)
     scope.stop()
   })
+
+  // ── tick 防御分支（S-14 补口：9 行缺口的状态机收口不靠人肉验证）──
+
+  it('turn 进行中清空 sessionId：tick 自停（stopTicking + 快照清空，不残留旧 turn 展示）', async () => {
+    const { scope, store, sut, sid } = makeEnv()
+    startTurnEvents(store)
+    await nextTick()
+    expect(sut.snapshot.value?.active).toBe(true)
+    // 后台清空 sid（切 landing / session 销毁路径）：watch 边沿与 tick 双路都必须收口
+    sid.value = null
+    await nextTick()
+    vi.advanceTimersByTime(5_000)
+    await nextTick()
+    expect(sut.snapshot.value).toBeNull()
+    scope.stop()
+  })
+
+  it('dispatching 空窗：startTurn 退化基线（无消息用当前时刻），展示不缺位不悬挂', async () => {
+    const { scope, store, sut } = makeEnv()
+    // occupancy 已 generating 但 message_start 未到（dispatching 空窗）：
+    // startTurn 退化为当前时刻作计时基线（turnStartedAt=null 的 tick 防御分支在
+    // 边沿流中不可达——isActive 边沿先重落基线，防御分支只收冷启动竞态残窗）
+    store.setOccupancy(SID, { turn: 'generating', compacting: false, bash: false })
+    await nextTick()
+    vi.advanceTimersByTime(2_000)
+    await nextTick()
+    expect(sut.snapshot.value?.active).toBe(true)
+    expect(sut.snapshot.value?.turnElapsedMs).toBe(2_000)
+    scope.stop()
+  })
+
+  it('idle 边沿漏检兜底：watch flush 前 tick 直接观测 idle → finishTurn 收口不悬挂', async () => {
+    const { scope, store, sut } = makeEnv()
+    startTurnEvents(store)
+    await nextTick()
+    expect(sut.snapshot.value?.active).toBe(true)
+    // 不 await nextTick：模拟「watch 尚未 flush、interval tick 先到」的边沿漏检窗口
+    store.setOccupancy(SID, { turn: 'idle', compacting: false, bash: false })
+    vi.advanceTimersByTime(1_000)
+    await nextTick()
+    expect(sut.snapshot.value).toBeNull()
+    scope.stop()
+  })
 })

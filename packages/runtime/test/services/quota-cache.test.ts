@@ -15,12 +15,25 @@
  *
  * 运行：cd packages/runtime && npx vitest run test/services/quota-cache.test.ts
  */
-import { describe, it, expect, beforeEach, afterEach } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { mkdtempSync, rmSync, existsSync, readFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { QuotaCache } from '../../src/services/quota-cache.js'
+import { logger } from '../../src/infra/logger.js'
 import type { NormalizedQuotaRow } from '@xyz-agent/shared'
+
+// node:fs 部分 mock（对齐 quota-cache-memory.test.ts 先例——ESM 下 vi.spyOn(node:fs)
+// 不可用，仅包装 renameSync 为可注入失败探针，默认委托真实实现，非失败用例零行为差）
+const fsMock = vi.hoisted(() => ({
+  renameSync: vi.fn(),
+  realRenameSync: null as unknown,
+}))
+vi.mock('node:fs', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:fs')>()
+  fsMock.realRenameSync = actual.renameSync
+  return { ...actual, renameSync: fsMock.renameSync }
+})
 
 let tmpDir: string
 let cache: QuotaCache
@@ -47,6 +60,8 @@ function readDiskProviderIds(): string[] | undefined {
 }
 
 beforeEach(() => {
+  fsMock.renameSync.mockClear()
+  fsMock.renameSync.mockImplementation(fsMock.realRenameSync as typeof import('node:fs')['renameSync'])
   tmpDir = mkdtempSync(join(tmpdir(), 'quota-cache-'))
   cache = new QuotaCache(tmpDir)
   cachePath = join(tmpDir, 'quota-cache.json')
@@ -143,5 +158,39 @@ describe('QuotaCache.removeEntry — 语义③ 幂等', () => {
     expect(cache.getEntry('p-once')).toBeNull()
     // 文件已物化（曾有条目），幂等删除后 providers 为空对象而非删除文件
     expect(readDiskProviderIds()).toEqual([])
+  })
+})
+
+describe('QuotaCache.removeEntry — 语义④ 写失败降级（S-12）', () => {
+  it('renameSync 抛错：磁盘保留旧条目 + 镜像不写入失败快照（miss-reload 取回旧行）+ .tmp 清理', async () => {
+    const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {})
+    try {
+      cache.update('p-a', makeRow('keep-me'))
+      await flushWriteChain()
+      expect(readDiskProviderIds()).toContain('p-a')
+
+      // 注入 rename 失败（doRemoveEntry 的写盘段抛错 → catch 降级分支）
+      fsMock.renameSync.mockImplementation(() => {
+        throw new Error('EACCES: simulated rename failure')
+      })
+      cache.removeEntry('p-a')
+      await flushWriteChain()
+
+      // 磁盘旧条目保留（失败不删除旧缓存）
+      expect(readDiskProviderIds()).toContain('p-a')
+      // .tmp 清理（catch 分支的 unlinkSync 兜底）
+      expect(existsSync(`${cachePath}.tmp`)).toBe(false)
+      // 内存镜像不被失败快照覆盖：removeEntry 同步段已删镜像键，getEntry miss-reload
+      // 从磁盘把旧行取回（等价于删除未生效的自愈路径）
+      expect(cache.getEntry('p-a')).not.toBeNull()
+      expect(cache.getEntry('p-a')?.data.label).toBe('keep-me')
+      // 伴生 warn log（落盘降级可观测）
+      expect(warnSpy).toHaveBeenCalledWith(
+        '[quota-cache] failed to remove cache entry',
+        expect.objectContaining({ error: expect.stringContaining('EACCES') }),
+      )
+    } finally {
+      warnSpy.mockRestore()
+    }
   })
 })

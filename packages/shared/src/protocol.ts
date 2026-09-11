@@ -30,6 +30,21 @@ import type { GenStatsFrame } from './gen-stats'
 // quota.configure payload 形状 SSOT 引用（coding-plan-quota-config-ux §7.1 契约收敛）
 import type { QuotaConfigurePayload } from './quota-types'
 
+/**
+ * 测试连接按协议分组的单行结果（SSOT，2026-09-10 review S-9 手写重复收编）：
+ * protocol `config.discoveredModels.results` 元素 / core transport / core TestConnectionResult /
+ * runtime port ConnectionTestResult 四处同形状，全部引用本类型，漂移编译期红。
+ */
+export interface ConnectionTestResultRow {
+  /** 协议（pi model.api） */
+  api: string
+  /** 该协议分组的代表模型 id */
+  modelId: string
+  ok: boolean
+  /** 失败时的真实原因（HTTP 状态码与响应截断） */
+  error?: string
+}
+
 // ── Client → Runtime message types
 
 /** pi get_commands 返回的命令来源元信息（RpcSlashCommand.sourceInfo 透传）。
@@ -1662,7 +1677,8 @@ export interface ServerMessageMapBase {
     error?: string
     // test 模式填（按协议分组的真实连接测试结果）；discover 模式不填；
     // optional 向后兼容——旧消费方不读该字段，行为不变。
-    results?: Array<{ api: string; modelId: string; ok: boolean; error?: string }>
+    // 行形状 SSOT = ConnectionTestResultRow（下方导出，4 处手写重复收编）。
+    results?: ConnectionTestResultRow[]
   }
   // config.providerUpdated：setProvider/deleteProvider reply（settings-message-handler.ts:37/51/65）。
   // 三种 shape：setProvider 成功 { saved: true }；deleteProvider { providerId, deleted: true }；

@@ -51,6 +51,8 @@ interface DoctorCacheEntry extends SessionRootCacheEntry {
 }
 
 const doctorScanCache = new Map<string, DoctorCacheEntry>()
+// §7.5 豁免（development-guide.md「纯性能缓存豁免」）：TTL 纯性能缓存，jiti 双路径加载
+// 分裂成两份仅多一次 miss 重扫，无正确性影响，不升级 globalThis 单例。
 
 /** doctor 根表来源标签列宽（最长 `[subagent]` 10 字符 + 1 对齐间距，§5.1 表格形态）。 */
 const DOCTOR_ROOT_LABEL_PAD = 11

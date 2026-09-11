@@ -255,7 +255,9 @@ export class UserStoppedGate {
     marks: UserStoppedMarkStore
     abortSession: (sessionId: string) => Promise<void>
   } | null = null
-  /** per-session 收敛环状态（环活跃 = 条目存在）。 */
+  /** per-session 收敛环状态（环活跃 = 条目存在）。非 GUI 数据技术簿记（timer 句柄 +
+   *  pendingSettled 布尔），豁免登记 = taste:allow-no-data-owner W24-EX-C（§4 ⑧ ⑤，
+   *  2026-09-10 u3b 补登）；数据本体「用户停止意图标记」在主表 #30。 */
   private readonly converging = new Map<string, {
     timer: ReturnType<typeof setTimeout>
     /** 有被环内 abort 掐掉的 turn 其 settled 未到达。 */

@@ -94,26 +94,28 @@ const GET_CONFIG_APIKEY_RE = /\bgetProviderConfig\s*\([^)]*\)\s*\??\.\s*apiKey\b
 /** 守卫 B：upsertProvider 调用形态（标识符/成员后紧跟 (，定义与签名声明由白名单放行）。 */
 const UPSERT_CALL_RE = /\bupsertProvider\s*\(/g
 
-function toRel(absPath) {
-  return path.relative(SCAN_ROOT, absPath).split(path.sep).join('/')
-}
-
 /**
  * 主流程：逐文件逐行匹配，收集违规。
+ * scanRoot / 白名单可注入（默认生产形态 = 全量扫 packages/runtime/src + 本脚本白名单）：
+ * 测试用 fixture 目录（mkdtemp 自建自删）验证命中/放行矩阵，不对真实仓库跑正则验证。
+ * @param {string} scanRoot 扫描根目录
+ * @param {{ guardA?: Set<string>, guardB?: Set<string> }} allowlists 白名单覆盖（默认本模块常量）
  * @returns {{ violations: Array<{file: string, line: number, guard: string, hit: string}>, fileCount: number, lineCount: number }}
  */
-function scan() {
+function scanDir(scanRoot, allowlists = {}) {
+  const guardAAllowlist = allowlists.guardA ?? GUARD_A_ALLOWLIST
+  const guardBAllowlist = allowlists.guardB ?? GUARD_B_ALLOWLIST
   const violations = []
-  const files = collectProductionTs(SCAN_ROOT)
+  const files = collectProductionTs(scanRoot)
   let lineCount = 0
   for (const file of files) {
-    const rel = toRel(file)
+    const rel = path.relative(scanRoot, file).split(path.sep).join('/')
     const lines = readFileSync(file, 'utf-8').split('\n')
     lineCount += lines.length
     lines.forEach((line, i) => {
       // 行内注释剔除后再匹配（注释提及旧符号做历史说明不算违规，与守卫 A 头注释自洽）
       const code = line.replace(/\/\/.*$/, '')
-      if (!GUARD_A_ALLOWLIST.has(rel)) {
+      if (!guardAAllowlist.has(rel)) {
         for (const [name, re] of Object.entries(IDENTIFIER_RES)) {
           re.lastIndex = 0
           if (re.test(code)) {
@@ -125,7 +127,7 @@ function scan() {
           violations.push({ file: rel, line: i + 1, guard: 'A', hit: 'getProviderConfig(...).apiKey' })
         }
       }
-      if (!GUARD_B_ALLOWLIST.has(rel)) {
+      if (!guardBAllowlist.has(rel)) {
         UPSERT_CALL_RE.lastIndex = 0
         if (UPSERT_CALL_RE.test(code)) {
           violations.push({ file: rel, line: i + 1, guard: 'B', hit: 'upsertProvider(' })
@@ -136,7 +138,10 @@ function scan() {
   return { violations, fileCount: files.length, lineCount }
 }
 
-const { violations, fileCount, lineCount } = scan()
+// 导出面（测试消费）：scanDir 主体 + 三组正则（词边界行为直测）+ 白名单常量（收口计数断言）。不导出主流程副作用。
+export { scanDir, IDENTIFIER_RES, GET_CONFIG_APIKEY_RE, UPSERT_CALL_RE, GUARD_A_ALLOWLIST, GUARD_B_ALLOWLIST }
+
+const { violations, fileCount, lineCount } = scanDir(SCAN_ROOT)
 
 if (violations.length > 0) {
   console.error(`[provider-credential-reads] 发现 ${violations.length} 处违规（C-proc-14/15）：`)

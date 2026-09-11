@@ -156,6 +156,9 @@ export function useQuotaConfigure(
   /** 凭证来源选择（D3，api-key 类专用）：UI 显示与 runtime 使用由同一份持久化数据驱动 */
   const credentialSource = ref<QuotaCredentialSource>('provider')
   /** Workspace 地址输入草稿（明文回显，D13：判定只看草稿） */
+  // D13 已知代价（设计 §6.14）：UI 不支持清除已保存 workspace（清空草稿 → readiness 置灰
+  // 保存不出去）；换地址直接覆盖、停用关开关。显式清除按钮是登记的重审触发条件，勿在
+  // readiness 里单独开「空串 = 清除」后门。
   const workspaceInput = ref('')
   const testStatus = ref<QuotaTestStatus>('idle')
   const testError = ref('')
@@ -440,6 +443,11 @@ export function useQuotaConfigure(
     configuring.value = true
     try {
       const result = await quotaApi.configure(payload)
+      // 半提交窗口对齐（runtime 改动 4：清理锚定 persist 成功而非 configure 整体成功）：
+      // persist 成功 + secrets 段失败 → runtime 返回 ok:false 但 QuotaCache 已清、fetcher
+      // 已换新 —— renderer 镜像失效不能只挂在 ok:true 上，typeChanged 时无条件同步失效
+      // （persist 失败多清一次 = 浮层一次后台重拉，与半提交自愈同级，无害）。
+      if (typeChanged) quotaStore.clearCache(p.id)
       if (!result.ok) {
         configureError.value = result.error || t('settings.providerEdit.quotaSaveAndTestFail')
         return
@@ -447,8 +455,6 @@ export function useQuotaConfigure(
       // 保存成功：密文草稿清空（不回显）；已保存态由 provider 广播 → syncFromProvider 重建
       cookieInput.value = ''
       apiKeyInput.value = ''
-      // 类型变更：runtime 已清 QuotaCache 条目（改动 4），renderer 侧镜像同步失效
-      if (typeChanged) quotaStore.clearCache(p.id)
       await testQuery()
     } catch (e) {
       configureError.value = e instanceof Error ? e.message : t('settings.providerEdit.quotaSaveAndTestFail')

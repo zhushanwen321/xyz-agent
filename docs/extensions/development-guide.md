@@ -821,6 +821,8 @@ export function setHub(hub: Hub): void {
 
 **[规范]** `Symbol.for` 的 key 必须用**包名 + 角色**的全限定形式（如 `"@zhushanwen/pi-subagents.hub"`），避免与其它扩展的 symbol 冲突。
 
+**纯性能缓存豁免**：TTL 型只读加速缓存（如 session-reader 的 `doctorScanCache` / `metadataCache`）**不强制**本规范——jiti 双路径加载分裂成两份缓存仅多一次 miss 重扫（自愈，无正确性影响），升级 `globalThis` 单例反而引入进程级生命周期管理负担；此类缓存声明处注释引用本豁免即可。需要跨路径共享**状态语义**（写后必须读到）的单例不在豁免内。
+
 ---
 
 ## 8. 配置管理 **[规范]**
