@@ -258,6 +258,40 @@ describe("A12 hash 基线跨重启恢复", () => {
 		expect(h.entries).toHaveLength(1);
 	});
 
+	it("fork（V6 第二步）：fork 基线命中确立 current 后配置回变 → 写 change，version 自源留痕续接 +1，diff 相对源留痕 fullText", () => {
+		// 源 session 预置两条留痕：v1（配置 A prompt）→ v2（配置 B prompt）
+		const h = makeHarness(P1);
+		h.logic.onSessionStart("startup", undefined, h.ctx);
+		h.logic.onTurnStart(h.ctx); // v1 initial（A）
+		h.setPrompt(P2);
+		h.logic.onTurnStart(h.ctx); // v2 change（B）
+		expect(h.entries).toHaveLength(2);
+
+		// fork 新 session：新闭包 + 空 stash → fork 档直读源文件最后留痕 v2 作基线
+		h.openNewSession("sess-a12-fork-change");
+		const logic2 = h.newLogic();
+		logic2.onSessionStart("fork", h.sessionFile, h.ctx);
+		logic2.onTurnStart(h.ctx); // prompt 仍 B：hash 命中源留痕 → 不写，仅确立 current（沿用上一用例语义）
+		expect(h.entries).toHaveLength(2);
+		expect(h.sessionLines()).toHaveLength(0); // fork 新文件零留痕
+
+		// 配置回变（B → A）：current 已由 fork 基线命中确立 → 后续 turn 变化走 change 分支
+		//（而非 resume——resume 仅用于 session_start 后基线重确立的首 turn）
+		h.setPrompt(P1);
+		logic2.onTurnStart(h.ctx);
+		expect(h.entries).toHaveLength(3);
+		expect(h.entries[2]).toMatchObject({
+			version: 3, // 源最后留痕 v2 + 1
+			reason: "change", // 非 resume / 非 initial
+			hash: computePromptHash(P1),
+			fullText: P1,
+		});
+		// diff 相对源留痕 v2 的 fullText（B）：P2 → P1 为删 1 行（"+N -M lines" 头形态）
+		expect(h.entries[2]?.parentVersionDiffSummary).toContain("+0 -1 lines");
+		// fork 新文件恰好落盘这一条留痕
+		expect(h.sessionLines()).toHaveLength(1);
+	});
+
 	it("readLastPromptFromSessionFile：损坏行跳过、取最后一条有效留痕；文件缺失 → null", () => {
 		const scanDir = mkdtempSync(join(rootDir, "scan-"));
 		const file = join(scanDir, "s.jsonl");

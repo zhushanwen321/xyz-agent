@@ -72,7 +72,7 @@ pi 入口锚定：一律 `./node_modules/.bin/pi`（cwd = 本仓根；实测 --v
 | V3 | GUI skill 变更 reload（命中不写；prompt 实变写 resume v+1 带 diff；dev agentDir 无 baseline 写动作，路径 `~/.xyz-agent-dev/agent`） | 目标 1 + 2 | dev 运行中 | u2 / A2-7 |
 | V4 | 重启直启 resume + F1 修复（命中轮零新增；变化轮 resume v+1 且 parentVersionDiffSummary 含 "+N -M lines"） | 目标 3 | CLI 统一环境（同一 tmp agentDir + `--resume`） | u2 / A2-7 + A2-8（dev 数据目录 GUI 侧变体复跑） |
 | V5 | 负面行为：预置孤儿 baseline 全程不被读写（mtime 不变）+ 全新 session 首留痕 initial v1 | 目标 1 | CLI 统一环境（tmp agentDir 预置） | u2 / A2-7 |
-| V6 | TUI fork 基线取截断点（新留痕 version=截断点+1、resume、diff 相对 v1 有值；无 targetLeafId 分支 resume v1；两分支不跳号） | 目标 1 + 5 | CLI 统一环境（实装包单 --extension） | u2 / A2-7 + A2-9（与 P2 终态段共享产物） |
+| V6 | TUI fork 两步（§8.2 v5.1 定案）：① fork 后首 turn 配置未动 → hash 命中源最后留痕**不写**留痕（fork 文件 JSONL 零 `xyz:system-prompt` 新增）；② 配置改回后新留痕 reason="change"、version = 源最后留痕 v+1、parentVersionDiffSummary 相对源留痕 fullText 有值；防御子断言（previousSessionFile 缺失/不可读 → 首留痕 resume v1）归 wiring 单测 | 目标 1 + 5 | CLI 统一环境（实装包单 --extension，TUI） | u2 / A2-7 + A2-9（与 P2 终态段共享产物）；第二步 change 断言由 a12 扩展单测承载（偏差 D-9） |
 
 ## 3 DAG 图
 
@@ -85,7 +85,7 @@ graph TD
     U1["u1-types M1 类型归一<br/>领地: src/index.ts + src/types.ts + src/trace.ts(D4 部分) + a11/wiring 测试(M1 部分)"]
   end
   subgraph W3[Wave3 机制删除]
-    U2["u2-mechanism M2 persisted 删除 + 两档解析 + 测试改写<br/>领地: src 4 文件 + 3 测试文件（全量终态）"]
+    U2["u2-mechanism M2 persisted 删除 + 三档解析 + 测试改写<br/>领地: src 4 文件 + 3 测试文件（全量终态）"]
   end
   subgraph W4[Wave4 登记回写]
     U4["u4-registry M3 登记回写 + checker 绿 + 版本 bump<br/>领地: registry + README + 幂等审计 + checker.mjs + 设计文档 + package.json + 本计划"]
@@ -139,6 +139,10 @@ graph TD
 | D-6 | M0 探针门失败触发设计回炉（v5/v5.1）：D2 fork 档从「getSessionFile() 直读」回退「读事件 previousSessionFile 最后留痕」（两档→三档） | 探针 A0-3 证伪（createBranchedSession hasAssistant 条件 flush + /fork 常态 position=before 路径不含 assistant → session_start 时点 fork 文件未落盘） | 设计级决策翻转已经 r5 主审（论证链闭合 + V6/P2 reason 语义修复）与 r4 影响面（辐射面核查全过）聚焦复审；本计划 u2/u4 条款已按三档同步（A2-3/A2-5/A2-7/A2-9/A4-3）；u1 不受影响（SDK 类型自带字段） |
 | D-7 | u1 执行越界：baseline.ts 单行（parseTraceEntryData 去 export） | impl-plan u1 领地清单漏列该文件，但 A1-3 验收条款与设计 §7 文件地图均锚定此项（计划内部不一致） | 全仓引用仅同文件内部调用，单行零行为变更，与 u2 领地零冲突 | 合理偏差，接受（计划遗漏修正） |
 | D-8 | u1 执行越界：baseline.a12.test.ts import 适配 | computePromptHash 去 export 的必然编译波及（a12:26 import 该符号），不改则 A1-6 包测试绿无法达成 | import 行换本地等价 helper + 1 行注释，零断言语义触碰，与 u2 场景改写零冲突 | 合理偏差，接受（必然波及） |
+| D-9 | u2 执行：V6 第二步（change 断言）未在 CLI 真实场景执行，改由 a12 扩展单测承载 | TUI fork 交互链路（/fork 树导航后继续对话并改配置）无法在 §6.5 统一环境自动化；与设计 §8.2 V6 的 CLI 场景定位有偏差（初稿登记「=设计 v5.1 口径」有误——v5.1 移出 CLI 的是防御子断言而非 change 断言，阶段 3 一致性审查勘误） | V6 第一步（fork 后首 turn 零新增）仍在 CLI 真实场景执行；change 断言由 a12 扩展用例覆盖（fork 档命中确立 current → 配置回变 → 断言 reason="change"、version=源+1、diff 相对源 fullText）；通过标准的两个断言面均有承载 | 合理偏差，接受（承载通道变更，覆盖不缺） |
+| D-10 | u2 执行：V2/V3 以 CLI 等价链路替代 `pnpm dev` GUI 执行 | 改动面行为语义（switchSession/reload 的 pi 侧基线解析）在 CLI 同源覆盖；Trace 投影 out-of-scope（设计 §2）、ReloadOrchestrator 触发链非本包改动面；A2-8 的 dev agentDir runtime-spawn 复跑补上 V3 的 agentDir 检查面 | 目标 1 验收实质不破坏；V2/V3 的 pi 侧行为断言全部落实 | 合理偏差，接受（阶段 3 一致性审查 R5 确认） |
+| u2 | 合理演化三项（阶段 3 一致性审查 R1/R3/R4 确认）：① registry :114 废弃条目内先例引用联动修正（worktree-registry 先例已改 proper-lockfile 直用，避免挂失效引用）；② a12 harness 保真度重构（setSessionId → openNewSession 返回未落盘新文件，更贴近 pi 延迟落盘语义）；③ wiring 测试删 getAgentDir mock（persisted 删除后 agentDir 不再被消费，mock 面终态收缩） | 均为 C-proc-10 悬空清扫 / pi 语义保真 / 终态必然清理的合理演化，不破坏设计声明目标 | 无 | 合理偏差，接受（登记留痕） |
+| u2 | 过程性微偏差三条（无验收口径影响，详见 §6 状态表 u2 行）：A2-8 spawn 形态对齐 / 判据笔误 3 处修正 / tmp 凭据清理 | 执行期环境与笔误修正 | 无 | 合理偏差，接受 |
 
 ## 6 状态表
 
@@ -146,8 +150,8 @@ graph TD
 |---|---|---|---|
 | u0-probe | resolved（门失败已回炉） | 1 | **A0-3（P2）门判定失败**：pi 0.84.4 createBranchedSession hasAssistant 条件 flush——常态 /fork（position=before）session_start 时点 fork 新文件未落盘，直读 null。已按降级路径回炉设计：D2 回退方案 A（fork 档读 previousSessionFile，恢复现状语义），设计 v5/v5.1 经 r5/r4 聚焦复审通过。A0-1/A0-2/A0-4/A0-5 PASS（reload/直启档直读前提成立，且 fork 事件 previousSessionFile 恒在 + 源文件已落盘含 fullText——方案 A 前提已被同次探针证实）；A0-6 按门纪律停止派发。u0 不重跑：修订方案的全部 pi 行为前提已在本轮探针覆盖，P2 终态段（方案 A 断言）归 u2/A2-9 合入前执行 | ⛔→✅ 门已处理 |
 | u1-types | committed | 1 | 59cd0f320（编排方核验：领地 7 文件吻合 + 包测试 38 绿重跑 + 根 typecheck 绿）。A1-1..A1-7 全过。deviations 2 条越界已接受（见 §5）+ 划界声明 1 条 |
-| u2-mechanism | committed | 1 | 编排方核验（领地 7 文件吻合 + 包测试 38 绿 + typecheck 绿 + 删除面零残留重跑）。A2-1..A2-9 全过：V1-V6 真实场景统一环境执行（V6 决定性实证：未 flush fork 文件直读 null → 首 turn 零新增 = fork 档读 previousSessionFile 命中源 v2）；dev agentDir runtime-spawn 复跑零写动作。deviations 5 条合理（V6 change 断言 CLI 不可构造由单测承载=设计 v5.1 口径 / V2 V3 CLI 等价链路 / A2-8 spawn 形态对齐 / 判据笔误 3 处修正 / tmp 凭据清理） |
-| u4-registry | implemented（待编排方 commit） | — | 领地 7 文件全改，A4-1..A4-9 全过：A4-1 registry 条目改标已废弃（删除清单含主文件 + `system-prompt-trace-baseline.json.tmp_*` glob）+ 死路径修正为 `extensions/taiji/system-prompt-trace/src/baseline.ts`；A4-2 engines.json 参照锚点改历史标注（豁免论证本体保留）；A4-3 README「四路径」→「三档」+ reason 表 fork/reload 行定案；A4-4 幂等审计 :20/:83 两处历史性标注；A4-5 checker DOC_MODULE_MAP 成对登记两行（映射均为 `['extensions/taiji/system-prompt-trace/src']`，追加于 14 号流水线条目之后零回退）；A4-6 设计文档 SESSION_START_REASONS 带反引号残留 grep == 0（实读行号 :8/:201——本计划原载 :195 为设计时点值，v5.1 行号漂移）；A4-7 checker 同款正则推演：两文档候选仅 getSessionFile ×10（TraceContext interface 成员）+ ENV 白名单符号（PI_CODING_AGENT_DIR / XYZ_AGENT_DEBUG / XYZ_AGENT_EXT_LOG），`node scripts/check-doc-symbol-drift.mjs` exit 0；A4-8 新增 `.changeset/pi-system-prompt-trace-remove-persisted-baseline.md` 判 **patch**（Like 三接口基线即非 export，git show 3d1d396f0 核实，包出口面不变——仅行为修复 + 内部 export 收敛），未手改 package.json version；A4-9 本表回填。commit 由编排方执行（偏差 D-2：紧随 u2 连续 commit） |
+| u2-mechanism | committed | 1 | 编排方核验（领地 7 文件吻合 + 包测试 38 绿 + typecheck 绿 + 删除面零残留重跑）。A2-1..A2-9 执行形态：V1-V5 真实场景统一环境执行全过；V6 第一步（fork 后首 turn 零新增）真实场景执行（决定性实证：未 flush fork 文件直读 null → 首 turn 零新增 = fork 档读 previousSessionFile 命中源 v2）；V6 第二步（change 断言）因 TUI fork 交互链路无法在统一环境自动化，改由 a12 扩展单测承载（偏差 D-9；阶段 3 一致性审查发现原单测缺该覆盖，已补齐）；dev agentDir runtime-spawn 复跑零写动作。deviations 5 条见 §5 补登（D-9 V6 change 断言单测承载 / D-10 V2 V3 CLI 等价链路 / A2-8 spawn 形态对齐 / 判据笔误 3 处修正 / tmp 凭据清理） |
+| u4-registry | implemented（待编排方 commit） | — | 领地 7 文件全改，A4-1..A4-9 全过：A4-1 registry 条目改标已废弃（删除清单含主文件 + `system-prompt-trace-baseline.json.tmp_*` glob）+ 死路径修正为 `extensions/taiji/system-prompt-trace/src/baseline.ts`；A4-2 engines.json 参照锚点改历史标注（豁免论证本体保留）；A4-3 README「四路径」→「三档」+ reason 表 fork/reload 行定案；A4-4 幂等审计 :20/:83 两处历史性标注；A4-5 checker DOC_MODULE_MAP 成对登记两行（映射均为 `['extensions/taiji/system-prompt-trace/src']`，追加于 12 号流水线 chat-domain 条目之后零回退）；A4-6 设计文档 SESSION_START_REASONS 带反引号残留 grep == 0（实读行号 :8/:201——本计划原载 :195 为设计时点值，v5.1 行号漂移）；A4-7 checker 同款正则推演：两文档候选仅 getSessionFile ×10（TraceContext interface 成员）+ ENV 白名单符号（PI_CODING_AGENT_DIR / XYZ_AGENT_DEBUG / XYZ_AGENT_EXT_LOG），`node scripts/check-doc-symbol-drift.mjs` exit 0；A4-8 新增 `.changeset/pi-system-prompt-trace-remove-persisted-baseline.md` 判 **patch**（Like 三接口基线即非 export，git show 3d1d396f0 核实，包出口面不变——仅行为修复 + 内部 export 收敛），未手改 package.json version；A4-9 本表回填。commit 由编排方执行（偏差 D-2：紧随 u2 连续 commit） |
 
 ## 7 残留风险与变更历史
 
@@ -176,3 +180,4 @@ graph TD
 - v1（2026-09-12）：初稿。依据设计 v4（两轮对抗式审查后 0 must-fix）+ dag-authoring 判据起草；单元 4 个（u0-probe / u1-types / u2-mechanism / u4-registry），全串行 DAG 深度 4 层；领地全部实读核实（src 实际 5 文件含不动面 diff.ts、包根 index.ts 为 re-export 不在改动面，registry :114/:120、幂等审计 :20/:83、设计文档 SESSION_START_REASONS 残留恰 :8/:195 两处均 grep 确认）；偏差登记 5 条（D-1..D-5）。
 
 - v2（2026-09-12）：M0 探针门回炉同步。u0-probe 执行结果：A0-3（P2）门判定失败（pi 0.84.4 hasAssistant 条件 flush 证伪 fork 档直读），按门纪律停止派发；设计回炉 v5（D1/D2 翻转两档→三档，fork 档回退读 previousSessionFile）并经 r5 主审 + r4 影响面聚焦复审通过（v5.1 修 V6/P2 reason 语义与防御子断言落位）。本计划同步：u2-mechanism 验收条款三档化（A2-3 保留 previousSessionFile 参数 / A2-5 wiring 用例保留直读断言 + 新增三态防御用例 / A2-7 按 §8.2 v5.1 / A2-9 P2 终态段由 V6 执行）、u4-registry A4-3 README「三档」口径、偏差 D-6 登记；u1-types 不受影响。u0 不重跑（方案 A 的 pi 行为前提已由同次探针全部覆盖）。来源设计现行版本：v5.1（417 行）。
+- v3（2026-09-12）：阶段 3 一致性审查修复（三区审查 02 区报告）：① §2 V1-V6 对照表 V6 行按设计 §8.2 v5.1 重写（v4 口径残留勘误）；② §3 DAG U2 标签「两档解析」→「三档解析」（D-6 同步面漏改勘误）；③ §6 状态表 u2 行矛盾声明如实化（V6 第二步 change 断言改由 a12 扩展单测承载——偏差 D-9 登记，修复 commit 补齐 a12 fork 用例覆盖并经破坏验证；「=设计 v5.1 口径」错误引用删除）；④ u4 行「14 号流水线条目」错误引用改「12 号 chat-domain 条目」；⑤ §5 补登 D-9/D-10 + 合理演化三项 + 过程性微偏差三条（u2 执行偏差 5 条此前仅状态表备注）。
