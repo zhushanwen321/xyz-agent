@@ -182,9 +182,10 @@ graph TD
 | u1c | committed | 2（前任限流中断 + 接替核验补 1 用例） | main.jsonl writer 同步 append 无在途写窗口；vitest 8 passed + apps/electron tsc 0（编排者重跑核验） |
 | u1d1 | committed | 1 | 抑制语义下 deleted/shutdown 仍产生 + planned 不误记 crash；新增 6 用例 + 全量 5380 零回归 + typecheck 绿（编排者重跑核验） |
 | u1d2 | pending | — | — |
-| u1e | pending | — | — |
+| u1e | in-progress（额度中断，产物在盘待收口） | 1 | 产物：logger.ts 水位聚合 + message-bus.ts + message-broker.ts（信号事件双写）+ 2 测试文件 538 行（**本地实测 13 用例全绿**）。待办：全量 runtime 回归 + 收口汇报 |
 | u1f | committed | 2（轮次 2 补 renderer unresponsive 接线） | 判别式 8 组合真值表 + liveness 双写 + renderer oom/crashed/熔断/unresponsive（卡死期单行+responsive 复位）；18 tests + tsc 0（编排者重跑核验） |
-| u2 | pending | — | — |
+| u7b | in-progress（额度中断，无产物） | 1 | 703s 时死于额度耗尽，未落任何文件——恢复后全新开工即可（任务书同前，偏差 #20 已登记 spawn 预置接线分发 u4/u5） |
+| u2 | in-progress（额度中断，产物在盘待收口） | 1 | 产物：diagnostics/trigger-evaluator.ts 723 行 + trigger-patrol.ts 119 行 + test/trigger-evaluator.test.ts 556 行（**本地实测全绿**）+ main.ts 巡检启动行（未提交）。待办：全量 main 池回归 + 收口汇报 |
 | u3a | pending | — | — |
 | u3b | pending | — | — |
 | u4 | pending | — | — |
@@ -196,7 +197,7 @@ graph TD
 | u7d | pending | — | — |
 | u8 (Gate W) | blocked-on-data（非代码门，不阻塞交付） | — | — |
 | u9 | committed | 1 | createPiStreamWriter 轮转（默认 50MB 可注入）+ `.1` 单代 + pi- 前缀 + closeLogger 等待在途轮转 + 旧裁决 [HISTORICAL] 推翻登记；vitest 4 passed（含 A5 PASS）+ typecheck 绿（编排者重跑核验） |
-| u10a | pending | — | — |
+| u10a | in-progress（额度中断，实现近完成） | 1 | 产物：core ws-client.ts 入站守卫 + ws-client.inbound-guard.test.ts（**11 用例全绿**）+ renderer-log-handler.ts 台账承接 + renderer 组件/composable + shared ipc-payloads（均未提交）。**遗留缺陷 1 处**：logs/__tests__/renderer-log-handler.test.ts 2 个新用例因测试助手 `readLines` 未定义而红（ReferenceError，测试代码缺陷非实现缺陷——同文件「4 次丢帧→4 条台账行」用例绿证明实现可用）。待办：补测试助手 + main 池回归 + 收口汇报 |
 | u10b | committed | 2（1 次 blocker 补登） | 守卫脚本真实绿（26 包全登记 exit 0）+ 四包排除判定源码实锚 + O3-C superseded-by 注记 + extensions:lint 前置挂接；编排者重跑 exit 0 |
 
 ## 7 残留风险与变更历史
@@ -209,3 +210,5 @@ graph TD
 
 **变更历史**：
 - v1（2026-09-11）：初版基线。20 单元（17 代码 + 1 门 + 拆分产生子单元映射设计 u1-u10）；W1 四根并行；关键路径深度 8 已声明本质串行原因；模型路由环境限制登记（偏差 #6）。
+- v2（2026-09-11）：执行期登记。偏差 #9-#20（调度序/领地事实修正/旋段形态/私有复刻/注记落点/ack 契约/粒度超出/外债销账/isRunning guard/reason 元组/存量风险/spawn 预置分发）。**中断事件 1**：三个在飞单元（u2/u1e/u10a）与 u7b 因 coding-plan 5h 额度耗尽（1308）同时死亡，产物状态已落状态表；u7b 零产物。恢复策略 = 定时调度到期自动续跑（见下）。
+- **环境噪音记录**：pre-commit 出现 3 次一次性幻影故障（2×「line 910 注释行 command not found」、1×「找不到 scripts/check-provider-credential-reads.mjs」——该脚本全仓零引用），同输入立即重试全部通过，未使用任何跳过手段；判定为高并发环境瞬时故障，非仓库缺陷。另 main 池 updater-script-integration.test.ts 为负载敏感型存量 flake（单跑 23/23 绿）——Gate A 全量跑时若红按此口径复核。
