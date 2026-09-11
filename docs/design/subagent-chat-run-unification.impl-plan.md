@@ -28,10 +28,11 @@
 | U1 | SDK 协议双键过渡：新增 `resume` 子对象与 `chat` 并存（载荷同形）+ schema/测试；roundLifecycle/interact 标 deprecated | `packages/subagent-engine-sdk/src/protocol/{methods,contract-types,schema,reverse-channels,port-contract,engine-protocol}.ts` + `packages/subagent-engine-sdk/src/__tests__/`（resume schema 用例新增） | 无（DAG 根） | plain | `cd packages/subagent-engine-sdk && pnpm test` 绿；resume 与 chat 键载荷同形单测 |
 | U2 | core 建路：ConversationContinuation（§3.4 全规格）+ message/close 编排改写 + SP-5 升级路由与 gate（双写点）+ 引擎退出链收割（红线①POSIX 组杀/Windows 镜像通道，intentionalKill 跳过）+ settle 交棒改 run 应答驱动 + doFinalizeRoundToIdle outcome 入参 | `packages/subagent-core/src/execution/conversation-continuation.ts`（新增）/ `execution/subagent-service.ts` / `execution/subagent-actions-core.ts` / `execution/finalize-record.ts` / `execution/notifier.ts` / `execution/engine/client/engine-client.ts` / `execution/settled-watchdog.ts` / `execution/engine/common/capability-gate.ts` / 对应 `__tests__/`（新增 continuation 用例族） | U1 | plain | `cd packages/subagent-core && pnpm test` 绿；U2 单测清单（§5 U2 验收列全项）逐条有对应用例 |
 | U3 | pi CLI 建路：run 路径 resume 参数穿透（spawn-args 已支持 `--session`）+ 首轮不再经 ChatSessionRegistry | `packages/pi-subagent-cli/src/{pi-engine,server,spawn-runner}.ts` | U1 | plain | e2e：resume run 续写同文件、历史召回（`cd packages/pi-subagent-cli && pnpm test`） |
-| U4 | 真机验收：S1-S8 全表 + 冷启耗时实测入表（D2 量化闭环） | 无代码领地（真机场景执行；发现缺陷回对应单元修复） | U2+U3 | plain | §4 场景表逐行签收（此单元在阶段 5 Gate B 复验；建路后先跑一轮拿基线）；**S1 须含快续聊形态**（续聊压在子进程存活窗口内连发，复现旧热路径时序——sess_8590cc5a 遗留「热路径续聊轮零通知」的显式回归目标，每轮通知各自到达）；附带核「主轮 error 终态后 UI 流式气泡是否冻结不重置」（遗留观察，若复现属 renderer 侧独立修复，登记不扩 H1 scope） |
+| U4 | 真机验收：S1-S8 全表 + 冷启耗时实测入表（D2 量化闭环） | 无代码领地（真机场景执行；发现缺陷回对应单元修复） | U2+U3 | plain | 基线轮已执行（2026-09-11，隔离实例 /tmp/xyz-iso-data，真实 LLM MiMo-V2.5-Pro）：S1 ✅（三轮通知各自到达，含快续聊回归点——sess_8590cc5a 遗留确认修复；轮 3 召回「牡丹47」准确；列表一行）/ S2 ✅（在途 abort 实证：child exit 143 → drain 新轮执行新指令「7」；检查点⑤按内容级口径过）/ S3 ✅（会话切换 live≡reload）/ S4 ✅（SIGKILL → 失败通知单发带恢复指引 + 原文件 resume + JSONL 20 行零交错 + 召回与 flush 内容一致）/ S7 ✅（close 胜出、无僵尸轮、record 终态 closed + 通知）/ S8 ✅（message on settled one-shot 返回 delivered:true，升级后续聊答 152）/ S6 ❌ → **UF-1 缺陷登记（见 §5）** / S5 ⏳（U5/U6 后 Gate B 复验）。冷启实测入表：spawn+重放+首条落盘 3-7s（中位 ~4s，n≈10），首响（含 LLM）3-18s——未触发 D2 重审线。气泡冻结观察项未复现（本基线无主轮 error 终态），Gate B 续观。观察项：列表「0 turns · 0 tok」计数不涨（display 面）、失败载荷 exit code 显示 128 vs relay 实录 143（信息准确性，低优）。 |
 | U5 | 删路①（引擎侧）：pi chat-session.ts + e2e chat 形态改写；SDK roundLifecycle 通道族 + interact + port-contract/engine-protocol + schema + conformance fixtures + probe；zcode server.ts interact dispatch + zcode-engine.ts 桩；测试处置表前 8 行 | `packages/pi-subagent-cli/src/chat-session.ts`（删）/ `packages/pi-subagent-cli/src/__tests__/{chat-session,chat-protocol,pi-engine,protocol-chat-e2e,server}.test.ts`（处置表）/ `packages/subagent-engine-sdk/src/protocol/*`（通道族删）/ `packages/subagent-engine-sdk/src/__tests__/{chat-domain-v1x,protocol}.test.ts` / `packages/zcode-subagent-cli/src/{server,zcode-engine}.ts` / `packages/zcode-subagent-cli/src/__tests__/server.test.ts` | U2+U4 | plain | S5 grep 门方向：处置表前 8 行清零；`cd packages/pi-subagent-cli && pnpm test` + `cd packages/subagent-engine-sdk && pnpm test` + `cd packages/zcode-subagent-cli && pnpm test` 绿 |
 | U6 | 删路②（core 侧）：删除清单（deliverChatMessage/resumeColdRound/cold-resurrect/closeChatIdle 族/handleChatRoundPhase/engine 层承载件/finalizeChatSpawnFailure/settleChatRoundFromResponse/base 两函数）；core 测试处置表后 4 行；**U6 同批 `chat`→`resume` 键读写两端切换**（U1 配对）；settled-watchdog 刷新源收尾 | `packages/subagent-core/src/execution/*`（删除清单）/ `execution/__tests__/`（处置表后 4 行）/ `execution/engine/{port.ts,client/{remote-engine,reverse-router,engine-client}.ts,host/host-bridge.ts}` / `execution/execution-record.ts`（roundBaseTurnIndex 清理）/ `execution/types.ts` | U5 | plain | S5 grep 门全量零命中 + 四包全量绿 + 净删统计 |
 | U7 | 文档与约束回写：C-proc-13 五段逐段、chat-domain-v1x 文档 superseded 横幅、protocolization 文档族符号清扫、troubleshooting §12 | `docs/constraints.json` + `docs/constraints.md`（render 脚本再生）/ `docs/design/chat-domain-v1x-liveness-governance*.md` / `docs/troubleshooting.md` | U6 | plain | `node scripts/check-doc-symbol-drift.mjs` 绿 + `node scripts/render-constraints.mjs` 已跑 |
+| UF-1 | 跨重启续聊绑定修复（U4 基线发现，见 §5 偏差表 UF-1 行）：宿主侧在 handshake sessionFile 回填点写 record 绑定 sidecar（id→file + rootSessionId，复用 L4 state-marker 载体族），必要时修 findLightById/collectRecords 消费面；**不引入 pi 源码/extension 改动** | `packages/subagent-core/src/execution/{subagent-service,state-marker,record-store}.ts` + `__tests__/`（新增绑定写入/消费/终态翻转用例） | U2 | plain | 单测：handshake 后 sidecar 落盘、coldLookupForAction 能经 sidecar 解析 id→file、close 终态翻转不破坏既有 .state 语义、`cd packages/subagent-core && pnpm test` 全绿；S6 三变体 Gate B 真机复验签收 |
 
 ## 3 DAG 图
 
@@ -41,11 +42,14 @@ graph TD
     U1 --> U3[U3 pi CLI 建路]
     U2 --> U4[U4 真机验收基线]
     U3 --> U4
-    U2 --> U5[U5 删路① 引擎侧]
-    U4 --> U5
-    U5 --> U6[U6 删路② core 侧 + 键切换]
+    U2 --> UF1[UF-1 绑定修复]
+    U4 --> U5[U5 删路① 引擎侧]
+    UF1 --> U6[U6 删路② core 侧 + 键切换]
+    U5 --> U6
     U6 --> U7[U7 文档约束回写]
 ```
+
+> UF-1 为 U4 基轮发现的 must-fix 修复单元（H1 G3 承诺「重启后续聊语义保持」），与 U5 并行、先于 U6（同文件 subagent-service.ts 领地互斥由串行保证），Gate B 前完成并复验 S6。
 
 ## 4 测试策略
 
@@ -72,6 +76,7 @@ graph TD
 | U2 | 旧测试最小适配 5 文件（删 3 用例 + 改写 5 用例） | 合理——delivery-methods 删 EPIPE（interact 面退役，覆盖归 pi 包）与 disarm idle timer（挂载面退役）；first-round-watchdog 删未知相位静默（相位消费面退役）；其余为签名/锚点/mock 最小适配；大规模删除仍归 U6 处置表 |
 | U2 | extensions 5 用例破损留 U6 处置（未越界修） | 已知过渡态——subagent-message-close 3 + one-shot-upgrade 1（mock 缺 canUpgradeToConversation）+ chatmode-round-notify-real-chain 1（anchor 回填退役，sessionFile 回填改由 run 应答 outcome.sessionFile 承载，kickOffChatRound resolve 段已实现）；同根因均为 U2 编排改写，处置表已排 U6 批；extensions 其余 901 用例绿 |
 | U2 | Windows 收割通道经私有方法 reapOrphansViaMirrorSnapshot 直调覆盖 | 合理——vitest worker 内 process.platform 不可 stub；platform→通道一行字面分派由 U4 真机 Windows 验收承接（本基线轮在 macOS 跑），通道语义（置死前快照过滤活孤儿 + 异步 taskkill + 无 spawnSync）已全测 |
+| U4 | **UF-1（S6 ❌，must-fix）：跨重启 record 续聊链断裂**——SIGKILL / 优雅停机 / 已完成三变体下，重启后 message 一律「subagent not found or not owned」；展示层可重建（列表 3 条）但动作链不可达 | **归属裁定：engine-CLI 化时代预存缺口，非 H1 回归**——证据链：①子任务 session 文件只含 {session, model_change, thinking_level_change, message} 四类条目，**无身份条目/record id/rootSessionId 绑定**；②sessions-index.json 从未落盘；③`PI_SUBAGENT_SELF_RECORD_ID` 全链路只有读取（subagent-service.ts:283 定义、:665/:692/:723 消费）**无注入点**（旧 in-proc session-runner 注入，W3 引擎协议化后丢失）→ coldLookupForAction（cold-resurrect.ts:50 findColdLookupCandidate：findLightById + collectRecords）无映射工件可查。设计 S6 前提（存量 record 可续聊）依赖的绑定写侧在基线之前已死，六轮双审未抓出。**修复路由：新增 scoped 单元 UF-1（H1 内、Gate B 前落地）**——宿主侧绑定写（handshake 拿到 sessionFile 后落 record 绑定 sidecar，复用 L4 state-marker 载体族；close 时写终态 marker 已有先例），使 findLightById/collectRecords 恢复 id→file 映射；带 S6 三变体回归（Gate B 复验）。设计文档 S6 需同步补「绑定工件」前提说明（U7 批）。 |
 
 ## 6 状态表
 
@@ -80,10 +85,11 @@ graph TD
 | U1 | committed | 1 | commit bc9322d05：SDK 7 文件 + resume-schema.test.ts 12 用例；重跑 152 passed；typecheck exit 0；读端三包零改动。解冻前置 = C-pi-14 守卫落地（e7740ca39，过渡豁免 104 文件） |
 | U2 | committed | 1 | commit 51e971a82：14 文件 +2265/-344（新增 conversation-continuation.ts + 2 测试文件 39 用例）；主 agent 独立重跑 2886 passed \| 4 skipped（193 文件）+ tsc 0；前任 dev 汇报随压缩丢失、接替 dev 派出 200s 即召回（未产生编辑）后按前任迟到送达的完整汇报硬核验流转；7 偏差登记 §5 |
 | U3 | committed | 1 | commit 2b7bf4f11：pi CLI 9 文件；重跑 336 passed（26 文件）+ typecheck exit 0；e2e 构造性历史召回 + 收割上报断言 |
-| U4 | pending | 0 | — |
+| U4 | committed | 1 | 基线轮完成（见 §2 U4 行逐场景签收）；S6 ❌ 触发 UF-1 单元（证据链 + 归属裁定 + 修复路由登记 §5） |
 | U5 | pending | 0 | — |
 | U6 | pending | 0 | — |
 | U7 | pending | 0 | — |
+| UF-1 | pending | 0 | — |
 
 ## 7 残留风险与变更历史
 
@@ -95,3 +101,4 @@ graph TD
   - 2026-09-11 **L 组 session 遗留收尾**（用户指令 sess_47c1bc22 完整处理）：① f6-third-site-wip stash 已消失，其内容经取证被 HEAD 的 F6 提交（d647b289e + 5186f6356）覆盖，无残留；剩余 3 条 stash 均属其他分支工作（dev-0.9.14 / cw/scoped-model / dev-0.9.5），不在本分支融合范围、未动。② childStateChanged 行为契约已登记 **C-pi-15**（constraints.json + constraints.md 再生，98 条）——引擎任务子进程 spawn/退出必须上报 host/childSpawned/childStateChanged（killed 类型层必含），宿主镜像置死 + SR-4 dialog 取消双依赖。
   - 2026-09-11 **sess_8590cc5a（subagent 通知机制）遗留并入**（用户指令当前 session 一并处理）：唯一未修遗留「pi 热路径续聊轮零通知」的处置 = 本设计自身（该 session 呈现的选项 1「等 H1 落地自然修复」）——D7 每轮 run 应答驱动 settle + 轮末分流通知，热路径整族随 U5/U6 删除；登记为 U4 真机 S1 显式回归目标（S1 执行须压子进程存活窗口）。附带观察「主轮 error 终态后 UI 流式气泡冻结不重置」列入 U4 真机核验项（复现则 renderer 侧独立修复，不扩 H1 scope）。U2 前任 dev 汇报随上下文压缩丢失，按接替程序补派（在途 diff 核验为领地内、新增用例 39/39 绿）。
   - 2026-09-11 **U2 流转 committed（51e971a82）**：接替 dev 派出 200s 即召回（原 ID 截断致 TaskOutput 查无——完整 ID 下前任 dev 仍在跑并正常送达完整汇报），按前任汇报硬核验（文件集合 ⊆ 领地逐一对上、全量独立重跑 2886 passed 与汇报逐字相符、tsc 0）后流转。教训入账：后台 agent 句柄查询必须用完整 agentId；「通知未到 ≠ agent 已死」。就绪集重算：U4 就绪（U2+U3 双 committed），U5 仍锁于 U4。
+  - 2026-09-11 **U4 真机基线轮完成**：隔离实例（/tmp/xyz-iso-data，PORT_OFFSET=200，vite 1421，CDP 9242，真实 LLM MiMo-V2.5-Pro，staged 引擎 bundle-extensions 重建含 U1-U3）。逐场景签收见 §2 U4 行：S1/S2/S3/S4/S7/S8 ✅（**sess_8590cc5a 遗留热路径零通知确认修复**——快续聊轮通知到达）；S6 ❌ 触发 **UF-1**（跨重启续聊绑定断裂，engine-CLI 时代预存缺口：PI_SUBAGENT_SELF_RECORD_ID 无注入点 → 身份条目永不落盘 → coldLookupForAction 无映射可查；展示层 3 条 vs message 链 not-found 双注册表不同源实测钉位）。新增 UF-1 单元（§2/§3 DAG/§6），与 U5 并行、先于 U6，Gate B 复验 S6 三变体。冷启量化入表。气泡观察项未复现、Gate B 续观；两项低优观察（turns/tok 计数、exit code 128 vs 143）随 UF-1/U7 批带走。
