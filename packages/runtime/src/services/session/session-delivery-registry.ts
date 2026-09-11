@@ -44,6 +44,11 @@ export interface SessionDeliveryRegistry {
   getOrCreateDelivery(sessionId: string, factory?: (sessionId: string) => DeliveryHandle): DeliveryHandle
   /** port 同款直投（handleCreate 初始 prompt：新 session 必 idle 无竞态，不走内核队列，失败照旧 throw） */
   sendDirect(sessionId: string, content: string): Promise<void>
+  /**
+   * 该 sid 的 delivery 内核是否有未终态投递（排队等待 + 在途投递中 + 错误重试中）。
+   * 只读查询（idle pi reclamation D2 #5 豁免信号，u3a）；handle 未创建 / 空队列 → false。
+   */
+  hasDeliveryActivity(sessionId: string): boolean
   /** 丢弃单 session 队列（session 删除等场景） */
   dispose(sessionId: string): void
   disposeAll(): void
@@ -154,6 +159,25 @@ export function createSessionDeliveryRegistry(
     sendDirect(sessionId, content) {
       // create 初始 prompt：新 session 必 idle，不传 streamingBehavior（无竞态窗口）
       return deliverText(sessionId, content)
+    },
+    // D2 #5「delivery 内核有排队投递（completion-backflow 回流）」的只读查询（u3a）。
+    //
+    // 查询面选择：DeliveryHandle 不暴露 isIdle（isIdle 是注入 createDelivery 的
+    // DeliveryPort 成员，registry 拿到的 handle 上不可达），但暴露队列深度查询
+    // depth()——文档语义「未终态消息数：等待队列 + 在途（含错误重试中）」，按
+    // 「handle 暴露队列状态查询则用之」采用 depth()。
+    //
+    // 为什么不是「handle 存在即豁免」：handle 是 per-session 单例，生命周期覆盖
+    // session 全程（D3 归属表还刻意在回收态保留 sid→handle 映射），存在性恒真会
+    // 让回收饿死；depth() > 0 才表示真有投递在途。
+    //
+    // 为什么不用 buildHandle 的 isIdle 三维标志：那与豁免 #1 occupancy 同源（同读
+    // deps.getSession 的三维标志），重复豁免无增量；depth() 恰好覆盖 occupancy 不
+    // 覆盖的窗口——session 已空闲但回流消息停在队列/在途投递中（此时回收会杀掉
+    // 承接投递的 pi）。
+    hasDeliveryActivity(sessionId) {
+      const handle = handles.get(sessionId)
+      return handle !== undefined && handle.depth() > 0
     },
     dispose(sessionId) {
       handles.get(sessionId)?.dispose()

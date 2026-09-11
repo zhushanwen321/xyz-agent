@@ -35,10 +35,7 @@ vi.mock('@/composables/features/file-tree/useFileTree', () => ({
 }))
 
 // ── mock useChat composable：捕获 disposeSession（cleanupSessionState 副作用）──
-// W4：selectSession 真实连锁会调 useChat().setHistoryTruncated（hydrate 成功路径），
-// 旧 mock 只提供 disposeSession → setHistoryTruncated 抛 TypeError 被 selectSession 的
-// try/catch 吞掉（误走 markHistoryFailed 回退路径），测试靠此吞错才通过、掩盖真实行为。
-// 补全 useChat 全部返回方法（与生产 useChat composable 返回签名对齐），确保 selectSession
+// 补全 useChat 返回方法（与生产 useChat composable 返回签名对齐），确保 selectSession
 // 走「hydrate 成功」路径而非 catch 回退；未来重构移除 try/catch 也不会静默失败。
 const useChatDisposeMock = vi.hoisted(() => vi.fn())
 vi.mock('@/composables/features/chat/useChat', () => ({
@@ -52,7 +49,6 @@ vi.mock('@/composables/features/chat/useChat', () => ({
     hydrateHistory: vi.fn(() => Promise.resolve()),
     loadMoreHistory: vi.fn(() => Promise.resolve()),
     hasMoreHistory: vi.fn(() => false),
-    setHistoryTruncated: vi.fn(),
     disposeSession: useChatDisposeMock,
   }),
   ensureStreamSubscription: vi.fn(),
@@ -63,7 +59,7 @@ const removeByCwdMock = vi.hoisted(() => vi.fn())
 const switchSessionMock = vi.hoisted(() => vi.fn(() => Promise.resolve()))
 vi.mock('@/api', () => ({ project: { load: vi.fn().mockResolvedValue({ projects: [], activeProjectId: '' }), save: vi.fn().mockResolvedValue(undefined) },
   chat: {
-    getHistory: vi.fn(() => Promise.resolve({ messages: [], historyTruncated: false })),
+    getHistory: vi.fn(() => Promise.resolve({ messages: [], truncated: false, loadedTurns: 0, totalTurnsEstimate: 0 })),
     streamSubscribe: vi.fn(() => () => {}),
   },
   session: {

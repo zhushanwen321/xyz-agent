@@ -13,6 +13,7 @@ import { buildOutboundChildEnv } from '../spawn-env.js'
 // （relay-registry 受托 spawn 真实 pi 复用同一决策链），原调用点行为零变化。
 import { findPiExecutable } from './find-pi-executable.js'
 import { getRelaySpawnEnv } from '../relay/relay-env.js'
+import { getCrashJournal } from '../crash-journal.js'
 // W9（设计 §3.7 Electron 打包态）：staged 引擎根推导 + pi 子进程注入（ROOTS +
 // 打包态执行器两键）；构造期补齐 runtime 自身发现面的 L1 env（打包态无 node_modules）
 import {
@@ -262,6 +263,13 @@ export class ProcessManager implements IProcessManager {
   async destroySession(sessionId: string): Promise<void> {
     const proc = this.processes.get(sessionId)
     if (!proc) return
+    // D1 台账（crash-forensics §3.3 D1 写入点矩阵 shutdown 行）：pi 计划内终止在杀链发起处
+    // 与杀链动作同点双写（reason=planned——附录 A #16 以这些 kill 发起事件的时间窗排除
+    // 计划内 SIGTERM）。不能挂 exit handler：本方法已先行删 processes/clientToId，exit 回调
+    // 反查无条目静默返回（抑制语义），挂错点事件永不产生（与 deleted 行同机理）。
+    // `!proc` 守卫天然幂等去重：重复调用/无条目不产生事件。destroyAll 逐 session 经本方法
+    // 到达同一挂点，无需单独双写。append 为 fire-and-forget，不阻塞杀链。
+    getCrashJournal().append({ layer: 'pi', event: 'shutdown', reason: 'planned', sessionId })
     // Remove from maps first to prevent exitCallback from triggering,
     // but keep a reference so we can kill after removal.
     // kill() is guaranteed to resolve (SIGCONT → SIGTERM → 2s → SIGKILL).

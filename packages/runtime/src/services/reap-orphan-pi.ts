@@ -67,6 +67,16 @@
  * 启动）。幂等：重复执行只是再扫一遍进程表。
  */
 import { execFile } from 'node:child_process'
+import type { CrashJournalEvent } from '@xyz-agent/shared'
+import { getCrashJournal } from '../infra/crash-journal.js'
+
+/**
+ * reaped 台账行使用 schema 登记的扩展字段 pid/ppid（偏差 #32③：扩展字段登记 SSOT =
+ * shared crash-journal-schema.ts CrashJournalEvent，本地不再重复声明）。设计 D1 矩阵
+ * reaped 行验收要求「pid + argv/ppid 判据摘要」可机器消费——pid/ppid 走结构化字段
+ * （评估器计数与归因不解析文本），argv 摘要走既有 detailDigest（≤2KB 内嵌，schema 无
+ * argv 对应字段）。writer 以 spread 序列化，扩展字段原样落盘 JSONL。
+ */
 
 /** ps 枚举超时：全量进程表是毫秒级本地操作，10s 只是无 ps/假死兜底，防启动链悬挂。 */
 const PS_TIMEOUT_MS = 10_000
@@ -233,6 +243,12 @@ export interface ReapOrphanOptions {
   ownPid: number
   /** SIGTERM→SIGKILL 宽限 ms，默认 ORPHAN_KILL_GRACE_MS。 */
   killGraceMs?: number
+  /**
+   * 杀链决策日志的「谁触发」（crash-resilience §3.3 D6-⑥，E2 归因缺口修复）：
+   * 调用方自述（如 'startup-sweep'）。可选，缺省 'unspecified'——不强制改动既有
+   * 调用方（startup-background-init），新调用方应显式传入。
+   */
+  trigger?: string
   /** 进程枚举注入（测试替身）；缺省真实执行 ps。返回 ps stdout 原文。 */
   listProcesses?: () => Promise<string>
   /** 信号注入（测试替身）；缺省 process.kill。signal 0 = 仅探活不实际发信号。 */
@@ -341,11 +357,44 @@ export async function reapOrphanPiProcesses(options: ReapOrphanOptions): Promise
   // 调用源与信号链（下各 pid 级明细 log 保持既有粒度不动）；u17 后判据为 spawn markers，
   // 清单条目数与数据目录一并记入。
   console.warn(`[orphan-reap] found ${orphans.length} orphan pi process(es) matching spawn markers (${markerPaths.length} entries, dataDir=${dataDir}), reaping (kill_source=reap_orphan | who: runtime startup delayed reap, previous runtime died leaving unparented pi | chain: ps scan -> argv + ppid=1 orphan match -> SIGTERM -> ${killGraceMs}ms grace -> SIGKILL if alive)`)
+  // 杀链决策日志（crash-resilience §3.3 D6-⑥，E2 归因缺口的直接修复）：一条结构化
+  // 行回答「谁触发 / 杀哪些 pid / 为什么」——动作/目标/原因字段化（console patch 的
+  // meta 走 JSON.stringify 单行落盘 runtime 主日志），与下方逐 pid 处置行互为索引。
+  console.log('[orphan-reap] kill decision', {
+    action: 'reap_orphan_pi',
+    trigger: options.trigger ?? 'unspecified',
+    scanned: result.scanned,
+    targets: orphans.map(r => ({ pid: r.pid, ppid: r.ppid })),
+    reason: 'argv --session-dir matches own sessions dir AND ppid=1 (parent runtime dead, orphan reparented to init)',
+    graceMs: killGraceMs,
+  })
   for (const row of orphans) {
     const ok = await killOrphan(row, killGraceMs, signal, delay)
-    if (ok) result.reaped.push(row.pid)
-    else result.failed.push(row.pid)
+    if (ok) {
+      result.reaped.push(row.pid)
+      // 台账双写（crash-forensics §3.3 D1 reaped 行：杀链判据命中处置成功处，与既有
+      // 逐 pid 处置日志同点）。挂在 ok 分支而非发现处：事件名语义 = 已收殓，处置失败
+      // 进 failed 不记 reaped（防误记）。best-effort：writer append 自吞错不向收殓链传播。
+      // 经中间变量传入（扩展字段过 schema 闭接口的 excess property check）。
+      const journalEvent: CrashJournalEvent = {
+        layer: 'pi',
+        event: 'reaped',
+        pid: row.pid,
+        ppid: row.ppid,
+        detailDigest: `argv --session-dir matches own sessions dir AND ppid=1; argv: ${argvSummary(row.command)}`,
+      }
+      getCrashJournal().append(journalEvent)
+    } else {
+      result.failed.push(row.pid)
+    }
   }
+  // 收殓结果汇总（D6-⑥ 配套：决策 → 结果闭环，failed 非空时归因有据）
+  console.log('[orphan-reap] reap result', {
+    action: 'reap_orphan_pi_result',
+    trigger: options.trigger ?? 'unspecified',
+    reaped: result.reaped,
+    failed: result.failed,
+  })
   return result
 }
 

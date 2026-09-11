@@ -17,29 +17,52 @@ import { RPC_BACKSTOP_TIMEOUT_MS } from '../pending'
 import { command as sendCommand } from '../request'
 import * as events from '../events'
 
-/** getHistory 返回结构（含 historyTruncated 标志，N1 修复） */
+/**
+ * getHistory 返回结构（[u4d] u4b 双预算窗口契约；[u6] legacy historyTruncated 已退役——
+ * truncated 是唯一截断标志，偏差表 D7 双轨收口）。
+ */
 export interface HistoryResult {
   messages: Message[]
-  historyTruncated: boolean
+  /** [u4b] truncated=true 表示预算窗口外仍有历史（前端据此显隐「加载更早」顶部条） */
+  truncated: boolean
+  /** [u4b] 本次返回的完整 turn 数（顶部条「已加载最近 N 轮」的 N；游标翻页时 = 本页 turn 数） */
+  loadedTurns: number
+  /** [u4b] session 的 turn 总数估计（读到头为精确值，窗口截断时为下界） */
+  totalTurnsEstimate: number
+}
+
+/**
+ * session.history 可选查询参数（[u6] crash-resilience §3.3 D4 中期分页协议）。
+ * cursor = turn 边界锚点 entryId（renderer 当前窗口最早消息的 piEntryId），带 cursor 返回
+ * 锚点之前的最近窗口（活跃/离线两路径共用语义）；limitTurns/maxBytes 覆盖默认预算。
+ */
+export interface HistoryQuery {
+  cursor?: string
+  limitTurns?: number
+  maxBytes?: number
 }
 
 /**
  * 拉取 session 历史（UC-2 切换 session 时回填 message-stream）。
- * runtime reply envelope 是 `{ sessionId, messages, historyTruncated }`，
- * historyTruncated=true 表示文件尾读截断了早期 turn（前端据此显隐「加载更多」）。
+ * runtime reply envelope 是 `{ sessionId, messages, truncated, loadedTurns, totalTurnsEstimate }`：
+ * truncated=true 表示历史按双预算（u4b）截断，前端据此显隐「加载更早」顶部条并显示已加载 turn 数。
+ * [u6] query 可选：带 cursor 时为「加载更早」游标翻页（runtime 返回锚点之前的最近窗口，
+ * cursor 未命中返回空页 + truncated=false 翻页到头语义）；缺省 = 最近窗口（u4b 现状）。
  */
-export async function getHistory(sessionId: string): Promise<HistoryResult> {
-  const reply = await sendCommand('session.history', { sessionId }, RPC_BACKSTOP_TIMEOUT_MS)
-  return { messages: reply.messages, historyTruncated: reply.historyTruncated }
-}
-
-/**
- * W4 H4：全量拉取 session 历史（加载更多 fallback）。
- * 走 session.getFullHistory → runtime getFullHistory（全量文件读取，非尾读）。
- */
-export async function getFullHistory(sessionId: string): Promise<Message[]> {
-  const reply = await sendCommand('session.getFullHistory', { sessionId }, RPC_BACKSTOP_TIMEOUT_MS)
-  return reply.messages
+export async function getHistory(sessionId: string, query?: HistoryQuery): Promise<HistoryResult> {
+  const reply = await sendCommand(
+    'session.history',
+    query
+      ? { sessionId, ...(query.cursor !== undefined && { cursor: query.cursor }), ...(query.limitTurns !== undefined && { limitTurns: query.limitTurns }), ...(query.maxBytes !== undefined && { maxBytes: query.maxBytes }) }
+      : { sessionId },
+    RPC_BACKSTOP_TIMEOUT_MS,
+  )
+  return {
+    messages: reply.messages,
+    truncated: reply.truncated,
+    loadedTurns: reply.loadedTurns,
+    totalTurnsEstimate: reply.totalTurnsEstimate,
+  }
 }
 
 /**

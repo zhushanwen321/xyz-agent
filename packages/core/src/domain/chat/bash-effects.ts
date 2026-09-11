@@ -43,7 +43,7 @@ type Payload = Record<string, unknown>
 // factory 模式（createChatStore，renderer 经 pinia 包装），渲染层 getExecutingBash 是模块级
 // import（MessageStream computed 直调），迁入 store 实例会迫使读方改走 pinia 解包（超出
 // 「读方签名不变」约束）；架构目标以「cleanup 编排可达」达成——store.disposeSession 同点
-// 调 clearExecutingBash（session 删除无残留，与 messages/hydrateAnchors 分区同编排清理）。
+// 调 clearExecutingBash（session 删除无残留，与 messages 分区同编排清理）。
 // 不进 messages、不持久化（live 瞬时态）。
 // 唯一写方（成对保证）：bashStartEffect 置 / bashResultEffect 清 / markBashError 清
 // （abortBash RPC 失败的前端兜底错误路径）。

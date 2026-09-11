@@ -683,6 +683,18 @@ export default {
     shortcutRecording: '按下新快捷键…',
     shortcutReset: '重置',
     shortcutRecordingHint: '点击「重录」后按下新的按键组合',
+    // ── 诊断包导出（crash-forensics-and-watchdog §3.3 D6 / u3b，SystemDiagnosticsSection
+    //    + 死态块 DiagnosticsExportAction 共用；知情文案本体是 shared
+    //    DIAGNOSTIC_EXPORT_PRIVACY_NOTICE，有意不走 i18n——两端共用防文案分叉）──
+    diagnosticsTitle: '诊断',
+    diagnosticsExportLabel: '导出诊断包',
+    diagnosticsExportDesc: '打包崩溃台账与日志尾部为 zip（含本机路径与会话标识），保存位置由你选择，仅用于问题排查',
+    diagnosticsExportBtn: '导出诊断包',
+    diagnosticsConfirmTitle: '导出诊断包',
+    diagnosticsConfirmExport: '导出',
+    diagnosticsCancel: '取消',
+    diagnosticsExportSuccess: '诊断包已导出：{path}',
+    diagnosticsExportFailed: '导出失败（{code}）：{message}。请检查磁盘空间与目录权限后重试',
   },
   // ── 资源页（SettingsResourcePage）──
   resource: {

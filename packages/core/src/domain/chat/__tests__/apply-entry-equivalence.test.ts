@@ -10,6 +10,17 @@
  * 2. runtime src/__tests__/equivalence/live-reload.test.ts：live≡reload store 级同构
  *    （真实 pi 子进程，实时 message_end 流与 get_entries 重放喂同一 reducer）。
  *
+ * [u6-paging-protocol] 断言域 re-scope（crash-resilience §3.3 D4）：
+ *   「live ≡ reload」不变量的比较域从「全量历史」re-scope 为「预算窗口内」——u4b 起
+ *   session.history 响应按双预算（最近 20 turns 且 ≤640KB）切窗返回，窗口内两通路
+ *   （live 累积 ≡ 重开重放）共用同一 reducer 与同一预算，等价性构造性成立；窗口外
+ *   历史在场期间可见（累积）、重开后需「加载更早」游标翻页恢复，属行为变化而非
+ *   等价性破坏（设计 D4 原文：「该不变量的比较域从『全量历史』re-scope 为『预算
+ *   窗口内』……等价性测试的断言域同步调整归 U6」）。窗口域的机器化断言见文末
+ *   「预算窗口内 live ≡ reload（u6 re-scope）」组：两侧同序列各自经
+ *   applyHistoryBudgetWindow 切窗后仍 deep-equal，且窗口投影由同一函数构造
+ *   （runtime 侧 sliceMessagesBeforeCursor + applyHistoryBudgetWindow 即生产实现）。
+ *
  * 行为级具体断言（role 细分 / contentBlocks 顺序 / fileChanges / usage / skill 剖离）
  * 由 apply-entry.test.ts（W20 reducer 单测）承担。
  *
@@ -29,6 +40,13 @@ import {
   convertPiHistory,
   liftHistoryToEntries,
 } from '../../../../../runtime/src/infra/pi/message-converter.js'
+// [u6 re-scope] 预算窗口投影的生产实现（crash-resilience §3.3 D4）：session.history 响应的
+// 实际切窗函数。跨包 import 先例 = 上方 message-converter（W20 D5）；Node-only 模块在
+// vitest node 环境可加载（同先例）。
+import {
+  applyHistoryBudgetWindow,
+  sliceMessagesBeforeCursor,
+} from '../../../../../runtime/src/services/session/history-rebuild-cache.js'
 
 // ── fixture（取自既有测试的真实形态：message-converter*.test.ts 家族）──────────
 
@@ -984,5 +1002,118 @@ describe('双入口等价（R2-TC S1）——同 toolCallId 双帧喂入 ≡ 单
     expect(dual).toEqual(single)
     expect(dual.orphanToolResults).toHaveLength(0)
     expect(dual.messages[0].toolCalls!.map((t) => t.output)).toEqual(['A', 'B'])
+  })
+})
+
+// ── 预算窗口内 live ≡ reload（u6 re-scope，crash-resilience §3.3 D4）──────────────
+//
+// 断言域声明（设计 D4 原文见文件头 re-scope 段）：比较域 = **预算窗口内**。窗口投影
+// 直接复用 runtime 生产实现（applyHistoryBudgetWindow——session.history 响应的实际
+// 切窗函数，活跃/离线/游标翻页三路径共用），等价性「构造性成立」由同一函数 +
+// 同一 reducer 承担：live 累积（分区最终内容）与重开重放（get_entries 全量重放）对
+// 同一 entry 序列，经同一窗口函数投影后必得同一页。
+describe('预算窗口内 live ≡ reload（u6 re-scope）', () => {
+  /** ms → ISO（fixture 统一 timestamp 形态；独立于 W6 块的同形 helper） */
+  const ts = (ms: number) => new Date(ms).toISOString()
+  /** uuidv7 形态假 id（replay 侧专用；独立于 W6 块的同形 helper） */
+  const piId = (n: number) => `0198aabb-ccdd-7e${n.toString().padStart(2, '0')}-8f00-00000000000${n}`
+
+  /** 归一（W6 同款：剥消息 id 与 piEntryId 后回填占位，uuidv7 异源差异类） */
+  function normalizeIds(state: ChatViewState): ChatViewState {
+    const messages = state.messages.map(({ id: _id, piEntryId: _piEntryId, ...rest }) => ({
+      ...rest,
+      id: 'normalized',
+    })) as Message[]
+    return { ...state, messages }
+  }
+
+  it('W1: 同序列两侧各自经预算窗口投影后仍 deep-equal（窗口外翻页恢复，不在等价域）', () => {
+    // 多 turn 序列（每条 user 开新 turn），体量超默认窗口（RECENT_TURNS=20）——
+    // 25 turns > 20，两侧都被切窗：窗口内（最近 20 turns）deep-equal。
+    const mkLive = (n: number): PiEntry[] =>
+      Array.from({ length: n }, (_, i) => ({
+        type: 'message',
+        id: `u-${i + 1}`,
+        parentId: null,
+        timestamp: ts((i + 1) * 1000),
+        message: { role: 'user', content: [{ type: 'text', text: `turn ${i + 1}` }], timestamp: (i + 1) * 1000 },
+      }))
+    const mkReplay = (n: number): PiEntry[] =>
+      Array.from({ length: n }, (_, i) => ({
+        type: 'message',
+        id: piId(i + 1),
+        parentId: i === 0 ? null : piId(i),
+        timestamp: ts((i + 1) * 1000),
+        message: { role: 'user', content: [{ type: 'text', text: `turn ${i + 1}` }], timestamp: (i + 1) * 1000 },
+      }))
+    const liveFull = replayEntries(mkLive(25))
+    const replayFull = replayEntries(mkReplay(25))
+    // 全量域等价先成立（既有断言域——re-scope 的前提）
+    expect(normalizeIds(liveFull)).toEqual(normalizeIds(replayFull))
+    // 预算窗口域：同一生产切窗函数投影后（各留最近 20 turns）仍 deep-equal
+    const liveWin = applyHistoryBudgetWindow(liveFull.messages)
+    const replayWin = applyHistoryBudgetWindow(replayFull.messages)
+    expect(normalizeIds({ ...liveFull, messages: liveWin.messages })).toEqual(
+      normalizeIds({ ...replayFull, messages: replayWin.messages }),
+    )
+    // 窗口如实反映预算：20 turns 入窗 + truncated=true（窗口外 5 turns 需翻页恢复）
+    expect(liveWin.loadedTurns).toBe(20)
+    expect(liveWin.truncated).toBe(true)
+    expect(liveWin.messages).toHaveLength(20)
+  })
+
+  it('W2: 窗口截断的起点恒对齐 turn 边界（entry 原子性——切分点不落 turn 中间）', () => {
+    // turn 3 内含 assistant + toolResult（非 user 边界消息），窗口起点若落中间即破坏
+    // parentId 链——re-scope 后该原子性由窗口函数构造保证，此处机器化锁定。
+    const side = (turnPrefix: string, startTs: number): PiEntry[] => [
+      { type: 'message', id: turnPrefix === 'L' ? `u-x${startTs}` : piId(startTs), parentId: null, timestamp: ts(startTs), message: { role: 'user', content: [{ type: 'text', text: `q-${startTs}` }], timestamp: startTs } },
+      { type: 'message', id: undefined, parentId: null, timestamp: ts(startTs + 100), message: { role: 'assistant', content: [{ type: 'toolCall', id: `tc-${startTs}`, name: 'bash', arguments: { command: 'ls' } }], timestamp: startTs + 100 } },
+      { type: 'message', id: undefined, parentId: null, timestamp: ts(startTs + 200), message: { role: 'toolResult', toolCallId: `tc-${startTs}`, toolName: 'bash', content: [{ type: 'text', text: 'ok' }], timestamp: startTs + 200 } },
+    ]
+    // 3 turns × 3 entries；窗口 1 turn 时起点必须落在 turn 边界（user 消息），不带前 turn 残段
+    const liveState = replayEntries([...side('L', 1000), ...side('L', 4000), ...side('L', 7000)])
+    const win = applyHistoryBudgetWindow(liveState.messages, { limitTurns: 1 })
+    expect(win.loadedTurns).toBe(1)
+    // 窗口首条 = turn 3 的 user（q-7000），其 assistant 完整随行（toolResult 已回填进
+    // assistant 的 toolCall.output——reducer 合并语义，2 条消息 = user + assistant）
+    expect(win.messages).toHaveLength(2)
+    expect(win.messages[0]!.role).toBe('user')
+    expect(win.truncated).toBe(true) // 前两个 turn 在窗口外（翻页恢复域）
+  })
+
+  it('W3: 游标前缀 + 窗口投影的构造性（翻页页 = 同一函数的复合，两通路页内容恒等）', () => {
+    // 游标翻页语义（runtime sliceMessagesBeforeCursor + applyHistoryBudgetWindow 的复合
+    // 在两侧同构适用）：对同序列，锚点之前的最近窗口 = 页内容。两侧独立构造同内容序列
+    // （W6 lift 保真风格），页投影 deep-equal。
+    const liveSeq = replayEntries([
+      { type: 'message', id: 'u-1', parentId: null, timestamp: ts(1000), message: { role: 'user', content: [{ type: 'text', text: '第一轮' }], timestamp: 1000 } },
+      { type: 'message', id: 'u-2', parentId: null, timestamp: ts(2000), message: { role: 'user', content: [{ type: 'text', text: '第二轮' }], timestamp: 2000 } },
+      { type: 'message', id: 'u-3', parentId: null, timestamp: ts(3000), message: { role: 'user', content: [{ type: 'text', text: '第三轮' }], timestamp: 3000 } },
+    ])
+    const replaySeq = replayEntries([
+      { type: 'message', id: piId(1), parentId: null, timestamp: ts(1000), message: { role: 'user', content: [{ type: 'text', text: '第一轮' }], timestamp: 1000 } },
+      { type: 'message', id: piId(2), parentId: piId(1), timestamp: ts(2000), message: { role: 'user', content: [{ type: 'text', text: '第二轮' }], timestamp: 2000 } },
+      { type: 'message', id: piId(3), parentId: piId(2), timestamp: ts(3000), message: { role: 'user', content: [{ type: 'text', text: '第三轮' }], timestamp: 3000 } },
+    ])
+    // 锚 = 两侧各自的第三轮身份（renderer 侧即分区最旧消息身份）
+    const livePage = applyHistoryBudgetWindow(sliceMessagesBeforeCursor(liveSeq.messages, 'u-3')!, { limitTurns: 1 })
+    const replayPage = applyHistoryBudgetWindow(sliceMessagesBeforeCursor(replaySeq.messages, piId(3))!, { limitTurns: 1 })
+    expect(normalizeIds({ ...liveSeq, messages: livePage.messages })).toEqual(
+      normalizeIds({ ...replaySeq, messages: replayPage.messages }),
+    )
+    // 页内容 = 第二轮（锚前最近 1 turn）；锚前无更早 turn 时窗口收敛为空（翻页到头）
+    const firstText = (m: (typeof livePage.messages)[number]): string => {
+      const c = m.content
+      if (typeof c === 'string') return c
+      if (Array.isArray(c)) {
+        const t = (c as Segment[]).find((seg) => seg.type === 'text')
+        return t && t.type === 'text' ? t.text : ''
+      }
+      return ''
+    }
+    expect(livePage.messages.map(firstText)).toEqual(['第二轮'])
+    const headPage = applyHistoryBudgetWindow(sliceMessagesBeforeCursor(liveSeq.messages, 'u-1')!, { limitTurns: 1 })
+    expect(headPage.messages).toEqual([])
+    expect(headPage.truncated).toBe(false)
   })
 })

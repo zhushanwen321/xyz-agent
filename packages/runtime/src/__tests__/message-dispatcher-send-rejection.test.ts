@@ -74,7 +74,9 @@ function makeMocks(opts: MockOpts = {}) {
     ? vi.fn(async () => { throw opts.promptError! })
     : vi.fn(async () => ({ role: 'assistant', content: 'ok' }))
 
-  const client = { prompt: promptFn } as unknown as IPiEngine
+  // touchActivity：sendPrompt 入口同步 touch（idle-pi-reclamation D6-1）经 pm.getClient
+  // 到达 fake client——fake 须补齐该接口成员
+  const client = { prompt: promptFn, touchActivity: vi.fn() } as unknown as IPiEngine
 
   // dispatcher 只依赖 publish 抽象：mock bus 收集发布消息供断言
   const broadcasts: ServerMessage[] = []

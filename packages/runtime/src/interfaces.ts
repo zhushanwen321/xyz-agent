@@ -165,13 +165,16 @@ export interface ISessionService {
   abortBash(sessionId: string): Promise<{ sent: boolean }>
   switchModel(sessionId: string, provider: string, modelId: string): Promise<string>
   compact(sessionId: string, customInstructions?: string): Promise<void>
-  getHistory(sessionId: string): Promise<{ messages: Message[]; truncated: boolean }>
   /**
-   * 获取 session 全量历史（直读 JSONL 文件，不截断）。
-   * 与 getHistory 的区别：getHistory 优先走 RPC（pi client.getEntries entry 树重建），文件路径 fallback 截断尾读；
-   * getFullHistory 直接全量读文件，供前端「加载更多历史」按钮调用（FR-4）。
+   * 拉取 session 历史（缓存增量三分支重建 + 双预算窗口，crash-resilience §3.3 D4）。
+   * truncated=true 表示窗口外仍有历史；loadedTurns=本次返回的完整 turn 数；
+   * totalTurnsEstimate=turn 总数估计（全量重建路径精确，窗口截断路径为下界）。
+   * [u6] query 可选（crash-resilience §3.3 D4 中期分页协议）：cursor=turn 边界锚点
+   * entryId（返回锚点之前的最近窗口，活跃/离线两路径共用语义）；limitTurns/maxBytes
+   * 覆盖默认预算（缺省回落 HISTORY_BUDGET）。cursor 未命中返回空页 + truncated=false
+   * （翻页到头，不报错）。
    */
-  getFullHistory(sessionId: string): Promise<Message[]>
+  getHistory(sessionId: string, query?: { cursor?: string; limitTurns?: number; maxBytes?: number }): Promise<{ messages: Message[]; truncated: boolean; loadedTurns: number; totalTurnsEstimate: number }>
   /**
    * 获取 session 派生的 subagent 列表（从主 session JSONL 的 subagent toolCall/toolResult 提取）。
    * 纯磁盘读取，不依赖 pi 进程活跃。文件不存在或无 subagent 调用时返回空数组。
@@ -180,8 +183,10 @@ export interface ISessionService {
   /**
    * 获取 subagent 的对话流历史（直读 subagent JSONL，复用 convertPiHistory 转换）。
    * subagentId 对应 SubagentRecord.subagentId，从 getSubagents 结果中查找 sessionFile 路径。
+   * 文件超 READ_PRECHECK_MAX_BYTES 预检（crash-resilience §3.3 D5①）时返回最近
+   * 预算窗口 + truncated 标记（不拒绝）。
    */
-  getSubagentHistory(sessionId: string, subagentId: string): Promise<Message[]>
+  getSubagentHistory(sessionId: string, subagentId: string): Promise<{ messages: Message[]; truncated: boolean }>
   /**
    * [U7] 子代理引擎配置视图（engines.json 动态引擎列表 + config.json defaultEngine 合成）。
    * 纯磁盘读取，不依赖 pi 进程活跃；engines.json 缺失/损坏时 engines 兜底 ['pi']。
@@ -202,7 +207,7 @@ export interface ISessionService {
    * 获取 workflow 内 agent call 的对话流历史。
    * agentCallSessionId 是 trace[].sessionId（pi session ID），按 sessionId 全局查找 JSONL。
    */
-  getAgentCallHistory(sessionId: string, agentCallSessionId: string): Promise<Message[]>
+  getAgentCallHistory(sessionId: string, agentCallSessionId: string): Promise<{ messages: Message[]; truncated: boolean }>
   /**
    * 解析 agent call 对话流 JSONL 绝对路径（与 getAgentCallHistory 共用 record 查找路径
    * ——subagentId → record.sessionFile，见 session-records.ts）。

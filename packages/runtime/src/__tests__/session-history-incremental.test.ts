@@ -28,7 +28,7 @@ vi.mock('../services/session-history.js', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../services/session-history.js')>()
   return {
     ...actual,
-    getHistoryTailFromFile: vi.fn(async () => ({ messages: [], truncated: true })),
+    getHistoryTailFromFile: vi.fn(async () => ({ messages: [], truncated: true, loadedTurns: 0, totalTurnsEstimate: 0 })),
   }
 })
 const { getHistoryTailFromFile } = await import('../services/session-history.js')
@@ -228,7 +228,7 @@ describe('SessionService.getHistory —— D6 历史增量', () => {
   it('② R-12（全量侧）：无缓存 + pi 返回空 entries → 返回空列表，不走尾读', async () => {
     const { svc } = makeService([{ data: { entries: [], leafId: null } }])
     const result = await svc.getHistory('s3')
-    expect(result).toEqual({ messages: [], truncated: false })
+    expect(result).toEqual({ messages: [], truncated: false, loadedTurns: 0, totalTurnsEstimate: 0 })
     expect(getHistoryTailFromFile).not.toHaveBeenCalled()
   })
 
@@ -300,7 +300,7 @@ describe('SessionService.getHistory —— D6 历史增量', () => {
     )
     const result = await svc.getHistory('s-offline')
     expect(getHistoryTailFromFile).toHaveBeenCalledTimes(1)
-    expect(result).toEqual({ messages: [], truncated: true })
+    expect(result).toEqual({ messages: [], truncated: true, loadedTurns: 0, totalTurnsEstimate: 0 })
   })
 
   it('Fix-2：delta 首条 parentId ≠ 缓存 leafId（branch）→ 丢缓存全量重拉，不合出混合历史', async () => {

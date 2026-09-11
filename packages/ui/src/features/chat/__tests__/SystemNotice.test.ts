@@ -13,6 +13,7 @@
 import { describe, it, expect } from 'vitest'
 import { mount } from '@vue/test-utils'
 import { SystemNotice } from '@xyz-agent/ui'
+import { PI_RESPAWN_NOTICE_CUSTOM_TYPE } from '@xyz-agent/shared'
 import type { Message } from '@xyz-agent/shared'
 
 const NOW = Date.now()
@@ -83,5 +84,79 @@ describe('SystemNotice subagent 定向气泡（U2b）', () => {
     })
     expect(wrapper.find('[data-testid="subagent-directive-bubble"]').exists()).toBe(false)
     expect(wrapper.find('.system-notice').exists()).toBe(true)
+  })
+})
+
+// ── respawn 提示条分支（[u8-pi-respawn]，crash-resilience D7）──────────────
+//
+// SystemNotice 的 v-else-if respawn 渲染分支：customType = pi-respawn-notice 且
+// parseRespawnNoticeVariant(details) 可解析 → 渲染 RespawnNoticeBar（restored = T4
+// 文案 / restoreFailed = 失败态 + 重试按钮，retry 事件透传壳层）；解析失败（variant
+// 非法 / details 非 object）→ respawn 为 null → 降级兜底 system 行（消息不静默消失，
+// subagent 定向气泡同款降级语义）。RespawnNoticeBar 本体细节由同目录
+// RespawnNoticeBar.test.ts 覆盖，此处锁定 SystemNotice 的分支派发与降级契约。
+
+/**
+ * 构造 reload 形态的 pi-respawn-notice Message（chat store appendRespawnNotice 投影）。
+ * details 放宽为 unknown：畸形载荷用例（降级分支）刻意构造契约外形态。
+ */
+function respawnMessage(over: Omit<Partial<Message>, 'details'> & { details?: unknown } = {}): Message {
+  return {
+    id: 'respawn-1',
+    role: 'system',
+    customType: PI_RESPAWN_NOTICE_CUSTOM_TYPE,
+    content: '',
+    details: { variant: 'restored' },
+    display: true,
+    status: 'complete',
+    timestamp: NOW,
+    ...over,
+  } as Message
+}
+
+describe('SystemNotice respawn 提示条分支（u8-pi-respawn）', () => {
+  it('pi-respawn-notice 消息（variant=restored）→ 渲染 RespawnNoticeBar，不走兜底 system 行', () => {
+    const wrapper = mount(SystemNotice, { props: { message: respawnMessage() } })
+    const bar = wrapper.find('[data-testid="respawn-notice-bar-slot"]')
+    expect(bar.exists()).toBe(true)
+    expect(bar.attributes('data-variant')).toBe('restored')
+    // 恢复成功无重试按钮（手动出口仅 restoreFailed 形态）
+    expect(wrapper.find('[data-testid="respawn-notice-retry"]').exists()).toBe(false)
+    // 分支互斥：兜底 system 行与定向气泡均不渲染
+    expect(wrapper.find('.system-notice').exists()).toBe(false)
+    expect(wrapper.find('[data-testid="subagent-directive-bubble"]').exists()).toBe(false)
+  })
+
+  it('variant=restoreFailed → 失败态提示条 + 重试按钮可见，点击透传 respawnRetry（壳层接 session.restore）', async () => {
+    const wrapper = mount(SystemNotice, {
+      props: { message: respawnMessage({ details: { variant: 'restoreFailed' } }) },
+    })
+    const bar = wrapper.find('[data-testid="respawn-notice-bar-slot"]')
+    expect(bar.exists()).toBe(true)
+    expect(bar.attributes('data-variant')).toBe('restoreFailed')
+    const btn = wrapper.find('[data-testid="respawn-notice-retry"]')
+    expect(btn.exists()).toBe(true)
+    await btn.trigger('click')
+    expect(wrapper.emitted('respawnRetry')).toHaveLength(1)
+  })
+
+  it('variant 非法（details.variant 未知值）→ 降级兜底 system 行不抛错（消息不静默消失）', () => {
+    const wrapper = mount(SystemNotice, {
+      props: { message: respawnMessage({ details: { variant: 'bogus' }, content: '降级留痕' }) },
+    })
+    expect(wrapper.find('[data-testid="respawn-notice-bar-slot"]').exists()).toBe(false)
+    const fallback = wrapper.find('.system-notice')
+    expect(fallback.exists()).toBe(true)
+    expect(fallback.text()).toContain('降级留痕')
+  })
+
+  it('details 非 object（损坏载荷）→ 同款降级兜底 system 行，不抛错', () => {
+    const wrapper = mount(SystemNotice, {
+      props: { message: respawnMessage({ details: 'corrupted', content: '损坏留痕' }) },
+    })
+    expect(wrapper.find('[data-testid="respawn-notice-bar-slot"]').exists()).toBe(false)
+    const fallback = wrapper.find('.system-notice')
+    expect(fallback.exists()).toBe(true)
+    expect(fallback.text()).toContain('损坏留痕')
   })
 })

@@ -69,6 +69,32 @@ export function parseSubagentDirective(content: unknown, details: unknown): Suba
     text: typeof content === 'string' ? content : '',
   }
 }
+
+/**
+ * pi-respawn 恢复提示条 customType SSOT（crash-resilience §3.3 D7，u8-pi-respawn）。
+ *
+ * pi 进程非主动退出后自动恢复（session.restored / session.restoreFailed 推送）时，
+ * renderer 在对话流插入的 ephemeral 系统提示条（Message.customType = 本常量）。
+ * 该提示条是 runtime 生成的 live-only 消息（pi session JSONL 无对应 entry，写入点置
+ * liveOnly:true）——重开 session 后不出现，属一次性通知语义。
+ *
+ * 与 SUBAGENT_DIRECTIVE_CUSTOM_TYPE 同款约定：写入方（core chat store
+ * appendRespawnNotice）与渲染方（ui SystemNotice 分支）共用本常量，禁字面量漂移。
+ */
+export const PI_RESPAWN_NOTICE_CUSTOM_TYPE = 'pi-respawn-notice'
+
+/** 恢复提示条形态：restored = 恢复成功（T4 文案）；restoreFailed = 熔断终态（含重试按钮）。 */
+export type PiRespawnNoticeVariant = 'restored' | 'restoreFailed'
+
+/**
+ * 防御性解析 pi-respawn-notice custom message 的 details → variant。
+ * 解析失败（details 畸形 / variant 非法）→ null（消费侧降级为普通 system 文本行，不崩溃）。
+ */
+export function parseRespawnNoticeVariant(details: unknown): PiRespawnNoticeVariant | null {
+  if (!details || typeof details !== 'object' || Array.isArray(details)) return null
+  const v = (details as Record<string, unknown>).variant
+  return v === 'restored' || v === 'restoreFailed' ? v : null
+}
 /** 消息生命周期状态（steer/followup 解耦后 pending 不再进消息流——m4 清理）。 */
 export type MessageStatus = 'streaming' | 'complete' | 'error'
 export type ToolCallStatus = 'running' | 'completed' | 'error' | 'end_not_received'
@@ -81,6 +107,13 @@ export interface ToolCall {
   /** tool result 原始文本（含 ANSI 转义，未经 stripAnsi）。前端用 ansi_up 渲染着色。
    *  无此字段时回退到 output（已 stripAnsi 的纯文本）。 */
   outputRaw?: string
+  /**
+   * output/outputRaw 是否被 entryStates 条目级截断裁剪 [crash-resilience §3.3 D6-⑧]。
+   * 累积态单条 tool output 超 64KB（ENTRY_TOOL_OUTPUT_MAX_BYTES）时为 true，文本尾部
+   * 带截断标记。live（tool_call_end overlay）与 reload（reducer replay）经同一截断函数，
+   * 两路径标记一致（D3 代价 C 根治）。可选字段：缺省 = 未截断。
+   */
+  outputTruncated?: boolean
   /** pi tool_execution_end result.details — 结构化扩展数据 */
   details?: Record<string, unknown>
   /** Extension tool_call_update 进度百分比 (0-100) */

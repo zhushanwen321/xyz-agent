@@ -24,6 +24,7 @@
     "index.ts"
   ],
   "dependencies": {
+    "@zhushanwen/pi-ext-guards": "workspace:*",
     "ajv": "^8.17.0"
   },
   "peerDependencies": {

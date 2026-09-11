@@ -52,6 +52,7 @@ import type {
   ToolCall,
 } from '@xyz-agent/shared'
 import { normalizePiToolResult } from '../apply-entry'
+import { truncateEntryToolOutput } from '../apply-entry-utils'
 import type { RetryState, QueueState, FinalizeReason } from '../store-types'
 import type { MessageEffectContext, MessageEffectHandler } from '../effect-types'
 export type { MessageEffectContext, MessageEffectHandler } from '../effect-types'
@@ -606,9 +607,16 @@ const messageEffects: Partial<Record<ServerMessageType, MessageEffectHandler>> =
     //（content block 数组 → join text），entry.content 已由 adapter 归一为数组形态（W21）。
     // content 缺失（mock/异常帧）保留 running 期间的旧值（迁移前 `?? c.output` 同语义）。
     const hasContent = entry.message.content !== undefined
-    const { output, outputRaw } = hasContent
+    const { output: rawOutput, outputRaw: rawOutputRaw, images } = hasContent
       ? normalizePiToolResult(entry.message)
-      : { output: undefined, outputRaw: undefined }
+      : { output: undefined, outputRaw: undefined, images: undefined }
+    // [D6-⑧] live overlay 与 reducer（computeToolCallFill）过同一 64KB 截断函数——
+    // 非六类工具（write/edit/MCP）大结果 live 与 reload 形态一致（D3 代价 C 根治）。
+    const outputT = rawOutput !== undefined ? truncateEntryToolOutput(rawOutput) : undefined
+    const outputRawT = rawOutputRaw !== undefined ? truncateEntryToolOutput(rawOutputRaw) : undefined
+    const output = outputT?.text
+    const outputRaw = outputRawT?.text
+    const outputTruncated = (outputT?.truncated ?? false) || (outputRawT?.truncated ?? false)
     const details = entry.message.details
     const isError = entry.message.isError === true
     const next = [...prev]
@@ -617,6 +625,11 @@ const messageEffects: Partial<Record<ServerMessageType, MessageEffectHandler>> =
         ? truncateToolCall({
           ...c,
           ...(output !== undefined && { output }),
+          ...(outputTruncated && { outputTruncated: true }),
+          // [D6-⑨] live 期 toolResult 图片回填（与重放路径 fillHostToolCall 同语义）：
+          // 缺此回填则 live 期 toolCall.images 恒 undefined，设计「live 期新到图片在
+          // 剩余额度内即写」无法成立（渲染层 ToolResultImages 无数据源）。
+          ...(images !== undefined && images.length > 0 && { images }),
           // end 有 content 时无条件写入 outputRaw（含 undefined 显式清空）——running 期
           // tool_call_update 写入的 outputRaw 在 end 文本无 ANSI 时会残留，用户终态看到
           // 带色陈旧尾窗而非 end 文本（错误信息），且 live ≠ reload。

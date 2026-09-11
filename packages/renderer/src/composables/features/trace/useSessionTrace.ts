@@ -56,8 +56,8 @@ export interface TraceCurrentPromptSummary {
 export interface TraceSessionPartition {
   /** 加载态：idle 未加载 / loading / ready / error。 */
   status: 'idle' | 'loading' | 'ready' | 'error'
-  /** 数据通路（ready 时有值）：rpc 活跃 / file 非活跃或降级 / empty 未落盘。 */
-  source: 'rpc' | 'file' | 'empty' | null
+  /** 数据通路（ready 时有值）：rpc 活跃 / file 非活跃或降级 / empty 未落盘 / oversize 超预检阈值降级（D5④，u4c 协议扩展的编译级联——降级态 UI 渲染分支留 Trace 视图改造单元）。 */
+  source: 'rpc' | 'file' | 'empty' | 'oversize' | null
   header?: TraceSessionHeader
   entries: unknown[]
   malformed: SessionTraceMalformedLine[]
@@ -69,6 +69,10 @@ export interface TraceSessionPartition {
   errorMessage: string | null
   /** session JSONL 绝对路径（快照透传；MALFORMED 行 reveal 按钮数据源，未落盘/未知为 null）。 */
   filePath: string | null
+  /** D5④ oversize 降级文案（source='oversize' 时有值：体积 + 源文件绝对路径，runtime
+   *  formatTraceOversizeMessage 产出透传——体积在快照中无独立字段，组件不可本地重组；
+   *  其余 source 恒 null。TraceView oversize 分支渲染）。 */
+  oversizeMessage: string | null
   // ── 现取当前 system prompt（§3.1 失败路径；与视图态同分区，切视图不丢）──
   /** 最近一次现取结果（null = 未现取过）。 */
   currentPrompt: TraceCurrentPromptSummary | null
@@ -104,6 +108,7 @@ function createDefaultPartition(): TraceSessionPartition {
     errorCode: null,
     errorMessage: null,
     filePath: null,
+    oversizeMessage: null,
     currentPrompt: null,
     currentPromptFetching: false,
     currentPromptErrorCode: null,
@@ -230,6 +235,7 @@ async function loadTrace(sid: string): Promise<void> {
       if (s.status !== 'loading') return
       s.source = snap.source
       s.filePath = snap.filePath ?? null
+      s.oversizeMessage = snap.oversizeMessage ?? null
       s.header = snap.header as TraceSessionHeader | undefined
       s.entries = [...snap.entries]
       s.malformed = [...snap.malformed]

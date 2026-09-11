@@ -58,6 +58,9 @@ function makeHarness(opts: HarnessOptions = {}): Harness {
       calls.push('followUp')
       return {}
     }),
+    // touchActivity：sendPrompt 入口同步 touch（idle-pi-reclamation D6-1）经 pm.getClient
+    // 到达 fake client——fake 须补齐该接口成员
+    touchActivity: vi.fn(),
   }
   const svc = {
     ensureActive: vi.fn(async () => {

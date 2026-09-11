@@ -21,7 +21,7 @@
  */
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
-import type { Message, SubagentRecord, WorkflowRunRecord } from '@xyz-agent/shared'
+import type { SubagentRecord, WorkflowRunRecord } from '@xyz-agent/shared'
 import { SUBAGENT_RECORD_CUSTOM_TYPE, WORKFLOW_RECORD_CUSTOM_TYPE } from '@xyz-agent/shared'
 import type { SubagentEngineConfigView, SubagentEnginesFile } from '@xyz-agent/extension-protocol'
 import { SUBAGENTS_ENGINES_FILENAME } from '@xyz-agent/extension-protocol'
@@ -29,7 +29,7 @@ import { SUBAGENTS_ENGINES_FILENAME } from '@xyz-agent/extension-protocol'
 // Node 端从子路径 import
 import { getDataDir } from '@xyz-agent/shared/paths'
 import type { IProcessManager, IPiEngine } from '../ports/pi-engine.js'
-import { getHistoryFromFilePath } from '../session-history.js'
+import { getHistoryFromFilePath, type HistoryFileReadResult } from '../session-history.js'
 import { extractSubagentsFromSessionFile, scanSubagentEntries } from './subagent-extractor.js'
 import {
   extractRecordEngine,
@@ -303,26 +303,32 @@ export class SessionRecords {
     return extractSubagentsFromSessionFile(target.filePath)
   }
 
-  async getSubagentHistory(sessionId: string, subagentId: string): Promise<Message[]> {
+  /**
+   * subagent 对话流历史（record.sessionFile 直读）。
+   *
+   * u4b（D5①）：底座 getHistoryFromFilePath 对超 READ_PRECHECK_MAX_BYTES（32MB）的
+   * 巨型 subagent JSONL（高发源）走逆序分块读最近预算窗口 + truncated 标记（不拒绝）。
+   */
+  async getSubagentHistory(sessionId: string, subagentId: string): Promise<HistoryFileReadResult> {
     // 先从主 session 提取 subagent 列表，找到 sessionFile 路径
     const subagents = await this.getSubagents(sessionId)
     const record = subagents.find((s) => s.subagentId === subagentId)
-    if (!record) return []
+    if (!record) return { messages: [], truncated: false }
 
     // P5 分协议路由：非 pi 引擎（record.engine 字段路由，缺省 pi）走 extractor 的
     // 三级降级读取链（①引擎原生 reader ②journal ③outcome-only）。pi 的现有直读链
     // 零变化（A1 守护）
     const engine = extractRecordEngine(record)
     if (engine !== DEFAULT_SUBAGENT_ENGINE) {
-      return readEngineSubagentHistory(record, getDataDir())
+      return { messages: await readEngineSubagentHistory(record, getDataDir()), truncated: false }
     }
 
-    if (!record.sessionFile) return []
+    if (!record.sessionFile) return { messages: [], truncated: false }
 
     // 路径穿越校验：sessionFile 必须严格落在 piAgentDir 下（<dataDir>/agent/）。
     // record.sessionFile 由 subagent-extractor 从 JSONL 文本提取，不可信——攻击者构造的
     // session JSONL 可塞入任意路径（如 /etc/passwd），不校验直接读会泄露任意文件内容。
-    if (!isStrictlyUnder(getPiAgentDir(), record.sessionFile)) return []
+    if (!isStrictlyUnder(getPiAgentDir(), record.sessionFile)) return { messages: [], truncated: false }
 
     // 直读 subagent JSONL，复用 getHistoryFromFilePath 转换链路（parseJsonl + filter + convertHistory）。
     // subagent JSONL 格式与主 session 一致（pi SessionManager._persist 写入）。
@@ -440,7 +446,7 @@ export class SessionRecords {
    *
    * 找不到 record 返回 []（前端显空对话流）。
    */
-  async getAgentCallHistory(sessionId: string, agentCallSessionId: string): Promise<Message[]> {
+  async getAgentCallHistory(sessionId: string, agentCallSessionId: string): Promise<HistoryFileReadResult> {
     return this.getSubagentHistory(sessionId, agentCallSessionId)
   }
 

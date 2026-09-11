@@ -34,6 +34,8 @@ function createMockSessionStore(mainSessionFile: string, mainSessionId: string, 
     scanSessions: () => [meta],
     // W26（D9-1）：ISessionStore 接口新增目录 TTL 缓存失效成员
     invalidateScanCache: () => {},
+    // u4c（D5⑤）：ISessionStore 新增流式归一化成员（本文件不触达，no-op 满足类型）
+    normalizeSessionFileStreaming: () => {},
     refreshAll: () => {},
     persistSessionEnd: () => {},
     persistPresetBinding: () => {},
@@ -285,7 +287,7 @@ describe('SessionService.getSubagentHistory', () => {
       sessionStore, {} as never, {} as never,
     )
 
-    const messages = await svc.getSubagentHistory('main-sess-id', 'bg-hist-1-222')
+    const { messages } = await svc.getSubagentHistory('main-sess-id', 'bg-hist-1-222')
 
     expect(messages.length).toBeGreaterThanOrEqual(2)
     expect(messages.some((m) => m.role === 'user')).toBe(true)
@@ -302,7 +304,7 @@ describe('SessionService.getSubagentHistory', () => {
       sessionStore, {} as never, {} as never,
     )
 
-    const messages = await svc.getSubagentHistory('main-sess-id', 'nonexistent-subagent')
+    const { messages } = await svc.getSubagentHistory('main-sess-id', 'nonexistent-subagent')
     expect(messages).toHaveLength(0)
   })
 })

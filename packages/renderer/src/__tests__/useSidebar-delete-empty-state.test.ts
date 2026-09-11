@@ -35,7 +35,7 @@ vi.mock('@/api', () => ({
     load: vi.fn().mockResolvedValue({ projects: [], activeProjectId: '' }),
     save: vi.fn().mockResolvedValue(undefined),
   },
-  chat: { getHistory: vi.fn(() => Promise.resolve({ messages: [], historyTruncated: false })), streamSubscribe: vi.fn(() => () => {}) },
+  chat: { getHistory: vi.fn(() => Promise.resolve({ messages: [], truncated: false, loadedTurns: 0, totalTurnsEstimate: 0 })), streamSubscribe: vi.fn(() => () => {}) },
   extension: {},
   session: {
     create: vi.fn(() => Promise.resolve(makeSummary('mock'))),
@@ -57,12 +57,10 @@ vi.mock('@/api', () => ({
 // ensureStreamSubscription 隔离（真实实现 fire-and-forget WS 订阅，测试不需要）
 const useChatMocks = vi.hoisted(() => ({
   disposeSession: vi.fn(),
-  setHistoryTruncated: vi.fn(),
 }))
 vi.mock('@/composables/features/chat/useChat', () => ({
   useChat: () => ({
     disposeSession: useChatMocks.disposeSession,
-    setHistoryTruncated: useChatMocks.setHistoryTruncated,
     send: vi.fn(),
     sendBash: vi.fn(),
   }),

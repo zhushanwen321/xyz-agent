@@ -7,7 +7,7 @@
 - **S（情境）**：xyz-agent 桌面工作台中，每个聊天 session 对应一个 runtime（Node.js 子进程）管理的 pi CLI 子进程（`pi --mode rpc`，stdin/stdout JSONL 通信）。session 历史持久化在磁盘 JSONL，进程只是无状态的运行时载体。
 - **C（冲突）**：pi 子进程被 kill -9（或崩溃）后，用户在该 session 发新 prompt 报 `pi process is not running`，切走再切回无效，只有重启应用才恢复。侧栏该 session 看起来一切正常——用户不知道它已经死了。
 - **Q（问题）**：为什么 pi 死后 runtime 既不通知前端也不自愈？respawn 应该怎么做、有哪些副作用？
-- **A（答案）**：修复死亡信号的传播链（根因），让既有的 lazy respawn 设施真正被触发；不做 proactive 自动重启（crash-loop 风险，无增量收益）。
+- **A（答案）**：修复死亡信号的传播链（根因），让 respawn 设施真正被触发。初版裁决「不做 proactive 自动重启」已被 2026-09 crash-resilience §3.3 D7 推翻并交付——现行形态 = 传播链修复 + bounded proactive respawn（5s 延迟 + 熔断），见 §6.2 现行裁决。
 
 ## 1. 背景：被设计的系统是什么
 
@@ -39,7 +39,7 @@ session 的创建有**三条 spawn 路径**，这是理解本 bug 的关键：
 **In-scope**：死亡信号传播链修复（rpc-client / process-manager）、消费端防御（session-service `ensureActive`）、相关单测与 dev 实测验收。附带修复：stream error handler 补 SIGKILL，回收「管道断裂但未退出」的孤儿进程（§6.3 副作用 #9，与传播链修复同文件，不拆分）。
 **Out-of-scope**：
 - **pi 假死检测与主动 kill**（进程活着但不响应 RPC 的场景）——当前系统完全无此机制，涉及心跳/超时策略设计，独立立项；
-- crash-loop 自动重启策略（proactive respawn 及其退避）——见 §6.2 裁决；
+- crash-loop 自动重启策略（proactive respawn 及其退避）——初版裁决见 §6.2；**2026-09 已由 crash-resilience §3.3 D7 立项交付**（`pi-respawn.ts`，本设计修复的传播链是其前提），现行裁决见 §6.2；
 - 死亡时在途生成内容的恢复——pi 已 flush 到 JSONL 的部分经历史重建可见，未 flush 部分接受丢失（错误消息已告知用户）。
 
 ## 3. 现状：使用者眼里是什么样的
@@ -147,7 +147,7 @@ respawn 失败的典型原因：model 配置失效（如 provider 下架）、pi
 
 ## 6. 关键决策与权衡
 
-**本章结论**：5 个决策——修传播链而非加 respawn 新机制；lazy 而非 proactive；死信号单一出口；onExit 改多播；ensureActive 加 exited 防御。
+**本章结论**：5 个决策——修传播链而非加 respawn 新机制；respawn 时机初版裁 lazy、v6 起 lazy 设施 + bounded proactive 并存（见 §6.2 现行裁决）；死信号单一出口；onExit 改多播；ensureActive 加 exited 防御。
 
 ### 6.1 总路线：修复传播链 vs 新增 respawn 机制
 
@@ -155,13 +155,17 @@ respawn 失败的典型原因：model 配置失效（如 provider 下架）、pi
 |---|---|---|---|---|
 | A. 修复传播链（rekey 闭包 + stream error 出口 + onExit 多播）+ ensureActive 防御 | 高：死信号是所有自愈的前提，一处修复三路（切回/重开/发消息）全通；无新概念 | 低：3 个文件各改一小块 | 低：行为对齐已验证的 restore 路径 | ✅ |
 | B. 不修 rekey，只在 ensureActive/prompt 处检测死 client 强制 restore | 低：症状补丁，`session.exited` 永远不发，前端 dead UI 永远不出现，用户只看到反复报错后「莫名恢复」 | 中 | 中：Map 残留仍会随时间累积（clientToId/adapter 监听器） | ❌ |
-| C. proactive respawn（exit 回调里立即重建） | 低：pi 因配置错误死亡时无限 crash-loop，需额外退避/上限机制 | 高 | 高：与本设计目标 2 无增量收益（无 pending 操作需要新进程立即接手） | ❌ |
+| C. proactive respawn（exit 回调里立即重建） | 低：pi 因配置错误死亡时无限 crash-loop，需额外退避/上限机制 | 高 | 高：与本设计目标 2 无增量收益（无 pending 操作需要新进程立即接手） | ❌（初版；v6 注：被 crash-resilience D7 有条件推翻——退避+熔断解决 crash-loop 后已交付，见 §6.2 现行裁决） |
 
 **被否若用 B**：§5.1 场景变成——用户看到报错但侧栏 session 始终「正常」，不知道要切走再切回；`session.exited` 的 streaming 收口不触发，聊天流卡「思考中」。**被否若用 C**：model auth 过期时 pi spawn 即退，runtime 无限重启进程打满 CPU，且用户没有任何输入窗口。
 
 ### 6.2 respawn 时机：lazy（现状设施）+ 用户显式动作
 
-裁决：保持 lazy。三条既有触发路径（`session.switch` auto-restore / dead UI 重新打开 / `sendPrompt` 的 `ensureActive`）在传播链修复后全部生效。**不新增** proactive 定时检测。理由：死亡时没有需要新进程接手的在途操作（在途 RPC 已被 rejectAll），立即重建无收益；lazy 由用户动作触发天然防 crash-loop。
+**现行裁决（v6 起，2026-09-11）**：意外退出的**用户可见 session** 由 runtime 主动 respawn——`packages/runtime/src/services/session/pi-respawn.ts`：退出后 5s 延迟调度（避开连坐终止窗口）→ 连续失败 2 次熔断转 dead 态（用户可见，不无限重试）→ join 语义（恢复期间并发操作汇合到同一恢复流）；shutdown / 删除 / idle 回收等主动终止路径先 cancelAll 再销毁，不触发 respawn。hidden 公共 session 保持 lazy（下次使用经 `ensureActive` 恢复）。传播链修复（本设计）是 proactive respawn 的前提——死信号不可靠则 respawn 不可靠。
+
+**初版裁决（v1-v5，已被取代，原文留存）**：保持 lazy。三条既有触发路径（`session.switch` auto-restore / dead UI 重新打开 / `sendPrompt` 的 `ensureActive`）在传播链修复后全部生效。**不新增** proactive 定时检测。理由：死亡时没有需要新进程接手的在途操作（在途 RPC 已被 rejectAll），立即重建无收益；lazy 由用户动作触发天然防 crash-loop。
+
+**翻案论据**（long-run-stability-architecture.md §3.3 D2「被否」块，2026-09-09）：① extension 异步崩溃从假设变为实锤高频源（9/3 smart-context），30 天维度每次崩溃都要求用户手动恢复不可接受；② crash-loop 风险用有界重试 + 熔断解决，不需要以「用户手动」当熔断器；③ 初版论据「立即重建无收益」部分保留——交付形态是 5s 延迟而非立即重建。
 
 ### 6.3 死信号单一出口：proc.on('exit') 是唯一通知点
 
@@ -203,7 +207,7 @@ respawn 失败的典型原因：model 配置失效（如 provider 下架）、pi
 | 2 | **spawn 参数漂移**（respawn 后 preset/model 与死亡前不一致） | preset 从 `.preset.json` sidecar 恢复；首 turn 前死亡（sidecar 未写，内存态已随 Map 清理丢失）→ fallback `builtin:full`，工具集可能变宽 | 可接受：首 turn 前无对话内容，影响仅为下次 prompt 的工具集；文档明示 |
 | 3 | **在途任务丢失** | 死亡时 streaming 内容：pi 已 flush 的在 JSONL，respawn 后历史重建可见；未 flush 的丢失。前端 `session.exited` → `markSessionError` 收口 + 错误消息 | 接受丢失，已有用户可见性 ✅ |
 | 4 | **subagent 级联** | 父 pi kill -9 → subagent 子进程经 stdio EOF 级联死亡（实测结论，handoff §4.5）；extension 侧孤儿终态恢复已由前序分支收敛 | 无需 runtime 参与 ✅ |
-| 5 | **crash-loop** | lazy + 用户显式触发，单次失败报错给用户，无自动重试 | 无此风险 ✅ |
+| 5 | **crash-loop** | 初版：lazy + 用户显式触发，单次失败报错给用户，无自动重试。现行（v6）：proactive respawn 自带 2 次熔断，连续失败转 dead 态 + 用户可见提示 | loop 有界（熔断兜底）✅ |
 | 6 | **消息订阅/缓存一致性** | 死亡时 `removeSessionEntry` 清 historyCache + `bus.clearSession`；respawn 后前端 `postLoadSession` 重新订阅 | 已有机制覆盖 ✅ |
 | 7 | **并发 restore** | `restoringSessions` Set 去重已有（`session-service.ts:528-531`） | 已有 ✅ |
 | 8 | **`onSessionExit` 与 destroySession 竞态** | destroySession 先删 Map 再 kill；exit 回调反查 `clientToId` 无条目 → no-op | 保持原语义 ✅ |
@@ -365,3 +369,4 @@ if (existing && !existing.exited) return existing   // 新增 exited 校验
 - v3（2026-08-20）：第二轮对抗式审查（1 must-fix / 6 suggestion）修复：must-fix = 首 turn 无文件死亡的状态组合——新增 §6.9 显式裁决「session 终结语义」（被否审查者建议的写文件/留 dead 条目两方案，理由：HISTORICAL 规则 #6 / 与目标 3 矛盾）+ V3b 验收场景 + not-found 错误恢复指引；suggestion：start() 失败与 exitCallback 的 no-op 时序说明、exitCallbacks 命名消歧、ensureActive 影响面声明（未覆盖入口清单）、SIGKILL 附带修复 scope 声明、stream error 单测断言措辞对齐 mock 层、接口契约变更标注。
 - v4（2026-08-20）：第三轮对抗式审查（1 must-fix / 6 suggestion）修复：must-fix = v3 引入的 V3b「再发 prompt」验收不可执行（session 从 list 消失后 composer/dead UI 均不可达）——改为「新建 session 正常对话」恢复路径 + SESSION_NOT_FOUND 文案改由单测断言覆盖；suggestion：§6.9 补前端 Panel 实际渲染分析（isSessionDead 依赖 list 命中，终结态 dead UI 不可达）+ 用户首条 prompt 丢失显式裁决、toThrow 子串兼容性说明（两个既有测试）、§6.6 补 setThinkingLevel、V3b 补未 flush 判定手段与 ps 检查命令、文案消费点说明。
 - v5（2026-08-20）：实施完成，新增 §12 回写：实测结果对照（runtime 层 7/7 全过、复测 4/4 PASS）、两个实测发现的前端缺口（dead 态覆盖 / 订阅断裂，已修）与设计盲区反思、follow-up 登记（tmpdir 持久化缺口等 4 项）。第四轮审查 0 must-fix / 0 suggestion 收敛。
+- v6（2026-09-11）：C-proc-10 同步修订——§6.2 初版「保持 lazy、不新增 proactive」裁决被 crash-resilience §3.3 D7 取代（proactive respawn 已实装 `pi-respawn.ts`：5s 延迟 + 2 次熔断 + join 语义 + 主动终止抑制），同步更新开篇 A、§2 out-of-scope 指针、§6 本章结论、§6.1 方案 C 裁决格、§6.7#5。义务来源：long-run-stability-architecture.md §3.3 D2「实施时须同步修订本节裁决记录」（design-code-sync 审计发现该义务未执行，本版本清账）。

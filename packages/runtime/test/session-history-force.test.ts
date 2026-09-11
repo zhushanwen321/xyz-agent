@@ -1,7 +1,7 @@
 /**
  * W26（plan M-3 / 05-scan-caching D9-1 审查修正）：路径解析消费方透传 force 绕过目录 TTL 缓存。
  *
- * 验收核心：**刚落盘 session 的 getHistoryFromFile 在 TTL 窗口内不返回空**。
+ * 验收核心：**刚落盘 session 的 getHistoryTailFromFile 在 TTL 窗口内不返回空**。
  * pi 是外部进程写文件（首个 assistant 后落盘），不在显式失效覆盖内——若路径解析也走
  * 1s TTL 缓存，刚落盘 session 的历史/子代理/workflow 查找会在窗口内静默返回 []。
  *
@@ -9,7 +9,7 @@
  *   1. 空目录首次 scanPiSessions（列表消费方）→ 填充 TTL 缓存（空快照）
  *   2. 写新 session JSONL（模拟 pi 落盘，不触发显式失效）
  *   3. TTL 窗口内：列表 scanSessions() 看不到新 session（缓存生效的证据）；
- *      getHistoryFromFile / getHistoryTailFromFile（force）必须解析到并返回非空
+ *      getHistoryTailFromFile（force）必须解析到并返回非空
  *
  * 用真实 PiSessionStore（scanSessions + convertPiHistory 全真实），真实 tmpdir 文件。
  *
@@ -32,7 +32,7 @@ vi.mock('../src/infra/pi/pi-paths.js', async (importOriginal) => {
   }
 })
 
-import { getHistoryFromFile, getHistoryTailFromFile } from '../src/services/session-history.js'
+import { getHistoryTailFromFile } from '../src/services/session-history.js'
 import { invalidateScanDirCache, _resetSessionMetaCacheForTest } from '../src/infra/pi/session-file-utils.js'
 import { PiSessionStore } from '../src/infra/pi/session-store.js'
 
@@ -64,7 +64,7 @@ describe('路径解析消费方 force 旁路 TTL（W26 M-3）', () => {
     invalidateScanDirCache()
   })
 
-  it('M-3 核心：刚落盘 session 的 getHistoryFromFile 在 TTL 窗口内不返回空', async () => {
+  it('M-3 核心：刚落盘 session 的 getHistoryTailFromFile 在 TTL 窗口内不返回空', async () => {
     // 1. 空目录填充 TTL 缓存（列表消费方）
     expect(store.scanSessions()).toEqual([])
 
@@ -76,19 +76,11 @@ describe('路径解析消费方 force 旁路 TTL（W26 M-3）', () => {
     expect(store.scanSessions().some((s) => s.id === freshId)).toBe(false)
 
     // 4. 路径解析消费方（force）：必须查到刚落盘 session 的历史，不返回空
-    const messages = await getHistoryFromFile(freshId, store)
-    expect(messages.length).toBeGreaterThan(0)
-    expect(messages[0].role).toBe('user')
-  })
-
-  it('M-3 顺带覆盖：getHistoryTailFromFile 同窗口内不返回空', async () => {
-    store.scanSessions() // fill TTL 缓存（空快照）
-    const freshId = 'fresh-session-2'
-    writeSessionFile(sessionDir, freshId)
-
+    // [u6] getHistoryFromFile 包装已随 getFullHistory 全量通路退役，force 语义由
+    // getHistoryTailFromFile 承接（二者同走 scanSessions({ force: true }) 路径解析）。
     const tail = await getHistoryTailFromFile(freshId, store)
     expect(tail.messages.length).toBeGreaterThan(0)
-    expect(tail.messages[0].role).toBe('user')
+    expect(tail.messages[0]!.role).toBe('user')
   })
 
   it('force 只作用路径解析：列表消费方在 TTL 窗口内保持缓存快照', async () => {
@@ -103,8 +95,8 @@ describe('路径解析消费方 force 旁路 TTL（W26 M-3）', () => {
     // 窗口内列表仍只见 s1
     expect(store.scanSessions().map((s) => s.id)).toEqual([s1])
     // 路径解析 force 可解析 s2
-    const messages = await getHistoryFromFile(s2, store)
-    expect(messages.length).toBeGreaterThan(0)
+    const tail = await getHistoryTailFromFile(s2, store)
+    expect(tail.messages.length).toBeGreaterThan(0)
   })
 
   it('invalidateScanCache 后列表消费方立即可见（delete/fork/rename 失效联动）', () => {
@@ -117,9 +109,9 @@ describe('路径解析消费方 force 旁路 TTL（W26 M-3）', () => {
     expect(store.scanSessions().map((s) => s.id)).toEqual([freshId])
   })
 
-  it('getHistoryFromFile 对缓存外不存在的 session 仍返回空（不回归）', async () => {
+  it('getHistoryTailFromFile 对缓存外不存在的 session 仍返回空（不回归）', async () => {
     store.scanSessions()
-    const messages = await getHistoryFromFile('no-such-session', store)
-    expect(messages).toEqual([])
+    const tail = await getHistoryTailFromFile('no-such-session', store)
+    expect(tail.messages).toEqual([])
   })
 })

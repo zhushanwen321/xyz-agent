@@ -12,6 +12,7 @@ import extensionUI from './en-US/extensionUI'
 import search from './en-US/search'
 import composable from './en-US/composable'
 import importSession from './en-US/importSession'
+import rollingRestart from './en-US/rollingRestart'
 
 export default {
   common,
@@ -28,4 +29,5 @@ export default {
   search,
   composable,
   importSession,
+  rollingRestart,
 }

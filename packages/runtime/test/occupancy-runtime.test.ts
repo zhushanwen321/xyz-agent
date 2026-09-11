@@ -239,6 +239,8 @@ describe('MessageDispatcher occupancy 挂点', () => {
       prompt: promptFn, bash: bashFn, abort: abortFn,
       abortBash: vi.fn(async () => {}), steer: vi.fn(async () => {}), followUp: vi.fn(async () => {}),
       compact: compactFn,
+      // touchActivity：sendPrompt 入口同步 touch（idle-pi-reclamation D6-1）——fake 补齐接口成员
+      touchActivity: vi.fn(),
     } as unknown as IPiEngine
 
     const svc: IDispatcherSessionOps = {
@@ -420,6 +422,8 @@ describe('MessageDispatcher occupancy 挂点', () => {
     const client = {
       prompt: vi.fn(async () => ({})),
       abort: vi.fn(async () => {}),
+      // touchActivity：sendPrompt 入口同步 touch（idle-pi-reclamation D6-1）——fake 补齐接口成员
+      touchActivity: vi.fn(),
     } as unknown as IPiEngine
     const svc: IDispatcherSessionOps = {
       ensureActive: vi.fn(async () => client),

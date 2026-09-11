@@ -19,6 +19,7 @@
     <SystemSmartContextSection :system="system" @update="emit('update', $event)" />
     <SystemLlmRetrySection />
     <SystemStreamingIdleSection :system="system" @update="emit('update', $event)" />
+    <SystemDiagnosticsSection />
   </div>
 </template>
 
@@ -31,6 +32,7 @@ import SystemAutoRenameSection from './SystemAutoRenameSection.vue'
 import SystemSmartContextSection from './SystemSmartContextSection.vue'
 import SystemLlmRetrySection from './SystemLlmRetrySection.vue'
 import SystemStreamingIdleSection from './SystemStreamingIdleSection.vue'
+import SystemDiagnosticsSection from './SystemDiagnosticsSection.vue'
 import type { SystemSettings } from '@xyz-agent/core'
 
 defineProps<{

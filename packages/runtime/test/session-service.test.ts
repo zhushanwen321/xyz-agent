@@ -36,6 +36,7 @@ import type {
 import type { IMessageBus } from '../src/services/message-bus/message-bus.js'
 import type { IProcessManager, IPiEngine, PiEventListener } from '../src/services/ports/pi-engine.js'
 import type { SessionSummary, SessionGroup, Message, ServerMessage, ProviderId, SegmentsMetadataEntry, SegmentsMetadataFile } from '@xyz-agent/shared'
+import { HISTORY_BUDGET } from '@xyz-agent/shared'
 import { getAttachmentsDir } from '@xyz-agent/shared/paths'
 
 // ── vi.hoisted：在 vi.mock 工厂执行前就绪的 mock 句柄 ───────────────
@@ -150,6 +151,8 @@ interface MockClient {
   onExit: MockInstance<(callback: (code: number | null) => void) => void>
   kill: MockInstance<() => Promise<void>>
   start: MockInstance<() => Promise<void>>
+  /** touchActivity：sendPrompt 入口同步 touch（idle-pi-reclamation D6-1）。 */
+  touchActivity: MockInstance<() => void>
   exited: boolean
   /** onEvent 注册的 listener 列表（测试触发 agent_end 用） */
   eventListeners: PiEventListener[]
@@ -183,6 +186,9 @@ function makeMockClient(overrides: Partial<MockClient> = {}): MockClient {
     onExit: vi.fn<(callback: (code: number | null) => void) => void>(),
     kill: vi.fn<() => Promise<void>>().mockResolvedValue(undefined),
     start: vi.fn<() => Promise<void>>().mockResolvedValue(undefined),
+    // touchActivity：sendPrompt 入口同步 touch（idle-pi-reclamation D6-1）经 pm.getClient
+    // 到达 fake client——fake 须补齐该接口成员
+    touchActivity: vi.fn(),
     exited: false,
     eventListeners,
     ...overrides,
@@ -1224,7 +1230,10 @@ describe('SessionService · Facade', () => {
       expect(got).toBe(client)
     })
 
-    it('throws when session is already being restored (dedup guard)', async () => {
+    it('joins the same in-flight restore when called concurrently (crash-resilience D7-3 join)', async () => {
+      // [HISTORICAL] 原断言第二个并发调用被 already being restored 拒绝（throw 语义）；
+      // u8（crash-resilience D7-③）throw→join：并发调用等待同一 in-flight Promise，
+      // restore 内核只进入一次（不报错不双跑）。
       // 让 restoreSession 挂起，模拟并发 restore。不能 mountClient，否则 ensureActive
       // 走 fast path（直接返回现有 client），不会进入 restoring 分支。
       let resolveRestore!: (v: SessionSummary) => void
@@ -1232,11 +1241,14 @@ describe('SessionService · Facade', () => {
       const restoreSpy = vi.spyOn(setup.service, 'restoreSession').mockReturnValueOnce(pending)
 
       const first = setup.service.ensureActive('dedup-sid')
-      // 第一个已进入 restoring，第二个应被拒绝
-      await expect(setup.service.ensureActive('dedup-sid')).rejects.toThrow('already being restored')
+      const second = setup.service.ensureActive('dedup-sid')
+      // join：restore 内核只进入一次（没有第二路并发 restore）
+      expect(restoreSpy).toHaveBeenCalledTimes(1)
       resolveRestore({} as SessionSummary)
-      // 第一个最终因 getClient 无 client 而 reject（符合无进程的真实场景）
+      // 双方都等恢复完成后继续；随后都因 getClient 无 client 而 reject（符合无进程的真实场景）
       await expect(first).rejects.toThrow('client not available')
+      await expect(second).rejects.toThrow('client not available')
+      expect(restoreSpy).toHaveBeenCalledTimes(1)
       restoreSpy.mockRestore()
     })
   })
@@ -1250,8 +1262,8 @@ describe('SessionService · Facade', () => {
       const result = await setup.service.getHistory('sid-hist')
       // rebuildHistoryFromEntries 收到原始 entries（getEntries 路径，取代旧 get_messages + convertPiHistory）
       expect(mocks.rebuildHistoryFromEntriesMock).toHaveBeenCalledWith(fakeEntries, null)
-      // getEntries 路径返回 { messages, truncated: false }（全量不截断）
-      expect(result).toEqual({ messages: ['rebuilt'], truncated: false })
+      // getEntries 路径返回双预算窗口（u4b：mock 消息无 role 字段 → 病态兜底视为单 turn 完整放行）
+      expect(result).toEqual({ messages: ['rebuilt'], truncated: false, loadedTurns: 1, totalTurnsEstimate: 1 })
     })
 
     it('R-12: returns empty array (short-circuit) when getEntries returns empty and session is idle', async () => {
@@ -1262,7 +1274,7 @@ describe('SessionService · Facade', () => {
       // 不走尾读 fallback（尾读会给最多 20 turn 的文件尾部视图，与 RPC 视图闪变不一致）。
       // 尾读降级仅在 getEntries 抛错时触发（见下方 throws 用例）。
       const result = await setup.service.getHistory(id)
-      expect(result).toEqual({ messages: [], truncated: false })
+      expect(result).toEqual({ messages: [], truncated: false, loadedTurns: 0, totalTurnsEstimate: 0 })
       expect(mocks.getHistoryTailFromFileMock).not.toHaveBeenCalled()
     })
 
@@ -1273,16 +1285,37 @@ describe('SessionService · Facade', () => {
       client.getEntries.mockResolvedValueOnce({ data: { entries: [], leafId: null } })
       const result = await setup.service.getHistory(id)
       // generating session getEntries 空 → 直接返回空（不走 fallback 尾读）
-      expect(result).toEqual({ messages: [], truncated: false })
+      expect(result).toEqual({ messages: [], truncated: false, loadedTurns: 0, totalTurnsEstimate: 0 })
       expect(mocks.getHistoryTailFromFileMock).not.toHaveBeenCalled()
     })
 
     it('falls back to file read when getEntries throws', async () => {
       const { id, client } = await setup.seedSession()
       client.getEntries.mockRejectedValueOnce(new Error('rpc boom'))
-      mocks.getHistoryTailFromFileMock.mockResolvedValueOnce({ messages: [], truncated: false })
+      mocks.getHistoryTailFromFileMock.mockResolvedValueOnce({ messages: [], truncated: false, loadedTurns: 0, totalTurnsEstimate: 0 })
       await setup.service.getHistory(id)
-      expect(mocks.getHistoryTailFromFileMock).toHaveBeenCalledWith(id, expect.anything())
+      // [D4] 尾读降级带字节预算缺省（与游标分支同源 HISTORY_BUDGET.MAX_BYTES——原样透传
+      // undefined 会退化为仅 turn 数截取，20 大 turn 的 reply 超 32MB 被 payload_too_large 拒绝）
+      expect(mocks.getHistoryTailFromFileMock).toHaveBeenCalledWith(
+        id, expect.anything(), expect.anything(), { maxBytes: HISTORY_BUDGET.MAX_BYTES },
+      )
+    })
+
+    it('D4: 增量路径非 EntryNotFound 错误降级尾读——同样带字节预算缺省', async () => {
+      const client = setup.mountClient('sid-inc-fallback')
+      const e1 = { type: 'message', id: 'e1', parentId: null, message: { role: 'user', content: 'q1' } }
+      const m1 = { id: 'm1', role: 'user', content: 'q1', piEntryId: 'e1' } as unknown as Message
+      client.getEntries.mockResolvedValueOnce({ data: { entries: [e1], leafId: 'e1' } })
+      mocks.rebuildHistoryFromEntriesMock.mockReturnValueOnce({ messages: [m1], clientUuidMap: new Map() })
+      await setup.service.getHistory('sid-inc-fallback') // 写缓存（leafId='e1'）
+
+      // 增量拉取抛非 EntryNotFound 错误 → 降级尾读（缓存不动）
+      client.getEntries.mockRejectedValueOnce(new Error('rpc boom'))
+      mocks.getHistoryTailFromFileMock.mockResolvedValueOnce({ messages: [], truncated: false, loadedTurns: 0, totalTurnsEstimate: 0 })
+      await setup.service.getHistory('sid-inc-fallback')
+      expect(mocks.getHistoryTailFromFileMock).toHaveBeenCalledWith(
+        'sid-inc-fallback', expect.anything(), expect.anything(), { maxBytes: HISTORY_BUDGET.MAX_BYTES },
+      )
     })
 
     it('终审 minor：全量重建与缓存新鲜路径返回浅拷贝——调用方就地变更不打穿缓存', async () => {
@@ -1335,9 +1368,12 @@ describe('SessionService · Facade', () => {
     })
 
     it('reads from file directly when no active client', async () => {
-      mocks.getHistoryTailFromFileMock.mockResolvedValueOnce({ messages: [], truncated: false })
+      mocks.getHistoryTailFromFileMock.mockResolvedValueOnce({ messages: [], truncated: false, loadedTurns: 0, totalTurnsEstimate: 0 })
       await setup.service.getHistory('no-client')
-      expect(mocks.getHistoryTailFromFileMock).toHaveBeenCalledWith('no-client', expect.anything())
+      // [D4] 离线尾读带字节预算缺省（与游标分支同源——原样透传 undefined 时仅按 turn 数截取）
+      expect(mocks.getHistoryTailFromFileMock).toHaveBeenCalledWith(
+        'no-client', expect.anything(), expect.anything(), { maxBytes: HISTORY_BUDGET.MAX_BYTES },
+      )
     })
   })
 

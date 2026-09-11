@@ -28,6 +28,11 @@
 import { computed, onScopeDispose } from 'vue'
 import type { BatchDeleteResult, Message, SessionGroup, SessionSummary } from '@xyz-agent/shared'
 import { triggerSessionCleanups } from '../../foundation/use-session-scoped-state'
+// [u4d] getHistory 响应 → 截断窗口状态归一（SSOT 在 domain/chat/truncated-window）；
+// [D6-⑨ 缺陷#2] toolResult 图片落盘编排（hydrate 通路统一收口，见 reconcileFromReply）。
+// session→chat 单向依赖（chat 域不 import session 域，无环；truncated-window 同先例）。
+import { historyWindowFromReply } from '../chat/truncated-window'
+import { collectImagesFromMessages, persistImagesNewestFirst } from '../chat/image-cache'
 import type { SessionApiPort, PanelOrchestrationPort, SessionEntryPort } from './api-port'
 import type { createSessionStore } from './store'
 import { toErrorMessage } from '../../utils/error-message'
@@ -53,17 +58,28 @@ export interface NavigationRoute {
  * 关键规则 9 持久化链路——tasks store 已删，goal/todo 快照渲染走 GuiComponentRenderer 历史消息）。
  */
 export interface ChatHydratePort {
-  /** 拉取 session 历史（session.history RPC；尾读可能截断） */
-  getHistory(sessionId: string): Promise<{ messages: Message[]; historyTruncated: boolean }>
+  /**
+   * 拉取 session 历史（session.history RPC；u4b 双预算窗口可能截断）。
+   * [u6] 窗口契约字段必填（legacy historyTruncated 退役，偏差表 D7 双轨收口），
+   * 经 historyWindowFromReply 归一后随 reconcileHistory 写入 chat store 截断窗口状态。
+   */
+  getHistory(sessionId: string): Promise<{
+    messages: Message[]
+    truncated: boolean
+    loadedTurns: number
+    totalTurnsEstimate: number
+  }>
   /** 该 session 是否已 hydrate（幂等守卫：已回填不重复拉取） */
   isHydrated(sessionId: string): boolean
   /** 注入历史消息（chat store hydrate） */
   hydrate(sessionId: string, messages: Message[]): void
-  /** 切入 reconcile：entry 历史为基线 + 分区尾部 streaming 实体保留（后台 session 切入刷新，
-   *  防 pi entries 不含进行中消息导致的 delta 断链——见 chat store reconcileHistory 注释） */
-  reconcileHistory(sessionId: string, messages: Message[]): void
-  /** 记录截断标记（N1：截断标记供 MessageStream 显隐） */
-  setHistoryTruncated(sessionId: string, historyTruncated: boolean): void
+  /**
+   * 切入 reconcile：entry 历史为基线 + 分区尾部 streaming 实体保留（后台 session 切入刷新，
+   * 防 pi entries 不含进行中消息导致的 delta 断链——见 chat store reconcileHistory 注释）。
+   * [u4d] window（可选）随刷新写入截断窗口状态——truncated 必须与分区当前内容同步
+   * （窗口响应把分区截回尾窗时 truncated=true，「加载更早」顶部条重显）。
+   */
+  reconcileHistory(sessionId: string, messages: Message[], window?: { truncated: boolean; loadedTurns: number; totalTurnsEstimate: number }): void
   /** 清历史加载失败态（retryHistory 先清再拉） */
   clearHistoryError(sessionId: string): void
   /** 标记历史加载失败（landing 显重试出口，不永久卡住） */
@@ -236,6 +252,25 @@ export function createUseSession(deps: UseSessionDeps) {
   }
 
   /**
+   * getHistory 响应 → store 回填 + toolResult 图片落盘编排统一收口（D6-⑨）。
+   *
+   * use-session 侧所有「history 消息写入 store」的通路（runEntryChain 首次切入 / 已
+   * hydrate 刷新 / retryHistory）必须经此 helper，禁止直接调 chat.reconcileHistory——
+   * 编排漏挂即旁路（Gate B A9③ 缺陷#2：persistImagesNewestFirst 此前只挂
+   * useChat.hydrateHistory 通路，主流点击切入三处 reconcile 零落盘，cache 帽满占位 /
+   * LRU 命中在主流路径全部无法触发）。幂等保障：persistImagesNewestFirst 内部按内容
+   * hash 剔除已落盘图（重复 hydrate 不双写）、无图消息零开销早退；fire-and-forget
+   * （D6-⑨ 契约）：不阻塞回填，内部消化异常——图片缓存故障不放大为历史加载失败。
+   */
+  function reconcileFromReply(sessionId: string, reply: Awaited<ReturnType<ChatHydratePort['getHistory']>>): void {
+    // [u4d] 窗口状态随 reconcile 一并写入 chat store（truncated/loadedTurns/totalTurnsEstimate
+    // 单点存截断窗口状态；合并语义见 store.reconcileHistory——truncated=true 窗口段覆盖、
+    // 更早历史保留，false 收敛顶部条）
+    chat.reconcileHistory(sessionId, reply.messages, historyWindowFromReply(reply))
+    void persistImagesNewestFirst(sessionId, collectImagesFromMessages(reply.messages))
+  }
+
+  /**
    * 切入链主体（原壳 useSidebar.postLoadSession，D3 入 core）：统一链步 4-12。
    * 前置：switchSession 已成功 + activeId 已置——ensureStreamSubscription /
    * syncSessionToPanel 依赖当前 activeId 路由到正确 session 分区（ADR-0049 + 架构约定 #7）。
@@ -257,9 +292,8 @@ export function createUseSession(deps: UseSessionDeps) {
     // entries（turn 可能在前端不在场时完成）+ 保留尾部 streaming 实体（进行中轮次不断链）。
     if (!chat.isHydrated(id)) {
       try {
-        const { messages, historyTruncated } = await chat.getHistory(id)
-        chat.reconcileHistory(id, messages)
-        chat.setHistoryTruncated(id, historyTruncated) // N1: 截断标记供 MessageStream 显隐
+        const reply = await chat.getHistory(id)
+        reconcileFromReply(id, reply)
         chat.clearHistoryError(id)
       } catch {
         chat.markHistoryFailed(id)
@@ -267,13 +301,8 @@ export function createUseSession(deps: UseSessionDeps) {
     } else {
       // 已 hydrate：静默刷新（失败不阻断——旧数据仍在，下次切入重试）
       try {
-        const { messages, historyTruncated } = await chat.getHistory(id)
-        chat.reconcileHistory(id, messages)
-        // reconcile 整量替换分区：getHistory 尾读（RPC 失败 fallback 20-turn）会把
-        // load-more 前插的更早历史截回尾窗——truncated 标记必须同步刷新，true 时
-        // load-more 按钮重显（hydrate 锚不被 reconcile 触碰，锚定切分仍可恢复全量）；
-        // false（RPC 全量成功）时清标记与「分区已替换为全量」一致。
-        chat.setHistoryTruncated(id, historyTruncated)
+        const reply = await chat.getHistory(id)
+        reconcileFromReply(id, reply)
       } catch (e) {
         // 已 hydrate 刷新失败不阻断切入——旧数据仍在，下次切入重试；warn 留排查痕迹
         console.warn(`[use-session] background reconcile refresh failed for ${id}:`, e)
@@ -317,9 +346,9 @@ export function createUseSession(deps: UseSessionDeps) {
   async function retryHistory(sessionId: string): Promise<void> {
     chat.clearHistoryError(sessionId)
     try {
-      const { messages, historyTruncated } = await chat.getHistory(sessionId)
-      chat.reconcileHistory(sessionId, messages)
-      chat.setHistoryTruncated(sessionId, historyTruncated)
+      const reply = await chat.getHistory(sessionId)
+      // [u4d] 窗口状态随 reconcile 写入 + 图片落盘编排（同 runEntryChain 收口）
+      reconcileFromReply(sessionId, reply)
     } catch {
       chat.markHistoryFailed(sessionId)
     }

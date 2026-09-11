@@ -186,6 +186,13 @@
                 <span v-else>{{ displayContent }}</span>
               </div>
             </template>
+            <!-- [D6-⑨ u7] toolResult 图片（bash/非 bash 分支共用的统一出口；路径引用渲染
+                 + 帽满占位/降级 badge，见 ToolResultImages） -->
+            <ToolResultImages
+              v-if="tool?.images?.length"
+              :session-id="sessionId"
+              :images="tool.images"
+            />
             <!-- bash meta 条（耗时等，内容区内） -->
             <div v-if="isBashTool && filteredMetaItems.length" class="mt-1 flex flex-wrap items-center gap-x-3 gap-y-0.5 pl-4 font-mono text-[length:var(--text-xs)]">
               <span
@@ -213,6 +220,7 @@ import { openWorkflow } from '@xyz-agent/core/domain/drawer'
 import { AnsiText, GuiComponentRenderer } from '../../rendering-protocol'
 import MarkdownRenderer from './MarkdownRenderer.vue'
 import BlockSubagent from './BlockSubagent.vue'
+import ToolResultImages from './ToolResultImages.vue'
 import { BLOCK_ICON_LUCIDE, RUNNING_LOADER_SVG, getBlockIcon } from './block-icon'
 import { formatDuration, shortenForHeader, tailLines, stripAnsi } from './format-utils'
 // primitives 直接路径（不经 @xyz-agent/ui 顶层 barrel）：chat 组件被 barrel 再导出，

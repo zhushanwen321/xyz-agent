@@ -14,12 +14,17 @@ import { ModelService } from './services/model-service.js'
 
 import { BASE_PORT, MAX_PORT } from '@xyz-agent/shared'
 import { getDataDir } from '@xyz-agent/shared/paths'
-import { initLogger, closeLogger } from './infra/logger.js'
+import { initLogger, closeLogger, logger, captureMemorySnapshot, formatMemoryWatermarkLine, MEMORY_WATERMARK_INTERVAL_MS } from './infra/logger.js'
+// u1b（crash-forensics-and-watchdog D1）runtime 台账单例。初始化是组合根职责（与
+// initLogger 同形态：模块级单例 + 未初始化 no-op）——不初始化则 getCrashJournal()
+// 恒返回 no-op，pi-respawn / message-bus 守卫 / session 生命周期的全部 runtime 侧
+// 事件静默丢弃（crashes/runtime.jsonl 永不创建）。close 挂点属 shutdown 链（u7c）。
+import { initCrashJournal, closeCrashJournal } from './infra/crash-journal.js'
 import { isContainedStreamError } from './infra/system/uncaught-policy.js'
 
 import { ProcessManager } from './infra/pi/process-manager.js'
 import { getProviderConfig, clearProviderApiKey, initProviderCredentialResolver, cleanLeakedPackages, sanitizeInvalidProviders } from './infra/pi/pi-provider-store.js'
-import { getExtensionsDir, getNpmDir, getTmpDir, getProviderExtrasPath } from './infra/pi/pi-paths.js'
+import { getExtensionsDir, getNpmDir, getTmpDir, getProviderExtrasPath, getPiAgentDir } from './infra/pi/pi-paths.js'
 import { getPiGlobalAgentDir, syncBundledResources, warnLegacyPiLayout } from './infra/pi/pi-maintenance.js'
 import { PiConfigStore } from './infra/pi/pi-config-store.js'
 import { PiSessionStore } from './infra/pi/session-store.js'
@@ -58,7 +63,7 @@ import { HandoffService } from './services/handoff-service.js'
 // bus.publish——wave:perf-w09 D1-2 删双写后唯一通道）+
 // RuntimeServer（subscribe/unsubscribe RPC handler + ConnectionManager.onClose → unsubscribeAll）。
 // 保留 re-export 供外部消费（renderer-subscribe wave 等可能 import 类型）。
-import { MessageBus } from './services/message-bus/message-bus.js'
+import { MessageBus, DEFAULT_OUTBOUND_FRAME_GUARD_OPTIONS } from './services/message-bus/message-bus.js'
 export { MessageBus } from './services/message-bus/message-bus.js'
 export type { BusClient, SessionBusState } from './services/message-bus/types.js'
 import { getAppVersion } from './services/plugin-service/plugin-version-checker.js'
@@ -70,7 +75,38 @@ import { WorkspaceService } from './services/workspace/workspace-service.js'
 import { WorkspaceDetector } from './services/worktree/workspace-detector.js'
 // D8-1（perf W29）：后台初始化序列（listen 后执行）——独立模块承载使「migrateBuiltin →
 // autoUpgrade 顺序」可 spy 断言（06 §5 门禁），组合根只负责构造与注入。
-import { runStartupBackgroundInit } from './services/startup-background-init.js'
+// resolveReclaimConfig（u3b，idle-pi-reclamation D4）：reaper 三旋钮 env 解析。
+import { runStartupBackgroundInit, resolveReclaimConfig } from './services/startup-background-init.js'
+// u5（crash-forensics-and-watchdog D3）：reattach 编排 + 孤儿收殓完成 promise 交付回调。
+import { runStartupReattach } from './services/startup-reattach.js'
+// u6（crash-forensics-and-watchdog D4）：内存看门狗——60s heap 采样环 + 两级阈值 +
+// memory-relief 动作点。resolveWatchdogConfig：Gate W 武装门与三旋钮 env 解析。
+import { startWatchdog, resolveWatchdogConfig } from './infra/watchdog.js'
+import type { WatchdogHandle } from './infra/watchdog.js'
+export { startWatchdog, resolveWatchdogConfig } from './infra/watchdog.js'
+export type { WatchdogHandle, WatchdogOptions, WatchdogSample, WatchdogStatus } from './infra/watchdog.js'
+// u7c（crash-forensics-and-watchdog D5）：滚动重启编排（推迟判定/上限/硬升级/T-30s 预告/
+// 状态机）+ shutdown 步骤打点面（SHUTDOWN_STEP_SEQUENCE 是打点序列 SSOT）。
+import { startRollingRestart, resolveRollingRestartConfig, shutdownStep } from './services/session/rolling-restart.js'
+import type { RollingRestartHandle } from './services/session/rolling-restart.js'
+export {
+  startRollingRestart,
+  resolveRollingRestartConfig,
+  shutdownStep,
+  SHUTDOWN_STEP_SEQUENCE,
+  ENV_ROLLING_RESTART_DEFER_LIMIT_MS,
+  ENV_WATCHDOG_FORCE_PCT,
+  DEFAULT_ROLLING_RESTART_DEFER_LIMIT_MS,
+} from './services/session/rolling-restart.js'
+export type {
+  RollingRestartHandle,
+  RollingRestartOptions,
+  RollingRestartBroadcastType,
+  RollingRestartBroadcastPayload,
+  ShutdownStepName,
+} from './services/session/rolling-restart.js'
+// u7c：滚动重启计划内退出码（D5 ④；SSOT 在 shared，main 侧 PLANNED_EXIT_CODE 是同值转发）。
+import { RUNTIME_PLANNED_EXIT_CODE } from '@xyz-agent/shared'
 // u17（设计 §6.12）：spawn 清单读侧在 infra SSOT（读写同模块）；组合根注入给 services 层
 // （D6c port 纪律——reap/startup-background-init 不直接 import infra）。
 import { readSpawnMarkerList } from './infra/pi/spawn-markers.js'
@@ -84,7 +120,12 @@ import { XyzProviderStore } from './services/provider-extras-store.js'
 // E-2（subagent-realtime-channel §4）：relay 基建——socket server + 子进程注册表 +
 // tee 翻译层。纯新增模块，经 messageBus.publish 广播 tee 帧；env 注入在
 // process-manager（getRelaySpawnEnv，与 server 激活状态联动）。
-import { initRelayServer, deinitRelayServer } from './infra/relay/relay-server.js'
+import { initRelayServer, deinitRelayServer, getActiveRelayRegistry } from './infra/relay/relay-server.js'
+// u3b（idle-pi-reclamation D2/D4/D6）：空闲 pi 回收装配原语——ReclaimSeat 占座单例 +
+// startIdlePiReaper 周期判定循环（DI 形态，依赖在下方 wiring 段组装）。
+import { ReclaimSeat, startIdlePiReaper } from './services/session/idle-pi-reaper.js'
+import type { IdlePiReaperHandle, ReclaimExemptions } from './services/session/idle-pi-reaper.js'
+import { reapSessionBackgroundTasks } from './services/session/background-task-reaper.js'
 import { toErrorMessage } from './utils/errors.js'
 // W8 宿主接线：runtime 协议客户端的自持引擎实例 dispose 钩子（idle 5min 复用的
 // 回收面之外，进程退出的兜底回收——设计 §3.6 退出钩子落点）。
@@ -149,6 +190,68 @@ function resolveRuntimeToken(): string | null {
   return null
 }
 
+// ── u5b-runtime-forensics D6-②：runtime 内存水位定时器 ──────────────────
+// 每 5 分钟一行（rss/heapUsed/heapTotal/external + 活跃 session 数 + pi 进程数），
+// 走既有 logger（runtime-<date>.log）。E2 事故（7 session 连坐 SIGTERM）无法归因的
+// 直接缺口就是无水位序列——A8 验收断言「runtime 日志有 5 分钟间隔水位行」。
+//
+// timer 句柄刻意做成模块级可取消形态：u8（pi respawn）将改写本文件的 shutdown 序列，
+// 届时直接调 stopMemoryWatermarkTimer() 接入新清理链，不需要重构本段。
+let memoryWatermarkTimer: NodeJS.Timeout | undefined
+
+/** 停止内存水位定时器（shutdown / u8 改造 shutdown 序列时的取消入口）。幂等。 */
+export function stopMemoryWatermarkTimer(): void {
+  if (memoryWatermarkTimer !== undefined) {
+    clearInterval(memoryWatermarkTimer)
+    memoryWatermarkTimer = undefined
+  }
+}
+
+// ── u6（crash-forensics-and-watchdog D4）：内存看门狗句柄 ─────────────────
+// 句柄做成模块级可取消形态（对齐上方水位定时器先例）：u7c 将改写本文件的 shutdown
+// 序列（D5 退出链「以 index.ts 为准逐行继承」），届时直接调 stopWatchdog() 接入清理链。
+let watchdogHandle: WatchdogHandle | undefined
+
+/** 停止内存看门狗（shutdown / u7c 改造 shutdown 序列时的取消入口）。幂等。 */
+export function stopWatchdog(): void {
+  watchdogHandle?.stop()
+  watchdogHandle = undefined
+}
+
+// ── u7c（crash-forensics-and-watchdog D5）：滚动重启编排句柄 ─────────────────
+// 句柄做成模块级可取消形态（对齐上方水位定时器/看门狗先例）：shutdown 首步
+// cancelRollingRestart（D5 退出链「取消推迟定时器是 shutdown 首步」——推迟等待中的
+// runtime 收到 app 级 SIGTERM 时不得继续执行滚动重启）。
+let rollingRestartHandle: RollingRestartHandle | undefined
+
+/** 取消滚动重启推迟/预告定时器并复位状态机（shutdown 首步收口）。幂等。 */
+export function cancelRollingRestart(): void {
+  rollingRestartHandle?.cancel()
+  rollingRestartHandle = undefined
+}
+
+/**
+ * 启动内存水位定时器（组合根 listen 成功后调用一次）。
+ * unref：水位打点是纯观测面，不得阻止进程自然退出（shutdown 显式 clearInterval 是
+ * 第一道，unref 是不阻塞退出路径的兜底）。
+ */
+function startMemoryWatermarkTimer(
+  getActiveSessions: () => number,
+  getPiProcesses: () => number,
+): void {
+  stopMemoryWatermarkTimer() // 幂等防御（重复调用不产生双定时器）
+  memoryWatermarkTimer = setInterval(() => {
+    const sample = {
+      ...captureMemorySnapshot(),
+      activeSessions: getActiveSessions(),
+      piProcesses: getPiProcesses(),
+    }
+    // 单行水位行（human grep）+ meta（机器消费同源数值），writeLogEntry 保证单行落盘
+    logger.info(formatMemoryWatermarkLine(sample), sample)
+  }, MEMORY_WATERMARK_INTERVAL_MS)
+  memoryWatermarkTimer.unref?.()
+}
+
 /**
  * sd-u5/u6 共用：组合根 agentSettledListeners 多播列表的订阅装配（add + 返回退订函数）。
  * sessionDelivery（U5 send 排队）与 completionBackflow（U6 完成回流）同一列表、同一语义。
@@ -176,6 +279,14 @@ async function main(): Promise<void> {
   // <dataDir>/logs/runtime-YYYY-MM-DD.log。
   initLogger(getDataDir())
 
+  // u1b（crash-forensics-and-watchdog D1）：runtime 台账单例初始化。位置与时序对齐上方
+  // initLogger（同处于组合根最早期、数据目录 getDataDir() 可用性已由 initLogger 验证）；
+  // 必须在任何 service 可能 append 之前——pi-respawn 的 auto-respawn 四态、message-bus
+  // 守卫的 frame-truncated/registry-miss、session 生命周期事件全部经 getCrashJournal()
+  // 单例落 `<dataDir>/logs/crashes/runtime.jsonl`。幂等；目录创建失败降级 no-op
+  // （旁路设施故障不放大为调用链故障，见 crash-journal.ts 契约）。
+  initCrashJournal(getDataDir())
+
   // S1-W1：token 解析在 initLogger 之后（fail-closed warning 落盘）、server 构造之前。
   const runtimeToken = resolveRuntimeToken()
 
@@ -189,7 +300,22 @@ async function main(): Promise<void> {
   // 在 server 构造后、setServices 前创建并注入——server 的 ConnectionManager.onDisconnect
   // 回调经 setMessageBus 拿到引用，setServices 装配 sessionHandler 时读 server.messageBus。
   // 默认 ring 容量 1000（bus-core DEFAULT_RING_CAPACITY，D4 决策）。
-  const messageBus = new MessageBus()
+  //
+  // u8 接线（实施计划偏差表 D1 移交项，u4a-outbound-guard 遗留）：push 通路（MessageBus
+  // 第二参）与 reply 通路（下方 server.setServices 的 replyGuardResolver）共用同一
+  // resolver 实例——出站帧超限的占位文案（formatTruncationNote / formatReplyOversizeMessage）
+  // 从「（见 runtime 日志）」升级为携带 session 文件实路径（错误规格表「出站 reply/push 超
+  // 32MB」两行的恢复指引）。闭包引用 sessionService 声明在下方（createAdapter/
+  // completionBackflow 同款「先声明后构造、调用时恒就绪」模式——publish/reply 仅发生在
+  // server.start 后，构造期无调用窗口）。解析链：活跃 session 直读内存 sessionFilePath；
+  // 否则扫盘（findScannedSession）兜底冷 session。实现抛错被守卫吞掉退化为 null 占位
+  // （resolvePathSafe，不打断消息流转）。
+  const resolveSessionFilePath = (sessionId: string): string | null | undefined =>
+    sessionService.getSession(sessionId)?.sessionFilePath ?? sessionService.findScannedSession(sessionId)?.filePath
+  // 首参缺省 = DEFAULT_RING_CAPACITY（1000）。D1（u8）：resolver 见上方 const（两通路共用）；
+  // resolver 抛错被 resolvePathSafe 吞掉退化为「（见 runtime 日志）」占位，不打断消息流转。
+  const messageBus = new MessageBus(undefined, { ...DEFAULT_OUTBOUND_FRAME_GUARD_OPTIONS,
+    resolveSessionFilePath })
   server.setMessageBus(messageBus)
 
   // ── Phase 1: create all service instances (no cross-service deps at construction time) ──
@@ -779,20 +905,117 @@ async function main(): Promise<void> {
     importService,
     // composer-gen-stats（D4）：session.getGenStats 恢复腿 RPC（降级链 + 写 3 回填在 service 内部）。
     genStats: genStatsService,
+    // u8（reply 通路对称接线）：reply 超限错误 envelope 的恢复指引携带 session 文件实路径，
+    // 与上方 MessageBus（push 通路）共用同一 resolveSessionFilePath resolver 实例。
+    replyGuardResolver: resolveSessionFilePath,
   })
 
+  // ── u3b（idle-pi-reclamation）：空闲 pi 进程回收装配 ──
+  // 设计与七豁免/占座语义见 docs/design/idle-pi-reclamation.md D2/D3/D4/D6。
+  // ReclaimSeat 单例：reaper 判定 / reclaimManagedSession 占座 / ensureActive 让路三处
+  // 共享同一互斥状态（D6-2）；reaper 经后台序列 ⑩ 才启动，此前 seat 缺省行为不变。
+  const reclaimSeat = new ReclaimSeat()
+  sessionService.setReclaimSeat(reclaimSeat)
+
+  // 七类豁免闭包（D2 表序逐一对应，全部只读访问器）。任一命中 = 本拍跳过该候选。
+  const reclaimExemptions: ReclaimExemptions = {
+    // #1 occupancy 三维非 idle（undefined = 未附着无占用信号，不豁免，与 lifecycle
+    // 最终豁免块同款判定）。
+    isOccupied: (sid) => {
+      const occ = sessionService.getSessionOccupancy(sid)
+      return occ !== undefined && (occ.turn !== 'idle' || occ.compacting || occ.bash)
+    },
+    // #2 有 running 后台任务（失败模式 B 硬约束：回收会让任务被判孤儿杀掉）。
+    hasRunningBackgroundTasks: (sid) =>
+      sessionService.backgroundTasks.listTasks(sid).entries.some((e) => e.state === 'running'),
+    // #3 有在途 relay 子进程（失败模式 C）。registry 由 initRelayServer（listen 后）创建，
+    // 此处延迟解析；未激活（测试/降级）= 无在途子进程，方向安全（宁漏不误杀）。
+    hasInflightRelayChildren: (sid) => getActiveRelayRegistry()?.hasByMainSessionId(sid) ?? false,
+    // #4 handoff 进行中。#5 delivery 内核有排队投递（completion-backflow 回流）。
+    hasHandoffInflight: (sid) => handoffService.hasInflightHandoff(sid),
+    hasQueuedDeliveries: (sid) => sessionDelivery.hasDeliveryActivity(sid),
+    // #6 最近被查看时间戳（undefined = 从未被查看，不豁免——0 是合法 epoch 不可当哨兵）。
+    getLastViewedAt: (sid) => sessionService.getSessionLastViewedAt(sid),
+    // #7 restore 进行中（回收自身占座由 reaper 经 seat 自查）。
+    isRestoring: (sid) => sessionService.isSessionRestoring(sid),
+  }
+
+  // 回收执行 = SessionService.reclaimSession → lifecycle 七步最小摘除编排（D3）。
+  const reclaim = (sid: string): Promise<boolean> =>
+    sessionService.reclaimSession(sid, {
+      seat: reclaimSeat,
+      // relay 尾扫快照枚举（D3 第 5 步①）：同步单段快照，registry 未激活返回空表。
+      listRelayChildrenByMainSession: (s) => getActiveRelayRegistry()?.listTargetsByMainSessionId(s) ?? [],
+      // 定向后台任务收殓（D3 第 5 步②）：复用 reaper 单 session 入口，与 removeSessionEntry
+      // 触发面同款；路径经 getPiAgentDir 动态推导（禁硬编码）。显式丢弃结果对象
+      // （deps 契约 Promise<void>；reap 摘要在函数内部已落日志）。
+      reapBackgroundTasks: async (s) => {
+        await reapSessionBackgroundTasks(getPiAgentDir(), s)
+      },
+      // pendingReload 定向清（D3 第 6 步，防御性 no-op）。
+      clearPendingReload: (s) => reloadOrchestrator.clearPending(s),
+    })
+
+  // reaper handle：保存供 shutdown 收口（tick 定时器已 unref 不阻塞退出，stop 是双保险）。
+  let idleReaperHandle: IdlePiReaperHandle | undefined
+  const startIdleReaper = (): void => {
+    idleReaperHandle = startIdlePiReaper({
+      seat: reclaimSeat,
+      exemptions: reclaimExemptions,
+      // 空闲信号（u1a）：client.lastActivityAt；无 client = 无信号，宁漏不误杀。
+      getClientActivity: (sid) => pm.getClient(sid)?.lastActivityAt,
+      // 候选枚举：lifecycle 全量活跃键（附着中 session，含公共 session）——回收候选语义
+      // 正是「已附着」，已回收条目不在 Map 内天然不再枚举。
+      listCandidateSessionIds: () => sessionService.getActiveSessionIds(),
+      reclaim,
+      // 按拍合并广播（D3 第 7 步）：与 handoffService/authService 同款 broker 广播入口。
+      broadcast: () => server.broadcastSessionList(),
+      // 三旋钮：shared/constants SSOT 默认值 + XYZ_RUNTIME_PI_RECLAIM_* env 覆盖（D4）。
+      ...resolveReclaimConfig(process.env),
+    })
+  }
+
   // Graceful shutdown on signals
+  // u7c（crash-forensics-and-watchdog D5 退出链）：本序被 SIGINT/SIGTERM/uncaughtException
+  // 与滚动重启执行（rollingRestart → exit 86）四源共用，逐行继承既有链只加步骤打点
+  // （A4 机械验证继承完整性：每步经 shutdownStep(ShutdownStepName 字面量) 打点，序列
+  // SSOT = SHUTDOWN_STEP_SEQUENCE，写错名字 tsc 红）。
   let shuttingDown = false
   const shutdown = async (signal: string, exitCode = 0) => {
     if (shuttingDown) return
     shuttingDown = true
+    // u7c（D5 退出链首步）：取消推迟/预告定时器、使滚动重启状态机失效——推迟等待中的
+    // runtime 收到 app 级 SIGTERM 时不得继续执行滚动重启；86 执行序内的再入由
+    // shuttingDown guard 与编排 executed 标志双重防护。
+    shutdownStep('cancel-rolling-restart')
+    cancelRollingRestart()
+    // D6-②：停水位定时器（shutdown 后不再有水位行）。
+    shutdownStep('stop-memory-watermark-timer')
+    stopMemoryWatermarkTimer()
+    // u6（crash-forensics D4）：停内存看门狗采样环（定时器已 unref，此 stop 是显式
+    // 收口双保险——shutdown 后不再有 relief/通知判定拍）。
+    shutdownStep('stop-watchdog')
+    stopWatchdog()
+    // u8（crash-resilience D7-②）：取消全部 pending 自动恢复 timer——必须在下方
+    // server.stop（内部 destroyAll 全部 pi 子进程）之前：若取消晚于 destroyAll，shutdown
+    // 中途 timer 触发会 spawn 新孤儿 pi（收割器只在下次启动后 5s 跑一次，用户直接退出
+    // app 则孤儿无限存活烧 token）。对齐上方 stopMemoryWatermarkTimer 的先取消先例。
+    shutdownStep('cancel-pending-respawns')
+    sessionService.cancelAllPendingRespawns()
+    // u3b（idle-pi-reclamation）：停空闲回收判定循环（若已启动）——shutdown 后不再有
+    // 回收拍。timer 已 unref，此 stop 是显式收口双保险（先取消先例同上）。
+    shutdownStep('stop-idle-reaper')
+    idleReaperHandle?.stop()
     console.log(`\n[runtime] received ${signal}, shutting down...`)
     try {
+      shutdownStep('flush-stores')
       recentWorkspacesStore.flushAll()
       projectStore.flushAll()
       // R1：关闭 SkillRegistry 的 chokidar watcher（global + project），防句柄泄漏阻塞退出。
+      shutdownStep('dispose-skill-registry')
       skillRegistry.dispose()
       // sd-u6：退订完成回流（settled / exit 两腿）
+      shutdownStep('dispose-completion-backflow')
       completionBackflow.dispose()
       // E-2 + W8：relay 优雅关停与引擎协议客户端 dispose **并行**——deinitRelayServer
       // 内部有 3s grace，串行（先 relay 后 dispose）会把引擎进程消失时间拖到 3s 之后，
@@ -802,17 +1025,36 @@ async function main(): Promise<void> {
       // 落点约束（设计 §3.6）：钩子在 shutdown() 内、与 deinitRelayServer() **并行发起**
       // （dispose 不等 relay 收敛，上两条注释的时序契约）；不用 process.on('exit')
       // （回调不能 await，异步 dispose 会被 process.exit 截断）。
+      shutdownStep('deinit-relay-server')
       const engineClientsDisposed = disposeRuntimeEngineClients()
       await deinitRelayServer()
       await engineClientsDisposed
+      shutdownStep('server-stop')
       await server.stop()
+      // u7c（D5 退出链新增步骤）：引擎池 dispose——zcode appserver 杀链，挂点钉死在
+      // server.stop 之后、closeLogger 之前（杀链期间的日志与 stderr tee 要经 logger
+      // 落盘，closeLogger 先行则现场丢失）。引擎池的物理宿主在 pi 进程内（registry
+      // 是进程级 globalThis 状态）：server.stop 的 destroyAll 向全部 pi 发 SIGTERM →
+      // pi 侧 extension 收割钩子 killAllSpawnedChildren 先 disposeEngines（杀 zcode
+      // appserver 常驻进程，D6①「SIGTERM 先发会丢 close 帧」顺序由该入口保证）再杀
+      // per-record children。runtime 进程注册表当前恒空（无引擎注册），本步骤在场 =
+      // 设计钉死的序列位置与打点完整性；未来引擎宿主迁移 runtime 侧时此处是杀链接线点。
+      shutdownStep('engine-pool-dispose')
     // eslint-disable-next-line taste/no-silent-catch -- shutdown: best-effort stop, process exits regardless
     } catch (e) {
       console.error('[runtime] error during shutdown:', e)
     }
+    // D1 台账 flush（crash-forensics §3.3 D1）：closeCrashJournal 等 runtime.jsonl 的
+    // 在途轮转与 WriteStream 缓冲落盘——server.stop→destroyAll 触发的 pi 层 shutdown/
+    // deleted 行（#16 计划内排除归因依赖的行）经异步缓冲写入，process.exit 不等待即丢
+    // 尾部。挂点在 closeLogger 之前：台账 close 自身的降级日志（轮转失败 warn 等）仍能
+    // 经 logger 落盘。幂等（重复 close no-op），未初始化时直接 resolve。
+    shutdownStep('close-crash-journal')
+    await closeCrashJournal()
     // D10-1（perf W30）：退出 flush——closeLogger 现在需要 await（end 主日志 + 全部 pi
     // session 写流并等待落盘）。process.exit 立即终止进程不等待异步 IO，必须在 flush
     // 完成后才退出，否则缓冲窗口内尾部日志丢失（pi 卡死诊断证据，见 logger.ts 头部）。
+    shutdownStep('close-logger')
     await closeLogger()
     process.exit(exitCode)
   }
@@ -886,6 +1128,58 @@ async function main(): Promise<void> {
     console.error('[runtime] fatal: relay server init failed:', err)
     process.exit(1)
   }
+  // ── u5b-runtime-forensics D6-②：内存水位定时器启动 ──────────────────
+  // listen 成功后启动（依赖 sessionService/pm 均已装配）。activeSession 数含公共
+  // session（getActiveSessionIds 全量 lifecycle 键），pi 进程数是 ProcessManager 托管
+  // 的 RpcClient 数（relay 子进程不在此列，其取证走 relay-registry 决策日志）。
+  startMemoryWatermarkTimer(
+    () => sessionService.getActiveSessionIds().length,
+    () => pm.size,
+  )
+
+  // ── u7c（crash-forensics-and-watchdog D5）：滚动重启编排启动 ─────────────
+  // 挂点 = listen 后、与 watchdog/reattach 同区（编排先例：startup-reattach）。Gate W
+  // armed 门与 watchdog 共用同一 resolveWatchdogConfig 结果（XYZ_RUNTIME_WATCHDOG_ARMED
+  // 默认 off）——off 时编排零动作（onMemoryPressure 对 critical 直接忽略，B2：u6 语义
+  // 延伸到重启编排）。执行 = onExecute → 既有完整 shutdown 序 + 专用退出码 86（D5 ④：
+  // supervisor 按码识别 planned 立即重启零退避零计数）；退出序首步取消本编排推迟定时器。
+  // status provider 注入 server：rollingRestart.status 只读 RPC（renderer 重连/刷新后
+  // 拉取恢复横幅——「broadcast 时序竞争」教训：持续态必须可拉取，deferred/forced/
+  // countdown 广播只作加速显示）。
+  const watchdogConfig = resolveWatchdogConfig(process.env)
+  const rollingRestartHandleLocal = startRollingRestart({
+    armed: watchdogConfig.armed,
+    ...resolveRollingRestartConfig(process.env),
+    listSessionIds: () => sessionService.getActiveSessionIds(),
+    // relay 在途面（D5 判定源 ②）组合根接线：registry 句柄归 index.ts（reclaim 豁免 #3
+    // 同款延迟解析），services 层不 value import 有状态 IO infra。
+    relayInFlight: () => getActiveRelayRegistry()?.size ?? 0,
+    onExecute: () => { void shutdown('rollingRestart', RUNTIME_PLANNED_EXIT_CODE) },
+    broadcast: (type, payload) => server.broadcast({ type, payload } as import('@xyz-agent/shared').ServerMessage),
+  })
+  rollingRestartHandle = rollingRestartHandleLocal
+  server.setRollingRestartStatusProvider(() => rollingRestartHandleLocal.getStatus())
+
+  // ── u6（crash-forensics-and-watchdog D4）：内存看门狗启动 ─────────────
+  // 挂点 = listen 后、与水位定时器同区（同为内存观测面；设计 D4 未指明 listen 前后，
+  // 取「listen 后与 background-init 并行」的端口先就绪序）。武装门 Gate W 默认 off
+  // （XYZ_RUNTIME_WATCHDOG_ARMED）——off 时纯观测：采样环照跑补全水位数据，relief 与
+  // renderer 通知不执行（设计 §3.2 方案 B）。
+  // u7c 接线两处：① onRelief = 清全部历史重建缓存（D4 可回收物 ①，偏差 #28①——
+  // renderer LRU 收紧 ② 走 broadcast → renderer useMemoryPressure 通道，动作本体随
+  // u7d 落地）；② broadcast 出口同拍喂滚动重启编排（critical 档 = D5 决策输入，warn
+  // 档编排侧忽略）。stop 挂 shutdown 序（上方）。
+  watchdogHandle = startWatchdog({
+    ...watchdogConfig,
+    onRelief: () => {
+      sessionService.clearHistoryRebuildCache()
+    },
+    broadcast: (payload) => {
+      server.broadcast({ type: 'watchdog:memoryPressure', payload })
+      rollingRestartHandleLocal.onMemoryPressure(payload)
+    },
+  })
+
   // 启动耗时分解探针（06 §5 m-7）：listen-ready 各段耗时（baseline 对比见汇报——
   // 改造前 getPiVersion 占 listen 延迟 1.1-1.3s，重排后该段归零）。
   console.log(`[runtime] startup breakdown: syncMigrations=${(tSyncMigrations - tStart).toFixed(1)}ms construction=${(tServicesReady - tSyncMigrations).toFixed(1)}ms listen=${(performance.now() - tListen).toFixed(1)}ms total=${(performance.now() - tStart).toFixed(1)}ms`)
@@ -894,6 +1188,10 @@ async function main(): Promise<void> {
   // 序列与顺序约束见 startup-background-init.ts 文件头注释（migrateProviderConfig →
   // migrateBuiltinExtensions → checkAndAutoUpgrade → getPiVersion → skill → plugins）。
   // fire-and-forget：每步自带 catch，无 rejection 逃逸；失败不阻塞其余步骤。
+  //
+  // u5（crash-forensics D3）：孤儿收殓完成 promise 经交付回调同步捕获（调度即交付——
+  // 回调在本调用同步段内触发，早于 reattach 编排的首个 await），供下方编排等待收割。
+  let orphanReapChain: Promise<void> = Promise.resolve()
   void runStartupBackgroundInit({
     configStore,
     authStorage,
@@ -905,8 +1203,31 @@ async function main(): Promise<void> {
     broadcastAppInfo: () => server.broadcastAppInfo(),
     skillRegistry,
     pluginService,
+    // u3b（idle-pi-reclamation D4）：reaper 启动闭包（装配在上方 wiring 段）——经后台
+    // 序列 ⑩ 触发一次，fire-and-forget 形态由该序列保证。
+    startIdleReaper,
+    // u5（crash-forensics D3）：收割完成 promise 交付（reattach 编排的唯一消费方）。
+    onOrphanReapChainScheduled: (completion) => {
+      orphanReapChain = completion
+    },
     // u17 判据 v2：spawn 清单读取（infra 读侧经 port 注入；闭包绑定组合根同源 getDataDir()）
     readSpawnMarkers: () => readSpawnMarkerList(getDataDir()),
+  })
+
+  // ── u5（crash-forensics-and-watchdog D3）：reattach 编排 ─────────────────────
+  // WS listen 后独立并行任务（D3 编排挂点：与 startup-background-init 串行链解耦，不违背
+  // 「端口先就绪」原则，也不阻塞链尾 reaper 启动——收割等待经 Promise.race 有界消费）。
+  // 冷启动无 checkpoint（clean exit 已删 / 首次启动）→ read() 返回 undefined → 编排零动作
+  // （A3b 冷启动维持 lazy）。restore 走 lifecycle registerSession 汇聚点（onSessionRegistered
+  // 挂点随附触发）。内部全容错不抛；外层 .catch 是防御兜底（对齐上方 fire-and-forget 形态）。
+  // 偏差 #27：onDeferredBroadcast = 高水位延迟进入/缓解的 reattach:deferred WS 推送出口
+  // （u7c 滚动重启 broadcast 注入同形态；renderer 横幅腿 = useRollingRestartStatus）。
+  void runStartupReattach({
+    restore: (sessionId) => sessionService.restoreSession(sessionId),
+    waitForOrphanReap: () => orphanReapChain,
+    onDeferredBroadcast: (payload) => server.broadcast({ type: 'reattach:deferred', payload }),
+  }).catch((e) => {
+    console.error('[runtime] reattach orchestration failed unexpectedly:', e)
   })
 }
 

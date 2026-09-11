@@ -31,6 +31,14 @@ import { ensureAutoRenameDefault } from './worktree-config-helper.js'
 import { ensureDeclaredStartupConfigs } from './extension-startup-config.js'
 import { ORPHAN_REAP_DELAY_MS, reapOrphanPiProcesses } from './reap-orphan-pi.js'
 import { reapAllSessionsBackgroundTasks } from './session/background-task-reaper.js'
+import {
+  XYZ_RUNTIME_PI_RECLAIM_IDLE_MS,
+  XYZ_RUNTIME_PI_RECLAIM_TICK_MS,
+  XYZ_RUNTIME_PI_RECLAIM_VIEWED_WINDOW_MS,
+  DEFAULT_PI_RECLAIM_IDLE_MS,
+  DEFAULT_PI_RECLAIM_TICK_MS,
+  DEFAULT_PI_RECLAIM_VIEWED_WINDOW_MS,
+} from '@xyz-agent/shared'
 import type { PiConfigStore } from '../infra/pi/pi-config-store.js'
 import type { AuthStorage, CredentialWriter } from './auth/auth-storage.js'
 import type { ExtensionService } from './extension-service.js'
@@ -52,10 +60,55 @@ export interface StartupBackgroundDeps {
   skillRegistry: SkillRegistry
   pluginService: PluginService
   /**
+   * 启动空闲 pi 回收 reaper（idle-pi-reclamation D4，u3b）。可选成员保证既有测试构造点
+   * 不破；undefined = 跳过（行为不变）。构造留在组合根（本模块只编排执行顺序，见文件头
+   * 注释）——闭包内完成 seat/豁免/reclaim 全部装配，本模块只在序列里触发一次。
+   */
+  startIdleReaper?: () => void
+  /**
+   * 孤儿收殓完成 promise 交付回调（crash-forensics-and-watchdog D3，u5）。定时器调度后
+   * 同步调用一次，参数 = 「5s 延迟 + 孤儿 pi 收殓 + 后台任务收殓」全链 settle 的 promise
+   * （永不 reject——既有 catch 链尾部 resolve）。消费方 = reattach 编排（live 孤儿未收割完
+   * 不 spawn，防双重进程；收割等待经 Promise.race 有界消费，promise 不是 loop handle，
+   * 不影响定时器 unref 语义）。可选成员，缺省行为与既有 fire-and-forget 完全一致。
+   */
+  onOrphanReapChainScheduled?: (completion: Promise<void>) => void
+  /**
    * spawn 清单读取（u17 判据 v2，D6c port 纪律）：组合根注入 infra/spawn-markers 的
    * readSpawnMarkerList(getDataDir()) 闭包；null = 清单缺失/坏 → reap 侧 fail-safe 跳过。
    */
   readSpawnMarkers: () => string[] | null
+}
+
+/** 空闲 pi 回收三旋钮（D4；默认值权威源 = shared/constants DEFAULT_PI_RECLAIM_*）。 */
+export interface ReclaimConfig {
+  idleThresholdMs: number
+  tickIntervalMs: number
+  viewedWindowMs: number
+}
+
+/**
+ * 解析 env 三旋钮（idle-pi-reclamation D4 env 覆盖；独立导出便于单测 env 覆盖行为）。
+ *
+ * 值语义：缺失回落 shared 默认；非法值（非数字 / NaN / Infinity / 非正数含 0）一律回落
+ * 默认——非正数周期/阈值会让 setInterval 立即连拍或永不回收，视为配置错误按缺省处理
+ * （env 是运维逃生旋钮不是校验面，warn 不 throw）。
+ */
+export function resolveReclaimConfig(env: NodeJS.ProcessEnv): ReclaimConfig {
+  const parseMs = (raw: string | undefined, fallback: number): number => {
+    if (raw === undefined) return fallback
+    const n = Number(raw)
+    if (!Number.isFinite(n) || n <= 0) {
+      console.warn(`[runtime] invalid reclaim env value "${raw}", falling back to ${fallback}ms`)
+      return fallback
+    }
+    return n
+  }
+  return {
+    idleThresholdMs: parseMs(env[XYZ_RUNTIME_PI_RECLAIM_IDLE_MS], DEFAULT_PI_RECLAIM_IDLE_MS),
+    tickIntervalMs: parseMs(env[XYZ_RUNTIME_PI_RECLAIM_TICK_MS], DEFAULT_PI_RECLAIM_TICK_MS),
+    viewedWindowMs: parseMs(env[XYZ_RUNTIME_PI_RECLAIM_VIEWED_WINDOW_MS], DEFAULT_PI_RECLAIM_VIEWED_WINDOW_MS),
+  }
 }
 
 /**
@@ -84,6 +137,15 @@ export async function runStartupBackgroundInit(deps: StartupBackgroundDeps): Pro
   // 定时器 + unref 语义，链式追加改动面最小且时序由 Promise 链构造性保证。
   // pi 收殓失败（catch 兜底后）仍继续扫描——B 处置 registry 遗留，与 pi 收殓成败解耦，
   // 硬序只约束先后不约束成败传递。整体 fire-and-forget：不阻塞本启动序列。
+  //
+  // u5（crash-forensics D3）：收殓链由纯 fire-and-forget 升级为「fire-and-forget + 完成
+  // promise 交付」——链尾 settle 后 resolve（全部 catch 已兜底，resolve 无竞态）；调度后
+  // 同步交付给 onOrphanReapChainScheduled（reattach 编排 await 该 promise = 含 5s 宽限的
+  // 收割完成信号）。未传回调时零行为变化。
+  let settleReapChain: () => void = () => {}
+  const reapChainDone = new Promise<void>((resolve) => {
+    settleReapChain = resolve
+  })
   const reapTimer = setTimeout(() => {
     // u17 判据 v2（设计 §6.12）：孤儿判据消费 spawn 清单，读取函数由组合根经 deps 注入
     // （清单文件 io 在 infra/spawn-markers.ts 读写两侧 SSOT；D6c services 层不 import infra）。
@@ -99,9 +161,13 @@ export async function runStartupBackgroundInit(deps: StartupBackgroundDeps): Pro
       .catch((e) => {
         console.warn('[runtime] background task reap-all failed unexpectedly:', e)
       })
+      .then(() => {
+        settleReapChain()
+      })
   }, ORPHAN_REAP_DELAY_MS)
   // unref：不让收殓定时器独自挂住进程生命周期（正常场景 runtime 长活，仅测试/工具受益）。
   reapTimer.unref()
+  deps.onOrphanReapChainScheduled?.(reapChainDone)
 
   // ① provider 迁移 → migrationReady gate（D8-3）：session spawn（create/restore/fork）
   // 在迁移完成前等待该 promise。gate 显式 .then(onFulfilled, onRejected) 双处理——
@@ -233,6 +299,20 @@ export async function runStartupBackgroundInit(deps: StartupBackgroundDeps): Pro
   } catch (e) {
     // best-effort：清扫失败不影响主流程（残留仅是磁盘垃圾，下次启动重试）
     console.warn('[runtime] tmp-migrate/tmp-import residue cleanup failed:', e)
+  }
+
+  // ⑩ 空闲 pi 回收 reaper 启动（idle-pi-reclamation D4，u3b）：对齐 ⑨ 的 fire-and-forget
+  // + try/catch 形态——startIdleReaper 只起一个 setInterval 判定循环（tick 定时器已在
+  // reaper 内部 unref，不阻塞进程退出），同步返回无异步面；首拍在 tick 间隔（默认 5min）
+  // 之后，与串行链其余步骤零共享状态。缺省（undefined）= 跳过（行为不变，既有测试构造点
+  // 不受影响）。
+  if (deps.startIdleReaper) {
+    try {
+      deps.startIdleReaper()
+    // eslint-disable-next-line taste/no-silent-catch -- best-effort：闭包装配错误仅 warn，不阻塞启动序列（reaper 缺席 = 现状行为，下轮重启重试）
+    } catch (e) {
+      console.warn('[runtime] idle pi reaper start failed:', e)
+    }
   }
 
   // 后台初始化耗时分解探针（06 §5 m-7）：listen 后各段（改造前这些段全部堆在 listen 前）。

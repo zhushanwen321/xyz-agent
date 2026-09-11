@@ -12,6 +12,11 @@ import { fileURLToPath } from 'node:url'
 import type { WorkerHandle, RpcRequest, RpcResponse } from './plugin-types.js'
 import { PluginRpcServer } from './plugin-rpc-server.js'
 import { PluginHostProcess, type PluginPoolOptions } from './plugin-host-process.js'
+// [crash-resilience §3.3 D6-⑤] plugin worker 崩溃取证：stderr 全量落盘 plugin-crash-*.log
+// + 崩溃时刻 runtime 内存快照（A8「plugin-crash log 有 worker stderr」断言的落盘出口）。
+// 采集器本体在 worker-stderr-collector.ts（独立模块可单测，本文件 max-lines 预算内）。
+import { writePluginCrashLog, captureMemorySnapshot } from '../../infra/logger.js'
+import { createWorkerStderrCollector } from './worker-stderr-collector.js'
 
 /**
  * 解析 plugin-host.ts 所在目录（即 dist/runtime/）。
@@ -274,6 +279,14 @@ export class PluginHost implements PluginHostContract {
   /** shutdown 已执行标志：关停后到达的 rebuild 请求一律拒绝（D6/W3 disposed 守卫） */
   private disposed = false
 
+  /**
+   * per-worker stderr 采集器（D6-⑤）：createWorker 以 `stderr: true` 把 worker stderr
+   * 从「继承父进程」改为 pipe，数据在此累积（同时转发 process.stderr 保持既有可见性），
+   * 崩溃时 handleWorkerCrash 落盘 plugin-crash-*.log。生命周期与 worker 一致：
+   * crash（take 后删）/ cleanExit / terminateWorker / shutdown 四路清理，防泄漏。
+   */
+  private workerStderrCollectors = new Map<string, ReturnType<typeof createWorkerStderrCollector>>()
+
   private static readonly MAX_REBUILD_ATTEMPTS = MAX_REBUILD_ATTEMPTS
   private static readonly REBUILD_COOLDOWN_MS = REBUILD_COOLDOWN_MS
   private static readonly CRASH_COUNT_DECAY_MS = CRASH_COUNT_DECAY_MS
@@ -454,6 +467,8 @@ export class PluginHost implements PluginHostContract {
     await worker.terminate()
     this.workerInstances.delete(workerId)
     this.workers.delete(workerId)
+    // D6-⑤：预期终止非崩溃，采集器随 worker 一起丢弃（防 Map 泄漏）
+    this.workerStderrCollectors.delete(workerId)
   }
 
   /**
@@ -532,6 +547,8 @@ export class PluginHost implements PluginHostContract {
     this.workerInstances.clear()
     this.workers.clear()
     this.pluginToWorker.clear()
+    // D6-⑤：关停非崩溃，全部 stderr 采集器一并丢弃（防 Map 泄漏）
+    this.workerStderrCollectors.clear()
     this.rpcServer.dispose()
   }
 
@@ -574,8 +591,11 @@ export class PluginHost implements PluginHostContract {
 
     let worker: Worker
     try {
+      // D6-⑤：stderr: true 改 pipe（默认继承拿不到流引用），「trusted-1 exited with code 1」
+      // 场景的崩溃打印从此可落盘；stdout 保持继承（行为面最小化）。
       worker = new Worker(bootstrapPath, {
         name: workerId,
+        stderr: true,
       })
     } catch (err: unknown) {
       // 区分路径错误 vs Worker 创建错误
@@ -629,6 +649,20 @@ export class PluginHost implements PluginHostContract {
       this.handleWorkerCrash(workerId, err.message)
     })
 
+    // D6-⑤：stderr pipe 消费——采集进崩溃取证缓冲 + 转发 process.stderr 保持既有可见性
+    // （pipe 前输出直达 runtime fd 2，不转发 = 行为回归）；worker 无 pid，此流是崩溃现场唯一来源。
+    const collector = createWorkerStderrCollector()
+    this.workerStderrCollectors.set(workerId, collector)
+    worker.stderr?.on('data', (chunk: Buffer) => {
+      collector.feed(chunk)
+      try {
+        process.stderr.write(chunk)
+      } catch (e) {
+        // EPIPE 极端路径：转发失败不连坐采集与主链路（取证面 best-effort），debug 留痕
+        console.debug('[plugin-host] worker stderr forward failed:', e)
+      }
+    })
+
     worker.on('exit', (code: number) => {
       if (code !== 0) {
         console.error(`[plugin-host] worker ${workerId} exited with code ${code}`)
@@ -658,6 +692,9 @@ export class PluginHost implements PluginHostContract {
     this.removeIndexEntries(workerId, pluginIds)
     this.workerInstances.delete(workerId)
     this.workers.delete(workerId)
+    // D6-⑤：正常退出非崩溃，stderr 采集器一并清理（collector 生命周期收敛在
+    // crash/cleanExit/terminateWorker/shutdown 四路，全 worker 生命周期无泄漏窗口）
+    this.workerStderrCollectors.delete(workerId)
     console.log(`[plugin-host] worker ${workerId} exited cleanly (code 0); handle cleaned up`)
   }
 
@@ -668,6 +705,29 @@ export class PluginHost implements PluginHostContract {
     handle.status = 'crashed'
     const pluginIds = [...handle.pluginIds]
     const trustLevel = handle.trustLevel
+
+    // D6-⑤：崩溃 stderr 全量落盘 plugin-crash-*.log（形态对齐 pi-crash：首行摘要 +
+    // truncated 标注 + [runtime-context] 头块 + stderr 原文）。三入口（error 事件 /
+    // fatal_error 消息 / exit code≠0）都汇聚到本函数，幂等守卫（上方 status 检查）保证
+    // 单次崩溃只写一份。时序注记：terminate→exit 间的残余 stderr 不进本份 log（collector
+    // 已 take，仍转发 process.stderr），取证主体是崩溃前打印，该窗口丢失可接受。best-effort。
+    try {
+      const snapshot = this.workerStderrCollectors.get(workerId)?.take() ?? { text: '', truncated: false }
+      this.workerStderrCollectors.delete(workerId)
+      writePluginCrashLog(workerId, [
+        `plugin worker crashed: ${error}`,
+        `at ${new Date().toISOString()}`,
+        snapshot.truncated ? '(stderr truncated: earliest lines dropped, worker crash buffer exceeded 1MB)' : '',
+        '[runtime-context] ' + JSON.stringify({ workerId, threadId: handle.threadId, pluginIds, trustLevel, memory: captureMemorySnapshot() }),
+        '',
+        snapshot.text,
+      ].filter(Boolean).join('\n'))
+    } catch (e) {
+      // 观测增强不得影响 crash 处置主流程（rebuild / onCrash 通知链），console.error
+      // 经 logger patch tee 进 runtime 主日志
+      console.error(`[plugin-host] write plugin crash log failed for ${workerId}:`, e)
+    }
+
     // 崩溃线程兜底终止（D6/W4 对称化）：fatal_error 消息路径线程发完消息仍存活
     //（对齐 plugin-host-process 的 kill 兜底），不 terminate = 线程泄漏。terminate 触发
     // 的 exit(code=1) 被 status='crashed' 幂等守卫拦截，不会二次进入本函数。

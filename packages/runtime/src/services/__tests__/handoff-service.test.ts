@@ -77,6 +77,8 @@ function createMockSessionService(opts: {
     getHistory: vi.fn(async () => ({
       messages: [makeMessage('user', 'hi')] as Message[],
       truncated: false,
+      loadedTurns: 1,
+      totalTurnsEstimate: 1,
     })),
     getSession: vi.fn(() => ({
       cwd: '/tmp',
@@ -494,6 +496,8 @@ describe('HandoffService', () => {
     vi.mocked(sessionService.getHistory).mockResolvedValueOnce({
       messages: [] as Message[],
       truncated: false,
+      loadedTurns: 0,
+      totalTurnsEstimate: 0,
     })
 
     await expect(service.runHandoff('src-1')).rejects.toThrow('handoff: no history to handoff')

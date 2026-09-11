@@ -18,7 +18,9 @@ import {
   evictIfNeeded,
   evictSessionWithVirtual,
   disposeLruEntry,
+  getLruMaxSessions,
   makeLruEvictDeps,
+  setLruMaxSessions,
   _resetLruForTest,
   LRU_MAX_SESSIONS,
   type LruEvictDeps,
@@ -267,5 +269,77 @@ describe('makeLruEvictDeps.deleteMessageKey', () => {
     const before = hydrated.value
     deps.deleteHydrated('nope')
     expect(hydrated.value).toBe(before)
+  })
+})
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 运行时可变上限（crash-forensics-and-watchdog §3.3 D4 memory-relief / 偏差 #28②，
+// u7d 消费方 = renderer useMemoryPressure defaultReliefAction）
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('setLruMaxSessions 可变上限（#28② 压窗 API）', () => {
+  /** 独立 makeDeps（局部最小构造，不依赖上方 describe 内 helper）。 */
+  function makeDeps(sids: string[]): { deps: LruEvictDeps; messages: ShallowRef<Map<string, unknown>> } {
+    const messages = shallowRef(new Map(sids.map((s) => [s, {}] as [string, unknown])))
+    const hydrated = shallowRef(new Set<string>())
+    const deps = makeLruEvictDeps(messages, hydrated, () => false, () => {}, () => {})
+    return { deps, messages }
+  }
+
+  it('设窗后驱逐生效：默认 8 不驱逐的 8 个，压窗到 4 驱逐最旧 4 个', () => {
+    const sids = Array.from({ length: 8 }, (_, i) => `s${i}`)
+    sids.forEach(touchLru)
+    const { deps, messages } = makeDeps(sids)
+    evictIfNeeded(deps)
+    expect(messages.value.size).toBe(8) // 前置：默认窗内零驱逐
+
+    setLruMaxSessions(4)
+    evictIfNeeded(deps)
+    expect(messages.value.size).toBe(4) // 压窗生效：驱逐到 4
+    // 驱逐的是最旧一半（s0-s3 先 touch）
+    expect(messages.value.has('s0')).toBe(false)
+    expect(messages.value.has('s3')).toBe(false)
+    expect(messages.value.has('s7')).toBe(true)
+  })
+
+  it('null 恢复默认：压窗驱逐后回默认，后续 evictIfNeeded 按 8 判定（已驱逐的不回补）', () => {
+    const sids = Array.from({ length: 8 }, (_, i) => `s${i}`)
+    sids.forEach(touchLru)
+    const { deps, messages } = makeDeps(sids)
+    setLruMaxSessions(4)
+    evictIfNeeded(deps)
+    expect(messages.value.size).toBe(4)
+
+    setLruMaxSessions(null)
+    expect(getLruMaxSessions()).toBe(LRU_MAX_SESSIONS)
+    evictIfNeeded(deps)
+    expect(messages.value.size).toBe(4) // 恢复默认不回补已驱逐（只影响后续判定）
+    // 后续新增至超默认窗才会再触发（语义：恢复默认 = 恢复常规容量，非撤销 relief 已生效动作）。
+    // 注意被驱逐的 s0-s3 连 touchLru 记录一起清了（非候选），剩余 s4-s7；新增 5 个后候选
+    // = 4+5 = 9 > 8 → 驱逐最旧 1 个。
+    for (let i = 9; i < 14; i++) {
+      messages.value = new Map(messages.value).set(`s${i}`, {})
+      touchLru(`s${i}`)
+    }
+    evictIfNeeded(deps)
+    expect(messages.value.size).toBe(LRU_MAX_SESSIONS) // 9 候选 → 驱逐 1 回到 8
+    expect(messages.value.has('s4')).toBe(false) // 驱逐的是最旧候选
+  })
+
+  it('下限钳制 ≥1 且非整数向下取整；getLruMaxSessions 读当前生效值', () => {
+    expect(getLruMaxSessions()).toBe(LRU_MAX_SESSIONS)
+    setLruMaxSessions(0)
+    expect(getLruMaxSessions()).toBe(1) // 0 = 全量驱逐会让切回重进变常态，钳到 1
+    setLruMaxSessions(2.9)
+    expect(getLruMaxSessions()).toBe(2)
+    setLruMaxSessions(-5)
+    expect(getLruMaxSessions()).toBe(1)
+  })
+
+  it('重复设置同值幂等（setter 幂等，无副作用累积）', () => {
+    setLruMaxSessions(4)
+    setLruMaxSessions(4)
+    setLruMaxSessions(4)
+    expect(getLruMaxSessions()).toBe(4)
   })
 })

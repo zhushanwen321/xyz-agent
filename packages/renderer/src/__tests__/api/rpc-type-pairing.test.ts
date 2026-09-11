@@ -59,16 +59,20 @@ describe('U1: ReplyPayloadMap — key 覆盖 RPC request type', () => {
     expect(hasTruncated).toBe(false)
   })
 
-  it('session.history 映射存在且含 messages + historyTruncated', () => {
+  it('session.history 映射存在且含窗口契约（[u6] legacy historyTruncated 退役，truncated 唯一标志）', () => {
     type HistoryReply = ReplyPayloadMap['session.history']
     const sample: HistoryReply = {
       sessionId: 's1',
       messages: [],
-      historyTruncated: false,
+      truncated: false,
+      loadedTurns: 0,
+      totalTurnsEstimate: 0,
     }
-    // session 字段 optional（switch 路径有，history 路径无）
+    // session 字段 optional（switch 路径有，history 路径无）；legacy 字段编译期锁定已删
+    const hasLegacyTruncated: 'historyTruncated' extends keyof HistoryReply ? true : false = false
+    expect(hasLegacyTruncated).toBe(false)
     expect(sample.messages).toEqual([])
-    expect(sample.historyTruncated).toBe(false)
+    expect(sample.truncated).toBe(false)
   })
 
   it('git.stage 映射为 void（ack 型）', () => {
@@ -207,15 +211,18 @@ describe('U3: command() — 返回类型从 ReplyPayloadMap[K] 推导', () => {
 // ════════════════════════════════════════════════════════════════════════
 
 describe('U4: ServerMessageMap — RPC reply 条目已收紧（非兜底 Record<string,unknown>）', () => {
-  it('session.history 的 payload 含 historyTruncated 字段（非兜底）', () => {
+  it('session.history 的 payload 含窗口契约字段（非兜底；[u6] legacy historyTruncated 退役）', () => {
     // 若走兜底 Record<string,unknown>，赋值给具体类型变量会报错（unknown 不可赋值）
     type HistoryPayload = ServerMessageMap['session.history']
     const sample: HistoryPayload = {
       sessionId: 's1',
       messages: [],
-      historyTruncated: false,
+      truncated: false,
+      loadedTurns: 0,
+      totalTurnsEstimate: 0,
     }
-    expect(sample.historyTruncated).toBe(false)
+    expect(sample.truncated).toBe(false)
+    expect(sample.loadedTurns).toBe(0)
   })
 })
 

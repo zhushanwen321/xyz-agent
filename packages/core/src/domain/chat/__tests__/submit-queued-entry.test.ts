@@ -33,7 +33,7 @@ function makeDeps(over: Partial<{ send: ReturnType<typeof vi.fn>; steer: ReturnT
     },
     writeSegments: writeSegments as unknown as SubmitQueuedEntryDeps['writeSegments'],
     chat,
-    sessionStore: { applySnapshot: vi.fn() },
+    sessionStore: { applySnapshot: vi.fn(), revive: vi.fn() },
     // [session-dead 第三环] warning：toast 端口透传 ensureStreamSubscription 的注入面（本用例不触发）
     toast: { error: vi.fn(), warning: vi.fn() },
     t: vi.fn((key: string) => key),

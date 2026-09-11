@@ -28,6 +28,34 @@
  */
 import type { ServerMessage } from '@xyz-agent/shared'
 import type { BusClient, SessionBusState, StreamRingBuffer } from './types.js'
+import {
+  type OutboundFrameGuardOptions,
+  DEFAULT_OUTBOUND_FRAME_GUARD_OPTIONS,
+  guardOutboundPushFrame,
+} from './outbound-frame-registry.js'
+import { getCrashJournal } from '../../infra/crash-journal.js'
+// 组合根（index.ts）经本模块导入守卫默认值——省一条独立 import 行（index.ts max-lines 门禁），
+// 阈值 SSOT 仍在 outbound-frame-registry（shared 常量的 registry 出口）。
+export { DEFAULT_OUTBOUND_FRAME_GUARD_OPTIONS } from './outbound-frame-registry.js'
+
+/**
+ * 条件信号事件 → 崩溃台账（crash-forensics-and-watchdog §3.3 D1 写入点矩阵，u1e）。
+ *
+ * 出站守卫判定点与既有日志/守卫行为**同点双写**：告警档 → frame-truncated(warn-tier)、
+ * 契约保持式截断档 → frame-truncated(trunc-tier)、注册表 miss（含替换后仍超限）→
+ * registry-miss。守卫行为本身零改动（append 是 fire-and-forget 旁路，writer 未初始化时
+ * no-op 单例、内部自吞异常——台账任何故障不反噬出站主链，D1 best-effort 语义）。
+ * 事件是评估器条件 #1/#2 的数据源（附录 A）。
+ */
+function appendFrameJournal(event: 'frame-truncated' | 'registry-miss', reason: string, sessionId: string, detail: Record<string, unknown>): void {
+  getCrashJournal().append({
+    layer: 'runtime',
+    event,
+    reason,
+    sessionId,
+    detailDigest: JSON.stringify(detail),
+  })
+}
 
 /** streamRing 默认容量（O(1) 覆盖写环形缓冲）。 */
 const DEFAULT_RING_CAPACITY = 1000
@@ -93,6 +121,11 @@ const TOPIC_TABLE: Readonly<Record<string, TopicKind>> = {
   'session.compacting': 'stream',
   'session.compacted': 'stream',
   'session.exited': 'stream',
+  // pi 崩溃自动恢复结果（crash-resilience D7，u8-pi-respawn）：一次性事件（非 last-value
+  // 状态），stream 入 ring——断连重连 / 恢复后重订阅经回放补见恢复提示条（恢复发生时
+  // renderer 订阅已被 bus.clearSession 清除，回放是提示条的主要送达通路）。
+  'session.restored': 'stream',
+  'session.restoreFailed': 'stream',
   'terminal.alive': 'stream',
   'terminal.exit': 'stream',
   'terminal.ack': 'stream',
@@ -214,13 +247,30 @@ export class MessageBus implements IMessageBus {
 
   /**
    * @param ringCapacity streamRing 容量上限，默认 1000。满时 publish 覆盖写最旧槽位（O(1)）。
+   * @param guardOptions 出站帧守卫选项（u4a：阈值参数化——生产默认 shared 常量 8MB/32MB；
+   *   测试注入小阈值走真实行为逻辑，A10 阈值校准法同型）。resolveSessionFilePath 组合根
+   *   可选注入（占位文案填 session 文件实路径；未注入走「见 runtime 日志」占位）。
    */
-  constructor(ringCapacity: number = DEFAULT_RING_CAPACITY) {
+  constructor(
+    ringCapacity: number = DEFAULT_RING_CAPACITY,
+    private readonly guardOptions: OutboundFrameGuardOptions = DEFAULT_OUTBOUND_FRAME_GUARD_OPTIONS,
+  ) {
     this.ringCapacity = ringCapacity
   }
 
   /**
    * 发布消息到 session：按 topicOf(type) 三分类分流（D5-1），三类都序列化一次并推给订阅者。
+   *
+   * 出站帧守卫（u4a，crash-resilience D3）：超截断档（guardOptions.truncateBytes）的 push
+   * 帧按「契约保持式截断」替换大字段为占位载荷（消息类型不变，截断版占 seq 入 ring/写快照/
+   * 直传——客户端、ring 回放、重订阅拿到**同一份截断版**，seq 连续性 / gap 检测 / live≡reload
+   * 不被破坏）；注册表 miss 或截断后仍超限 → 整条丢弃 + **seq 回滚**（该消息从未占用 seq，
+   * 不触发 gap——被否方案④「占 seq 后丢弃」会触发 gap-重订阅失败死循环）。
+   *
+   * 时序实现（w09 TC-V1 契约：单条消息全程 JSON.stringify 恰好 1 次，守卫不得对小消息
+   * 额外序列化）：seq 写入 → 序列化（唯一一次）→ 守卫按 wire 字节数判定——小消息零额外
+   * 开销直接广播；超限才进入守卫决策（其内部序列化仅罕见路径发生），drop 时 seq 回滚，
+   * 外部可观察语义与「seq 分配前整条丢弃」等价（同步单线程内无观察窗口）。
    *
    * 分流语义：
    * - state：++seq 写 message.seq → 写 stateSnapshot（同 typeKey 覆盖）→ 不入 ring。
@@ -228,8 +278,10 @@ export class MessageBus implements IMessageBus {
    * - transient：不分配 seq（消息保持无 seq 字段——调用方构造 push 消息不得自带 seq）、
    *   不入 ring、不写快照，直接序列化推送。
    *
-   * 广播（三类共用）：readyState===1（OPEN）的 ws 调 send(JSON.stringify(message))；
-   * 单个 ws.send 抛错 try/catch 兜底（ES4），不影响其它 ws 与 publish 主流程。
+   * 广播（三类共用）：readyState===1（OPEN）的 ws 调 send(序列化文本)；单个 ws.send 抛错
+   * try/catch 兜底（ES4），不影响其它 ws 与 publish 主流程。序列化失败（循环引用等不可
+   * 序列化载荷）→ seq 回滚 + 丢弃 + error 日志（u4a 零抛错：守卫设施不成为新崩溃源；
+   * 原行为向调用方冒泡 stringify 异常，守卫语义下收紧为有痕丢弃）。
    *
    * @param sessionId 目标 session
    * @param message 待发布消息（广播时 JSON.stringify；注意 state/stream 类会原地写入
@@ -238,16 +290,80 @@ export class MessageBus implements IMessageBus {
   publish(sessionId: string, message: ServerMessage): void {
     const state = this.getOrCreateSession(sessionId)
     const topic = topicOf(message.type)
-    if (topic === 'transient') {
-      // transient：不占 seq、不进 ring、不写快照——高频流直传，丢失可接受
-      // （routeInbound 对无 seq 消息直接 dispatch，不做 gap 检测）。
-      this.broadcast(state.subscribers, message)
+    const isTransient = topic === 'transient'
+    // state / stream 共用统一 seq 计数器（R-03：保住「全序」不变量；state 消息带 seq 推进
+    // 订阅方 lastSeq 基线，只是不入 ring）。seq 必须在序列化前写入（wire 帧携带 seq）。
+    if (!isTransient) {
+      state.seqCounter += 1
+      message.seq = state.seqCounter
+    }
+    let payload: string
+    try {
+      payload = JSON.stringify(message)
+    } catch (e) {
+      this.rollbackSeq(state, message, isTransient)
+      console.error('[message-bus] publish payload serialization failed — message dropped:', e)
       return
     }
-    // state / stream 共用统一 seq 计数器（R-03：保住「全序」不变量；state 消息带 seq 推进
-    // 订阅方 lastSeq 基线，只是不入 ring）。
-    state.seqCounter += 1
-    message.seq = state.seqCounter
+    const bytes = Buffer.byteLength(payload, 'utf8')
+    if (bytes > this.guardOptions.truncateBytes) {
+      // u4a：超截断档 → 契约保持式截断 / miss 兜底。守卫零 mutate 入参（不可变克隆替换，
+      // 克隆随 spread 携带已写入的 seq），ring/快照/广播统一存截断版。
+      const guarded = guardOutboundPushFrame(message, sessionId, this.guardOptions)
+      if (guarded.action === 'dropped') {
+        // u1e（crash-forensics D1）：注册表 miss（含替换后仍超限）→ registry-miss 台账
+        // 事件（reason 保留守卫 dropReason 原值区分两形态）。评估器条件 #2 出现即 tripped。
+        appendFrameJournal('registry-miss', guarded.dropReason, sessionId, {
+          frameType: message.type,
+          bytes: guarded.bytes,
+          channel: 'push',
+          dropReason: guarded.dropReason,
+        })
+        this.rollbackSeq(state, message, isTransient)
+        return
+      }
+      if (guarded.action === 'replaced') {
+        // u1e（crash-forensics D1）：契约保持式截断 → frame-truncated(trunc-tier)。
+        appendFrameJournal('frame-truncated', 'trunc-tier', sessionId, {
+          frameType: message.type,
+          bytesBefore: guarded.bytesBefore,
+          bytesAfter: guarded.bytesAfter,
+          fieldPaths: guarded.fieldPaths,
+          channel: 'push',
+        })
+      }
+      const truncated = guarded.message
+      if (!isTransient) {
+        // 截断版替代原消息占位：stream 入 ring、state 写快照——回放/重订阅拿到同一份截断版。
+        if (topic === 'state') {
+          const typeKey = stateTypeKey(truncated)
+          if (typeKey !== null) {
+            state.stateSnapshot.set(typeKey, truncated)
+          }
+        } else {
+          this.ringPush(state.streamRing, truncated)
+        }
+      }
+      this.broadcastText(state.subscribers, JSON.stringify(truncated))
+      return
+    }
+    if (bytes > this.guardOptions.warnBytes) {
+      // u4a 告警档（8MB 哨兵）：不截断，warn 暴露（上游自截失效时先于此档可见）。
+      console.warn(`[outbound-frame-guard] large outbound push frame (warn): type=${message.type} sessionId=${sessionId} bytes=${bytes}`)
+      // u1e（crash-forensics D1）：告警档 → frame-truncated(warn-tier) 台账事件（评估器
+      // 条件 #1 数据源，附录 A「周均 >10 次」按此事件窗口计数）。
+      appendFrameJournal('frame-truncated', 'warn-tier', sessionId, {
+        frameType: message.type,
+        bytes,
+        channel: 'push',
+      })
+    }
+    if (isTransient) {
+      // transient：不占 seq、不进 ring、不写快照——高频流直传，丢失可接受
+      // （routeInbound 对无 seq 消息直接 dispatch，不做 gap 检测）。
+      this.broadcastText(state.subscribers, payload)
+      return
+    }
     if (topic === 'state') {
       // state：写快照（同 typeKey 覆盖，状态去重语义），不入 ring。
       const typeKey = stateTypeKey(message)
@@ -258,7 +374,17 @@ export class MessageBus implements IMessageBus {
       // stream：入 O(1) 环形缓冲（满则覆盖最旧）。
       this.ringPush(state.streamRing, message)
     }
-    this.broadcast(state.subscribers, message)
+    this.broadcastText(state.subscribers, payload)
+  }
+
+  /**
+   * seq 回滚（u4a drop/序列化失败路径）：seqCounter 退回 + 清除已写入的 message.seq——
+   * 同步单线程内等价于「从未分配」，消息不占 seq 不触发 gap。transient 无 seq 可回滚。
+   */
+  private rollbackSeq(state: SessionBusState, message: ServerMessage, isTransient: boolean): void {
+    if (isTransient) return
+    state.seqCounter -= 1
+    delete message.seq
   }
 
   /**
@@ -379,11 +505,11 @@ export class MessageBus implements IMessageBus {
   }
 
   /**
-   * 序列化一次 + 遍历推送订阅者（三类 topic 共用出口）。
+   * 遍历推送订阅者（三类 topic 共用出口）。接收 publish 已序列化的文本（w09 TC-V1 契约：
+   * 单条消息全程恰好 1 次 stringify——序列化在 publish 顶部完成，本方法不再 stringify）。
    * readyState!==1 跳过；单个 ws.send 抛错 ES4 兜底（不 rethrow，继续下一个 ws）。
    */
-  private broadcast(subscribers: Set<BusClient>, message: ServerMessage): void {
-    const payload = JSON.stringify(message)
+  private broadcastText(subscribers: Set<BusClient>, payload: string): void {
     for (const ws of subscribers) {
       if (ws.readyState !== 1) continue
       try {

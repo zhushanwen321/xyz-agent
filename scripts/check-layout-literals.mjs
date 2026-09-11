@@ -96,6 +96,21 @@ export const LAYOUT_LITERAL_EXEMPT = [
     file: 'apps/electron/resources/extensions/@zhushanwen/pi-session-reader/index.js',
     reason: 'bundled 扩展产物（源 extensions/universal/session-reader，不入扫描域）——内含旧布局探测判据（AGENT_DIR_SHAPE_OLD）与迁移提示文案，职责即新旧布局兼容识别（C-pi-14 恢复动作 3）',
   },
+  {
+    file: 'apps/electron/main/images/__tests__/image-cache.test.ts',
+    reason:
+      '负向诱饵 fixture（pi-maintenance.test.ts 同型先例）：缺省 sessionsDir 推导用例必须构造旧布局 pi/sessions 层级放孤儿同构文件——推导若错查旧层会误判活而不删；另 :43 实测锚点为旧布局时期取样记录（文件名形态两布局一致）',
+  },
+  {
+    file: 'apps/electron/main/images/image-cache.ts',
+    reason:
+      ':176-178 session 文件名形态实测锚点（2026-09-02 旧布局时期本机取样记录，文件名形态跨布局不变，历史证据不改写——workflow-extractor.ts:236 先例）',
+  },
+  {
+    file: 'apps/electron/main/test/global-setup.ts',
+    reason:
+      ':32 2026-09-02 会话丢失事故复盘的历史叙述（当时会话确在旧布局层，事实性历史证据不改写；现行 getSessionsDir 已是新布局派生式）',
+  },
 ]
 
 const EXEMPT_SET = new Set(LAYOUT_LITERAL_EXEMPT.map((e) => e.file))

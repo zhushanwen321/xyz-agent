@@ -41,6 +41,7 @@
  */
 
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { guardStaleCtx, toErrorMessage } from "@zhushanwen/pi-ext-guards";
 
 import { isPlainObject, isToolExecutionEndEvent } from "./schema-guards.js";
 import {
@@ -558,8 +559,23 @@ export function setupLoopGate(pi: PiAPI, options: LoopGateOptions = {}): LoopGat
 
 		options.onTerminal?.();
 		writeTerminatedLog(pi, gate);
-		ctx.abort();
-		ctx.shutdown();
+		// stale ctx 防御（crash-resilience D1）：abort/shutdown 均在 pi assertActive 面
+		// （PS-30，runner.js createContext）——session 替换窗口触发 terminal 时无人接的
+		// 同步 throw 会经 async handler 变 rejected Promise 杀 pi 进程。stale 静默跳过
+		// 优雅退出（此时进程的存在意义已随 session 替换消失），armForceExitTeardown 的
+		// 15s 硬退兜底保持武装——自清理语义不丢。非 stale 错误原样上抛（守卫不吞真实 bug）。
+		guardStaleCtx(() => {
+			ctx.abort();
+			ctx.shutdown();
+		}, {
+			label: "structured-output:terminal-teardown",
+			onStale: (error) => {
+				process.stderr.write(
+					`[structured-output gate] terminal teardown skipped (stale ctx, session replaced): `
+						+ `${toErrorMessage(error)}; force-exit timer stays armed.\n`,
+				);
+			},
+		});
 		armForceExitTeardown();
 	});
 

@@ -17,10 +17,19 @@
 
 import { fork, type ChildProcess, type Serializable } from 'node:child_process'
 import { dirname as pathDirname } from 'node:path'
+import type { CrashJournalEvent } from '@xyz-agent/shared'
 import { buildOutboundChildEnv } from '../../infra/spawn-env.js'
+import { getCrashJournal } from '../../infra/crash-journal.js'
 import type { ProcessHandle } from './plugin-types.js'
 import { PluginRpcServer, type RpcIdentity } from './plugin-rpc-server.js'
 import { resolveAndValidateFile, dispatchHostRpcMessage, safeDispatchHostMessage, isRecordMessage } from './plugin-host.js'
+
+/**
+ * plugin-worker crash 台账行使用 schema 登记的扩展字段 processId/pid/signal/pluginIds
+ * （偏差 #32③：扩展字段登记 SSOT = shared crash-journal-schema.ts CrashJournalEvent，
+ * 本地不再重复声明；crash-forensics §3.3 D1 plugin-worker crash 行：fork 宿主崩溃身份
+ * 与致死信号）。writer 以 spread 序列化原样落盘 JSONL；exitCode 走 schema 既有字段。
+ */
 
 const MAX_PLUGINS_PER_TRUSTED_PROCESS = 10
 const LOAD_PLUGIN_TIMEOUT_MS = 10_000
@@ -534,7 +543,7 @@ export class PluginHostProcess implements PluginHostProcessContract {
         return
       }
       console.error(`[plugin-host-process] process ${processId} exited with code ${code} signal ${signal}`)
-      this.handleProcessCrash(processId, `Child process exited with code ${code}`)
+      this.handleProcessCrash(processId, `Child process exited with code ${code}`, { exitCode: code, signal })
     })
 
     return handle
@@ -561,8 +570,16 @@ export class PluginHostProcess implements PluginHostProcessContract {
   /**
    * 崩溃统一处理：status 幂等守卫（crashed/terminated 不重复触发）。
    * 对齐 handleWorkerCrash 语义；重启 outOfScope（C5，由上层 wiring 决定）。
+   *
+   * exitMeta 仅 exit 事件路径携带（退出码/信号权威源）；error/disconnect/fatal_error
+   * 路径无退出语义，台账行落显式 null（「不知道 ≠ 没打点」）。计划内终止（terminate
+   * / shutdown 的 pre-mark）被幂等守卫先拦，不产生 crash 事件。
    */
-  private handleProcessCrash(processId: string, error: string): void {
+  private handleProcessCrash(
+    processId: string,
+    error: string,
+    exitMeta?: { exitCode: number | null; signal: string | null },
+  ): void {
     const handle = this.processes.get(processId)
     if (!handle || handle.status === 'crashed' || handle.status === 'terminated') return
 
@@ -570,6 +587,23 @@ export class PluginHostProcess implements PluginHostProcessContract {
     const pluginIds = [...handle.pluginIds]
     this.rpcServer.unregisterWorker(processId)
     this.removeIndexEntries(processId, pluginIds)
+
+    // 台账双写（crash-forensics §3.3 D1 plugin-worker crash 行：worker 退出计数器驱动
+    // 点/崩溃统一处理汇聚点补台账行，与 status 幂等守卫同点——同一进程不重复记）。
+    // best-effort：writer append 自吞错不向崩溃链传播。code 0 正常退出走
+    // handleProcessCleanExit，不经此处（正常退出不产生事件）。经中间变量传入
+    // （扩展字段过 schema 闭接口的 excess property check）。
+    const journalEvent: CrashJournalEvent = {
+      layer: 'plugin-worker',
+      event: 'crash',
+      processId,
+      pid: handle.pid,
+      exitCode: exitMeta ? exitMeta.exitCode : null,
+      signal: exitMeta ? exitMeta.signal : null,
+      pluginIds,
+      detailDigest: error,
+    }
+    getCrashJournal().append(journalEvent)
 
     // M6a-03：kill 兜底——fatal_error 消息路径子进程可能仍存活（发完消息不退出 = 进程
     // 泄漏）。崩溃时强制终止。kill 后晚到的 exit 被上方 status='crashed' 幂等守卫拦截，

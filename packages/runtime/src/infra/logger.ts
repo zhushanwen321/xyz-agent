@@ -44,8 +44,14 @@
 import { createReadStream, createWriteStream, mkdirSync, readdirSync, renameSync, statSync, unlinkSync, type WriteStream } from 'node:fs'
 import { join } from 'node:path'
 import { pipeline } from 'node:stream/promises'
+// [crash-resilience §3.3 D6-⑦] 保留天数两进程共读同一函数（env 覆盖 || 默认）——merge 裁决保留 shared SSOT 形态
+import { readLogKeepDays } from '@xyz-agent/shared'
 import { createGzip } from 'node:zlib'
 import { isPackaged } from '../utils/runtime-env.js'
+// endAndAwait 单一实现（偏差 #32①：原模块私有复刻与 crash-journal 同构，收敛共享原语；
+// 超时留痕出口 reportEndAwaitTimeout 保持本模块注入）
+import { END_AWAIT_TIMEOUT_MS, endAndAwaitStream } from './stream-end-await.js'
+import { getCrashJournal } from './crash-journal.js'
 
 // ── 级别 ────────────────────────────────────────────────────────────
 export type LogLevel = 'debug' | 'info' | 'warn' | 'error'
@@ -61,8 +67,12 @@ function parseLevel(env: string | undefined, fallback: LogLevel): LogLevel {
 const BYTES_PER_KB = 1024
 const DEFAULT_MAX_FILE_MB = 50
 const MAX_FILE_BYTES = Number(process.env.XYZ_LOG_MAX_BYTES) || DEFAULT_MAX_FILE_MB * BYTES_PER_KB * BYTES_PER_KB
-const DEFAULT_KEEP_DAYS = 7
-const KEEP_DAYS = Number(process.env.XYZ_LOG_KEEP_DAYS) || DEFAULT_KEEP_DAYS
+/**
+ * pi tee 单文件 size 轮转阈值（crash-forensics §3.3 D7：50MB 上限，收口 198MB 实证）。
+ * [dev-0.9.17 合并] pi tee 与主日志共用 MAX_FILE_BYTES（XYZ_LOG_MAX_BYTES env 单旋钮），
+ * 无独立阈值常量——u9 的 opts.maxBytes 注入面与 PI_TEE_MAX_FILE_BYTES 已随 .1.gz
+ * gzip 实现取代而删除（裁决见 crash-forensics impl-plan §7 v5）。
+ */
 const SECONDS_PER_MINUTE = 60
 const HOURS_PER_DAY = 24
 const MS_PER_SECOND = 1000
@@ -96,9 +106,6 @@ const MAX_PENDING_LINES = 10_000
 /** 当前轮转窗口内因超限丢弃的行数（轮转结束后合并记一次 warn，不在热路径递归记日志）。 */
 let pendingDroppedCount = 0
 
-/** endAndAwait 等待写流 'close' 的超时：fs 挂起时 close 永不触发，超时降级 resolve（防永久挂起）。 */
-const END_AWAIT_TIMEOUT_MS = 5_000
-
 // ── pi 流 size 轮转常量 ─────────────────────────────────────────────
 /** 压缩产物后缀：**单代**（下一次轮转 rename 覆盖同名文件，磁盘上恒只有 1 个压缩代）。 */
 const PI_GZIP_SUFFIX = '.1.gz'
@@ -113,11 +120,11 @@ const GZIP_TIMEOUT_MS = 10_000
 
 // ── pi session 写流注册表（D10-1 退出 flush：closeLogger 统一 end + 等待）──
 interface PiStreamState {
-  /** 惰性打开：首次 write 才建流。 */
+  /** 惰性打开：首次 write 才建流。轮转窗口内为 undefined（新流由轮转续体重开）。 */
   stream: WriteStream | undefined
   /** end() 已调（write 后续为 no-op）。保留注册直到 closeLogger，确保退出 flush 覆盖。 */
   ended: boolean
-  /** 目标文件路径（closeLogger 端 endAndAwait 超时报告的 label 用）。 */
+  /** 目标文件路径（closeLogger 端 endAndAwait 超时报告的 label 用；轮转 rename 的源）。 */
   file: string
   /** 自本次打开以来写入该文件的字节数（size 轮转判定，与主日志 mainBytesWritten 同款计数）。 */
   bytesWritten: number
@@ -347,10 +354,17 @@ function createStreamSafe(file: string, flags: 'a' | 'w' = 'a'): WriteStream | u
   }
 }
 
-/** 清理 KEEP_DAYS 天前的日志文件（启动时调一次）。 */
+/**
+ * 清理保留期（readLogKeepDays()，shared）天前的日志文件（initLogger 启动时调一次）。
+ *
+ * [crash-resilience §3.3 D6-⑦] 保留天数从进程内常量改为 shared readLogKeepDays()：
+ * 每次调用时读 env（XYZ_LOG_KEEP_DAYS 覆盖 || 默认 7），与 main 侧每日复扫共用同一
+ * 值域。本函数仍是 runtime 侧唯一触发点（仅启动时跑）；长寿运行的持续清理由 main
+ * 每日定时器承担（u5a），两进程超龄判定同源。
+ */
 function cleanExpiredLogs(): void {
   if (!logsDir) return
-  const cutoff = Date.now() - KEEP_DAYS * MS_PER_DAY
+  const cutoff = Date.now() - readLogKeepDays() * MS_PER_DAY
   let entries: string[]
   try {
     entries = readdirSync(logsDir)
@@ -358,8 +372,13 @@ function cleanExpiredLogs(): void {
     return
   }
   for (const name of entries) {
-    // 只清理本模块产出的日志文件（runtime-* / pi-*.jsonl）
-    if (!name.startsWith('runtime-') && !name.startsWith('pi-')) continue
+    // 只清理本模块产出的日志文件（runtime-* / pi-*.jsonl / pi-crash-*.log / plugin-crash-*.log）。
+    // pi-crash-* 靠 pi- 前缀覆盖；plugin-crash-*（u5b D6-⑤，plugin worker 崩溃取证）
+    // 是新写入面，写入与清理通道同步落地（D6-⑦：有写入无清理 = 新债）。
+    // 固定名 stderr 文件（electron-runtime-stderr.log / zcode-appserver-stderr.log）
+    // 不匹配任何前缀，天然不进超龄清单（writer 持有型 append fd 的 unlink 会造成
+    // 「写成功、盘上无文件」的静默丢失；其治理归 writer 侧 size 轮转）。
+    if (!name.startsWith('runtime-') && !name.startsWith('pi-') && !name.startsWith('plugin-crash-')) continue
     const full = join(logsDir, name)
     try {
       if (statSync(full).mtimeMs < cutoff) {
@@ -457,6 +476,15 @@ export interface PiSessionLog {
 }
 
 /**
+ * pi tee 写入器构造选项（crash-forensics §3.3 D7）。生产代码不传（走默认 50MB）；
+ * 测试注入小阈值验证旋段行为。
+ */
+export interface PiTeeRotationOptions {
+  /** 单文件 size 轮转阈值（字节）。默认 PI_TEE_MAX_FILE_BYTES（50MB）。 */
+  maxBytes?: number
+}
+
+/**
  * 为一个 pi session 创建独立日志写入器。
  *
  * pi stdout 的 JSONL 事件流是诊断 pi 卡死的**决定性证据**（pi 发了什么 / 什么都没发）。
@@ -471,10 +499,10 @@ export interface PiSessionLog {
  *
  * D10-2：接口形状不变（end 后 write 为 no-op），内部从 appendFileSync 换成 WriteStream
  * 缓冲写（惰性打开）。end() 只关闭本 session 写流；注册表保留条目，closeLogger 退出
- * flush 时统一等待全部写流（含已 end 未 flush 完的）落盘——pi 静默卡死场景丢尾部
- * 几行 = 丢「pi 挂在最后哪一步」的冒烟证据（D10-1 分档承诺）。
+ * flush 时统一等待全部写流（含已 end 未 flush 完的、含轮转后新流的）落盘——pi 静默
+ * 卡死场景丢尾部几行 = 丢「pi 挂在最后哪一步」的冒烟证据（D10-1 分档承诺）。
  */
-export function createPiSessionLog(sessionId: string): PiSessionLog {
+export function createPiSessionLog(sessionId: string, _opts?: PiTeeRotationOptions): PiSessionLog {
   if (!logsDir || !currentLevel) {
     // logger 未初始化（如单元测试）：返回 no-op 写入器
     return { write: () => {}, end: () => {} }
@@ -491,11 +519,13 @@ export function createPiSessionLog(sessionId: string): PiSessionLog {
  * 对 relay 子进程的同款覆盖）。
  *
  * 文件名 `pi-relay-<date>-<recordId>.jsonl`（pi- 前缀对齐既有命名，cleanExpiredLogs
- * 的保留期清理同样覆盖；date 前缀防跨天冲突）。recordId 来自握手帧（extension 注入），
- * 按文件名安全字符集清洗。logger 未初始化时返回 no-op 写入器（与 createPiSessionLog
- * 同契约，单元测试无副作用）。
+ * 的保留期清理同样覆盖；date 前缀防跨天冲突）。size 轮转与 createPiSessionLog 同款
+ * （D7 复刻点③ `pi-relay-*` 同款：共享 createPiStreamWriter 的 per-writer 轮转，旋段
+ * `pi-relay-*.jsonl.1` 仍以 pi- 开头，白名单不变量保持）。recordId 来自握手帧（extension
+ * 注入），按文件名安全字符集清洗。logger 未初始化时返回 no-op 写入器（与
+ * createPiSessionLog 同契约，单元测试无副作用）。
  */
-export function createPiRelayLog(recordId: string): PiSessionLog {
+export function createPiRelayLog(recordId: string, _opts?: PiTeeRotationOptions): PiSessionLog {
   if (!logsDir || !currentLevel) {
     return { write: () => {}, end: () => {} }
   }
@@ -504,9 +534,192 @@ export function createPiRelayLog(recordId: string): PiSessionLog {
   return createPiStreamWriter(join(logsDir, `pi-relay-${date}-${safeRecordId}.jsonl`))
 }
 
+// ── 崩溃取证上下文（crash-resilience §3.3 D6-④⑤ / A8）────────────────
+
+/** runtime 进程内存快照的四指标（process.memoryUsage() 的取证子集）。 */
+export interface MemorySnapshot {
+  rss: number
+  heapUsed: number
+  heapTotal: number
+  external: number
+}
+
+/**
+ * pi 崩溃时 runtime 侧可得的上下文（D6-④，A8 交叉归因的 runtime 半边）。
+ *
+ * 全字段可空：来源是 ProcessManager/RpcClient 在崩溃时刻已知的内存态，未知一律 null
+ * （显式落盘「不知道」而不是省略行——字段名恒在，事后 grep 可判别「没采到」与「没打点」）。
+ */
+export interface PiCrashContext {
+  /** 崩溃 session id（rpc-client options.sessionId；早期 spawn 崩溃可能缺失）。 */
+  sessionId: string | null
+  /**
+   * pi 历史文件绝对路径：switch_session 参数或 get_state 返回的 sessionFile，二者
+   * 任一发生过才非 null。新建 session 在首条 assistant 前 pi 侧尚未落盘（仓规 #6），
+   * runtime 不主动创建/探测文件，未知即 null。
+   */
+  sessionFile: string | null
+  /** 最后一次发出的 RPC 命令类型（sendCommand 记录，如 'send_prompt' / 'switch_session'）。 */
+  lastRpcCommand: string | null
+  /** pi 进程存活时长 ms（spawn 完成到崩溃时刻；未记录到 spawn 点为 null）。 */
+  uptimeMs: number | null
+  /** 崩溃时刻 runtime 进程内存快照（captureMemorySnapshot，恒可得除非宿主异常）。 */
+  memory: MemorySnapshot | null
+}
+
+/**
+ * 采集当前进程内存快照（D6-②④ 共用的四指标提取）。
+ * process.memoryUsage() 恒同步可得，无失败路径；包装成函数便于测试替身与统一形状。
+ */
+export function captureMemorySnapshot(): MemorySnapshot {
+  const m = process.memoryUsage()
+  return { rss: m.rss, heapUsed: m.heapUsed, heapTotal: m.heapTotal, external: m.external }
+}
+
+/**
+ * 渲染 pi-crash log 的 runtime 上下文头块（D6-④）。每行 `[runtime-context] key=value`
+ * 形态：与 stderr 原文可肉眼区分、grep 'runtime-context' 可整块提取、null 显式落盘。
+ * 返回多行字符串（无尾换行），调用方负责块间分隔。
+ */
+export function formatPiCrashContextHeader(ctx: PiCrashContext): string {
+  return [
+    `[runtime-context] sessionId=${ctx.sessionId ?? 'null'}`,
+    `[runtime-context] sessionFile=${ctx.sessionFile ?? 'null'}`,
+    `[runtime-context] lastRpcCommand=${ctx.lastRpcCommand ?? 'null'}`,
+    `[runtime-context] uptimeMs=${ctx.uptimeMs ?? 'null'}`,
+    `[runtime-context] memory=${ctx.memory ? JSON.stringify(ctx.memory) : 'null'}`,
+  ].join('\n')
+}
+
+/**
+ * 内存水位行格式化（D6-②，runtime 水位定时器每 5 分钟一行，A8 断言「5 分钟间隔水位行」）。
+ * 单行、数值单位 MB（1 位小数）+ session/pi 计数——grep '[watermark]' 可提取全序列画曲线。
+ *
+ * u1e（crash-forensics D1）：本函数同时是 watermark-daily 自然日聚合的采样入口——组合根
+ * 水位定时器每拍经此处消费样本（唯一生产调用点，依赖事实见上方聚合段注释）。聚合任何
+ * 异常已在 recordWatermarkDailySample 内消化，不影响本函数返回格式化行。
+ */
+export function formatMemoryWatermarkLine(sample: MemoryWatermarkSample): string {
+  recordWatermarkDailySample(sample)
+  const mb = (n: number): string => (n / (BYTES_PER_KB * BYTES_PER_KB)).toFixed(1)
+  return `[watermark] rss=${mb(sample.rss)}MB heapUsed=${mb(sample.heapUsed)}MB heapTotal=${mb(sample.heapTotal)}MB external=${mb(sample.external)}MB sessions=${sample.activeSessions} pi=${sample.piProcesses}`
+}
+
+/** 内存水位行载荷（四指标 + 两个进程计数）。 */
+export interface MemoryWatermarkSample extends MemorySnapshot {
+  /** 活跃 session 数（sessionService.getActiveSessionIds().length）。 */
+  activeSessions: number
+  /** 托管 pi 进程数（ProcessManager.size）。 */
+  piProcesses: number
+}
+
+/** 水位打点周期（分钟，D6-②：每 5 分钟一行）。 */
+const WATERMARK_INTERVAL_MINUTES = 5
+/** runtime 内存水位定时器周期（D6-②）。 */
+export const MEMORY_WATERMARK_INTERVAL_MS = WATERMARK_INTERVAL_MINUTES * SECONDS_PER_MINUTE * MS_PER_SECOND
+
+// ── watermark-daily 自然日聚合（crash-forensics-and-watchdog §3.3 D1，u1e）────────
+//
+// 设计 D1：既有水位 5min 定时器处聚合，自然日窗口一条（rss/heapUsed min/max/avg +
+// coverage 起止戳，评估器条件 #4/#5 数据源，coverage<50% 由评估器降权）；明细 5min 行
+// 仍只进 runtime-*.log 不进台账。**钩子位置的事实依据**：水位定时器本体在组合根
+// index.ts startMemoryWatermarkTimer，其每拍回调恰调用本模块 formatMemoryWatermarkLine
+// 一次（唯一生产消费点）——聚合钩子挂该函数即「既有 5min 水位定时器处」，采样链迁移
+// 时钩子必须随迁。**日内重启处置（D1 原文）**：聚合态在本模块内存、重启即清零——重启
+// 后从进程内首个样本起算当日剩余窗口，coverage 戳随条目落盘；当日未完结不写（只写
+// 完整窗口）。**循环依赖说明**：本模块 import crash-journal（getCrashJournal）、反向被
+// 其 import（logger 单例）——两模块顶层均只做定义、互访全在运行期函数体内（ESM live
+// binding 下安全）；台账单例未初始化时 getCrashJournal 返回 no-op（crash-journal 契约）。
+
+/** 单个自然日窗口的水位聚合态（模块内存态，重启清零——D1 日内重启处置）。 */
+interface WatermarkDailyAccumulator {
+  /** 窗口所属自然日（UTC，YYYY-MM-DD）。 */
+  day: string
+  rssMin: number
+  rssMax: number
+  rssSum: number
+  heapUsedMin: number
+  heapUsedMax: number
+  heapUsedSum: number
+  /** 样本数（avg 分母，digest 携带供评估器判窗口密度）；coverageStart/End = 窗口首末样本时刻（ISO）。 */
+  samples: number
+  coverageStart: string
+  coverageEnd: string
+}
+
+let watermarkDailyAcc: WatermarkDailyAccumulator | undefined
+
+/**
+ * 记录一个水位样本进自然日聚合窗口；检测到日翻转时先把**已完结的前一日窗口**写进
+ * 崩溃台账（event=watermark-daily）再开新窗口。now 缺省当前时刻，测试注入固定时刻
+ * 控制日翻转（真实 IO 不与 fake timers 交互——writer 是真实异步流）。
+ */
+export function recordWatermarkDailySample(sample: MemoryWatermarkSample, now: Date = new Date()): void {
+  try {
+    const day = now.toISOString().slice(0, ISO_DATE_LENGTH)
+    if (watermarkDailyAcc && watermarkDailyAcc.day !== day) {
+      flushWatermarkDaily(watermarkDailyAcc) // 日翻转：前一日窗口已完结（末样本即 coverage 终点）
+      watermarkDailyAcc = undefined
+    }
+    const iso = now.toISOString()
+    const acc = watermarkDailyAcc ?? {
+      day, rssMin: sample.rss, rssMax: sample.rss, rssSum: 0,
+      heapUsedMin: sample.heapUsed, heapUsedMax: sample.heapUsed, heapUsedSum: 0,
+      samples: 0, coverageStart: iso, coverageEnd: iso,
+    }
+    acc.rssMin = Math.min(acc.rssMin, sample.rss)
+    acc.rssMax = Math.max(acc.rssMax, sample.rss)
+    acc.rssSum += sample.rss
+    acc.heapUsedMin = Math.min(acc.heapUsedMin, sample.heapUsed)
+    acc.heapUsedMax = Math.max(acc.heapUsedMax, sample.heapUsed)
+    acc.heapUsedSum += sample.heapUsed
+    acc.samples += 1
+    acc.coverageEnd = iso
+    watermarkDailyAcc = acc
+  // eslint-disable-next-line taste/no-silent-catch -- 聚合是水位定时器回调的旁路观测面，不得打断水位行落盘（writeLogEntry 同款容错哲学）
+  } catch {
+    // no-op
+  }
+}
+
+/**
+ * 把一个已完结的自然日窗口写成一条 watermark-daily 台账事件。字段映射（schema 无统计
+ * 专字段）：顶层 rss/heapUsed = 当日**平均值**（评估器趋势判定主形态）；min/max 与
+ * coverage 起止戳内嵌 detailDigest（JSON，百字节级 ≪ 2KB 上限）。台账未初始化（no-op
+ * 单例）时窗口数据丢弃——no-sink 窗口不伪装成已落盘（与「重启清零」同语义）。
+ *
+ * **digest 键名契约（d2 评估器消费面）**：heap 族 max 键名 = `heapMax`（非 `heapUsedMax`）——
+ * 评估器 extractWatermarkSample（apps/electron/main/diagnostics/trigger-evaluator.ts）
+ * 对 #4「回收态存量致水位不回落」取 `digest.heapMax` 为当日 heap 峰值，缺失则回退顶层
+ * `heapUsed`（当日**平均**）。键名不齐时趋势判定会静默退化为均值口径（无错误、无告警），
+ * 故此处以评估器已声明的键名对齐；rss 族键名同理被评估器用作次选（`rssMax`）。改键名
+ * 前先核对评估器取值链。
+ */
+function flushWatermarkDaily(acc: WatermarkDailyAccumulator): void {
+  if (acc.samples === 0) return
+  const rssAvg = acc.rssSum / acc.samples
+  const heapAvg = acc.heapUsedSum / acc.samples
+  getCrashJournal().append({
+    layer: 'runtime',
+    event: 'watermark-daily',
+    rss: rssAvg,
+    heapUsed: heapAvg,
+    detailDigest: JSON.stringify({
+      coverageStart: acc.coverageStart, coverageEnd: acc.coverageEnd,
+      rssMin: acc.rssMin, rssMax: acc.rssMax, rssAvg,
+      heapMin: acc.heapUsedMin, heapMax: acc.heapUsedMax, heapAvg,
+      samples: acc.samples,
+    }),
+  })
+}
+
 /**
  * pi 崩溃 stderr 全量落盘（设计 file-lock-unification-and-reaper-sink §3.2-D4 / U3-4，
  * rpc-client exit handler 的异常退出分支调用）。
+ *
+ * [crash-resilience §3.3 D6-④] 第三参 context（可选）：runtime 侧上下文头
+ * （formatPiCrashContextHeader 渲染）插在 stderr 原文之前，A8 交叉归因的 runtime 半边；
+ * 未传时行为与历史版本逐字一致（纯 stderr 内容）。
  *
  * 文件名 `pi-crash-<date>-<sessionId>.log`：复用 pi-*.jsonl 命名惯例（pi- 前缀使
  * cleanExpiredLogs 的保留期清理自动覆盖，无需改过滤规则）；date + sessionId 防同日
@@ -521,12 +734,36 @@ export function createPiRelayLog(recordId: string): PiSessionLog {
  * 支持）append 语义不覆盖历史。内容为 best-effort：写失败不向上抛（调用方在 exit
  * 主流程上，观测增强不得影响 rejectAll / exitCallbacks 通知链）。
  */
-export function writePiCrashLog(sessionId: string | undefined, content: string): void {
+export function writePiCrashLog(sessionId: string | undefined, content: string, context?: PiCrashContext): void {
   if (!logsDir || !currentLevel) return
   const date = new Date().toISOString().slice(0, ISO_DATE_LENGTH)
   // 文件名安全化与 createPiSessionLog 同规则；空清洗结果（如全非法字符）回落 'nosid'
   const safeSid = (sessionId ?? 'nosid').replace(/[^a-zA-Z0-9-]/g, '').slice(0, SESSION_ID_MAX_LENGTH) || 'nosid'
   const writer = createPiStreamWriter(join(logsDir, `pi-crash-${date}-${safeSid}.log`))
+  const body = content.endsWith('\n') ? content : content + '\n'
+  // context 头块与 stderr 原文之间空一行分隔（块尾无换行，此处补两个 \n）
+  writer.write(context ? `${formatPiCrashContextHeader(context)}\n\n${body}` : body)
+  writer.end()
+}
+
+/**
+ * plugin worker 崩溃 stderr 全量落盘（[crash-resilience §3.3 D6-⑤ / A8]，plugin-host
+ * handleWorkerCrash 的三入口汇聚点调用）。
+ *
+ * 形态对齐 writePiCrashLog：`plugin-crash-<date>-<workerId>.log`（独立 plugin-crash- 前缀
+ * 进 cleanExpiredLogs 白名单，D6-⑦ 有写入即有清理）；worker 是 Worker Thread 无 pid，
+ * 文件名键用 workerId（如 'trusted-1'），内容头块记录 threadId。重复调用 append 不覆盖
+ * （同 worker 冷却窗内多次崩溃，防御性支持）。
+ *
+ * 未初始化（单元测试）no-op；best-effort：写失败不向上抛（调用方在 crash 处置主流程上，
+ * 观测增强不得影响 rebuild / onCrash 通知链）。
+ */
+export function writePluginCrashLog(workerId: string, content: string): void {
+  if (!logsDir || !currentLevel) return
+  const date = new Date().toISOString().slice(0, ISO_DATE_LENGTH)
+  // 文件名安全化与 writePiCrashLog 同规则；空清洗结果回落 'noworker'
+  const safeWorkerId = workerId.replace(/[^a-zA-Z0-9_-]/g, '').slice(0, SESSION_ID_MAX_LENGTH) || 'noworker'
+  const writer = createPiStreamWriter(join(logsDir, `plugin-crash-${date}-${safeWorkerId}.log`))
   writer.write(content.endsWith('\n') ? content : content + '\n')
   writer.end()
 }
@@ -577,6 +814,8 @@ function createPiStreamWriter(file: string): PiSessionLog {
         }
         // write 返回 false = 背压（缓冲堆积）。日志行量级 KB、磁盘正常不触发；慢盘时
         // 内存增长与轮转窗口 pendingLines 同源，已由容量上限兜底（审查 W30 Fix-6）。
+        // ensurePiStream 惰性打开（首写开流）——勿在其前检查 state.stream（合并事故：
+        // 残留 u9 版「先显式打开再检查」的前置守卫会把首行全部丢弃且流永不打开）。
         ensurePiStream(state).write(data)
         state.bytesWritten += bytes
       // eslint-disable-next-line taste/no-silent-catch -- pi stdout 落盘失败（磁盘满/权限）不影响 runtime 主流程；best-effort 容错
@@ -765,48 +1004,11 @@ function existsSyncSafe(path: string): boolean {
  * end 一个写流并等待其真正关闭（'close' 事件，fd 已释放、缓冲已 flush）。
  *
  * 退出 flush（D10-1）与轮转（审查 m-6）的核心：process.exit() 立即终止进程、rename
- * 前必须有「无在途写」保证——都要求 end 后**等待落盘完成**，否则缓冲窗口内的尾部日志
- * 在退出时丢失 / 轮转边界在途写被 orphaning。
- *
- * 永不 reject（best-effort）：'error' 也 resolve，避免日志模块阻塞进程退出。
- *
- * 超时降级（审查 W30 Fix-1）：fs 挂起时 'close' 永不触发，等待 END_AWAIT_TIMEOUT_MS 后
- * resolve 并**强制销毁流**（destroy 释放 fd、丢弃在途缓冲）——轮转续体照常 rename
- * （rename 失败可容忍、数据不丢，见 rotateMain），closeLogger 不会永久挂起阻塞 SIGTERM
- * 处理器（supervisor 无需升级 SIGKILL）。代价：超时销毁丢弃在途缓冲尾部几行（与硬崩溃
- * 取证能力削弱同档，已声明可接受）。
+ * 前必须有「无在途写」保证——都要求 end 后**等待落盘完成**（形态契约与超时降级见
+ * stream-end-await.ts，偏差 #32① 收敛后的单一实现）。
  */
 function endAndAwait(stream: WriteStream | undefined, label: string): Promise<void> {
-  if (!stream) return Promise.resolve()
-  if (stream.closed) return Promise.resolve() // 已关闭（含已 error 销毁的流）
-  if (!stream.writableEnded) stream.end()
-  if (stream.closed) return Promise.resolve() // 同步关闭路径（如测试用 fake 流）
-  return new Promise<void>((resolve) => {
-    let settled = false
-    const finish = (timedOut: boolean) => {
-      if (settled) return
-      settled = true
-      clearTimeout(timer)
-      // 清理 once 链（审查 W30 Fix-9）：'close' 先触发时 'error' 监听器仍挂残留，
-      // 超时/事件到达后手动移除，避免悬挂监听器持有已关闭流的引用。
-      stream.removeListener('close', onClose)
-      stream.removeListener('error', onError)
-      if (timedOut) {
-        // 强制销毁（审查 W30 Fix-1）：不 destroy 则 fd 悬挂、「close」永不触发，
-        // 后续轮转/退出若再 end 同一流仍会挂满一个超时窗口。无参 destroy 不 emit
-        // 'error'（上面的 error 监听器也已摘除），不会产生未捕获异常。
-        stream.destroy()
-        reportEndAwaitTimeout(label)
-      }
-      resolve()
-    }
-    const onClose = () => finish(false)
-    const onError = () => finish(false)
-    const timer = setTimeout(() => finish(true), END_AWAIT_TIMEOUT_MS)
-    timer.unref?.() // 超时定时器不 holding 事件循环（fs 正常时 close 远早于超时到达）
-    stream.once('close', onClose)
-    stream.once('error', onError)
-  })
+  return endAndAwaitStream(stream, label, reportEndAwaitTimeout)
 }
 
 /**

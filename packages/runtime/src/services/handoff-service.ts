@@ -330,6 +330,18 @@ export class HandoffService {
   }
 
   /**
+   * 查询 handoff 是否进行中（idle pi reclamation D2 #4 豁免信号，u3a 只读访问器）。
+   *
+   * inflight Map 的条目生命周期与「handoff turn 在途」精确同界：runHandoff 第 5 步注册
+   * （prompt 受理前后、等 agent_end），settle 各路（agent_end / timeout / abort / exit）
+   * 经 finalize 清理 + runHandoff finally 兜底清理——条目存在 ⇔ 源 session 正在跑
+   * handoff turn，正是 reaper 必须豁免的窗口（回收会杀掉正在生成 handoff 文档的 pi）。
+   */
+  hasInflightHandoff(sessionId: string): boolean {
+    return this.inflight.has(sessionId)
+  }
+
+  /**
    * 取消进行中的 handoff。
    *
    * 1. inflight 无记录 → no-op return false（幂等；返回 false 让 handler 区分 no-op）。
