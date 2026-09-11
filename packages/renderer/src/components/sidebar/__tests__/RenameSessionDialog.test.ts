@@ -175,7 +175,7 @@ describe('RenameSessionDialog 校验（V5：空/超60/换行拒绝，合法通�
     expect((inputEl() as HTMLInputElement).value).toBe('旧名称')
   })
 
-  it('交互: 初值未动时无错误展示（对齐改写前表单库未 touched 不报错），动过再改回原值错误消失', async () => {
+  it('交互: 初值未动时无错误展示（新实现：label 偏离初值或提交尝试后即显示错误；旧 vee-validate 为 blur/submit 后才显示，差异登记 D7），动过再改回原值错误消失', async () => {
     await mountDialog()
     expect(errorMsgEl(), '打开初值合法不应显示错误').toBeNull()
     await type('')
