@@ -8,8 +8,9 @@
  * （goal 不在 before_agent_start 注入等待消息——避免双信息源，pending 感知由 LLM 自行查询）。
  *
  * 文件职责：
- * - state.ts:    PendingEntry / PendingRegistry + 纯函数（register/unregister/rebuild）
- * - index.ts（本文件）: 工厂入口（注册 events.on 监听 + session 生命周期 + 查询 tool）
+ * - state.ts:    PendingEntry + 差集/写侧判断纯函数（countActiveFromEntries /
+ *                hasPendingId / isPendingActive）
+ * - index.ts（本文件）: 工厂入口（EventBus 写侧监听 + session 基准 + 查询 tool）
  *
  * 事件契约（emit 端在 packages/subagent-core：orchestration/lifecycle.ts 与
  * execution/subagent-service.ts）：
@@ -17,11 +18,12 @@
  * - emit("pending:unregister", { id, reason })
  *
  * entry 契约（与 goal before-agent-start.ts 对齐，读取端按 e.data.id 算差集）：
- * - pending:register → { id, type, name, registeredAt, expiresAt?, sessionId }
- *   （expiresAt 仅 session 档写入；process 档（D16）省略该字段）
+ * - pending:register → { id, type, name, registeredAt, sessionId }
  * - pending:unregister → { id, reason, status }
- *   （主路径为事件监听写入的三字段；session_start 补 expired / session_shutdown 补
- *   cancelled 的 flush 路径只写 { id, status }，省略 reason——消费方只读 id，无行为影响）
+ *
+ * 状态权威源：session entries 是唯一状态——工具投影与写侧去重/活跃判断全部对
+ * getEntries() 现算（appendEntry 同步入账，pi dist 实证），无内存第二份状态；
+ * 历史的内存 registry、session_start 重建、TTL 与 shutdown 机器已删除。
  *
  * 监听方式：pi.events.on（Pi 的 EventBus，真实 SDK 为 EventBus.on，非 optional）。
  * workflow 侧通过 deps.eventBus 注入 pi.events（同一总线）。
@@ -32,38 +34,24 @@ import { getLogger } from "@zhushanwen/pi-extension-logger";
 import { Type } from "typebox";
 
 import {
-	createRegistry,
-	getActive,
-	PENDING_LIFECYCLE,
-	PENDING_TTL_MS,
+	countActiveFromEntries,
+	hasPendingId,
+	isPendingActive,
+	normalizePendingType,
 	type PendingEntry,
-	type PendingRegistry,
 	type PendingStatus,
 	type PendingType,
-	normalizePendingType,
-	rebuildFromEntries,
-	register,
-	unregister,
 } from "./state.ts";
 
 // 跨扩展消费 API：goal（continuation 守卫）/ subagent-workflow（agent_end 后代判定）
-// 直接 import 本包的导出，避免各自复制差集逻辑。PENDING_LIFECYCLE 供消费方（如
-// base-tool-enhance 启动时的 peer 版本检查）读取分档声明。
+// 直接 import 本包导出的 countActiveFromEntries，避免各自复制差集逻辑。导出面只保留
+// 唯一消费函数 + 其签名所需类型（entries 是唯一状态源，包内不再导出状态机 API）。
 export {
 	countActiveFromEntries,
-	createRegistry,
-	getActive,
-	PENDING_LIFECYCLE,
-	PENDING_TTL_MS,
 	type CountActiveOptions,
 	type CountActiveResult,
 	type PendingEntry,
-	type PendingRegistry,
-	type PendingStatus,
 	type PendingType,
-	rebuildFromEntries,
-	register,
-	unregister,
 } from "./state.ts";
 
 const logger = getLogger("pending-notifications");
@@ -111,9 +99,18 @@ export default function pendingNotificationsExtension(pi: ExtensionAPI): void {
 	}
 	unsubscribers = [];
 
-	// ── 闭包内状态（session 隔离，每个 session_start 重建） ─────
-	let registry: PendingRegistry = createRegistry();
+	// ── 闭包内状态 ─────
+	// entries 是唯一状态源（无内存状态副本）：currentSessionId 是查询投影的跨 session
+	// 过滤基准；sessionManager 是 listener 写侧前置判断的 entries 读取通道（EventBus
+	// 回调无 ctx 参数，经 session_start 缓存持有）。
 	let currentSessionId: string = "";
+	let sessionManager: ExtensionContext["sessionManager"] | undefined;
+
+	// listener 前置判断读 entries：未 session_start 前视为空（前置判断放行落盘，
+	// 与历史空状态口径一致）；getEntries 为纯数组读（pi dist 实证），无失败路径。
+	function currentEntries(): unknown[] {
+		return sessionManager?.getEntries() ?? [];
+	}
 
 	// 安全写入 session entry：忽略 stale context 等不可恢复错误（如 subagent 子进程
 	// session replacement 后 listener 仍触发）。返回是否成功。
@@ -129,8 +126,8 @@ export default function pendingNotificationsExtension(pi: ExtensionAPI): void {
 	}
 
 	// debug 日志：环境变量 XYZ_AGENT_DEBUG=1 时经共享 logger 写文件日志（默认 no-op）。
-	// 不再写入 session entry（pending:log）——session entries 是 append-only 无法 GC，
-	// 12 处 debug 日志会让长 session 的 entries 线性膨胀，而 goal before-agent-start
+	// 不写入 session entry（pending:log）——session entries 是 append-only 无法 GC，
+	// debug 日志会让长 session 的 entries 线性膨胀，而 goal before-agent-start
 	// 每 turn 全量扫描 getEntries()。状态数据（pending:register/unregister）仍写 entry。
 	const debugEnabled = process.env.XYZ_AGENT_DEBUG === "1";
 	function debugLog(level: string, message: string, data?: unknown): void {
@@ -149,35 +146,21 @@ export default function pendingNotificationsExtension(pi: ExtensionAPI): void {
 
 		debugLog("debug", "listener: pending:register parsed", parsed);
 
-		const now = Date.now();
-		// D16 分档：process 档（bash 后台任务）不计算 expiresAt——进程级生命周期
-		// 无 TTL 概念，任务寿命由其自身超时/reaper 管理，session 档保持 TTL 不变。
-		const entry: PendingEntry = {
-			id: parsed.id,
-			type: parsed.type,
-			name: parsed.name,
-			status: "active",
-			registeredAt: now,
-			expiresAt: PENDING_LIFECYCLE[parsed.type] === "session" ? now + PENDING_TTL_MS : undefined,
-			sessionId: currentSessionId,
-		};
-
-		// 重复注册忽略（U6）
-		const added = register(registry, entry);
-		if (!added) {
+		// 重复注册忽略（U6）：entries 已有该 id 的 register entry（无论注销与否）即
+		// 跳过——写侧判断与落盘同源（同一份 entries），无第二份状态可分歧。
+		if (hasPendingId(currentEntries(), parsed.id)) {
 			debugLog("debug", "listener: pending:register ignored (duplicate)", { id: parsed.id });
 			return;
 		}
 
-		// 落盘与内存 entry 对称：process 档省略 expiresAt 字段（而非写 undefined），
-		// 读取侧 normalizeRegisterEntry 对 process 档同样不回填，两侧共同兑现 TTL 豁免。
+		// 写入侧无条件省略 expiresAt：三类型全 process 档（无 TTL 概念），读取侧
+		// 同样不读该键，两侧共同兑现豁免。
 		safeAppendEntry("pending:register", {
-			id: entry.id,
-			type: entry.type,
-			name: entry.name,
-			registeredAt: entry.registeredAt,
-			...(entry.expiresAt !== undefined ? { expiresAt: entry.expiresAt } : {}),
-			sessionId: entry.sessionId,
+			id: parsed.id,
+			type: parsed.type,
+			name: parsed.name,
+			registeredAt: Date.now(),
+			sessionId: currentSessionId,
 		});
 
 		debugLog("debug", "listener: pending:register appended", { id: parsed.id });
@@ -194,9 +177,10 @@ export default function pendingNotificationsExtension(pi: ExtensionAPI): void {
 
 		debugLog("debug", "listener: pending:unregister parsed", parsed);
 
+		// 未知/已注销 id 忽略（U8）：对 entries 现算（有 register 且无任何 unregister
+		// 才落盘）——bte 对账已直接落盘的注销在此同样生效，收尾尽力补 emit 天然幂等。
 		const status = mapReasonToStatus(parsed.reason);
-		const changed = unregister(registry, parsed.id, status);
-		if (!changed) {
+		if (!isPendingActive(currentEntries(), parsed.id)) {
 			debugLog("debug", "listener: pending:unregister ignored (unknown id)", { id: parsed.id });
 			return;
 		}
@@ -210,54 +194,10 @@ export default function pendingNotificationsExtension(pi: ExtensionAPI): void {
 		debugLog("debug", "listener: pending:unregister appended", { id: parsed.id });
 	}));
 
-	// ── session_start：从持久化 entries 重建 registry ────────
+	// ── session_start：仅记录当前 session（entries 现算，无状态重建） ─────
 	pi.on("session_start", (_event, ctx: ExtensionContext) => {
-		registry = createRegistry();
+		sessionManager = ctx.sessionManager;
 		currentSessionId = ctx.sessionManager.getSessionId();
-
-		const entries = ctx.sessionManager.getEntries();
-		const now = Date.now();
-		const { expiredToFlush } = rebuildFromEntries(registry, entries, currentSessionId, now);
-
-		debugLog("debug", "session_start: registry rebuilt", {
-			sessionId: currentSessionId,
-			totalEntries: entries.length,
-			activeAfterRebuild: getActive(registry).length,
-			expiredToFlush: expiredToFlush.length,
-		});
-
-		// 补 expired/跨 session 残留的 unregister entry（U3/U4）
-		for (const item of expiredToFlush) {
-			safeAppendEntry("pending:unregister", {
-				id: item.id,
-				status: item.status,
-			});
-		}
-	});
-
-	// ── session_shutdown：所有 active → cancelled + 补 entry（U11） ──
-	// [W4 翻档登记] U11（shutdown 标 cancelled）随翻档对全部现存类型（process 档）
-	// 不再发生——process 档语义本就跨 shutdown 存活，任务收尾归任务自身/reaper/
-	// 监督器，不由 session 退出裁定；清理痕迹由 core 注册对账 sweep 兜底（覆盖
-	// subagent/workflow；bash 无 record/store 可查，死亡窗口丢失无补发通道——显式
-	// 边界，impl-plan §5 偏差登记）。已按设计
-	// 接受（设计 D4 连带面 3），非缺陷。本 handler 与 U3/U4 机器同为 session 档
-	// 留存件，待未来 session 档类型。
-	pi.on("session_shutdown", (_event, _ctx: ExtensionContext) => {
-		const active = getActive(registry);
-		for (const op of active) {
-			// D16 分档：process 档跳过 cancelled 标注——进程级生命周期的任务跨
-			// session 替换继续运行（fork/switch），收尾归任务自身/reaper，
-			// 不由 session 退出裁定。
-			if (PENDING_LIFECYCLE[op.type] === "process") continue;
-			const changed = unregister(registry, op.id, "cancelled");
-			if (changed) {
-				safeAppendEntry("pending:unregister", {
-					id: op.id,
-					status: "cancelled",
-				});
-			}
-		}
 	});
 
 	// ── 查询 tool ─────────────────────────────────────────
@@ -267,16 +207,14 @@ export default function pendingNotificationsExtension(pi: ExtensionAPI): void {
 		description:
 			"查询当前活跃的异步操作（workflow/subagent/bash 后台任务）。action=count 返回数量；action=list 返回列表。状态由 EventBus + session entries 维护，无需手动注册。",
 		parameters: PendingNotificationsParams,
-		execute: async (_toolCallId: string, params: { action: "count" | "list" }, _signal: AbortSignal | undefined, _onUpdate: unknown, _ctx: ExtensionContext): Promise<{ content: { type: "text"; text: string }[]; details: PendingToolDetails }> => {
-			// [W4 读侧过滤③ 工具读侧半口] 防御性按当前 session 过滤（rebuild 入口已按
-			// sessionId 过滤，此处是第二道）：listener 注册路径写入的 entry sessionId =
-			// 注册时的 currentSessionId，session 替换（/new /fork 重建闭包）前残留的
-			// 旧 session entry 若经任何路径进入 registry，投影面会虚报跨 session 活跃。
-			// currentSessionId 为空串（session_start 未到）时不过滤（同 rebuild 的
-			// 旧形态容错方向：宁放行不误逐）。
-			const active = getActive(registry).filter(
-				(op) => currentSessionId === "" || op.sessionId === currentSessionId,
-			);
+		execute: async (_toolCallId: string, params: { action: "count" | "list" }, _signal: AbortSignal | undefined, _onUpdate: unknown, ctx: ExtensionContext): Promise<{ content: { type: "text"; text: string }[]; details: PendingToolDetails }> => {
+			// entries 现算（单一权威源）：与 goal/subagent-workflow 同一原语。跨 session
+			// 残留（fork 继承的父级注册）按 currentSessionId 过滤；为空串（session_start
+			// 未到）时不过滤——宁放行不误逐。
+			const active = countActiveFromEntries(
+				ctx.sessionManager.getEntries(),
+				currentSessionId ? { currentSessionId } : undefined,
+			).entries;
 
 			debugLog("debug", `tool ${params.action} requested`, { action: params.action, activeCount: active.length });
 
@@ -311,7 +249,7 @@ function parseRegisterEvent(data: unknown): ParsedRegister | null {
 	if (typeof d.id !== "string") return null;
 	return {
 		id: d.id,
-		// D16：bash 类型直通（归一化映射与 state.ts 读取侧共用同一函数，防两侧漂移）
+		// bash 类型直通（归一化映射与 state.ts 读取侧共用同一函数，防两侧漂移）
 		type: normalizePendingType(d.type),
 		name: typeof d.name === "string" ? d.name : d.id,
 	};
@@ -334,7 +272,7 @@ function parseUnregisterEvent(data: unknown): ParsedUnregister | null {
 	};
 }
 
-/** 将事件 reason 映射为内部 PendingStatus */
+/** 将事件 reason 映射为 pending:unregister entry 的 status 字段（落盘契约组成部分） */
 function mapReasonToStatus(reason: string): PendingStatus {
 	switch (reason) {
 		case "completed": return "completed";
