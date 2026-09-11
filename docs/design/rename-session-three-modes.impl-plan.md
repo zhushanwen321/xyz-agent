@@ -116,6 +116,7 @@ graph TD
 - CHANGELOG.md 条目归 merge/release 流程（项目惯例）
 - GUI「跟随会话模型」文案与既有 RenameModelNotSet i18n 键的关系——**已闭环（2026-09-12 u6）：新键 renameModelFollow，旧键删除 0 残留**
 - ~~V10 场景需 GUI dev 双 session + 模式切换实操，依赖 u5/u6 完成后联调（Gate B 收口）~~ **已清账（Gate B 收口，2026-09-12：V10 四判据闭环——live 双向、工具面按起动 mode、守卫文案逐字命中、count≥2 一次性窗口拦截，见 §6 阶段 5）**
+- **[design-code-sync r2 留置·待用户裁决] i18n `autoRenameDesc` 模式无关化 + 死键 `autoRenameSessionHint` 删除（R2-07）修复完成但未 commit**——改动在工作区：`packages/renderer/src/i18n/locales/{zh-CN,en-US}/settings.ts`（zh「按所选时机自动用主题给会话命名」/ en 'Auto-name sessions by topic at the selected timing'；死键 zh/en 各 1 行，全仓 grep 0 引用）。验证绿：定向 19/19 + i18n 套件 196/196（含 locale 键集一致性）。**阻塞原因（基础设施时序，非修复质量问题）**：共享 pre-commit hook（`.bare/hooks/pre-commit`，2026-09-12 04:41 被 main 新合入的 dev-0.9.17 线更新）的 C-pi-14 段在 staged 命中 `packages/` 时要求 `scripts/check-layout-literals.mjs` 存在且全量通过；本分支 merge-base（550cdca6b）早于该线的数据布局迁移，守卫全量扫描本分支有 209 处存量命中（main 上已由该线清扫）——拉脚本红、不拉脚本也红，死锁。裁决选项：① merge main 清扫线后正常提交（长期方案）；② 授权单次 `--no-verify` 提交并在 commit message 说明（仅此一次）；③ 用户自行处理 hook 环境后再提交。
 
 **变更历史**：
 - 2026-09-12：初版（来源设计 v3.2；tech-design 审查收敛轨迹：主审 2 轮 0 must-fix、影响面审 3 轮 1 must-fix 全修 + 第 4 轮聚焦复审）。
@@ -123,3 +124,4 @@ graph TD
 - 2026-09-12：阶段 3-4 review 修复与定向复审（8a61fb9b0）——定向复审 7/7 判定、无新 must-fix；残留台账结算（i18n 键闭环、e2e README A1-A7 清账）；同期来源设计升 v3.3（181fc2197 实施期校准）。
 - 2026-09-12：阶段 5 双绿（55fec6746）——Gate A 改动区全绿（唯一失败 = session-reader 存量环境用例，登记残留）+ Gate B 10/10 场景 pass；V9 改道发现（pi 0.84.4 RPC 拒空串）登记。
 - 2026-09-12：design-code-sync 第 2 轮修复（impl-plan 组）——V10 残留风险清账（Gate B 四判据 pass）+ rename-session 计数差异披露（202→203，对齐 renderer 同款说明）。
+- 2026-09-12：design-code-sync 第 2 轮收口——双区审查 9 finding（4MF/4S/1I，8 code-right + 1 doc-right，无 contested）全修：设计文档升 v3.4（dcbca4063：探针回写/V9 改道/D3 throw/§5.3 扩张句/D1 toast 句）+ impl-plan 台账（5da5aca09）+ e2e README 导出清单补全（5718c6164，断言纯函数 11→16 与 harness 24 导出对照差集为空）；聚焦复审 9/9 修复成立 + 零新差距。i18n 组（R2-07）修复完成但留置未 commit（见残留风险 C-pi-14 死锁项）。
