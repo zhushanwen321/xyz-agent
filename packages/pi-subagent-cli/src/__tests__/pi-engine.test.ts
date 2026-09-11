@@ -331,7 +331,8 @@ describe("PiEngine.run（一次性任务形态）", () => {
       forkSource: "/tmp/fork-source.jsonl",
       sessionRootId: "root-sess-f6",
       signal,
-      // resolveSessionDir：<dataDir>/subagents/sessions/<encoded(cwd)>（cwd 未传 = process.cwd()）
+      // [LEGACY fallback] ctx.sessionDir 缺省 → 旧推导 <dataDir>/subagents/sessions/
+      // <encoded(cwd)>（cwd 未传 = process.cwd()）；权威 = 宿主注入（见下方优先用例）
       sessionDir: join("/tmp/engine-data", "subagents", "sessions", process.cwd().replace(/[^a-zA-Z0-9_-]+/g, "_")),
     });
     expect(cap.params.chatMode).toBeUndefined();
@@ -416,6 +417,19 @@ describe("PiEngine.run（一次性任务形态）", () => {
     await runP2;
   });
 
+  it("[Option C] ctx.sessionDir 优先——引擎不再自推导（宿主权威 getSubagentSessionDir 值直通 --session-dir）", async () => {
+    const { engine, captured } = makeEngine();
+    const hostAuthoritative = "/host/agent-dir/subagents/--Users-x-proj--/sessions";
+    const runP = engine.run(
+      { prompt: "sessionDir priority" },
+      { taskId: "run-sd-priority", poolKey: PI_POOL_KEY, sessionDir: hostAuthoritative },
+    );
+    // ctx.sessionDir 有值 → 原样直通（[LEGACY] fallback 不参与——即使其推导值不同）
+    expect(captured[0]!.params.sessionDir).toBe(hostAuthoritative);
+    await settleRun(captured[0]!, spawnRunResult());
+    await runP;
+  });
+
   it("bindAskUser 注入后 run 回调 askUser 转发 host handler", async () => {
     const { engine, captured } = makeEngine();
     const asked: string[] = [];
@@ -456,6 +470,7 @@ describe("PiEngine.run（会话形态轮 run 派发形态）", () => {
       chatMode: true,
       resumeSessionFile: "/tmp/sess-c9.jsonl",
       sessionRootId: "root-sess-f6",
+      // [LEGACY fallback] ctx.sessionDir 缺省 → 旧推导不变（LEGACY 语义锁定）
       sessionDir: join("/tmp/engine-data", "subagents", "sessions", process.cwd().replace(/[^a-zA-Z0-9_-]+/g, "_")),
     });
     expect(cap.params.agentName).toBe("chat-agent");

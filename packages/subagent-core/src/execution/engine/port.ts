@@ -97,6 +97,15 @@ export interface RunContext {
    */
   sessionRootId?: string;
   /**
+   * [Option C 协议化] 权威 subagent session 目录（getSubagentSessionDir(agentDir,
+   * rootCwd) 宿主推导值）——经 wire ctx.sessionDir 送达 pi 引擎组装 `--session-dir`。
+   * 生产注入方 = RemoteEngine（cli 形态引擎的唯一宿主侧适配点，env 同源推导，见
+   * remote-engine buildRunParams）；编排层显式注入（ctx.sessionDir 有值）时优先于
+   * RemoteEngine 自推导。zcode 等不消费 session 目录的引擎忽略本字段。additive：
+   * undefined 不上 wire（引擎走 [LEGACY] fallback）。
+   */
+  sessionDir?: string;
+  /**
    * [P4 对齐点③] 引擎声明实际隔离池 key（journal 落盘路径权威）。宿主创建 journal
    * writer 时只能用缺省占位 poolKey（pi 恒 'shared'），非池化稳定的引擎（zcode 按
    * provider+model 池化）在 prepare 期确定 poolKey 后回调本方法重定向 writer——

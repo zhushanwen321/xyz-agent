@@ -13,6 +13,9 @@
 //
 // W3 消费契约：routing/registry 的 cli 形态 EnginePort 实例 = 本类（先写后读）。
 
+import { homedir } from "node:os";
+import { join } from "node:path";
+
 import {
   CANCEL_SETTLE_GRACE_MS,
   EngineSdkError,
@@ -25,6 +28,7 @@ import {
 } from "@zhushanwen/subagent-engine-sdk";
 
 import type { AgentCallOpts } from "../../../orchestration/models/types.ts";
+import { getSubagentSessionDir } from "../../path-encoding.ts";
 import { assertGateCapabilitiesMatched } from "../common/capability-gate.ts";
 import type {
   EngineCapabilities,
@@ -288,8 +292,37 @@ interface WireRunParams {
     engineFallback: RunContext["engineFallback"];
     streamMode: "stream" | undefined;
     sessionRootId?: string;
+    /** [Option C] 恒有值（宿主注入 ?? 同源 env 推导）——与 sessionRootId 的
+     * "undefined 不上 wire" 不同，本字段派生恒产出字符串。 */
+    sessionDir: string;
   };
   resume?: NonNullable<RunContext["resume"]>;
+}
+
+// pi 壳宿主进程内贯穿的两条 env（与 subagent-service / workflow-state-root 同源推导）：
+//   - PI_CODING_AGENT_DIR：pi SDK getAgentDir 的 env 覆盖通道——xyz-agent 生产链路由
+//     runtime spawn pi 时显式注入（rpc-client buildSafeEnv）；缺省 ~/.pi/agent 与 pi
+//     实装版 dist config.js getAgentDir 逐字同构（锚定先例 workflow-state-root.ts）。
+//   - PI_SUBAGENT_ROOT_CWD：真 ROOT 的 cwd（MF-3 贯穿）——嵌套 subagent 场景宿主
+//     spawn 子进程时注入，与 subagent-service 构造处的 rootCwd 同 env 同值。
+const PI_AGENT_DIR_ENV = "PI_CODING_AGENT_DIR";
+const PI_ROOT_CWD_ENV = "PI_SUBAGENT_ROOT_CWD";
+
+/**
+ * [Option C 协议化] 宿主权威 subagent session 目录（Gate B S6 修复）：宿主进程内
+ * 同源 env 推导 agentDir/rootCwd 后调 getSubagentSessionDir（宿主单一权威推导，
+ * path-encoding.ts——引擎本地推导与宿主布局三处不等价，已降级 [LEGACY] fallback）。
+ * 每次调用重新解析（env 读取零成本，不缓存防测试/宿主切换读旧值，对齐
+ * common/data-dir.ts getEngineDataDir 惯例）。rootCwd 缺省 process.cwd()：pi 壳
+ * ctx.cwd = pi 进程启动 cwd（session-lifecycle 侧同用进程 cwd 的既有锚定）。
+ */
+function deriveHostSubagentSessionDir(): string {
+  const agentDir = process.env[PI_AGENT_DIR_ENV];
+  const resolvedAgentDir =
+    agentDir !== undefined && agentDir !== "" ? agentDir : join(homedir(), ".pi", "agent");
+  const rootCwd = process.env[PI_ROOT_CWD_ENV];
+  const resolvedRootCwd = rootCwd !== undefined && rootCwd !== "" ? rootCwd : process.cwd();
+  return getSubagentSessionDir(resolvedAgentDir, resolvedRootCwd);
 }
 
 /**
@@ -315,6 +348,10 @@ function buildRunParams(task: AgentCallOpts, ctx: RunContext, runId: string): Wi
       // [F6] 根 session id（relay 归属键 SESSION_ID 权威源）——undefined 不上 wire
       //（additive 语义，与顶层 chat 参数同写法）。
       ...(ctx.sessionRootId !== undefined ? { sessionRootId: ctx.sessionRootId } : {}),
+      // [Option C 协议化] 权威 subagent session 目录（Gate B S6）：宿主注入值优先，
+      // 缺省同源 env 推导（deriveHostSubagentSessionDir）——恒有值恒上 wire，引擎
+      // 据此组装 --session-dir 不自推导（引擎本地推导降级 [LEGACY] fallback）。
+      sessionDir: ctx.sessionDir ?? deriveHostSubagentSessionDir(),
     },
     ...(ctx.resume !== undefined ? { resume: ctx.resume } : {}),
   };

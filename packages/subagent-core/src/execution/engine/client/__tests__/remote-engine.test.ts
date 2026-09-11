@@ -15,6 +15,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { EngineClient } from "../engine-client.ts";
 import { RemoteEngine, type RemoteEngineManifestSnapshot } from "../remote-engine.ts";
 import { SubagentStream } from "../../../stream-sink.ts";
+import { getSubagentSessionDir } from "../../../path-encoding.ts";
 import { isProcessAlive } from "../pid-file.ts";
 import { getLogger, type UiRequest } from "@zhushanwen/subagent-engine-sdk";
 
@@ -268,6 +269,32 @@ describe("RemoteEngine run 帧映射", () => {
 
     await withRoot.cleanup();
     await bare.cleanup();
+  });
+
+  it("[Option C] wire ctx.sessionDir = getSubagentSessionDir(env 同源推导)；ctx 显式注入优先", async () => {
+    // stub env 固定推导输入（测试进程可能已带这两键——stub 后期望值确定）
+    vi.stubEnv("PI_CODING_AGENT_DIR", join(dataDir, "agent-dir"));
+    vi.stubEnv("PI_SUBAGENT_ROOT_CWD", join(dataDir, "root-cwd"));
+    try {
+      // 正向：env 同源推导值上 wire（宿主单一权威 getSubagentSessionDir，引擎不自推导）
+      const derived = makeEngine();
+      const { ctx, events } = makeCtx();
+      await derived.engine.run({ prompt: "p" }, ctx);
+      expect(extractRunParams(events).ctx.sessionDir).toBe(
+        getSubagentSessionDir(join(dataDir, "agent-dir"), join(dataDir, "root-cwd")),
+      );
+
+      // 宿主编排层显式注入（ctx.sessionDir）优先于 env 推导
+      const injected = makeEngine();
+      const { ctx: ctxInj, events: eventsInj } = makeCtx({ sessionDir: "/explicit/session-dir" });
+      await injected.engine.run({ prompt: "p" }, ctxInj);
+      expect(extractRunParams(eventsInj).ctx.sessionDir).toBe("/explicit/session-dir");
+
+      await derived.cleanup();
+      await injected.cleanup();
+    } finally {
+      vi.unstubAllEnvs();
+    }
   });
 
   it("poolResolved / handleReady → RunContext 回调（journal 路径权威 + 运行中句柄回填）", async () => {

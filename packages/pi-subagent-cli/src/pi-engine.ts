@@ -60,9 +60,12 @@ const PROBE_VERSION_TIMEOUT_MS = 10_000;
 /** PiEngine 构造依赖。 */
 export interface PiEngineDeps {
   /**
-   * 数据根（协议 initialize 的 hostInfo.dataRoot；subagent session 目录相对它推导）。
-   * 缺省读 env XYZ_AGENT_DATA_DIR——两者皆无时 probe 报错（resolveEngineDataDir 语义，
-   * 显式报 engine_not_found 附期望路径，不猜 cwd）。
+   * 数据根（session 目录 [LEGACY] fallback 与 journal 重放的锚）。来源 = 显式注入
+   * 或 env XYZ_AGENT_DATA_DIR——注意协议 initialize 的 hostInfo.dataRoot 引擎**不
+   * 消费**（initialize 仅版本协商 + capabilities 应答）；权威 session 目录也不由
+   * 它推导（ctx.sessionDir 宿主注入，Option C）。两者皆无时 run 报错
+   * （resolveEngineDataRootOrThrow 语义，显式报 engine_not_found 附期望路径，不猜
+   * cwd）。
    */
   dataDir?: string;
   /** 版本探测执行器（测试注入 fake 避免真实子进程）。 */
@@ -71,8 +74,12 @@ export interface PiEngineDeps {
   spawnRunner?: (params: Parameters<typeof runSpawnOnce>[0], callbacks: SpawnRunCallbacks) => Promise<SpawnRunResult>;
 }
 
-/** subagent session 目录（core getSubagentSessionDir 的包内等价形态：
- *  <dataDir>/subagents/sessions/<encoded(cwd)>）。 */
+/** subagent session 目录的 [LEGACY] fallback（仅独立运行/测试形态）：旧推导
+ *  <dataDir>/subagents/sessions/<encoded(cwd)> 与宿主权威布局
+ *  <agentDir>/subagents/<encodeCwd(rootCwd)>/sessions 三处不等价（根/段序/编码），
+ *  曾致 session 文件与 .record-binding 落到宿主冷查扫描根之外（Gate B S6 全灭）。
+ *  权威 = 宿主注入 ctx.sessionDir（协议化 Option C，宿主 getSubagentSessionDir
+ *  单一权威）；本函数只在 ctx.sessionDir 缺省（旧宿主/直构引擎/测试）时兜底。 */
 function resolveSessionDir(dataDir: string, cwd: string): string {
   const encoded = cwd.replace(/[^a-zA-Z0-9_-]+/g, "_");
   return path.join(dataDir, "subagents", "sessions", encoded);
@@ -228,8 +235,10 @@ function resolveEngineDataRootOrThrow(explicit: string | undefined): string {
   if (dataDir !== undefined) return dataDir;
   throw new EngineSdkError(
     "engine_not_found",
-    "pi-subagent-cli cannot resolve the engine data root (neither initialize hostInfo.dataRoot nor env XYZ_AGENT_DATA_DIR is set)",
-    "The host must pass hostInfo.dataRoot at initialize, or inject XYZ_AGENT_DATA_DIR into the engine child env. Expected shape: <xyz-agent dataDir> (sessions live under <dataDir>/subagents/sessions/).",
+    "pi-subagent-cli cannot resolve the engine data root (neither the explicit deps.dataDir nor env XYZ_AGENT_DATA_DIR is set)",
+    "The host must inject XYZ_AGENT_DATA_DIR into the engine child env (initialize hostInfo.dataRoot is "
+      + "not consumed by this engine). Expected shape: <xyz-agent dataDir> (legacy fallback sessions live "
+      + "under <dataDir>/subagents/sessions/; authoritative sessionDir arrives per-run via ctx.sessionDir).",
   );
 }
 
@@ -256,7 +265,10 @@ function buildRunParams(
       ? `${(ctx.ctxModel as EngineCtxModel).provider}/${(ctx.ctxModel as EngineCtxModel).id}`
       : task.model,
     ...(task.thinkingLevel !== undefined ? { thinkingLevel: task.thinkingLevel } : {}),
-    sessionDir: resolveSessionDir(dataDir, cwd),
+    // [Option C 协议化] session 目录：宿主注入 ctx.sessionDir 权威优先（宿主
+    // getSubagentSessionDir 推导）；缺省走 [LEGACY] fallback（独立运行/测试形态，
+    // 旧推导与宿主布局不等价——见 resolveSessionDir 注释）。
+    sessionDir: ctx.sessionDir ?? resolveSessionDir(dataDir, cwd),
     cwd,
     ...(task.schemaEnv !== undefined ? { schemaEnv: task.schemaEnv } : {}),
     ...(task.maxTurns !== undefined ? { maxTurns: task.maxTurns } : {}),

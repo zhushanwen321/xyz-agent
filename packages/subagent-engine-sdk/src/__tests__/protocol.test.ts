@@ -274,3 +274,21 @@ describe("run.params.ctx 增量字段（F6 sessionRootId：relay 归属键 SESSI
     expect(run.ctx.sessionRootId).toBeUndefined();
   });
 });
+
+describe("run.params.ctx 增量字段（Option C sessionDir：宿主权威 subagent session 目录）", () => {
+  const v1Ctx: RunContextParams = { poolKey: "shared", cwd: "/tmp" };
+
+  it("带 sessionDir 的 run ctx 可构造（引擎据此组装 --session-dir，不自推导）", () => {
+    const run: RunParams = {
+      runId: "run-1",
+      task: { prompt: "do" },
+      ctx: { ...v1Ctx, sessionDir: "/agent/subagents/--Users-x-proj--/sessions" },
+    };
+    expect(run.ctx.sessionDir).toBe("/agent/subagents/--Users-x-proj--/sessions");
+  });
+
+  it("v1 形态（无 sessionDir）零破坏——additive 可选，旧引擎走 [LEGACY] fallback", () => {
+    const run: RunParams = { runId: "run-1", task: { prompt: "do" }, ctx: v1Ctx };
+    expect(run.ctx.sessionDir).toBeUndefined();
+  });
+});

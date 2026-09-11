@@ -87,6 +87,13 @@ export interface RunContext {
    * relay 归属键 SESSION_ID 的权威来源。additive 可选：宿主缺省不传。
    */
   sessionRootId?: string;
+  /**
+   * [Option C 协议化] 权威 subagent session 目录（协议 run.params.ctx.sessionDir 的
+   * 进程内还原）——pi 引擎组装 `--session-dir` 的唯一权威值（宿主
+   * getSubagentSessionDir 推导，引擎不自推导）。additive 可选：缺省走引擎内
+   * [LEGACY] fallback（独立运行/测试形态）。
+   */
+  sessionDir?: string;
   onPoolResolved?: (poolKey: string) => void;
   onHandleReady?: (partial: Pick<EngineHandleData, "sessionRef" | "poolKey">) => void;
   /** 一次性子进程 pid 上报（host/childSpawned 载荷形态；ChildProcess 句柄不跨协议面）。 */

@@ -81,6 +81,14 @@ export interface RunContextParams {
    * 未知字段，undefined 不上 wire。
    */
   sessionRootId?: string;
+  /**
+   * [Option C 协议化] 权威 subagent session 目录——宿主以 getSubagentSessionDir
+   * (agentDir, rootCwd) 推导（宿主单一权威，Fix Gate B S6：引擎本地推导与宿主布局
+   * 三处不等价 → 跨重启续聊链断裂）。引擎用它组装 pi `--session-dir`，不自推导；
+   * 缺省（独立运行/测试）走引擎内 [LEGACY] fallback。additive 可选：旧引擎忽略
+   * 未知字段，undefined 不上 wire。
+   */
+  sessionDir?: string;
 }
 
 // ============================================================

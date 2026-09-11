@@ -352,6 +352,7 @@ describe("run：协议载荷 → 本地 AgentCallOpts/RunContext", () => {
           schemaEnv: "PI_WORKFLOW_SCHEMA=1",
           engineFallback: { from: "zcode", reason: "manifest" },
           sessionRootId: "root-sess-9",
+          sessionDir: "/host/agent-dir/subagents/--Users-x-proj--/sessions",
         },
       },
     });
@@ -385,6 +386,8 @@ describe("run：协议载荷 → 本地 AgentCallOpts/RunContext", () => {
     expect(captured?.ctx.schemaEnv).toBe("PI_WORKFLOW_SCHEMA=1");
     expect(captured?.ctx.engineFallback).toEqual({ from: "zcode", reason: "manifest" });
     expect(captured?.ctx.sessionRootId).toBe("root-sess-9");
+    // [Option C 协议化] ctx.sessionDir 还原透传（宿主权威值，引擎不自推导）
+    expect(captured?.ctx.sessionDir).toBe("/host/agent-dir/subagents/--Users-x-proj--/sessions");
     expect(captured?.ctx.stream).toBeDefined();
     expect(captured?.ctx.signal).toBeInstanceOf(AbortSignal);
     expect(captured?.ctx.resume).toBeUndefined();
