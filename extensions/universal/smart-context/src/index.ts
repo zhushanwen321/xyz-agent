@@ -17,7 +17,6 @@ import {
 	createBeforeCompactHandler,
 	createTakeoverState,
 	debugLog,
-	type BeforeCompactLikeEvent,
 	type TakeoverState,
 } from "./compact-handler.js";
 import { buildDownshiftNotice, buildSwitchNotice, buildThresholdReminder } from "./reminder.js";
@@ -31,29 +30,6 @@ import {
 	loadSmartContextConfig,
 	type EntryLike,
 } from "./pure.js";
-
-/** agent_settled 事件形状（无 payload）。 */
-interface AgentSettledLikeEvent {
-	type: "agent_settled";
-}
-
-/** model_select 事件形状。 */
-interface ModelSelectLikeEvent {
-	type: "model_select";
-	model: { provider?: string; id?: string; contextWindow?: number } | undefined;
-	previousModel: { provider?: string; id?: string; contextWindow?: number } | undefined;
-	source: string;
-}
-
-/** session_compact 事件形状（compactionEntry 只消费 type；interface 无隐式 index signature，
- * 禁用 `& Record<string, unknown>` 交叉目标——会破坏 on() 重载的参数逆变匹配）。 */
-interface SessionCompactLikeEvent {
-	type: "session_compact";
-	compactionEntry: { type: string };
-	fromExtension: boolean;
-	reason: "manual" | "threshold" | "overflow";
-	willRetry: boolean;
-}
 
 /** session 级闭包状态（规范：模块级仅工厂函数，状态在 session_start 重建）。 */
 interface SessionState {
@@ -96,11 +72,10 @@ export default function smartContextExtension(pi: ExtensionAPI): void {
 		() => state.takeover,
 		loadSmartContextConfig,
 	);
-	pi.on("session_before_compact", (event: BeforeCompactLikeEvent, ctx: ExtensionContext) =>
-		beforeCompact(event, ctx));
+	pi.on("session_before_compact", beforeCompact);
 
 	// ── 压缩完成：重置提醒档位（D3）──
-	pi.on("session_compact", (_event: SessionCompactLikeEvent, _ctx: ExtensionContext) => {
+	pi.on("session_compact", (_event, _ctx) => {
 		state.firedThresholds.clear();
 	});
 
@@ -108,7 +83,7 @@ export default function smartContextExtension(pi: ExtensionAPI): void {
 	registerCompactContextTool(pi);
 
 	// ── 阈值提醒（D3/D4）：agent_settled 越档检查 + followUp 一次性投递 ──
-	pi.on("agent_settled", (_event: AgentSettledLikeEvent, ctx: ExtensionContext) => {
+	pi.on("agent_settled", (_event, ctx) => {
 		const config = loadSmartContextConfig();
 		const modelId = getCurrentModelId(ctx.model);
 		if (!isGatingActive(config, modelId)) return;
@@ -128,7 +103,8 @@ export default function smartContextExtension(pi: ExtensionAPI): void {
 	});
 
 	// ── 模型切换：跨界通知 + downshift 提醒（D5，仅跨界时注入一次）──
-	pi.on("model_select", (event: ModelSelectLikeEvent, ctx: ExtensionContext) => {
+	// event 类型由 on() 重载上下文推导为 SDK ModelSelectEvent（不在包根导出，省略标注）
+	pi.on("model_select", (event, ctx) => {
 		const config = loadSmartContextConfig();
 		const modelId = getCurrentModelId(event.model);
 		const previousModelId = getCurrentModelId(event.previousModel);

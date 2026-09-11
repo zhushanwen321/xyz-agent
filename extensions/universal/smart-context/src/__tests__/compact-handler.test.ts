@@ -16,30 +16,45 @@ import { callSameModelCompaction } from "../llm.js";
 import {
 	createBeforeCompactHandler,
 	createTakeoverState,
-	type BeforeCompactLikeEvent,
 } from "../compact-handler.js";
 import { normalizeSmartContextConfig, type SmartContextConfig } from "../pure.js";
-import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, ExtensionContext, SessionBeforeCompactEvent } from "@earendil-works/pi-coding-agent";
 
-function makeEvent(overrides?: Partial<BeforeCompactLikeEvent["preparation"]>): BeforeCompactLikeEvent {
+// assistant 消息形态锁定为单 text 块（设计 §8.3）：必填标量字段补齐 + content 不得追加
+// thinking/toolCall 块——追加会抬高 shadowedTokens，使「新旧口径数值等价」声明静默失效
+function makeEvent(overrides?: Partial<SessionBeforeCompactEvent["preparation"]>): SessionBeforeCompactEvent {
 	return {
 		type: "session_before_compact",
 		preparation: {
 			firstKeptEntryId: "kept-1",
 			messagesToSummarize: [
-				{ role: "user", content: "x".repeat(4_000) },
-				{ role: "assistant", content: "y".repeat(4_000) },
+				{ role: "user", content: "x".repeat(4_000), timestamp: 0 },
+				{
+					role: "assistant",
+					content: [{ type: "text", text: "y".repeat(4_000) }],
+					api: "openai-completions",
+					provider: "zai",
+					model: "glm",
+					usage: {
+						input: 1, output: 1, cacheRead: 0, cacheWrite: 0, totalTokens: 2,
+						cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+					},
+					stopReason: "stop",
+					timestamp: 0,
+				},
 			],
 			turnPrefixMessages: [],
 			isSplitTurn: false,
 			tokensBefore: 500_000,
 			fileOps: { read: new Set(["/a.ts"]), written: new Set(), edited: new Set() },
+			settings: { enabled: true, reserveTokens: 16_384, keepRecentTokens: 20_000 },
 			...overrides,
 		},
 		branchEntries: [],
 		customInstructions: undefined,
 		reason: "manual",
 		willRetry: false,
+		signal: new AbortController().signal,
 	};
 }
 
@@ -148,7 +163,7 @@ describe("session_before_compact 接管 handler", () => {
 	it("收缩校验失败（摘要 ≥ 被压段）→ 拒绝 + 同段记录不重试（D13-1）", async () => {
 		mockedCall.mockResolvedValue({ ok: true, text: "z".repeat(10_000) });
 		const { handler, state } = makeHandler(normalizeSmartContextConfig({}));
-		const event = makeEvent({ messagesToSummarize: [{ role: "user", content: "x".repeat(400) }] });
+		const event = makeEvent({ messagesToSummarize: [{ role: "user", content: "x".repeat(400), timestamp: 0 }] });
 		await expect(handler(event, makeCtx())).resolves.toEqual({});
 		expect(state.inflatedSegments.has("kept-1")).toBe(true);
 		// 同段第二次直接跳过（不再调 LLM）
