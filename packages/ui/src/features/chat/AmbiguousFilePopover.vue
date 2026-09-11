@@ -56,7 +56,7 @@
  * 歧义文件选择浮层。
  *
  * 触发：markdown 裸 basename（如 design.md）点击时，若 fileSearchStore 反查到多个匹配，
- * useMarkdownInteractions 的 onAmbiguous 回调设 ambiguousState → 渲染本组件。
+ * 同包 MarkdownRenderer.vue 的路径点击分支（onClick ③）设 ambiguousState → 渲染本组件。
  *
  * 交互：↑↓ 切换高亮、⏎/Tab 选中、Esc 关闭（window capture 键盘导航，与 CommandPopover 同模式）。
  * 选中后 emit('select', path)，调用方负责 selectFile + drawer.open + 清 ambiguousState。

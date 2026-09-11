@@ -36,6 +36,10 @@ import type { ISessionStore } from '../ports/session.js'
 import type { WorkspaceService } from '../workspace/workspace-service.js'
 import { toErrorMessage, errorWithCode, MODEL_NOT_CONFIGURED, SESSION_NOT_FOUND } from '../../utils/errors.js'
 import { createForkedSessionFile, resolveEntryIdByTimestamp } from './session-fork.js'
+// session-dead-structural-fixes D2/D4：转移原语（宣告帧 announce-idle 行）+ userStopped 门面
+//（restore 标记检测 / delete 清理 / 收敛环）。event-interpreter 是唯一无环的兄弟依赖方向
+//（session-service 值导入本文件与本文件引用的两者，反向 import 成环）。
+import { applySessionOccupancyTransition, userStoppedGate } from './event-interpreter.js'
 // restore 附着辅助（F2/F3 归一化 + U2/D1 生效值播种 + get_state 共用解析）——
 // 自本文件迁出（max-lines 行数合规），函数体逐字节等价，见 restore-seeding.ts。
 import { normalizeInactiveSessionFileIfNeeded, readEffectiveModelFromState, seedRestoreMetaOverride } from './restore-seeding.js'
@@ -189,6 +193,12 @@ export class SessionLifecycle implements ISessionRegistry {
     private readonly workspaceService: WorkspaceService,
     /** registerSession 装配依赖（adapterFactory + send 闭包窄依赖,S3/D2② 随迁注入）。 */
     private readonly registerDeps: ISessionRegisterDeps,
+    /**
+     * D4（session-dead-structural-fixes）restore-abort 失败链的强杀收敛兜底（可选，组合根
+     * 经 SessionService 构造注入 = dispatcher.forceQuit）。未注入时（存量测试）restore-abort
+     * 失败仅记日志保留标记，下次 restore 重试。
+     */
+    private readonly userStoppedOps?: { forceQuitFallback: (sessionId: string) => Promise<void> },
   ) {}
 
   // ── ISessionRegistry：sessions Map 只读查询面（Facade 残余域读点的统一通道）──
@@ -295,9 +305,11 @@ export class SessionLifecycle implements ISessionRegistry {
       forkEntryId,
     }
     this.sessions.set(id, session)
-    // occupancy idle 宣告帧（session-occupancy-send-closure D3 转移 #10 respawn 衔接，
-    // Gate B V6b 反例修复）：直接 publish 而非 updateSessionOccupancy——对象初值即 idle，
-    // 全等去重会短路广播，而本帧职责恰恰是「宣告」而非「转移」：
+    // occupancy idle 宣告帧（session-dead-structural-fixes D2：收编为转移原语 announce-idle
+    // 行，Gate B V6b 反例修复）：原语对该行合并/派生均为 no-op、跳过全等去重强制广播当前
+    // 投影（对象初值即 idle，「转移」的全等去重会短路广播，而本帧职责恰恰是「宣告」），
+    // 广播走原语既有 state-topic 通路（实时广播 + 快照写入/重订阅回放双腿随通路保留，
+    // 不绕过 state topic 裸 publish）：
     // 1. 写 bus state 快照：restore（respawn）后 renderer 重订阅时 stateSnapshot 回放必含
     //    idle 帧。旧假设「重订阅无帧 = idle 缺省」被帧丢失击穿——占用中 pi 死亡时 renderer
     //    的 session.exited 兜底 handler 同步失效本地订阅（invalidateStreamSubscription），
@@ -308,10 +320,7 @@ export class SessionLifecycle implements ISessionRegistry {
     //    restore 场景旧订阅集合已随 onSessionExit 的 bus.clearSession 清除——两腿实际都只
     //    落快照，由重订阅回放消费，时序上 subscribe 必然晚于本 publish（postLoadSession 在
     //    restore RPC resolve 之后），无竞态。
-    this.registerDeps.getMessageBus()?.publish(id, {
-      type: 'session.occupancy',
-      payload: { sessionId: id, turn: 'idle', compacting: false, bash: false },
-    })
+    applySessionOccupancyTransition(session, this.registerDeps.getMessageBus(), 'announce-idle')
     // 注册事件同步直发（sessions.set 之后——订阅者可经 Registry 读到条目）：S3 期订阅者
     // = Facade（组装根接线），按迁移前体内顺序执行 registerReplicatedStates →
     // ensureRecordEntriesCache → reconciler 对账（fire-and-forget）。
@@ -761,8 +770,15 @@ export class SessionLifecycle implements ISessionRegistry {
   }
 
   async delete(sessionId: string): Promise<void> {
+    // D4 清理路径：delete = 彻底删除，userStopped 标记随 session 一起清理（收敛环定时器
+    // 一并停——active 分支的 removeSessionEntry 只停环不清标记，本调用补齐标记清理）。
+    // 两分支共用（非 active 分支不经过 removeSessionEntry 也必须清）。
+    userStoppedGate.disposeForDelete(sessionId)
     const session = this.get(sessionId)
     if (session) {
+      // D5①（session-dead-structural-fixes）：kill 路径全量日志 K5——活跃 session 被删除时
+      // 其 pi 进程被杀，含调用源与信号链（仅 active 分支有 kill；非 active 分支无进程可杀）。
+      console.warn(`[session-lifecycle] deleting active session, killing pi, session ${sessionId} (kill_source=delete | who: user delete session action | chain: detach -> pm destroy -> trash session file)`)
       this.detachSession(sessionId)
       await this.pm.destroySession(sessionId)
       this.svc.removeSessionEntry(sessionId)
@@ -828,92 +844,31 @@ export class SessionLifecycle implements ISessionRegistry {
 
   /** 从持久化文件恢复 session。 */
   async restoreSession(sessionId: string): Promise<SessionSummary> {
-    const target = this.svc.findScannedSession(sessionId)
-    // 文案是追加（非替换）：既有测试用 toThrow 子串匹配「Persisted session X not found」
-    //（test/session-service.test.ts / test/session-pool-restoresession.test.ts），见设计文档 §7.3。
-    if (!target) {
-      throw errorWithCode(
-        `Persisted session ${sessionId} not found — 该会话无已保存内容（进程在首次保存前退出），请新建会话`,
-        SESSION_NOT_FOUND,
-      )
-    }
+    // D5②（session-dead-structural-fixes）：幂等短路复用——client 已活跃且未退出时直接
+    // 返回现有 summary（等价 ensureActive 的既有短路分支），不再无条件清场重开。
+    //
+    // 背景（设计 §2.2 附带缺陷①）：restoreSession 无幂等保护——本事故中 restore #2（用户
+    // 点击 dead session 的 session.restore RPC，直连本方法不经 ensureActive）把 restore #1
+    // 0.6 秒前刚拉起的 pi 杀了重开（14:14:03.104 的「幽灵 exit 143」，K3 撞车实证）。
+    // 短路条件取 ensureActive 同款判定（existing && !existing.exited）+ sessions Map 条目
+    // 存在（toSummary 需要；缺条目 = registerSession 未完成的半截态，走全流程重开安全）。
+    // 短路命中不产生 kill 日志、不重开进程（错误规格 §3.4「session.restore 短路命中」行）。
+    const reused = this.reuseRestoreSessionSummary(sessionId)
+    if (reused) return reused
 
-    if (!this.configStore.getDefaultModel()) {
-      throw errorWithCode('No model configured. Please configure a provider and model in Settings before restoring a session.', MODEL_NOT_CONFIGURED)
-    }
-    const existing = this.get(sessionId)
-    if (existing) {
-      this.detachSession(sessionId)
-      await this.safeDestroy(sessionId)
-      this.svc.removeSessionEntry(sessionId)
-    }
-
-    // session cwd 可能已被删除(如 worktree 清理后),降级到 home。
-    // W1（restore-fork-attach-fix）：cwd 死路径时两处都要兜底——spawn 侧 = 下方 sessionCwd
-    // 降级（cwdFellBack 标记）；会话文件 header 侧 = F3 归一化时 applyHeaderCwdFallback
-    // 落回原文件（归一化后 header cwd 持久化为 homedir——W11「源文件 header 永久保持
-    // 旧 cwd」的声明已被本设计取代，登记表 §4 例外③已更新）。
-    let cwdFellBack = false
-    const sessionCwd = existsSync(target.cwd) ? target.cwd : (() => {
-      console.warn(`[session-lifecycle] session cwd does not exist: ${target.cwd}, falling back to home`)
-      cwdFellBack = true
-      return homedir()
-    })()
-
-    const id = sessionId
-    // preset 是 launch 配置不是终态（设计文档 §4.5），restore 后仍属同一 preset，
-    // .preset.json sidecar 不清理。target.launchPresetId undefined 时（历史 session 无 sidecar）
-    // 用 'builtin:full' 兜底（FR-10）。
-    const presetId = target.launchPresetId ?? BUILTIN_PRESET_IDS.FULL
-    const resolution = await this.svc.getLaunchPresetOptions(presetId, sessionCwd)
-    const allExtPaths = resolution?.extensionPaths ?? await this.svc.getExtensionPaths(sessionCwd)
-    // restore 不接收 Landing Chip override（无用户交互）。preset 的 model 是 launch 配置
-    // 只在创建时生效——附着路径的模型终态由 pi 从 model_change entry 恢复（见下方
-    // inheritSessionModel），presetClientOptions.model 在此处被显式清空；thinking 仍透传
-    // preset（launch 档位；session 内切档由 thinking_level_change entry 承载）。
-    const presetClientOptions = buildPresetClientOptions(resolution, undefined, undefined)
-    // D8-3（perf W29）：restore 同样 spawn pi——gate 等待（启动时恢复路径与 create 一致过 gate）。
-    await migrationGate
-    const client = await this.pm.createSession(id, sessionCwd, {
-      skillPaths: resolution?.skillPaths ?? this.svc.getSkillPaths(sessionCwd),
-      extensionPaths: allExtPaths,
-      systemPrompt: this.svc.getReplaceSystemPrompt(),
-      ...presetClientOptions,
-      // P1（pi-assumption final gate V1⑤）：pi CLI --model 恒优先于 session entry 恢复
-      //（main.js buildSessionOptions），restore 路径曾因全局默认兜底把 --model 拼进 spawn
-      // args，用户切换过的模型在重启重开时被静默压回默认。模型终态改由 pi 从
-      // model_change entry 恢复（每次创建/切换都会写该 entry，W1a 实证）。
-      model: undefined,
-      inheritSessionModel: true,
-    })
-
-    try {
-      // W1（restore-fork-attach-fix）F2/F3 分流：pi 的 switch_session 是「永久重绑读写目标」
-      //（pi-mono session-manager.ts setSessionFile 把传入路径存为永久 sessionFile，_persist
-      // 每轮 appendFileSync 该路径——文件被删后 append 按路径重建），必须直接附着 sessions
-      // 目录内的正式文件。旧「拷贝 $TMPDIR → 附着 tmp → 立即 unlink」管线使 pi 终身写
-      // tmp 孤儿文件、原会话文件永不更新（P0 数据丢失），已整体删除。
-      // 判定/变换逻辑抽至 normalizeInactiveSessionFileIfNeeded（renameSession 非活跃
-      // 分支共用，p1p4-closure W1），行为不变。
-      normalizeInactiveSessionFileIfNeeded(target.filePath, cwdFellBack)
-      // F2 直附着（归一化判定未命中）：零拷贝零改写，pi 的读写目标 = 登记路径 = 原文件。
-      await client.switchSession(target.filePath)
-      // W2（restore-fork-attach-fix F4）：附着必断言（I1「登记路径 ≡ pi 写路径」）——
-      // get_state().sessionFile 与登记路径 resolve 归一后必须一致，不一致即 throw
-      //（D3 fail loud；本 try 的 catch 分支 safeDestroy + rethrow 保证进程不泄漏）。
-      await assertPiSessionFile(client, target.filePath, `restoreSession(${sessionId})`)
-      // W2-4：清理旧 sidecar 移到 switchSession 成功之后。
-      // 原顺序是 switchSession 之前 unlink，若 switchSession 抛错，原 session 的终态 sidecar
-      //（done/stopped）已被删 → 原会话终态永久丢失。现在只在切换成功后才删，失败时保留旧终态。
-      try { unlinkSync(target.filePath + '.meta.json') } catch { void 0 }
-    } catch (e) {
-      // switch_session 失败时清理已创建的资源,避免子进程/监听器泄漏
-      await this.safeDestroy(id)
-      throw e
-    }
+    // 前置校验 + 旧进程清场 + cwd 解析（顺序即语义，勿调换，与拆分前同序）：
+    // findScannedSession → SESSION_NOT_FOUND → model 门禁 → 旧 pi 清场（detach →
+    // safeDestroy → 移 Map 条目）→ cwd 降级判定。
+    const target = this.resolveRestoreTarget(sessionId)
+    await this.clearExistingSessionForRestore(sessionId)
+    const { sessionCwd, cwdFellBack } = this.resolveRestoreCwd(target)
+    const { client, presetId } = await this.spawnRestoreClient(target, sessionId, sessionCwd)
+    await this.attachRestoreFile(client, target, sessionId, cwdFellBack)
 
     // U2: get_state 读回 pi 生效 model + thinkingLevel（D2 设计）。
-    // switchSession 成功后 pi 已附着会话文件，get_state 返回当前生效值。
+    // switchSession 成功后 pi 已附着会话文件，get_state 返回当前生效值
+    //（pi 行为锚点 = 登记 ⑩：switch_session 永久重绑读写目标，agent-session-runtime.ts:193-209 /
+    // session-manager.ts:815-816）。
     // r3 校准：metaOverride 恒提供（读回成功/失败两路径同构），每字段独立走
     // 「读回值 → sidecar 扫描值 → ''」兜底链。restore 从不播种全局默认：空串经
     // registerSession 的 ?? 短路阻断 modelOverride/fallbackModelId，composer 按 D3
@@ -921,22 +876,13 @@ export class SessionLifecycle implements ISessionRegistry {
     // hydrateBindingMeta restore='none' 不覆写播种值（D1 裁决），所以兜底链在此完成不经过 hydrate。
     const restoreMetaOverride = await seedRestoreMetaOverride(client, sessionId, target)
 
-    // M3: registerSession 失败时清理 pi 进程（与 create 同模式）
-    let session: IManagedSessionView
-    try {
-      session = await this.registerSession(
-        id, client, sessionCwd, target.name ?? basename(sessionCwd), target.filePath,
-        undefined, undefined, undefined, undefined, restoreMetaOverride,
-      )
-    } catch (initErr) {
-      await this.safeDestroy(id)
-      throw initErr
-    }
+    // M3: registerSession 失败时清理 pi 进程（与 create 同模式，收口在 registerRestoredSession）
+    const session = await this.registerRestoredSession(sessionId, client, sessionCwd, target, restoreMetaOverride)
     // 恢复后兜底广播一次上下文用量（pi 从历史估算 contextUsage）。
     // 注意：此广播可能早于前端订阅新 sessionId 通道（时序竞争，见架构约定 #7），
     // 前端 useContextUsage composable 的恢复腿（每次切入视图拉 session.getContext）保证到达。
     // fire-and-forget：拉取失败不阻塞 session 恢复。
-    void this.svc.fetchAndBroadcastContext(id)
+    void this.svc.fetchAndBroadcastContext(sessionId)
     // sidecar-binding-sync：restore 全量回填（矩阵 restore 列）——修复缺陷 A-1：原来只回填
     // launchPresetId，projectId/spawnSource/parentAgentSessionId/handedOffTo 不回填导致
     // 重开后归属/徽标丢失、广播回退默认项目。期望值来自 findScannedSession 全字段 meta。
@@ -949,9 +895,231 @@ export class SessionLifecycle implements ISessionRegistry {
       handedOffTo: target.handedOffTo,
     }, 'restore')
     const restoredSummary = this.svc.toSummary(session)
+    // D4（session-dead-structural-fixes）：restore-abort——返回前检测 userStopped 标记。判定
+    // 保持在主流程（位置同拆分前：toSummary 之后、notifySessionCreated 之前）：无标记时本行
+    // 不产生任何 await 边界，await 时序与拆分前逐点相同。标记命中 → applyRestoreAbortConvergence
+    //（abort + 收敛环；失败链与「标记不在此清」的理由见该函数 docstring）。
+    if (userStoppedGate.hasUserStoppedMark(sessionId)) {
+      await this.applyRestoreAbortConvergence(client, sessionId)
+    }
     // S3-W2：创建入口收敛点（restoreSession 路径）——session 复活进 Map，插件 didCreate 投递。
     this.svc.notifySessionCreated(restoredSummary)
     return restoredSummary
+  }
+
+  /**
+   * restore 幂等短路（D5②）：client 已活跃且未退出 + sessions Map 有该条目时，返回现有
+   * summary 供 restoreSession 直接短路。
+   *
+   * 与拆分前逐点等价（含求值顺序）：getClient 无论命中与否都求值（首行）；命中候选才查
+   * sessions Map（缺条目 = registerSession 未完成的半截态 → 返回 undefined 走全流程重开）；
+   * 命中先 console.log 再 toSummary（短路命中不产生 kill 日志、不重开进程——错误规格 §3.4）。
+   * 同步函数，不引入 await 边界。
+   */
+  private reuseRestoreSessionSummary(sessionId: string): SessionSummary | undefined {
+    const existingClient = this.pm.getClient(sessionId)
+    if (!existingClient || existingClient.exited) return undefined
+    const active = this.get(sessionId)
+    if (!active) return undefined
+    console.log(`[session-lifecycle] restoreSession: client already active for ${sessionId}, short-circuiting to existing summary (D5②)`)
+    return this.svc.toSummary(active)
+  }
+
+  /**
+   * restore 前置校验：定位已落盘 session + model 门禁（顺序同拆分前：findScannedSession →
+   * 未找到抛 SESSION_NOT_FOUND → getDefaultModel 门禁——错误优先级不可调换）。
+   *
+   * 文案是追加（非替换）：既有测试用 toThrow 子串匹配「Persisted session X not found」
+   *（test/session-service.test.ts / test/session-pool-restoresession.test.ts），见设计文档 §7.3。
+   */
+  private resolveRestoreTarget(sessionId: string): ScannedSession {
+    const target = this.svc.findScannedSession(sessionId)
+    if (!target) {
+      throw errorWithCode(
+        `Persisted session ${sessionId} not found — 该会话无已保存内容（进程在首次保存前退出），请新建会话`,
+        SESSION_NOT_FOUND,
+      )
+    }
+    if (!this.configStore.getDefaultModel()) {
+      throw errorWithCode('No model configured. Please configure a provider and model in Settings before restoring a session.', MODEL_NOT_CONFIGURED)
+    }
+    return target
+  }
+
+  /**
+   * restore 清场：旧 client 仍活跃时 kill 后重开（D5①）。副作用顺序同拆分前：
+   * 判定 → K3 日志 → detach → **await** safeDestroy → 移 Map 条目。
+   *
+   * D5①（session-dead-structural-fixes）：kill 路径全量日志 K3——旧 pi 被清场重开时
+   * 必须留「谁发起、为什么」痕迹（2026-09-10 事故 14:14:03.104 exit 143 无 kill 日志
+   * 排查一整晚的直接教训；K3 撞车实证：restore #2 杀掉 restore #1 刚拉起的 pi）。
+   */
+  private async clearExistingSessionForRestore(sessionId: string): Promise<void> {
+    const existing = this.get(sessionId)
+    if (!existing) return
+    console.warn(`[session-lifecycle] killing active pi before restore, session ${sessionId} (kill_source=restore_clear | who: restore request while old pi still active (session.restore RPC / ensureActive) | chain: detach -> safeDestroy old pi -> respawn + switch_session)`)
+    this.detachSession(sessionId)
+    await this.safeDestroy(sessionId)
+    this.svc.removeSessionEntry(sessionId)
+  }
+
+  /**
+   * restore spawn cwd 解析：session cwd 可能已被删除(如 worktree 清理后),降级到 home。
+   *
+   * W1（restore-fork-attach-fix）：cwd 死路径时两处都要兜底——spawn 侧 = 本函数返回的
+   * sessionCwd 降级（cwdFellBack 标记）；会话文件 header 侧 = F3 归一化时
+   * applyHeaderCwdFallback 落回原文件（归一化后 header cwd 持久化为 homedir——W11「源文件
+   * header 永久保持旧 cwd」的声明已被本设计取代，登记表 §4 例外③已更新）。
+   * 副作用顺序同拆分前：existsSync → 判定失败才 warn → homedir()。
+   */
+  private resolveRestoreCwd(target: ScannedSession): { sessionCwd: string; cwdFellBack: boolean } {
+    if (existsSync(target.cwd)) return { sessionCwd: target.cwd, cwdFellBack: false }
+    console.warn(`[session-lifecycle] session cwd does not exist: ${target.cwd}, falling back to home`)
+    return { sessionCwd: homedir(), cwdFellBack: true }
+  }
+
+  /**
+   * restore spawn 段：preset 解析 → migrationGate 等待 → createSession（gate 等待使启动时
+   * 恢复路径与 create 一致，D8-3/perf W29）。
+   *
+   * preset 是 launch 配置不是终态（设计文档 §4.5），restore 后仍属同一 preset，.preset.json
+   * sidecar 不清理。target.launchPresetId undefined 时（历史 session 无 sidecar）用
+   * 'builtin:full' 兜底（FR-10）。
+   *
+   * 求值顺序硬约束（同拆分前，勿把 options 字面量提到 gate 之前）：getLaunchPresetOptions →
+   * extensionPaths 兜底 → buildPresetClientOptions → **await migrationGate** → createSession
+   *（skillPaths / systemPrompt 在 options 字面量内求值 = gate 之后）。
+   */
+  private async spawnRestoreClient(
+    target: ScannedSession,
+    sessionId: string,
+    sessionCwd: string,
+  ): Promise<{ client: IPiEngine; presetId: string }> {
+    const presetId = target.launchPresetId ?? BUILTIN_PRESET_IDS.FULL
+    const resolution = await this.svc.getLaunchPresetOptions(presetId, sessionCwd)
+    const allExtPaths = resolution?.extensionPaths ?? await this.svc.getExtensionPaths(sessionCwd)
+    // restore 不接收 Landing Chip override（无用户交互）。preset 的 model 是 launch 配置
+    // 只在创建时生效——附着路径的模型终态由 pi 从 model_change entry 恢复（见下方
+    // inheritSessionModel），presetClientOptions.model 在此处被显式清空；thinking 仍透传
+    // preset（launch 档位；session 内切档由 thinking_level_change entry 承载）。
+    const presetClientOptions = buildPresetClientOptions(resolution, undefined, undefined)
+    await migrationGate
+    const client = await this.pm.createSession(sessionId, sessionCwd, {
+      skillPaths: resolution?.skillPaths ?? this.svc.getSkillPaths(sessionCwd),
+      extensionPaths: allExtPaths,
+      systemPrompt: this.svc.getReplaceSystemPrompt(),
+      ...presetClientOptions,
+      // P1（pi-assumption final gate V1⑤）：pi CLI --model 恒优先于 session entry 恢复
+      //（main.js buildSessionOptions），restore 路径曾因全局默认兜底把 --model 拼进 spawn
+      // args，用户切换过的模型在重启重开时被静默压回默认。模型终态改由 pi 从
+      // model_change entry 恢复（每次创建/切换都会写该 entry，W1a 实证）。
+      model: undefined,
+      inheritSessionModel: true,
+    })
+    return { client, presetId }
+  }
+
+  /**
+   * restore 附着段：F2/F3 归一化 → switchSession → 附着断言 → 清 .meta.json 旧 sidecar；
+   * 任一失败 → **await** safeDestroy 已建进程后原样重抛（子进程/监听器不泄漏）。
+   *
+   * W1（restore-fork-attach-fix）F2/F3 分流：pi 的 switch_session 是「永久重绑读写目标」
+   *（pi-mono session-manager.ts setSessionFile 把传入路径存为永久 sessionFile，_persist
+   * 每轮 appendFileSync 该路径——文件被删后 append 按路径重建），必须直接附着 sessions
+   * 目录内的正式文件。旧「拷贝 $TMPDIR → 附着 tmp → 立即 unlink」管线使 pi 终身写 tmp
+   * 孤儿文件、原会话文件永不更新（P0 数据丢失），已整体删除。
+   * 判定/变换逻辑抽至 normalizeInactiveSessionFileIfNeeded（renameSession 非活跃分支共用，
+   * p1p4-closure W1），行为不变（F2 直附着 = 归一化判定未命中：零拷贝零改写，pi 的读写
+   * 目标 = 登记路径 = 原文件）。
+   *
+   * W2（restore-fork-attach-fix F4）：附着必断言（I1「登记路径 ≡ pi 写路径」）——
+   * get_state().sessionFile 与登记路径 resolve 归一后必须一致，不一致即 throw
+   *（D3 fail loud；catch 分支 safeDestroy + rethrow 保证进程不泄漏）。W2-4：清理旧
+   * sidecar 移到 switchSession 成功之后——原顺序是 switchSession 之前 unlink，若
+   * switchSession 抛错，原 session 的终态 sidecar（done/stopped）已被删 → 原会话终态永久
+   * 丢失。现在只在切换成功后才删，失败时保留旧终态。
+   */
+  private async attachRestoreFile(
+    client: IPiEngine,
+    target: ScannedSession,
+    sessionId: string,
+    cwdFellBack: boolean,
+  ): Promise<void> {
+    try {
+      normalizeInactiveSessionFileIfNeeded(target.filePath, cwdFellBack)
+      await client.switchSession(target.filePath)
+      await assertPiSessionFile(client, target.filePath, `restoreSession(${sessionId})`)
+      try { unlinkSync(target.filePath + '.meta.json') } catch { void 0 }
+    } catch (e) {
+      // switch_session 失败时清理已创建的资源,避免子进程/监听器泄漏
+      await this.safeDestroy(sessionId)
+      throw e
+    }
+  }
+
+  /**
+   * restore 注册段：registerSession + 失败清理（M3：registerSession 失败时清理 pi 进程，
+   * 与 create 同模式）。失败原样重抛（不吞错），清理失败不掩盖原始错误（safeDestroy 自身吞错）。
+   */
+  private async registerRestoredSession(
+    sessionId: string, client: IPiEngine, sessionCwd: string, target: ScannedSession,
+    restoreMetaOverride: { modelId: string; thinkingLevel: string },
+  ): Promise<IManagedSessionRecord> {
+    try {
+      return await this.registerSession(
+        sessionId, client, sessionCwd, target.name ?? basename(sessionCwd), target.filePath,
+        undefined, undefined, undefined, undefined, restoreMetaOverride,
+      )
+    } catch (initErr) {
+      await this.safeDestroy(sessionId)
+      throw initErr
+    }
+  }
+
+  /**
+   * D4（session-dead-structural-fixes）：restore-abort——userStopped 标记命中时 `await
+   * client.abort()`（对 idle pi 是无害 no-op——锚点核实 pi@0.84.4 实装：abort RPC 分支
+   * `dist/modes/rpc/rpc-mode.js:329-331` → `AgentSession.abort()`（`dist/core/agent-session.js:1222-1226`，
+   * 仅 abortRetry + agent.abort + waitForIdle）→ `pi-agent-core/dist/agent.js:201-204`
+   * `abort() { this.activeRun?.abortController.abort() }` 可选链——无活跃 run（`activeRun = undefined`，
+   * `:371`）时零副作用；waitForIdle 对 isIdle（`agent-session.js:620-622`，`!_isAgentRunActive`）
+   * 立即返回——幂等无副作用；对 session_start 钩子补投（notify replay / scheduler）已起跑的
+   * replay turn 是精准中止）。
+   * 调用方已判定标记存在（判定点与拆分前同位置），本函数不重复判定。
+   *
+   * 标记不在此清：notify-ledger 有两条投递腿（session_start 恢复扫描 + settled 补发腿——
+   * abort 掐掉的 turn 收尾产生 agent_settled 边沿，busy parked 的通知在该边沿补投开新
+   * turn），一次性 abort 后清标记会被补发腿击穿（R1 审查反例）。改由收敛环接管：abort 成功后
+   * 启动静默观察窗（起点 = abort 完成，idle 场景同样有明确起点），标记存活期内 interpreter
+   * 观测到非显式投递引发的 agent_start 一律再 abort，窗满且最后一次被掐 turn 的
+   * agent_settled 已到达 → 判收敛清标记（挂点与状态机见 event-interpreter.ts
+   * UserStoppedGate）。显式投递（sendPrompt 等）在 dispatcher 投递前清标记放行。
+   *
+   * 失败链顺序同拆分前：abort 抛错 → warn → **await** forceQuitFallback → 再抛错 → warn
+   *（两层 try/catch 都在本函数内，吞错边界与拆分前一致）。
+   */
+  private async applyRestoreAbortConvergence(client: IPiEngine, sessionId: string): Promise<void> {
+    try {
+      await client.abort()
+      // 主 abort 成功 → 启动收敛环（abort 失败路径不起环：标记不视为已消费，收敛环未完成，
+      // 下次 restore 重试——错误规格 §3.4 restore-abort 失败行）。
+      userStoppedGate.beginRestoreConvergence(sessionId)
+    } catch (abortErr) {
+      // 既有 abort 失败链收口（错误规格 §3.4）：超时/断链 → forceQuit 强杀收敛（幂等：
+      // 进程已死时成功返回）。经注入的 dispatcher.forceQuit（构造注入，避免双倍 abort
+      // RPC 超时等待直达强杀）。强杀失败（极端）→ 标记保留 + 环不启动，用户再点
+      // 「强制退出」即达终态（设计恢复指引）。
+      console.warn(`[session-lifecycle] restore-abort failed for ${sessionId}, falling back to force-quit convergence:`, toErrorMessage(abortErr))
+      try {
+        await this.userStoppedOps?.forceQuitFallback?.(sessionId)
+      } catch (fallbackErr) {
+        // 强杀收敛吞错（降级策略）：走到此处时 abort RPC 已超时，fallback 走 forceQuitSession
+        // 完整链（含自己的日志与广播），此处异常不改变收敛路径——标记保留 + 环不启动（见上），
+        // 下次 restore 重试；restore 主体不可回滚（session 已复活进 Map），向上传播只会把
+        // 收敛细节泄漏成 restore 失败。极端兜底再失败的用户出口：再点「强制退出」即达终态。
+        console.warn(`[session-lifecycle] restore-abort force-quit fallback also failed for ${sessionId}, mark kept for next restore:`, toErrorMessage(fallbackErr))
+      }
+    }
   }
 
   /**

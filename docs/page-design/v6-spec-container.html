@@ -460,7 +460,7 @@
       <div class="anno"><b>⑥ 回底部按钮:</b><br>absolute bottom-4 left-1/2 z-10 size-9 -translate-x-1/2 rounded-full shadow-lg · Transition fade</div>
       <div class="anno"><b>⑥ 触发条件:</b><br>showJumpButton = 非贴底 + 有新内容</div>
       <div class="anno"><b>⑦ ForkNotice:</b><br><span class="v6">[v6 改动]</span> <span class="old">bg-info-soft</span> → <code>bg-surface</code> 卡片骨架 · <b>info 色只落 GitFork icon + 查看链接</b> · 同 ④⑤ 卡片骨架</div>
-      <div class="anno"><b>[欠考虑] 堆叠顺序:</b><br>compacting/dispatching/fork 都读 <code>vlistBottom</code> + offset 垂直堆叠：compacting(46) → dispatching(46) → fork(baseTop)。z-index=10；<b>定位基准与堆叠偏移需文档化</b>（当前由 useMessageStreamNotices/useNoticeStack 计算）</div>
+      <div class="anno"><b>[欠考虑] 堆叠顺序:</b><br>compacting/dispatching/fork 都读 <code>vlistBottom</code> + offset 垂直堆叠：compacting(46) → dispatching(46) → fork(baseTop)。z-index=10；<b>定位基准与堆叠偏移需文档化</b>（原由 useMessageStreamNotices/useNoticeStack 计算；两者已清理——常量族现见 message-stream-layout.ts，编排已于 2026-09-09 D6 死路径清理删除）</div>
       <div class="anno"><b>abs 锚点汇总:</b><br>top=0（load-more）· top=vlistBottom（compacting/dispatching/fork）· bottom-4 center（回底部）· inset-0（空态）</div>
       <div class="anno"><b>z-index 层级:</b><br>瞬时浮层 z-10 · TurnRail z-20 · 同层内按 DOM 顺序</div>
     </div>

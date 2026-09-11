@@ -50,10 +50,10 @@ vi.mock('@/stores/fileTree', () => ({
 }))
 vi.mock('@/stores/panel', () => ({
   usePanelStore: () => ({
-    currentLeaf: { type: 'panel', id: 'panel-root', sessionId: null },
+    currentLeaf: { id: 'panel-root', sessionId: null },
     activePanelId: 'panel-root',
     focusedSessionId: { value: null },
-    layout: { value: { type: 'panel', id: 'panel-root', sessionId: null } },
+    layout: { value: { id: 'panel-root', sessionId: null } },
     findPanelBySession: () => null,
     loadSession: vi.fn(),
   }),
@@ -85,8 +85,7 @@ vi.mock('@/composables/features/command/useCommandStore', () => ({
 vi.mock('@/composables/features/chat/useSessionDerivations', () => ({
   useSessionDerivations: () => ({ derivedStatus: () => ({ value: 'done' }) }),
 }))
-vi.mock('@/composables/features/chat/useSubagentListSync', () => ({ useSubagentListSync: vi.fn() }))
-vi.mock('@/composables/features/chat/useWorkflowListSync', () => ({ useWorkflowListSync: vi.fn() }))
+vi.mock('@/composables/features/chat/useListSync', () => ({ useListSync: vi.fn() }))
 vi.mock('@xyz-agent/core/transport/api', () => ({
   onGlobalType: vi.fn(() => () => {}),
   dispatchSession: vi.fn(),

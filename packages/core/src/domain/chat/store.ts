@@ -532,6 +532,23 @@ export function createChatStore() {
     return queueStates.value.get(sessionId)
   }
 
+  /**
+   * 清指定 session 的 queueStates 快照（forceQuit 编排调用，session-dead G1）。
+   *
+   * 为什么独立于 disposeSession：forceQuit 后 session 仍存在（dead 占位可 restore 重开），
+   * 只清 pi 快照展示态——steer 队列随 pi 进程死亡确定性作废，restore 后无 queue_update
+   * 帧会再清它，残留即「气泡挂着却永远发不出去」的状态撒谎（Gate B 实测）。LRU 驱逐 /
+   * 断连收口对 queueStates 的豁免（D4 / finalizeAllStreaming 各自声明）不受影响——本方法
+   * 仅由用户显式 forceQuit 入口编排，不并入上述收口路径。
+   */
+  function clearQueueState(sessionId: string): void {
+    if (queueStates.value.has(sessionId)) {
+      const next = new Map(queueStates.value)
+      next.delete(sessionId)
+      queueStates.value = next
+    }
+  }
+
   /** 是否已加载历史（用于决定是否调 api.chat.getHistory） */
   function isHydrated(sessionId: string): boolean {
     return hydrated.value.has(sessionId)
@@ -1047,7 +1064,8 @@ export function createChatStore() {
 
   /** 设置/清除 compacting reason 文案源（session.compacting{reason} 写 / session.compacted 清）。
    *  [u5b] setCompacting 退役后 reason 的独立入口——浮层文案（getCompactingReason 消费方
-   *  useMessageStreamNotices）不受 membership 通路切换影响。 */
+   *  ActivityStrip.vue；行高常量族见 message-stream-layout.ts，原 useMessageStreamNotices.ts
+   *  于 2026-09-11 改名）不受 membership 通路切换影响。 */
   function setCompactingReason(sessionId: string, reason: string | undefined): void {
     const nextMap = new Map(compactingReasons.value)
     if (reason === undefined) nextMap.delete(sessionId)
@@ -1171,7 +1189,7 @@ export function createChatStore() {
     failedHistory,
     hydrated,
     getMessages,
-    getRetryState, getQueueState,
+    getRetryState, getQueueState, clearQueueState,
     getChangeSetStatus, setChangeSetStatus,
     markChangeSetsSuperseded,
     isHydrated, markHistoryFailed, clearHistoryError,
@@ -1285,6 +1303,7 @@ export type ChatStoreReaders = Pick<
   | 'getInflight'
 >
 
+
 /**
  * [D6②/u6.1] chat store facet：ops 面——编排/composable 专用动作面（写操作 + LRU + 订阅类 + 测试逃生舱）。
  *
@@ -1306,6 +1325,7 @@ export type ChatStoreOps = Pick<
   | 'refreshStreamingTimer' | 'setStreamingIdleTimeoutMs'
   | 'touchLru' | 'evictIfNeeded' | 'evictSessionWithVirtual' | 'evictVirtualKey'
   | 'incrementInflight' | 'decrementInflight' | 'clearInflight'
+  | 'clearQueueState'
   | 'testInternals'
 >
 

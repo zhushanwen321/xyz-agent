@@ -6,21 +6,26 @@
         <DialogDescription>{{ t('sidebar.renameDialog.desc') }}</DialogDescription>
       </DialogHeader>
 
-      <form class="mt-2 space-y-4" @submit="onSubmit">
-        <FormField v-slot="{ componentField }" name="label">
-          <FormItem>
-            <FormLabel>{{ t('sidebar.renameDialog.nameLabel') }}</FormLabel>
-            <FormControl>
-              <Input
-                v-bind="componentField"
-                ref="inputRef"
-                :placeholder="t('sidebar.renameDialog.namePlaceholder')"
-                autocomplete="off"
-              />
-            </FormControl>
-            <FormMessage />
-          </FormItem>
-        </FormField>
+      <form class="mt-2 space-y-4" @submit.prevent="onSubmit">
+        <div class="space-y-2">
+          <Label for="rename-session-label">{{ t('sidebar.renameDialog.nameLabel') }}</Label>
+          <Input
+            id="rename-session-label"
+            ref="inputRef"
+            v-model="label"
+            :aria-invalid="hasVisibleError"
+            aria-describedby="rename-session-label-message"
+            :placeholder="t('sidebar.renameDialog.namePlaceholder')"
+            autocomplete="off"
+          />
+          <p
+            v-if="hasVisibleError"
+            id="rename-session-label-message"
+            class="text-[12px] font-medium text-danger"
+          >
+            {{ visibleError }}
+          </p>
+        </div>
 
         <div class="flex justify-end gap-2">
           <Button type="button" variant="ghost" size="sm" @click="onCancel">
@@ -38,9 +43,6 @@
 <script setup lang="ts">
 import { computed, ref, watch, nextTick } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { useForm } from 'vee-validate'
-import { toTypedSchema } from '@vee-validate/zod'
-import * as z from 'zod'
 import {
   Dialog,
   DialogContent,
@@ -50,13 +52,7 @@ import {
 } from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
-import {
-  FormControl,
-  FormField,
-  FormItem,
-  FormLabel,
-  FormMessage,
-} from '@/components/ui/form'
+import { Label } from '@/components/ui/label'
 import { useSessionStore } from '@/stores/session'
 
 const { t } = useI18n()
@@ -76,18 +72,28 @@ const inputRef = ref<InstanceType<typeof Input> | null>(null)
 
 const MAX_LABEL_LENGTH = 60
 
-const schema = computed(() => toTypedSchema(
-  z.object({
-    label: z.string()
-      .min(1, t('sidebar.renameDialog.validationRequired'))
-      .max(MAX_LABEL_LENGTH, t('sidebar.renameDialog.validationMaxLength', { max: MAX_LABEL_LENGTH }))
-      .regex(/^[^\r\n]+$/, t('sidebar.renameDialog.validationPattern', { max: MAX_LABEL_LENGTH })),
-  }),
-))
+/** 单字段内联校验（label: min1/max60/无换行），返回错误文案或空串 */
+function validateLabel(value: string): string {
+  if (value.length < 1) return t('sidebar.renameDialog.validationRequired')
+  if (value.length > MAX_LABEL_LENGTH) {
+    return t('sidebar.renameDialog.validationMaxLength', { max: MAX_LABEL_LENGTH })
+  }
+  if (/[\r\n]/.test(value)) {
+    return t('sidebar.renameDialog.validationPattern', { max: MAX_LABEL_LENGTH })
+  }
+  return ''
+}
 
-const { handleSubmit, resetForm } = useForm({
-  validationSchema: schema,
-})
+const label = ref('')
+// 错误仅在校验值偏离打开时初值（用户输入过）或尝试提交后展示，对齐改写前表单库「初始未 touched 不报错」行为
+const initialValue = ref('')
+const submitAttempted = ref(false)
+
+const validationError = computed(() => validateLabel(label.value))
+const hasVisibleError = computed(
+  () => (label.value !== initialValue.value || submitAttempted.value) && !!validationError.value,
+)
+const visibleError = computed(() => (hasVisibleError.value ? validationError.value : ''))
 
 function currentLabel(): string {
   return session.list.find((s) => s.id === props.sessionId)?.label ?? ''
@@ -101,10 +107,16 @@ function focusInput(): void {
   })
 }
 
+function resetState(): void {
+  initialValue.value = currentLabel()
+  label.value = initialValue.value
+  submitAttempted.value = false
+}
+
 function onOpenChange(value: boolean): void {
   emit('update:open', value)
   if (value) {
-    resetForm({ values: { label: currentLabel() } })
+    resetState()
     focusInput()
   }
 }
@@ -113,16 +125,18 @@ function onCancel(): void {
   emit('update:open', false)
 }
 
-const onSubmit = handleSubmit((values) => {
-  emit('confirm', { sessionId: props.sessionId, label: values.label.trim() })
+function onSubmit(): void {
+  submitAttempted.value = true
+  if (validationError.value) return
+  emit('confirm', { sessionId: props.sessionId, label: label.value.trim() })
   emit('update:open', false)
-})
+}
 
 watch(
   () => props.open,
   (isOpen) => {
     if (isOpen) {
-      resetForm({ values: { label: currentLabel() } })
+      resetState()
       focusInput()
     }
   },

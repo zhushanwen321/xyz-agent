@@ -20,7 +20,7 @@ import type { BackgroundTaskFilterValue } from '@/lib/background-task-bucket'
 export const BACKGROUND_TASK_DEFAULT_FILTER: BackgroundTaskFilterValue = 'active'
 
 /** 分区容器：标量必须对象包装（工厂响应式契约，plain object 是已知回归坑）。 */
-export interface BackgroundTaskFilterPartition {
+interface BackgroundTaskFilterPartition {
   value: BackgroundTaskFilterValue
 }
 

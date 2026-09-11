@@ -29,6 +29,7 @@ import type { IProcessManager } from '../ports/pi-engine.js'
 import type { SessionOutcome } from '../ports/session.js'
 import type { IMessageBus } from '../message-bus/message-bus.js'
 import type { IManagedSessionView } from './types.js'
+import { applySessionOccupancyTransition } from './event-interpreter.js'
 import { ReplicatedState } from './replicated-state.js'
 import {
   createThinkingLevelStateConfig,
@@ -245,8 +246,12 @@ export class SessionStateProjection {
    * agent_end 副作用（W3 迁移自 attachUsageListener agent_end 分支）。
    *
    * 承载三个副作用：
-   *   1. 复位 isGenerating=false —— 不迁移则正常生成完成后 session 永远 isGenerating=true，
-   *      下一条消息被 busy 拒绝（message-dispatcher preemptive reject），用户无法继续对话。
+   *   1. occupancy #3 'settling' 转移（session-dead-structural-fixes D2 挂点迁移，u3b）——
+   *      原直写 isGenerating=false 与 interpreter 侧 #3（turn-end → settling）是「agent_end
+   *      两边各写一处且非原子」的漂移形态（设计 §2.3 根因 1），改调 'settling' 行后原语原子
+   *      完成「isGenerating=false 派生 + turn='settling' 合并 + state 帧广播」，双写合一；
+   *      interpreter #3 保留为幂等去重的防御性冗余。不迁移则正常生成完成后 session 永远
+   *      isGenerating=true，下一条消息被 busy 拒绝（message-dispatcher preemptive reject）。
    *   2. project sidecar 兜底补写 —— turn_end 时仍未落盘则在此补写（label 持久化已不在此
    *      承载：W1 起活跃 label 唯一写入口 = set_session_name RPC）。
    *      D1 写点③延迟 flush 兜底（Gate B 实证）同点镜像补写 model sidecar。
@@ -260,7 +265,7 @@ export class SessionStateProjection {
   handleTurnEndSideEffects(sessionId: string, stopReason?: string): void {
     const session = this.deps.getSession(sessionId)
     if (!session) return
-    session.isGenerating = false
+    applySessionOccupancyTransition(session, this.deps.getMessageBus(), 'settling')
     // D14 语义修正：agent_end 兜底补写归属（turn_end 时仍未落盘则在此补写）。
     this.deps.tryPersistProjectBinding(session)
     // D1 写点③延迟 flush 兜底（Gate B 实证）：agent_end 是 turn_end 主路径错过后的
@@ -271,6 +276,36 @@ export class SessionStateProjection {
       : stopReason === 'aborted' ? 'stopped'
         : 'done'
     this.deps.persistSessionOutcome(sessionId, outcome)
+  }
+
+  /**
+   * agent_settled 副作用（session-dead 2026-09-10 补丁）：run 级联结束 → occupancy #4 'idle'
+   * 转移（session-dead-structural-fixes D2 挂点迁移，u3b——原直写 isGenerating=false 改调
+   * 'idle' 行，原语原子完成「isGenerating=false 派生 + turn='idle' 合并」；interpreter 侧 #4
+   * 幂等去重，settled 边沿时投影即时归位）。
+   *
+   * 与上方 agent_end 副作用的分工（pi 实装依据）：`agent_end` 由 Agent 每次 attempt 发出，
+   * retry / auto-compaction 续跑会**重发**，本身不是 run 终点；真正的终点是 `_runAgentPrompt`
+   * 的 `finally` 中 `_emitAgentSettled()`（pi dist/core/agent-session.js:772-786），且存在
+   * 「post-run 尾段返回 false 直接 settle」这条不含 agent_end 的收尾路径（同文件 :787+）。
+   *
+   * 缺本挂点的后果：message-dispatcher 的 processing 分支在 pi 拒绝「already processing」时
+   * 置 isGenerating=true（'reject-processing' 行，见 handlePromptFailure 注释），其复位原先只
+   * 依赖 agent_end。若 prompt 恰落在「post-run 尾段」（_flushPendingBashMessages 等 I/O，可达
+   * 百毫秒级、**每次 run 结束都经过**）窗口，则 agent_end 已发而 settle 未完成 → isGenerating
+   * 永久残留 true：occupancy 已被 #4 复位为 idle（前端照常 flush），但 busy 预检读 occupancy
+   * → 后续每条消息被拒，只能等 abort / 进程退出（幽灵忙碌，与本次事故同类）。
+   *
+   * 语义依据：agent_settled = run 级联结束（pi finally），此刻必无 turn 在跑 → 'idle' 转移正确。
+   * 反向竞态（本复位晚于「新 run 受理 prompt」的置位）存在但可自愈：pi 对活跃 run 的 prompt
+   * 会拒绝 processing（锚点 pi@0.84.4 dist/core/agent-session.js:862 "Agent is already
+   * processing" throw，run 活跃时 prompt 直拒），由 handlePromptFailure 的 processing 分支
+   * （'reject-processing'）重新纠偏。
+   */
+  handleAgentSettledSideEffects(sessionId: string): void {
+    const session = this.deps.getSession(sessionId)
+    if (!session) return
+    applySessionOccupancyTransition(session, this.deps.getMessageBus(), 'idle')
   }
 
   /**

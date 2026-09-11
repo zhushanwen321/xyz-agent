@@ -145,7 +145,8 @@ function makeFixture(sid: string): Fixture {
     // pinia store → core ChatStoreInstance 的类型鸿沟 cast（renderer useChat.ts 同款，运行时等价）
     getChatStore: () => chatStore as unknown as ChatStoreInstance,
     getSessionStore: () => ({ applySnapshot: vi.fn() }),
-    toast: { error: vi.fn() },
+    // [session-dead 第三环] warning：defer 重投熔断提示的注入面（本用例不触发）
+    toast: { error: vi.fn(), warning: vi.fn() },
     t: (k: string) => k,
     getCompactQueue: () => ({ flush: vi.fn().mockResolvedValue(true) }),
   }

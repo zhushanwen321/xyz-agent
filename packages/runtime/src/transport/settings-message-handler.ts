@@ -11,14 +11,34 @@ import { attachSupportedLevelsSafe } from './message-broker.js'
 import { toErrorMessage } from '../utils/errors.js'
 import type { MessageHandlerContext } from './message-context.js'
 import { ConfigPreferencesMessageHandler } from './config-preferences-message-handler.js'
+import type { IProviderCredentialResolver } from '../services/ports/provider-credential-resolver.js'
+import type { IModelConnectionTester } from '../services/ports/model-connection-tester.js'
+import { PROVIDER_CONNECTION_TEST_ERRORS } from '../services/model-service.js'
+import type { ProviderConnectionTestOutcome, ProviderConnectionTestService } from '../services/model-service.js'
 
 /** Interface for server methods needed by this handler */
 export interface SettingsHandlerContext extends MessageHandlerContext {
   configService: IConfigService
   sessionService: ISessionService
-  modelService: IModelService
+  /**
+   * modelService（IModelService）。测试连接的 per-model 编排面（M3a：
+   * ProviderConnectionTestService.testProviderConnections）是可选交集——组合根注入的
+   * ModelService 实现类具备该方法，测试替身可缺省（handler 走 test_unavailable 防御分支）。
+   */
+  modelService: IModelService & Partial<ProviderConnectionTestService>
   /** OAuth Login（路径 B）：config.oauthLogin/oauthCancel RPC 路由 + auth.* 事件由 AuthService 推 broadcast */
   authService: IAuthService
+  /**
+   * Provider 凭据解析唯一通道（D3 收口，链 2 消费点）。
+   * 构造必需（M2fg 收口）：组合根装配注入（M2c），models.json 直查回退已删除。
+   */
+  providerCredentialResolver: IProviderCredentialResolver
+  /**
+   * 测试连接 HTTP 适配器（D-21 端口化：接口 SSOT 在 services/ports，infra 实现
+   * ModelConnectionTester 由组合根构造注入——transport 不再 value import infra）。
+   * 构造必需（恒注入形态，同 providerCredentialResolver）。
+   */
+  connectionTester: IModelConnectionTester
   /** W4：skillRegistry（全局 + 项目级 skill 缓存，带 watcher）。landing 全局 skill 经此拿 globalCache（FR-5）。 */
   skillRegistry: SkillRegistry
   projectRoot: string
@@ -709,16 +729,68 @@ export class SettingsMessageHandler {
   }
 
   private handleDiscoverModels(msg: Extract<ClientMessage, { type: 'config.discoverModels' }>, ws: WsType): boolean {
-    const { baseUrl, apiKey, providerType, providerId } = msg.payload
-    let resolvedApiKey = apiKey
-    if (!resolvedApiKey && providerId) resolvedApiKey = this.ctx.configService.getProvider(providerId)?.apiKey
+    const { baseUrl, apiKey, providerType, providerId, mode } = msg.payload
+    // test 模式（D4）：按模型协议分组发真实最小请求——baseUrl / apiKey 忽略（凭据经 resolver
+    // 唯一通道取，代表模型与端点回落链归 runtime）。缺省 / 'discover' 保持既有 GET /v1/models
+    // 行为逐字节不变（CLI 与旧调用方零改动，向后兼容）。
+    if (mode === 'test') return this.handleTestConnections(msg, ws, providerId)
+    // 链 2（D3 收口）：payload 未带 apiKey 时经 resolver async 版解析（auth.json → models.json），
+    // 修复「catalog 凭据只在 auth.json 时恒 miss」。
+    const credentialPromise: Promise<string | undefined> = apiKey
+      ? Promise.resolve(apiKey)
+      : providerId
+        ? this.resolveProviderApiKey(providerId)
+        : Promise.resolve(undefined)
     // 错误文案翻译（ByteString / fetch failed → 中文）已下沉 model-service；
     // handler 只 reply service 返回的 models 或 error.message。
-    this.ctx.modelService.discoverModelsFromApi(baseUrl, resolvedApiKey, providerType)
+    credentialPromise
+      .then((resolvedApiKey) => this.ctx.modelService.discoverModelsFromApi(baseUrl, resolvedApiKey, providerType))
       .then((models) => { this.ctx.reply(ws, msg.id, 'config.discoveredModels', { models, success: true }) })
       .catch((e: unknown) => {
         this.ctx.reply(ws, msg.id, 'config.discoveredModels', { models: [], success: false, error: toErrorMessage(e) })
       })
     return true
+  }
+
+  /**
+   * test 模式编排：凭据经 resolver → modelService 发 per-协议真实最小请求 → reply results。
+   * 行级失败（协议不支持 / 无 baseUrl / 无启用模型 / HTTP / 网络）不改变顶层 success，
+   * 顶层 success:false 仅承载 provider 级失败 code（见 PROVIDER_CONNECTION_TEST_ERRORS）。
+   */
+  private handleTestConnections(
+    msg: Extract<ClientMessage, { type: 'config.discoverModels' }>,
+    ws: WsType,
+    providerId: string | undefined,
+  ): boolean {
+    if (!providerId) {
+      this.replyTestResult(ws, msg.id, { success: false, error: PROVIDER_CONNECTION_TEST_ERRORS.providerNotFound })
+      return true
+    }
+    // 交集类型的可选方法：解构后判函数（运行时守卫，替代对 IModelService 的强制断言）
+    const testProviderConnections = this.ctx.modelService.testProviderConnections
+    if (typeof testProviderConnections !== 'function') {
+      this.replyTestResult(ws, msg.id, { success: false, error: PROVIDER_CONNECTION_TEST_ERRORS.testUnavailable })
+      return true
+    }
+    this.resolveProviderApiKey(providerId)
+      .then(apiKey => testProviderConnections.call(this.ctx.modelService, providerId, apiKey, this.ctx.connectionTester))
+      .then(outcome => { this.replyTestResult(ws, msg.id, outcome) })
+      .catch((e: unknown) => {
+        this.replyTestResult(ws, msg.id, { success: false, error: toErrorMessage(e) })
+      })
+    return true
+  }
+
+  /** test 模式 reply 装配（成功带 results、失败带 provider 级 code；`models` 恒空——test 不发现模型）。 */
+  private replyTestResult(ws: WsType, id: string | undefined, outcome: ProviderConnectionTestOutcome): void {
+    this.ctx.reply(ws, id, 'config.discoveredModels', outcome.success
+      ? { models: [], success: true, results: outcome.results }
+      : { models: [], success: false, error: outcome.error, results: [] })
+  }
+
+  /** discover 凭据回查（链 2）：唯一通道（auth.json → models.json，ctx 构造必需注入）。 */
+  private async resolveProviderApiKey(providerId: string): Promise<string | undefined> {
+    const resolved = await this.ctx.providerCredentialResolver.resolveProviderCredential(providerId)
+    return resolved?.key
   }
 }

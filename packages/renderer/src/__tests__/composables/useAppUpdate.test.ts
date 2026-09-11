@@ -14,7 +14,7 @@
  * ipc 层新增 updateDownload/updateInstall/getPreloaded 三导出，本测试同步补 mock。
  *
  * Mock 策略：
- * - vi.mock('@/lib/ipc') 桩 8 个 update 方法；onUpdateProgress/onUpdateError 捕获 cb 供测试手动触发
+ * - vi.mock('@/api/domains/settings') 桩 8 个 update 方法；onUpdateProgress/onUpdateError 捕获 cb 供测试手动触发
  * - vi.mock('@/composables/logic/markdown') 桩 renderMarkdown 避免加载 shiki WASM
  * - effectScope 包 useAppUpdate（onScopeDispose 依赖活跃 scope）
  * - _resetForTest 在 beforeEach 重置 module-level 单例 state
@@ -62,7 +62,7 @@ const hoisted = vi.hoisted(() => {
   }
 })
 
-vi.mock('@/lib/ipc', () => ({
+vi.mock('@/api/domains/settings', () => ({
   checkForUpdate: hoisted.checkForUpdate,
   updateDownload: hoisted.updateDownload,
   updateInstall: hoisted.updateInstall,
@@ -89,7 +89,7 @@ vi.mock('@/composables/useToast', () => ({
   useToast: () => toastFns,
 }))
 
-import { useAppUpdate, _resetForTest } from '@/composables/features/settings/useAppUpdate'
+import { useAppUpdate, __testing, _resetForTest } from '@/composables/features/settings/useAppUpdate'
 
 /** 构造测试用 LatestReleaseInfo */
 function makeRelease(version = '0.9.0'): LatestReleaseInfo {
@@ -363,7 +363,7 @@ describe('useAppUpdate', () => {
   // 事故：state.latestRelease 存入 reactive(state) 后被 Vue 深度代理化（含嵌套 assets），
   // performDownload 把 proxy 传给 ipcRenderer.invoke → Electron structured clone 抛
   // "an object could not be cloned" → invoke reject 被 catch 吞成 errorMessage，
-  // 用户在 UpdateButton hover 看到英文 clone 报错。现有用例 mock @/lib/ipc 接收的是
+  // 用户在 UpdateButton hover 看到英文 clone 报错。现有用例 mock @/api/domains/settings 接收的是
   // makeRelease() 返回的普通对象，测不到此问题；本用例在 reactive 上下文（effectScope +
   // useAppUpdate 内部 reactive state）下验证传给 ipc 的对象可被 structuredClone。
   // [批次 3 RC1] 旧用例验证「传给 ipc 的是 plain object（toRaw 解包）」——契约版本号化后
@@ -435,7 +435,7 @@ describe('useAppUpdate', () => {
     const release = makeRelease('0.9.0')
     hoisted.getPreloaded.mockResolvedValue({ release, filePath: '/tmp/preloaded.zip' })
     const { result, stop } = setupUseAppUpdate()
-    const restored = await result.restorePreloadedUpdate()
+    const restored = await __testing.restorePreloadedUpdate()
 
     expect(restored).toBe(true)
     expect(result.state.state).toBe('downloaded')
@@ -446,7 +446,7 @@ describe('useAppUpdate', () => {
   it('restorePreloadedUpdate 无预下载产物（null）→ no-op，state 不变，返回 false', async () => {
     hoisted.getPreloaded.mockResolvedValue(null)
     const { result, stop } = setupUseAppUpdate()
-    const restored = await result.restorePreloadedUpdate()
+    const restored = await __testing.restorePreloadedUpdate()
 
     expect(restored).toBe(false)
     expect(result.state.state).toBe('idle')
@@ -459,7 +459,7 @@ describe('useAppUpdate', () => {
     vi.stubGlobal('__APP_VERSION__', '0.8.48')
     hoisted.getPreloaded.mockResolvedValue({ release: makeRelease('0.8.49'), filePath: '/tmp/x.zip' })
     const { result, stop } = setupUseAppUpdate()
-    const restored = await result.restorePreloadedUpdate()
+    const restored = await __testing.restorePreloadedUpdate()
 
     expect(restored).toBe(true)
     expect(result.state.state).toBe('downloaded')
@@ -471,7 +471,7 @@ describe('useAppUpdate', () => {
     vi.stubGlobal('__APP_VERSION__', '0.8.49')
     hoisted.getPreloaded.mockResolvedValue({ release: makeRelease('0.8.49'), filePath: '/tmp/x.zip' })
     const { result, stop } = setupUseAppUpdate()
-    const restored = await result.restorePreloadedUpdate()
+    const restored = await __testing.restorePreloadedUpdate()
 
     expect(restored).toBe(false)
     expect(result.state.state).not.toBe('downloaded')
@@ -489,7 +489,7 @@ describe('useAppUpdate', () => {
       filePath: '/tmp/x.zip',
     })
     const { result, stop } = setupUseAppUpdate()
-    const restored = await result.restorePreloadedUpdate()
+    const restored = await __testing.restorePreloadedUpdate()
 
     expect(warnSpy).toHaveBeenCalled()
     expect(restored).toBe(true)
@@ -506,7 +506,7 @@ describe('useAppUpdate', () => {
     hoisted.getPreloaded.mockResolvedValue({ release: preloadedRelease, filePath: '/tmp/x.zip' })
     hoisted.checkForUpdate.mockResolvedValue({ info: makeRelease('0.8.44'), rateLimited: false }) // 同版本
     const { result, stop } = setupUseAppUpdate()
-    await result.restorePreloadedUpdate()
+    await __testing.restorePreloadedUpdate()
     expect(result.state.state).toBe('downloaded')
 
     await result.checkForUpdate()
@@ -521,7 +521,7 @@ describe('useAppUpdate', () => {
     hoisted.getPreloaded.mockResolvedValue({ release: preloadedRelease, filePath: '/tmp/x.zip' })
     hoisted.checkForUpdate.mockResolvedValue({ info: makeRelease('0.8.46'), rateLimited: false }) // 更新版本
     const { result, stop } = setupUseAppUpdate()
-    await result.restorePreloadedUpdate()
+    await __testing.restorePreloadedUpdate()
     expect(result.state.state).toBe('downloaded')
 
     await result.checkForUpdate()

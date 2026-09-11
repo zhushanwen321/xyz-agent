@@ -117,7 +117,7 @@ describe('A3b: 缓存失效集成', () => {
       invalidateScanDirCache()
 
       // 创建 session 文件
-      const sessionsDir = join(dir, 'pi', 'sessions')
+      const sessionsDir = join(dir, 'agent', 'sessions')
       mkdirSync(sessionsDir, { recursive: true })
       const fp = join(sessionsDir, 'test.jsonl')
       writeFileSync(fp, '{"type":"session","id":"s1","cwd":"/tmp","timestamp":"2026-01-01"}\n')
@@ -301,7 +301,7 @@ describe('persistModelBinding', () => {
       _resetSessionMetaCacheForTest()
       invalidateScanDirCache()
 
-      const sessionsDir = join(dir, 'pi', 'sessions')
+      const sessionsDir = join(dir, 'agent', 'sessions')
       mkdirSync(sessionsDir, { recursive: true })
       const fp = join(sessionsDir, 'test.jsonl')
       writeFileSync(fp, '{"type":"session","id":"s1","cwd":"/tmp","timestamp":"2026-01-01"}\n')

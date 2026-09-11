@@ -49,6 +49,8 @@ interface WrittenModel {
 
 interface WrittenProvider {
   name?: string
+  baseUrl?: string
+  apiKey?: string
   headers?: Record<string, string>
   authHeader?: boolean
   models?: WrittenModel[]
@@ -75,7 +77,7 @@ function modelsJsonRaw(): string {
 
 beforeEach(() => {
   dir = mkdtempSync(join(tmpdir(), 'provider-write-fields-'))
-  agentDir = join(dir, 'pi', 'agent')
+  agentDir = join(dir, 'agent')
   mkdirSync(join(agentDir, 'config'), { recursive: true })
   process.env.XYZ_AGENT_DATA_DIR = dir
   setModelsPath(join(agentDir, 'models.json'))
@@ -305,12 +307,43 @@ describe('模型合并分支缺口（input 过滤 / thinkingLevelMap 删除 / co
     expect(({} as Record<string, unknown>).bad).toBeUndefined()
   })
 
-  it('id 缺省 → String(m.id ?? "") 空串锚定（不抛错，条目保留）', async () => {
+  it('id 缺省/空串/纯空白 → 该模型整条丢弃（防线② 模型级，不产生 id:"" 条目）', async () => {
+    // baseUrl 在场保证条目仍非空壳、upsert 真发生（否则 skipUpsert 不落盘，读不到文件态）
     await svc.setProvider('my-proxy', {
-      models: [{ name: 'No Id Model' } as unknown as { id: string }],
+      baseUrl: 'https://proxy.example.com',
+      models: [
+        { name: 'No Id Model' } as unknown as { id: string },
+        { id: '   ', name: 'Blank Id' },
+      ],
     })
     const models = readModelsJson().providers['my-proxy']?.models ?? []
-    expect(models).toHaveLength(1)
-    expect((models[0] as Record<string, unknown>).id).toBe('')
+    expect(models).toHaveLength(0)
+    expect(models.some(m => (m as Record<string, unknown>).id === '')).toBe(false)
+  })
+})
+
+/**
+ * M1b：写侧防线②③ 端到端（设计 §4 验收场景 1 的单元级形态——P0 毒化链拆除）。
+ * 真实 models.json + 真实 PiConfigStore：断言「一次 catalog 保存不会把空串写进文件、
+ * 同文件其他 custom provider 的原值不受影响」。
+ */
+describe('M1b：写侧防线②③ 端到端（P0 毒化链拆除）', () => {
+  it('已导入 catalog 保存空串 baseUrl → 条目无空串 baseUrl 键；同文件 custom 的 apiKey 原样保留', async () => {
+    writeModelsJson({
+      // 已导入的 catalog override：带历史 artifact baseUrl（非空）
+      'opencode-go': { name: 'OpenCode Go', baseUrl: 'https://artifact.example/v1' },
+      // 同文件的 custom provider（带凭据）——防御线必须不波及它
+      'my-proxy': { name: 'My Proxy', baseUrl: 'https://proxy.example.com', apiKey: 'sk-keep' },
+    })
+
+    // 编辑体保存形态：catalog 回传空串 baseUrl（清除网关）+ 一条无关 headers 修改
+    await svc.setProvider('opencode-go', { baseUrl: '', headers: { 'X-Custom': 'v' } })
+
+    const raw = modelsJsonRaw()
+    expect(raw).not.toContain('"baseUrl": ""')
+    const providers = readModelsJson().providers
+    expect(providers['opencode-go']).toBeDefined()
+    expect('baseUrl' in (providers['opencode-go'] as Record<string, unknown>)).toBe(false)
+    expect(providers['my-proxy']?.apiKey).toBe('sk-keep')
   })
 })

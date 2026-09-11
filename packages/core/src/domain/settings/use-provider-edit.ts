@@ -18,9 +18,10 @@
  * 零 '@/' import（core 零 renderer 依赖铁律）。
  */
 import { ref, reactive, watch, computed, type Ref } from 'vue'
-import type { ProviderInfo } from '@xyz-agent/shared'
+import type { ProviderInfo, SetProviderData, ConnectionTestResultRow } from '@xyz-agent/shared'
 import { getSettingsStore } from './settings-store'
 import { getSettingsTransport } from './transport'
+import type { DiscoverModelsRequest, DiscoverModelsResponse } from './transport'
 
 // ── 类型 ──
 
@@ -99,16 +100,22 @@ export const CONTEXT_OPTIONS = [
 ] as const
 
 /**
- * 思考策略预设 → thinkingLevelMap。thinkingLevelMap 语义：
- * - key = UI 可选档位（ThinkingLevel 枚举值，含 max），用于展示和判定可用
- * - value = 发给 runtime/pi 的实际 level（string=可用，null=不可用）
- * - 发给 pi 的是 value（如 max 档发 xhigh），不是 key——展示是展示，传递 value 是 value
- * 预设：all-levels(undefined=全档) / on-off(off+high) / high-max(off+high+max→xhigh)
+ * 思考策略预设 → thinkingLevelMap。thinkingLevelMap 语义是 pi 的**黑名单过滤**，
+ * 不是「key = UI 可选档位」的白名单（按白名单心智写预设会多出未列出的默认档）：
+ * pi `getSupportedThinkingLevels`（pi-ai dist/models.js:548-558）对 reasoning=true 的
+ * 模型遍历 EXTENDED_THINKING_LEVELS（off/minimal/low/medium/high/xhigh/max）逐档判定：
+ * - value = null → 剔除该档
+ * - xhigh / max → 必须显式列出（未列即视为不支持）
+ * - 其余档（off/minimal/low/medium/high）→ 默认保留（未列也参与）
+ * 所以「只保留某几档」必须把不要的档显式写 null，不能靠不写 key 实现。
+ * value = 发给 pi 的实际 level（如 max 档发 xhigh），不是 key——展示是展示、传递是 value。
+ * 预设：all-levels(undefined = pi 默认五档 off~high；xhigh/max 需显式映射，要最高档选 high-max)
+ *      / on-off(off+high 两档) / high-max(off+high+max→xhigh 三档)
  */
 const THINKING_PRESETS: Record<ThinkingStrategy, Record<string, string | null> | undefined> = {
   'all-levels': undefined,
-  'on-off': { off: 'off', high: 'high' },
-  'high-max': { off: 'off', high: 'high', max: 'xhigh' },
+  'on-off': { off: 'off', high: 'high', minimal: null, low: null, medium: null },
+  'high-max': { off: 'off', high: 'high', max: 'xhigh', minimal: null, low: null, medium: null },
 }
 
 /** 思考策略 Select 选项（template thinkingStrategies 来源）。
@@ -127,10 +134,17 @@ export const THINKING_STRATEGIES: Array<{
 export type DiscoverAction = 'test' | 'discover'
 
 /**
+ * 测试连接按协议分组的单条结果（runtime `config.discoveredModels.results` 元素，设计 §3.5 D4）：
+ * 每协议一条，代表模型 + 成败 + 失败时的真实原因（HTTP 状态码与响应截断）。
+ * 形状 SSOT = shared ConnectionTestResultRow（S-9 收编，本名保留为域内语义别名）。
+ */
+export type TestConnectionResult = ConnectionTestResultRow
+
+/**
  * apiKey「清除」哨兵值（D18）。
  * 表单内 form.apiKey 默认 ''=不变（save 时 `apiKey || undefined` 跳过）。
  * 用户点「清除」时把 form.apiKey 置为此哨兵，save 识别后发送空串给 runtime
- * （config-service `if (data.apiKey !== undefined) merged.apiKey = data.apiKey`，空串=清空 key）。
+ * ——runtime 防线②把空串转译为删键（delete merged.apiKey），不落空串。
  */
 export const API_KEY_CLEAR_SENTINEL = '__CLEAR__'
 
@@ -298,6 +312,10 @@ export function useProviderEdit(providerRef: Ref<ProviderInfo | null>, deps: Pro
   const discovering = ref(false)
   /** test 结果：ok=连接成功 / error=失败 / null=未测 */
   const testResult = ref<'ok' | 'error' | null>(null)
+  /** test 模式按协议分组的连接结果（runtime results；空数组 = 无分组结果，如整体性失败） */
+  const testResults = ref<TestConnectionResult[]>([])
+  /** test 模式整体性失败原因（success=false 的 error；有分组结果时留空） */
+  const testError = ref('')
   /** discover 结果文案（如「已发现 N 个模型，新增 M 个已合并」） */
   const discoverResult = ref('')
   const showAddModel = ref(false)
@@ -323,6 +341,8 @@ export function useProviderEdit(providerRef: Ref<ProviderInfo | null>, deps: Pro
   function resetTransientState(): void {
     showKey.value = false
     testResult.value = null
+    testResults.value = []
+    testError.value = ''
     discoverResult.value = ''
     showAddModel.value = false
     actionError.value = ''
@@ -382,9 +402,63 @@ export function useProviderEdit(providerRef: Ref<ProviderInfo | null>, deps: Pro
 
   // ── ② test/discover 编排（统一 runDiscover：testConnection 与 autoDiscover 共用）──
 
-  /** 统一探活（transport.discoverModels）：test 取 success→testResult；discover 合并 models + discoverResult */
+  /**
+   * 请求构造（M3b/D4）：discover 显式带 mode（协议缺省即 discover，显式化防默认值将来变化）；
+   * test 只需 providerId + mode——代表模型选择归 runtime（前端零推导，对齐 view-ready 原则），
+   * baseUrl/apiKey/providerType 在 test 模式被 runtime 忽略故不发（baseUrl 是协议形状必填键，
+   * 传 '' 占位）。两模式各自构造（非展开合并）：键序 = 协议序，不用的键根本不出现。
+   */
+  function buildDiscoverRequest(action: DiscoverAction): DiscoverModelsRequest {
+    const providerId = providerRef.value?.id
+    if (action === 'test') return { mode: 'test', baseUrl: '', providerId }
+    return {
+      mode: 'discover',
+      baseUrl: form.baseUrl,
+      providerId,
+      providerType: form.api,
+      apiKey: resolveApiKeyForSave(form.apiKey),
+    }
+  }
+
+  /** test 结果消费（M3b）：分组结果与整体性失败互斥——成功走 results（每协议一行），失败走 error */
+  function applyTestResult(res: DiscoverModelsResponse): void {
+    testResults.value = res.results ?? []
+    testError.value = res.success ? '' : res.error ?? ''
+    testResult.value = res.success ? 'ok' : 'error'
+    if (!res.success && res.error) actionError.value = res.error
+  }
+
+  /**
+   * discover 结果消费：成功则合并去重入清单 + 结果文案，失败则写 actionError。
+   * D9①：合并进来的模型出厂显式 reasoning（对齐 addModel）——pi 两级门控把缺失判「关」，
+   * 缺字段会让思考档位恒只有「关」（失败模式 D 用户数据命中此入口）。
+   */
+  function applyDiscoverResult(res: DiscoverModelsResponse): void {
+    if (!res.success) {
+      actionError.value = res.error ?? t('composable.discoverFailed')
+      return
+    }
+    const discovered = res.models ?? []
+    const existing = new Set(localModels.value.map((m) => m.id))
+    const merged = discovered.filter((m) => !existing.has(m.id))
+    localModels.value.push(
+      ...merged.map((m) => ({
+        id: m.id,
+        name: m.name,
+        contextWindow: m.contextWindow,
+        reasoning: true,
+      })),
+    )
+    discoverResult.value = t('composable.discoveredModels', { count: discovered.length, merged: merged.length > 0 ? t('composable.newMerged', { count: merged.length }) : t('composable.allExisted') })
+  }
+
+  /**
+   * 统一探活（transport.discoverModels）：test 取 success→testResult；discover 合并 models +
+   * discoverResult。本函数只留「置况 → 请求 → 分发结果 → 收尾」的线性骨架，分支细节在下游 helper。
+   */
   async function runDiscover(action: DiscoverAction): Promise<void> {
-    if (action === 'test') {
+    const isTest = action === 'test'
+    if (isTest) {
       testing.value = true
       testResult.value = null
     } else {
@@ -394,37 +468,17 @@ export function useProviderEdit(providerRef: Ref<ProviderInfo | null>, deps: Pro
     actionError.value = ''
 
     try {
-      const res = await getSettingsTransport().discoverModels({
-        baseUrl: form.baseUrl,
-        // D18：探活与 save 同路径解析——哨兵（清除标记）→ undefined，不把哨兵串当真 key 发出
-        apiKey: resolveApiKeyForSave(form.apiKey),
-        providerType: form.api,
-        providerId: providerRef.value?.id,
-      })
-
-      if (action === 'test') {
-        testResult.value = res.success ? 'ok' : 'error'
-        if (!res.success && res.error) actionError.value = res.error
+      const res = await getSettingsTransport().discoverModels(buildDiscoverRequest(action))
+      if (isTest) {
+        applyTestResult(res)
         return
       }
-
-      // discover：成功合并，失败显示错误
-      if (res.success) {
-        const discovered = res.models ?? []
-        const existing = new Set(localModels.value.map((m) => m.id))
-        const merged = discovered.filter((m) => !existing.has(m.id))
-        localModels.value.push(
-          ...merged.map((m) => ({ id: m.id, name: m.name, contextWindow: m.contextWindow })),
-        )
-        discoverResult.value = t('composable.discoveredModels', { count: discovered.length, merged: merged.length > 0 ? t('composable.newMerged', { count: merged.length }) : t('composable.allExisted') })
-      } else {
-        actionError.value = res.error ?? t('composable.discoverFailed')
-      }
+      applyDiscoverResult(res)
     } catch (e) {
-      if (action === 'test') testResult.value = 'error'
+      if (isTest) testResult.value = 'error'
       actionError.value = e instanceof Error ? e.message : String(e)
     } finally {
-      if (action === 'test') testing.value = false
+      if (isTest) testing.value = false
       else discovering.value = false
     }
   }
@@ -445,58 +499,91 @@ export function useProviderEdit(providerRef: Ref<ProviderInfo | null>, deps: Pro
    * 保存：校验 → transport.setProvider。调用方据 result.ok emit close；
    * result.wroteApiKey 供父组件做「apikey 配置完成即自动启用」（ProviderPage afterApiKeySave）。
    */
-  async function save(): Promise<SaveResult> {
-    // 前端校验（D15b）：供应商名称必填
-    if (!form.name.trim()) {
-      actionError.value = t('composable.providerNameRequired')
-      return { ok: false, wroteApiKey: false }
-    }
-    // B-1 形态切换守卫：oauth → api_key 切换后必须提供新 key——确认弹窗承诺「退出 OAuth
-    // 登录」，空 key 保存会让 auth.json OAuth 凭证残留（catalog 的覆写只发生在携带 apiKey 时）
+  /**
+   * 保存前校验：返回错误文案，null = 通过。
+   * - D15b：供应商名称必填
+   * - B-1 形态切换守卫：oauth → api_key 切换后必须提供新 key——确认弹窗承诺「退出 OAuth
+   *   登录」，空 key 保存会让 auth.json OAuth 凭证残留（catalog 的覆写只发生在携带 apiKey 时）
+   */
+  function validateBeforeSave(): string | null {
+    if (!form.name.trim()) return t('composable.providerNameRequired')
     if (snapshot.value?.authMethod === 'oauth' && form.authMethod === 'api_key'
       && resolveApiKeyForSave(form.apiKey) === undefined) {
-      actionError.value = t('composable.oauthSwitchNeedsKey')
+      return t('composable.oauthSwitchNeedsKey')
+    }
+    return null
+  }
+
+  /**
+   * setProvider 载荷构造（防线①：catalog / custom 的 provider 级字段分体系）。
+   * isCatalog / baseUrl 由调用方先算后传（保持原求值时点）；条件键各自按 isCatalog 与 truthy 守卫
+   * 决定带不带键。
+   */
+  function buildSetProviderPayload(isCatalog: boolean, baseUrl: string): SetProviderData {
+    return {
+      // 防线①：custom 空串 name 不带键（truthy 守卫，对齐 use-quick-setup-form 既有先例）；
+      // catalog 的 name 是 provider 展示名（正常态非空），保持回传。
+      ...(isCatalog || form.name.trim() ? { name: form.name } : {}),
+      // 防线①：catalog 不带 type 键——协议是模型级属性，provider 级 api 对 catalog 无用户语义
+      // （前端回传的是快照 artifact，runtime 侧对 catalog 的 type 同样忽略；不发是双保险）。
+      ...(isCatalog ? {} : { type: form.api }),
+      // 防线①：catalog 的 baseUrl **恒显式带键**（值 = trim 结果：非空 = 设置网关 / '' = 清除
+      // 网关——「undefined = 不变」是既有 merge 协议，清空输入框必须走显式空串带键，否则网关
+      // 回退通道不可达）；custom 空串不带键（runtime 对 custom 空串同样是「不变」）。
+      ...(isCatalog || baseUrl ? { baseUrl } : {}),
+      // D18：apiKey 空=不变（undefined）；哨兵=清空（''）；非空=原值
+      apiKey: resolveApiKeyForSave(form.apiKey),
+      // B-1：凭证形态回传（undefined = 不变；runtime 写 providers.json authMethod 标注）
+      authMethod: form.authMethod,
+      // W3 D7：headers（空对象时不传，避免覆盖 runtime 既有值）+ authHeader 回写。
+      headers: Object.keys(form.headers).length > 0 ? form.headers : undefined,
+      authHeader: form.authHeader,
+      // 透传 model 级 api/baseUrl/enabled：runtime setProvider 用 spread 合并 base，
+      // 缺字段会被 base 兜底，但显式回传避免「编辑保存丢字段」（P1 bug #4/#5）。
+      // B-2：catalog provider 的 localModels 只含 override 条目（toEditableModels）——
+      // builtin 不回传，runtime 合并语义 builtin ∪ override 会自动补齐内置模型。
+      models: localModels.value.map((m) => ({
+        id: m.id,
+        name: m.name,
+        api: m.api,
+        baseUrl: m.baseUrl,
+        contextWindow: m.contextWindow,
+        input: m.input,
+        thinkingLevelMap: m.thinkingLevelMap,
+        // B-4b 透传（round-trip 接通）：reasoning/maxTokens/cost/headers 有值才回传
+        // （undefined 不传键，runtime 语义 undefined=不变、base spread 保留既有值；
+        // 与 provider 级 headers「空对象不传」不同——model 级 {} = 清空是 runtime 的
+        // 两态契约，此处值忠实回传）。reasoning 显式 false 是合法值，须用 !== undefined 判定。
+        ...(m.reasoning !== undefined ? { reasoning: m.reasoning } : {}),
+        ...(m.maxTokens !== undefined ? { maxTokens: m.maxTokens } : {}),
+        ...(m.cost !== undefined ? { cost: m.cost } : {}),
+        ...(m.headers !== undefined ? { headers: m.headers } : {}),
+        compat: m.compat,
+        enabled: m.enabled,
+      })),
+    }
+  }
+
+  /**
+   * 保存：校验 → transport.setProvider。调用方据 result.ok emit close；
+   * result.wroteApiKey 供父组件做「apikey 配置完成即自动启用」（ProviderPage afterApiKeySave）。
+   */
+  async function save(): Promise<SaveResult> {
+    const validationError = validateBeforeSave()
+    if (validationError) {
+      actionError.value = validationError
       return { ok: false, wroteApiKey: false }
     }
     saving.value = true
     actionError.value = ''
     const providerId = providerRef.value?.id ?? form.name
+    // 防线①（设计 D1）：catalog / custom 的 provider 级字段分体系。kind 缺失（旧数据 / 新建态
+    // 无 providerRef）按 custom 处理（自定义 provider 需要 provider 级协议）。
+    const isCatalog = providerRef.value?.kind === 'catalog'
+    // 网关输入框值：trim 后判定（纯空白串与空串同视，runtime 侧同样按 trim 判定）
+    const baseUrl = form.baseUrl.trim()
     try {
-      await getSettingsTransport().setProvider(providerId, {
-        name: form.name,
-        type: form.api,
-        baseUrl: form.baseUrl,
-        // D18：apiKey 空=不变（undefined）；哨兵=清空（''）；非空=原值
-        apiKey: resolveApiKeyForSave(form.apiKey),
-        // B-1：凭证形态回传（undefined = 不变；runtime 写 providers.json authMethod 标注）
-        authMethod: form.authMethod,
-        // W3 D7：headers（空对象时不传，避免覆盖 runtime 既有值）+ authHeader 回写。
-        headers: Object.keys(form.headers).length > 0 ? form.headers : undefined,
-        authHeader: form.authHeader,
-        // 透传 model 级 api/baseUrl/enabled：runtime setProvider 用 spread 合并 base，
-        // 缺字段会被 base 兜底，但显式回传避免「编辑保存丢字段」（P1 bug #4/#5）。
-        // B-2：catalog provider 的 localModels 只含 override 条目（toEditableModels）——
-        // builtin 不回传，runtime 合并语义 builtin ∪ override 会自动补齐内置模型。
-        models: localModels.value.map((m) => ({
-          id: m.id,
-          name: m.name,
-          api: m.api,
-          baseUrl: m.baseUrl,
-          contextWindow: m.contextWindow,
-          input: m.input,
-          thinkingLevelMap: m.thinkingLevelMap,
-          // B-4b 透传（round-trip 接通）：reasoning/maxTokens/cost/headers 有值才回传
-          // （undefined 不传键，runtime 语义 undefined=不变、base spread 保留既有值；
-          // 与 provider 级 headers「空对象不传」不同——model 级 {} = 清空是 runtime 的
-          // 两态契约，此处值忠实回传）。reasoning 显式 false 是合法值，须用 !== undefined 判定。
-          ...(m.reasoning !== undefined ? { reasoning: m.reasoning } : {}),
-          ...(m.maxTokens !== undefined ? { maxTokens: m.maxTokens } : {}),
-          ...(m.cost !== undefined ? { cost: m.cost } : {}),
-          ...(m.headers !== undefined ? { headers: m.headers } : {}),
-          compat: m.compat,
-          enabled: m.enabled,
-        })),
-      })
+      await getSettingsTransport().setProvider(providerId, buildSetProviderPayload(isCatalog, baseUrl))
       // 哨兵→''、空→undefined 均为 falsy：只有本次真正写入非空 key（明文或 $ENV 引用）才 true
       return { ok: true, wroteApiKey: Boolean(resolveApiKeyForSave(form.apiKey)) }
     } catch (e) {
@@ -556,8 +643,15 @@ export function useProviderEdit(providerRef: Ref<ProviderInfo | null>, deps: Pro
     m.contextWindow = value
   }
 
-  /** 行级思考策略（Select → 写 thinkingLevelMap） */
+  /**
+   * 行级思考策略（Select → 写 thinkingLevelMap）。
+   * D9②：reasoning 缺失时补显式 true——pi 两级门控把缺失判「关」，不补则用户设的策略
+   * 根本轮不到被读取（弹层只显示「关」）。永不覆盖用户显式 false（显式选择优先于联动）；
+   * all-levels 与其余策略同规则——存量最常见形态正是「从未设策略 = all-levels + reasoning
+   * 缺失」，救回路径必须闭合在 all-levels 分支上。
+   */
   function pickStrategy(m: LocalModel, strategy: ThinkingStrategy): void {
+    if (m.reasoning === undefined) m.reasoning = true
     m.thinkingLevelMap = THINKING_PRESETS[strategy]
       ? structuredClone(THINKING_PRESETS[strategy])
       : undefined
@@ -648,6 +742,8 @@ export function useProviderEdit(providerRef: Ref<ProviderInfo | null>, deps: Pro
     testing,
     discovering,
     testResult,
+    testResults,
+    testError,
     discoverResult,
     showAddModel,
     saving,

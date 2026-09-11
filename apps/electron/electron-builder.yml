@@ -50,7 +50,7 @@ files:
 # dist/runtime 必须在 files 中存在，然后 asarUnpack 会把它从 asar
 # 中剔除到 app.asar.unpacked/ 目录。如果 files 排除了 dist/runtime，
 # 这里只会静默失败，产物中不会有 app.asar.unpacked/dist/runtime/。
-# 检查：scripts/preflight-check.sh [7/10] asarUnpack vs files consistency
+# 检查：scripts/preflight-check.sh [7/11] asarUnpack vs files consistency
 asarUnpack:
   - "dist/runtime/**/*"
   # node-pty native binary（prebuilds/<platform>/pty.node + spawn-helper）

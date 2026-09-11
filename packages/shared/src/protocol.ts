@@ -27,6 +27,23 @@ import type { ImportCandidatesRequest, ImportCandidatesReply, ImportRequest, Imp
 import type { UsageStatsResult } from './usage-stats'
 // composer-gen-stats（docs/design/composer-gen-stats.md §3.4）：生成指标帧形状 SSOT（本文件仅登记 type→payload 映射）
 import type { GenStatsFrame } from './gen-stats'
+// quota.configure payload 形状 SSOT 引用（coding-plan-quota-config-ux §7.1 契约收敛）
+import type { QuotaConfigurePayload } from './quota-types'
+
+/**
+ * 测试连接按协议分组的单行结果（SSOT，2026-09-10 review S-9 手写重复收编）：
+ * protocol `config.discoveredModels.results` 元素 / core transport / core TestConnectionResult /
+ * runtime port ConnectionTestResult 四处同形状，全部引用本类型，漂移编译期红。
+ */
+export interface ConnectionTestResultRow {
+  /** 协议（pi model.api） */
+  api: string
+  /** 该协议分组的代表模型 id */
+  modelId: string
+  ok: boolean
+  /** 失败时的真实原因（HTTP 状态码与响应截断） */
+  error?: string
+}
 
 // ── Client → Runtime message types
 
@@ -184,7 +201,17 @@ export interface QuotaFetchResultPayload {
 
 /** config.setProvider 除 providerId 外的透传字段，与 IConfigService.setProvider 参数对齐。
  *  models 元素字段与 runtime ConfigModelDefinition 对齐（含 api/baseUrl/enabled 透传位，
- *  W2/W4 model 级配置不丢字段）。 */
+ *  W2/W4 model 级配置不丢字段）。
+ *
+ *  写入语义（design catalog-provider-field-authority §3.5 D1「setProvider 契约变化」，
+ *  协议形状不变、向后兼容，行为变化在 runtime 侧）：
+ *  - catalog provider：忽略 `type`（协议是模型级属性，provider 级 api 无用户语义）；
+ *    `baseUrl` 非空 = 设置网关（覆盖该 provider 全部模型端点）、显式空串带键 = 清除网关
+ *    回退内置、未带键（undefined）= 不变（既有 merge 协议不动）。
+ *  - custom 与模型级字段：空串 `name`/`baseUrl`/`apiKey`/`api` 按 pi schema 语义转译——
+ *    `apiKey` 空串 = 清除（删键），其余 = 未指定（不写键）；pi 对空串的 minLength:1 校验
+ *    会拒绝整个 models.json，故空串不得落盘。
+ */
 export interface SetProviderData {
   name?: string
   type?: string
@@ -437,7 +464,18 @@ export interface ClientMessageMap {
   // wave4：按体系移除 provider。kind 来自 ProviderInfo.kind（wave2 聚合层标注），catalog 清凭据/custom 删条目。
   'config.removeProviderByKind': { providerId: ProviderId; kind: 'catalog' | 'custom' }
   'config.setToolPermissions': { permissions: Record<string, string> }
-  'config.discoverModels': { baseUrl: string; apiKey?: string; providerType?: string; providerId?: string }
+  // 模型发现 / 测试连接共享入口（design catalog-provider-field-authority §3.5 D4）。
+  // discover 模式：拉 GET /v1/models（baseUrl 必填），只对 custom provider 有意义；
+  // test 模式：按模型协议分组发真实最小请求（providerId 必填，baseUrl/apiKey 忽略，
+  // 凭据经 runtime 唯一的 provider 凭据解析通道取）。
+  'config.discoverModels': {
+    baseUrl: string
+    apiKey?: string
+    providerType?: string
+    providerId?: string
+    /** 缺省 'discover'，向后兼容旧调用方（runtime CLI 等）。 */
+    mode?: 'test' | 'discover'
+  }
   // W3 默认模型持久化：前端设置全局默认模型，runtime 调 configService.setDefaultModel 写 settings.json。
   'config.setDefaultModel': { provider: ProviderId; modelId: string }
   'config.scanSkills': { sources: string[] }
@@ -558,11 +596,12 @@ export interface ClientMessageMap {
   'quota.fetch': { providerId: string }
   'quota.getCached': { providerId: string }
   /**
-   * quota.configure：Coding Plan 额度查询配置。
+   * quota.configure：Coding Plan 额度查询配置。payload 形状 SSOT = QuotaConfigurePayload
+   * （quota-types.ts，coding-plan-quota-config-ux §7.1——四处共用单一类型，加字段零改动）。
    * workspace（D1-1）：资源维度 fetcher（opencode）的 workspace 地址——完整 URL 或裸 wrk_ id
    * 均可（runtime 归一化存储）；空字符串 = 清除（恢复未配置态，查询报 not_configured）。
    */
-  'quota.configure': { providerId: string; enabled: boolean; cookie?: string; fetcher?: string; apiKey?: string; workspace?: string }
+  'quota.configure': QuotaConfigurePayload
   /** 强制刷新额度（绕过 throttle，Settings 测试查询用）。 */
   'quota.refresh': { providerId: string }
   /** usage.getStats：拉取用量统计数据（无参数）。 */
@@ -1636,6 +1675,10 @@ export interface ServerMessageMapBase {
     models: Array<{ id: string; name?: string; contextWindow?: number }>
     success: boolean
     error?: string
+    // test 模式填（按协议分组的真实连接测试结果）；discover 模式不填；
+    // optional 向后兼容——旧消费方不读该字段，行为不变。
+    // 行形状 SSOT = ConnectionTestResultRow（下方导出，4 处手写重复收编）。
+    results?: ConnectionTestResultRow[]
   }
   // config.providerUpdated：setProvider/deleteProvider reply（settings-message-handler.ts:37/51/65）。
   // 三种 shape：setProvider 成功 { saved: true }；deleteProvider { providerId, deleted: true }；

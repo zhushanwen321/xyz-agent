@@ -121,7 +121,7 @@ import { useGitStatusOrFail, type GitState } from '@/composables/features/file-t
 import { useFileTreeStore } from '@/stores/fileTree'
 import { useSideDrawer } from '@/composables/features/drawer/useSideDrawer'
 import { useSessionStore } from '@/stores/session'
-import { useComposerInjectionStore } from '@/composables/panel/composer-injection-store'
+import { composerInjectionStore } from '@/composables/panel/composer-injection-store'
 import type { GitFileStatus } from '@xyz-agent/shared'
 
 const { t } = useI18n()
@@ -143,7 +143,7 @@ const {
 const fileTreeStore = useFileTreeStore()
 const drawer = useSideDrawer()
 const sessionStore = useSessionStore()
-const composerInjection = useComposerInjectionStore()
+const composerInjection = composerInjectionStore
 
 /**
  * FR-6: 注入文件引用到 composer（无行范围，target=current）。

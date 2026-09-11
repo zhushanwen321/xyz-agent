@@ -48,7 +48,7 @@
 ```
 runtime（pi session JSONL → subagent-extractor 解析）
   → WS: session.subagents / session.subagent.delta
-  → renderer useSubagentListSync（事件订阅）
+  → renderer useListSync（事件订阅；原 useSubagentListSync 于 2026-09-11 合并入 packages/renderer/src/composables/features/chat/useListSync.ts）
   → subagentStore.records（Map 按 sessionId 分区，ADR-0049）
   → useSidebarCounts.subagentList（computed，只读投影）
   → Sidebar.vue（props 下发）

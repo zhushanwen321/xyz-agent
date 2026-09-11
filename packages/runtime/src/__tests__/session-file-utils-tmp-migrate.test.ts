@@ -44,7 +44,7 @@ describe('cleanupTmpMigrateResidue（W3 残留清理）', () => {
     dataDir = mkdtempSync(join(tmpdir(), 'w3-tmp-migrate-'))
     process.env.XYZ_AGENT_DATA_DIR = dataDir
     invalidateScanDirCache()
-    sessionsDir = join(dataDir, 'pi', 'sessions')
+    sessionsDir = join(dataDir, 'agent', 'sessions')
   })
 
   afterEach(() => {

@@ -34,8 +34,10 @@
  */
 import { readFileSync, readdirSync, statSync } from 'node:fs'
 import path from 'node:path'
+import { fileURLToPath } from 'node:url'
 
-const PROJECT_ROOT = path.resolve(new URL('.', import.meta.url).pathname, '..')
+// fileURLToPath 而非 URL.pathname：Windows 上 pathname 返回 /D:/... 形态，resolve 叠加盘符成 D:\D:\
+const PROJECT_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 
 /** 检查 1 扫描范围：跟随链路目录（递归）+ 单文件（§4.4⑤ 收窄声明） */
 const SCOPE_DIRS = ['packages/renderer/src/composables/panel']

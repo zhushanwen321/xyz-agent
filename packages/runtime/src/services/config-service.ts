@@ -73,6 +73,7 @@ import {
   removeProviderByKind as removeProviderByKindImpl,
   type ProviderExtrasServiceDeps,
   type SetProviderInput,
+  type QuotaStateCleaner,
 } from './provider-config-helper.js'
 import {
   refreshProviderCatalogs as refreshProviderCatalogsImpl,
@@ -102,6 +103,7 @@ import {
   setTerminalConfig as setTerminalConfigImpl,
 } from './terminal-config-helper.js'
 import type { ILlmRetrySettings, LlmRetryConfigSnapshot } from './ports/llm-retry-settings.js'
+import type { IProviderCredentialResolver } from './ports/provider-credential-resolver.js'
 
 // ── Service ─────────────────────────────────────────────────────
 
@@ -134,6 +136,23 @@ export class ConfigService implements IConfigService {
      * （生产恒注入；既有测试不关心 retry 域可不传）。
      */
     private llmRetrySettings?: ILlmRetrySettings,
+    /**
+     * Provider 凭据解析唯一通道（D3 收口，链 5 消费点）：listProviders 的凭据判定经其批量
+     * sync 版单次取（auth.json ∪ models.json）。M2fg 删降级后无回退——生产恒注入；参数保持
+     * 可选只为不强迫与 provider 无关的测试构造点（terminal-config / streaming-idle 等 46 处）
+     * 注入替身，listProviders / toggleProviderEnabled / removeProviderByKind 消费点经
+     * resolver() 访问器显式守卫锁定恒注入前提（少参构造 + 调这三法 = 带恢复指引的 Error，
+     * 属测试构造错误；不用 `!` 断言——那会把 undefined 静默传进必参，深处 TypeError 才暴露）。
+     */
+    private providerCredentialResolver?: IProviderCredentialResolver,
+    /**
+     * quota 副产物清理（D12/改动 5）：provider 删除链清 secrets/<pid>-{cookie,apikey}.txt
+     * 明文 + 内存失败/节流标记 + 额度缓存条目。只在 extras 条目确认清除后执行（排序约束，
+     * 防幽灵标记，见 provider-config-helper.cleanDeleteTail）。
+     * 可选注入：未注入时该步 no-op（测试场景），生产恒注入——组合根经 setQuotaStateCleaner
+     * 后置回填（QuotaService 依赖 ConfigService，构造期拿不到）。
+     */
+    private quotaStateCleaner?: QuotaStateCleaner,
   ) {}
 
   /**
@@ -150,7 +169,32 @@ export class ConfigService implements IConfigService {
     this.credentialWriter = writer
   }
 
+  /**
+   * quota 副产物清理回填（D12/改动 5）：QuotaService 依赖 ConfigService（providerExists /
+   * readExtrasWithFallback），构造在 configService 之后——组合根在 quotaService 构造后回填
+   * （先例 setCredentialWriter）；回填前无 RPC 处理（server.start 在全部装配后），无窗口期。
+   * 未注入时删除链的 quota 清理 no-op（可选注入语义）——漏回填不会编译报错而是静默失效。
+   */
+  setQuotaStateCleaner(cleaner: QuotaStateCleaner): void {
+    this.quotaStateCleaner = cleaner
+  }
+
   // ── Provider CRUD（委托 provider-config-helper）─────────────────
+
+  /**
+   * resolver 显式守卫访问器：可选构造参数 + 消费点统一断言。与 provider 无关的构造点
+   * （skill-registry 局部实例只调 loadSkills 等）不经此路径不受影响；调到 provider 三方法
+   * 而未注入 = 构造错误，报错指向恢复动作（注入 resolver / 改用 provider 无关实例），
+   * 不做 `!` 断言把 undefined 静默传进必参。
+   */
+  private resolver(): IProviderCredentialResolver {
+    if (!this.providerCredentialResolver) {
+      throw new Error(
+        '[config-service] providerCredentialResolver 未注入：listProviders / toggleProviderEnabled / removeProviderByKind 需要凭据解析唯一通道（D3）。恢复：在组合根构造 ConfigService 时注入 resolver；若调用点与 provider 无关，改用不触这三法的实例',
+      )
+    }
+    return this.providerCredentialResolver
+  }
 
   getDefaultModel(): { provider: ProviderId; modelId: string } | null {
     return getDefaultModelImpl(this.configStore)
@@ -161,7 +205,8 @@ export class ConfigService implements IConfigService {
   }
 
   listProviders(): ProviderInfo[] {
-    return listProvidersImpl(this.configStore, this.authStorage, this.providerExtrasStore)
+    // 显式守卫 = 恒注入前提（组合根 index.ts 装配序测试锁定；M2fg 删降级后无回退）
+    return listProvidersImpl(this.configStore, this.authStorage, this.providerExtrasStore, this.resolver())
   }
 
   /**
@@ -189,15 +234,15 @@ export class ConfigService implements IConfigService {
   }
 
   toggleProviderEnabled(providerId: string, enabled: boolean): { newDefault?: { provider: ProviderId; modelId: string } } {
-    return toggleProviderEnabledImpl(this.configStore, this.authStorage, this.providerExtrasStore, providerId, enabled)
+    return toggleProviderEnabledImpl(this.configStore, this.authStorage, this.providerExtrasStore, this.resolver(), providerId, enabled)
   }
 
   async deleteProvider(providerId: string): Promise<{ removed: boolean; newDefault?: { provider: ProviderId; modelId: string } }> {
-    return deleteProviderImpl(this.configStore, this.authStorage, this.providerExtrasStore, providerId)
+    return deleteProviderImpl(this.configStore, this.authStorage, this.providerExtrasStore, providerId, this.quotaStateCleaner)
   }
 
   async removeProviderByKind(providerId: string, kind: 'catalog' | 'custom'): Promise<{ removed: boolean; newDefault?: { provider: ProviderId; modelId: string } }> {
-    return removeProviderByKindImpl(this.configStore, this.authStorage, this.providerExtrasStore, providerId, kind)
+    return removeProviderByKindImpl(this.configStore, this.authStorage, this.providerExtrasStore, this.resolver(), providerId, kind, this.quotaStateCleaner)
   }
 
   getProvider(providerId: string): { apiKey?: string; name?: string; type?: string; baseUrl?: string; models?: unknown[]; enabled?: boolean } | undefined {

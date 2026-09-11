@@ -75,7 +75,7 @@ vi.mock('../src/infra/pi/pi-paths.js', async (importOriginal) => {
   return {
     ...actual,
     getSessionsDir: () => '/mock/home/.xyz-agent/sessions',
-    getPiAgentDir: () => '/mock/home/.xyz-agent/pi/agent',
+    getPiAgentDir: () => '/mock/home/.xyz-agent/agent',
   }
 })
 
@@ -92,6 +92,10 @@ vi.mock('node:fs', () => ({
   readdirSync: vi.fn(() => []),
   statSync: vi.fn(() => ({ mtimeMs: Date.now(), size: 0 })),
   unlinkSync: vi.fn(),
+  // spawn-markers（rpc-client start 链）tmp+rename 原子写清单——本 mock 为完全替换式，
+  // 缺任一 named export 会在 spawn-markers 模块加载期炸掉全部用例（vitest export 校验）
+  renameSync: vi.fn(),
+  rmSync: vi.fn(),
 }))
 
 // Mock trash

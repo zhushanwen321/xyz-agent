@@ -25,9 +25,9 @@ vi.mock('@/composables/useToast', () => ({
   }),
 }))
 
-// Mock ipc
+// Mock settings 域 IPC 接缝层（useAppUpdate 的 import 源）
 const onUpdateErrorMock = vi.fn()
-vi.mock('@/lib/ipc', () => ({
+vi.mock('@/api/domains/settings', () => ({
   checkForUpdate: vi.fn(() => Promise.resolve({ info: null, rateLimited: false })),
   performUpdate: vi.fn(() => Promise.resolve({ triggerRestart: false })),
   updateDownload: vi.fn(() => Promise.resolve({ downloaded: false })),

@@ -19,7 +19,7 @@ let dataDir: string
 
 beforeEach(() => {
   dataDir = mkdtempSync(join(tmpdir(), 'pcr-test-'))
-  mkdirSync(join(dataDir, 'pi', 'agent'), { recursive: true })
+  mkdirSync(join(dataDir, 'agent'), { recursive: true })
   vi.stubEnv('XYZ_AGENT_DATA_DIR', dataDir)
 })
 
@@ -40,7 +40,7 @@ function writeOwnCache(entries: unknown): void {
 }
 
 function writePiStore(entries: unknown): void {
-  writeFileSync(join(dataDir, 'pi', 'agent', 'models-store.json'), JSON.stringify(entries))
+  writeFileSync(join(dataDir, 'agent', 'models-store.json'), JSON.stringify(entries))
 }
 
 /** fetch mock：返回固定状态码/形状响应，返回 fn 供调用断言。 */

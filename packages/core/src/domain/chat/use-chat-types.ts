@@ -14,6 +14,10 @@ import type { ChatStoreInstance } from './store'
  * CompactQueueLike —— useChat 消费 compactQueue 的最小结构类型（renderer useCompactQueue
  * 单例自动满足，经 deps.getCompactQueue 注入——session.compacted → flush 先例的既有模式）。
  *
+ * 契约对端：packages/renderer/src/composables/panel/useCompactQueue.ts（CompactQueue /
+ * QueuedMessage）——结构类型 seam，有意不合并：core 不反向依赖 renderer 实现，仅以本
+ * 最小结构面约束实现方；任一侧扩展字段时需同步核对另一侧结构面。
+ *
  * session-occupancy-send-closure D2 P1：send.rejected{reason:'compacting'} 兜底入队复用
  * compactQueue（enqueue）+ flush 重放来源消歧（peek 命中条目 id 即跳过重入队）。
  * [u4a / D5.3 ①] 扩展投递确认回调（confirmDelivery）与条目提交通道标记（mode）——
@@ -110,7 +114,11 @@ export interface EnsureStreamSubDeps {
    * Pick 子集），u4b 的 submitQueuedEntry 依赖组装得以按实际用量窄化注入。
    */
   chatApi: Pick<ChatApiPort, 'streamSubscribe'>
-  toast: { error: (msg: string) => void }
+  /**
+   * [session-dead 第三环] error = 操作失败；warning = defer 重投连续失败达阈值的「可能卡死、
+   * 需用户处置」信号（与 error 语义区分，壳侧 useToast().warning 对接）。
+   */
+  toast: { error: (msg: string) => void; warning: (msg: string) => void }
   t: (key: string, params?: Record<string, unknown>) => string
   getCompactQueue: () => CompactQueueLike
 }
@@ -131,7 +139,8 @@ export interface SubmitQueuedEntryDeps {
   /** chat store：send 通道挂 inflight 占位 + 透传 ensureStreamSubscription */
   chat: ChatStoreInstance
   sessionStore: SessionStoreLike
-  toast: { error: (msg: string) => void }
+  /** [session-dead 第三环] 同 EnsureStreamSubDeps：本 deps 向 ensureStreamSubscription 透传 toast 端口 */
+  toast: { error: (msg: string) => void; warning: (msg: string) => void }
   t: (key: string, params?: Record<string, unknown>) => string
   getCompactQueue: () => CompactQueueLike
 }
@@ -150,7 +159,8 @@ export interface UseChatDeps {
   writeSegments: WriteSegmentsFn
   getChatStore: () => ChatStoreInstance
   getSessionStore: () => SessionStoreLike
-  toast: { error: (msg: string) => void }
+  /** [session-dead 第三环] warning 同 EnsureStreamSubDeps（defer 重投熔断的行动信号） */
+  toast: { error: (msg: string) => void; warning: (msg: string) => void }
   t: (key: string, params?: Record<string, unknown>) => string
   getCompactQueue: () => CompactQueueLike
 }

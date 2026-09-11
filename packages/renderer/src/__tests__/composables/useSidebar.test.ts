@@ -292,7 +292,7 @@ describe('useSidebar 接缝（TC-1..TC-4）', () => {
     getSubagentsMock.mockClear()
     getWorkflowsMock.mockClear()
 
-    // 首连（initApp 路径）不含 subagent/workflow 重拉——列表首拉归 useSubagentListSync
+    // 首连（initApp 路径）不含 subagent/workflow 重拉——列表首拉归 useListSync
     await sidebar.onConnected()
     expect(getSubagentsMock).not.toHaveBeenCalled()
     expect(getWorkflowsMock).not.toHaveBeenCalled()

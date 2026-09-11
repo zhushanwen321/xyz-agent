@@ -49,7 +49,8 @@ let originalGlobalAgentsDir: string | undefined
 beforeEach(() => {
   tmpDir = mkdtempSync(join(tmpdir(), 'system-prompt-ext-'))
   dataDir = tmpDir
-  piAgentDir = join(tmpDir, 'pi', 'agent')
+  // 新布局形态（方案 B）：agentDir = <dataDir>/agent，插件回退推导 1 层上溯得 dataDir
+  piAgentDir = join(tmpDir, 'agent')
   mkdirSync(piAgentDir, { recursive: true })
   agentsDir = join(tmpDir, 'agents')
   mkdirSync(agentsDir, { recursive: true })
@@ -155,7 +156,7 @@ describe('@zhushanwen/pi-system-prompt', () => {
     process.env.PI_CODING_AGENT_DIR = piAgentDir
 
     const factory = await loadPlugin()
-    // PI_CODING_AGENT_DIR/../.. === tmpDir === dataDir
+    // PI_CODING_AGENT_DIR/.. === tmpDir === dataDir（<dataDir>/agent 1 层上溯）
     writeConfig(tmpDir, {
       version: 1,
       replace: { enabled: false, prompt: '' },

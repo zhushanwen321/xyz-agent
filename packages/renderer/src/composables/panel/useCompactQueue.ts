@@ -10,6 +10,12 @@
  * [u6b] 独立 badge 组件已移除（D7 展示统一）：队列可见性由 PendingBubble（对话流内）
  * 独立承接。
  *
+ * **双契约 seam 说明**：本文件的 CompactQueue / QueuedMessage 与 core 侧最小结构类型
+ * CompactQueueLike（契约对端：packages/core/src/domain/chat/use-chat-types.ts）构成
+ * 结构类型 seam——两端类型各自声明，经 deps.getCompactQueue 结构匹配对接，有意不合并
+ * （core 不反向依赖 renderer 实现，仅以最小结构面约束实现方；任一侧扩展字段时需
+ * 同步核对另一侧结构面）。
+ *
  * 入队即显：条目由对话流尾部的 PendingBubble 组件渲染（半透明 + Clock + hover 标注），
  * 条目 id 作气泡 id（data-testid 锚点）。撤销（remove）仅对未提交条目（mode === undefined）
  * 开放——已提交条目已进 pi 队列无法撤回（UI 禁用 ×，tooltip「已提交，等待投递」）。
@@ -105,6 +111,16 @@ export interface CompactQueue {
   peek(sid: string): QueuedMessage[]
   /** 是否有待发消息（count > 0） */
   hasPending(sid: string): boolean
+  /**
+   * [session-dead 结构性修复 D3] 整队回收：取出该 session 全部条目并清空分区，返回
+   * 出队快照（副本）。forceQuit 编排专用——pi 已被杀，未提交条目的自动投递权被斩断
+   * （L1 复活主腿），已提交在途条目（mode 已写）的确认帧也永不再来（进程消亡），
+   * 一并回收，文本交还用户处置（回 Composer 草稿）。
+   * 与 remove（单条撤销，已提交条目 no-op）、confirmDelivery（投递事实确认出队）
+   * 语义不同，不可互替：本方法是「用户停止意图」对整队的强制回收（唯一允许动已提交
+   * 条目的出口，前提 = 进程已死、在途记账不再有意义）。
+   */
+  drain(sid: string): QueuedMessage[]
   /**
    * [session-occupancy u4a / D5.3 ①] 投递确认出队 + 气泡转态（core CompactQueueLike.
    * confirmDelivery 契约）：message_end(user) 帧经 core effects/registry ① 命中本队列
@@ -284,6 +300,16 @@ function createCompactQueue(): CompactQueue {
     return count(sid) > 0
   }
 
+  /** [session-dead 结构性修复 D3] 整队回收（语义见接口 jsdoc）：快照取出 + 清空分区 */
+  function drain(sid: string): QueuedMessage[] {
+    let drained: QueuedMessage[] = []
+    state.updateFor(sid, (p) => {
+      drained = p.messages.map((m) => ({ ...m }))
+      p.messages = []
+    })
+    return drained
+  }
+
   // per-session in-flight 守卫（S2）：flush 进行中重复触发复用同一 promise，不重复发送。
   // 「同 key 复用 / settle 即清 / 引用比对防误删」生命周期收编于 createInflightDedup
   // （D9 共享原语，state-truth-sync §3.3）。
@@ -366,7 +392,7 @@ function createCompactQueue(): CompactQueue {
     }
   }
 
-  return { enqueue, remove, count, peek, hasPending, confirmDelivery, flush, _clearAllForTest: state._clearAllForTest }
+  return { enqueue, remove, count, peek, hasPending, drain, confirmDelivery, flush, _clearAllForTest: state._clearAllForTest }
 }
 
 // [session-occupancy u4a / D5.3] 注册 defer 队列 provider（core effects/registry ① 的注入点）。

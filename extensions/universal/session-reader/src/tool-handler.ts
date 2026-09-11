@@ -4,8 +4,16 @@
  * 分层约定（同 scheduler/cw-tool）：本文件零 pi 依赖——agentDir 作参数注入，
  * 不调用 getAgentDir()，可完全单测；pi 注册与 getAgentDir() 调用在 index.ts。
  *
- * 按 action 分发到 10 条路径，串联 M1 core（parser/tree/turns/render）+ M2 discovery
- *（find/subagents）。content 给 LLM 读（人类可读摘要），details 供程序化消费/测试断言。
+ * 按 action 分发到 11 条路径，串联 M1 core（parser/tree/turns/render）+ M2 discovery
+ *（find/subagents）+ doctor 的环境判定与根表渲染（u8，discovery/env）。content 给 LLM
+ * 读（人类可读摘要），details 供程序化消费/测试断言。
+ *
+ * 域模块拆分（max-lines 拆分轮机械提取，零行为变更，result-action.ts 先例同型）：
+ *   result-action.ts（result）/ doctor.ts（doctor + SessionReadSignals）/
+ *   search-across.ts（search 管线 + u12 跨会话）/ extract.ts（extract 预设）/
+ *   no-match.ts（F1 自检行）/ handler-utils.ts（pad/err/turn 索引解析低层小工具）。
+ * 本模块保留公共类型、定位解析（resolveSessionId）、各 action 编排与共享渲染；
+ * 拆出域的公开导出经此 re-export（index.ts / 单测白盒 import 路径不变）。
  *
  * 错误规格 F1-F6：handler 抛 Error（message 含 👉 恢复指引），index.ts 的 execute 闭包
  * 原样传播给 pi——pi-agent-core 只对 execute throw 置 isError:true（返回值里的 isError
@@ -16,14 +24,23 @@ import { existsSync, openSync, readSync, closeSync } from 'node:fs'
 import { mkdir, writeFile } from 'node:fs/promises'
 import { join, isAbsolute } from 'node:path'
 import { homedir } from 'node:os'
-import { findSessions, type MatchedSession } from './discovery/find.js'
-import { buildFamilyFromFs, listRecordManifests, type RecordManifest } from './discovery/subagents.js'
+import {
+  findSessions,
+  type MatchedSession,
+  type SessionMetadataEntry,
+  type SessionMetadataProvider,
+} from './discovery/find.js'
+import { resolveSessionRoots } from './discovery/roots.js'
+import {
+  buildFamilyFromFs,
+  listRecordManifests,
+  type RecordManifest,
+} from './discovery/subagents.js'
 import { readRunSnapshot, resolveWorkflows } from './discovery/workflows.js'
 import { parseSessionFile, type Entry, type ParseResult } from './core/parser.js'
 import { parseRunSnapshot, renderWorkflowOverview, type WorkflowOverview } from './core/workflow.js'
 import { buildTreeView } from './core/tree.js'
-import { segmentTurns, type Turn } from './core/turns.js'
-import { extractToolCalls, formatToolCallSummary, basename } from './core/toolcall.js'
+import { segmentTurns } from './core/turns.js'
 import {
   renderOutline,
   renderExpand,
@@ -44,6 +61,34 @@ import {
   formatExecutionTreeText,
   type ExecutionTree,
 } from './core/execution-tree.js'
+// 同轮拆分的域模块（依赖方向：本模块 → 域模块 → handler-utils，无循环；
+// 域模块对本模块仅 type import——编译期擦除，同 result-action.ts 先例）。
+import { err, pad, parseTurnIndex, parseTurnsRange, rangeLabel } from './handler-utils.js'
+import { formatNoMatch } from './no-match.js'
+import {
+  collectSearchHits,
+  compilePattern,
+  formatSearchText,
+  isCatastrophicPattern,
+  searchAcrossSessions,
+  SEARCH_DEFAULT_LIMIT,
+} from './search-across.js'
+import {
+  extractCommits,
+  extractCommands,
+  extractFiles,
+  extractToolResults,
+  extractUserMessages,
+  type ExtractWhat,
+} from './extract.js'
+import { doDoctor, DOCTOR_CACHE_TTL_MS, statDirMtimeOrNull, type SessionReadSignals } from './doctor.js'
+
+// 拆出域的公开导出面保持从本模块可见（index.ts / 单测白盒 import 路径不变）。
+export type { SessionReadSignals }
+export { DOCTOR_CACHE_TTL_MS }
+export { levenshtein } from './no-match.js'
+export { MULTI_SEARCH_MAX_SESSIONS, SEARCH_SCAN_BYTE_BUDGET, searchAcrossSessions } from './search-across.js'
+export { renderExtractItems } from './extract.js'
 
 // ---------------------------------------------------------------------------
 // 公共类型（与 index.ts 的 TypeBox schema 对齐）
@@ -60,6 +105,7 @@ export type SessionReadAction =
   | 'extract'
   | 'workflow'
   | 'result'
+  | 'doctor'
 
 export interface SessionReadParams {
   action: SessionReadAction
@@ -86,6 +132,12 @@ export interface SessionReadParams {
   tool?: string
   /** family action: 返回嵌套执行树（任意深度 subagent↔workflow-call 相互嵌套）。默认 false（flat family）。 */
   recursive?: boolean
+  /**
+   * doctor action: 是否同时扫描 subagent 根（产文件数）。默认 false——subagent 根在纯 pi
+   * 下可达数千文件，doctor 可能被反复询问（design 2026-09-10 §6.3 成本控制），默认只列
+   * 路径与可扫性（exists）。
+   */
+  includeSubagents?: boolean
 }
 
 export interface ToolResult {
@@ -96,16 +148,6 @@ export interface ToolResult {
 // ---------------------------------------------------------------------------
 // 小工具
 // ---------------------------------------------------------------------------
-
-/** turn 索引显示宽度（T013 三位补零）。 */
-const TURN_INDEX_WIDTH = 3
-
-const pad = (n: number): string => String(n).padStart(TURN_INDEX_WIDTH, '0')
-
-/** 构造带 👉 恢复指引的 Error（handler 抛出，由 execute 闭包 catch）。 */
-function err(message: string): Error {
-  return new Error(message)
-}
 
 /** 剥 # 前缀（TUI `#e6c96` 引用 → 纯片段，design §3.3 D-3/D-4）。 */
 function stripHash(s: string): string {
@@ -142,48 +184,6 @@ function requireStr(
     throw err(`action:"${action}" 需要参数 "${name}"。👉 补上 "${name}" 重试。`)
   }
   return val.trim()
-}
-
-// ---------------------------------------------------------------------------
-// turn / turns 索引解析
-// ---------------------------------------------------------------------------
-
-const TURN_RE = /^T?(\d+)$/i
-
-function parseTurnIndex(raw: string): number {
-  const m = raw.trim().match(TURN_RE)
-  if (!m) {
-    throw err(
-      `turn "${raw}" 格式无效（应为 T013 或 013）。👉 用合法 turn 索引重试，或 outline 重看有效范围。`,
-    )
-  }
-  return parseInt(m[1], 10)
-}
-
-/** turns 范围 "T013-T015" 的段数。 */
-const TURNS_RANGE_PARTS = 2
-
-function parseTurnsRange(raw: string): { start: number; end: number } {
-  const parts = raw.split('-').map((s) => s.trim())
-  if (parts.length === 1) {
-    const i = parseTurnIndex(parts[0])
-    return { start: i, end: i }
-  }
-  if (parts.length === TURNS_RANGE_PARTS) {
-    const start = parseTurnIndex(parts[0])
-    const end = parseTurnIndex(parts[1])
-    if (end < start) {
-      throw err(
-        `turns 范围 "${raw}" 起始大于结束。👉 检查范围格式（如 T013-T015）重试。`,
-      )
-    }
-    return { start, end }
-  }
-  throw err(`turns "${raw}" 格式无效（应为 T013 或 T013-T015）。👉 用合法范围重试。`)
-}
-
-function rangeLabel(r: { start: number; end: number }): string {
-  return r.start === r.end ? `T${pad(r.start)}` : `T${pad(r.start)}-T${pad(r.end)}`
 }
 
 // ---------------------------------------------------------------------------
@@ -254,8 +254,13 @@ function expandHome(p: string): string {
  * 把 session 参数解析到唯一完整 id（design §6.1 M0 + U2/U3）。三形态各拆独立解析器：
  * resolveBySessionPath（① 绝对路径/~）→ resolveByRecordId（② sa- 前缀）→ resolveByFragment（③ 片段）。
  * 错误契约（U3）：① 文件不存在/非 .jsonl/header 读不出 → F6 风格；② sessionFile GC → ES1（manifest 元数据 + 👉）；
- * sa-id 0/>1 命中 → ES2（👉 family）。仅用于 family/outline/expand/detail/search/export/extract/result
- *（find action 自行调 findSessions，零匹配时返回空 + 提示，不抛错）。
+ * sa-id 0/>1 命中 → ES2（👉 family）。仅用于 family/outline/expand/detail/search/export/extract/workflow/result
+ *（find 自行调 findSessions，零匹配时返回空 + 提示，不抛错；doctor 为环境自检，无 session 解析）。
+ *
+ * liveSessionDir（§6.1 信号 1）只作用于形态③：片段匹配与 find 消费同一 roots
+ *（[live] 根对片段解析可见——否则 find 能列出的 session 在 [live]≠[default] 环境
+ * 下 outline 等解析不到，违反「同一 roots」契约）；①按路径直读、②按 agentDir 下
+ * manifest 反查，均不依赖根列表，不消费该信号。
  */
 async function resolveSessionId(
   rawSession: string | undefined,
@@ -265,6 +270,8 @@ async function resolveSessionId(
   /** S3（code-simplify）：批量调用方（doResult）预取的 manifest 列表——省去逐 id
    *  重复全量扫 subagents/ 树（N+1）。单 id 调用点不传，行为零变化。 */
   prefetchedManifests?: RecordManifest[],
+  /** 信号包中的 liveSessionDir，透传形态③（resolveByFragment）；缺省 = 三根降级。 */
+  liveSessionDir?: string,
 ): Promise<ResolveResult> {
   const session = stripHash(requireStr(rawSession, 'session', action))
 
@@ -278,8 +285,8 @@ async function resolveSessionId(
     return resolveByRecordId(session, agentDir, prefetchedManifests)
   }
 
-  // ③ 其余：findSessions 透传 source 沿用 F1/F2
-  return resolveByFragment(session, agentDir, source)
+  // ③ 其余：findSessions 透传 source/liveSessionDir 沿用 F1/F2
+  return resolveByFragment(session, agentDir, source, liveSessionDir)
 }
 
 /** 形态①：绝对路径 / ~ 前缀 → 展开后读首行 header，sessionId=header 真实 id（文件名仅定位）。 */
@@ -330,13 +337,29 @@ async function resolveByRecordId(session: string, agentDir: string, prefetchedMa
   return { kind: 'ok', sessionId: headerId, fileName: record.sessionFile }
 }
 
-/** 形态③：其余片段 → findSessions 透传 source 沿用 F1（零匹配）/ F2（多匹配消歧）。 */
-async function resolveByFragment(session: string, agentDir: string, source?: 'main' | 'subagent'): Promise<ResolveResult> {
-  const opts = { limit: 10, ...(source ? { source } : {}) }
+/**
+ * 形态③：其余片段 → findSessions 透传 source/liveSessionDir 沿用 F1（零匹配）/ F2（多匹配消歧）。
+ * liveSessionDir 透传保证片段匹配与 find 同一 roots；F1 自检行同理须含 [live] 根行
+ *（否则 [live]≠[default] 环境下自检行看不到最高优先级根，计数失真）。
+ */
+async function resolveByFragment(
+  session: string,
+  agentDir: string,
+  source?: 'main' | 'subagent',
+  liveSessionDir?: string,
+): Promise<ResolveResult> {
+  const opts = {
+    limit: 10,
+    ...(source ? { source } : {}),
+    ...(liveSessionDir ? { liveSessionDir } : {}),
+  }
   const { matches } = await findSessions(session, agentDir, opts)
   if (matches.length === 0) {
-    const recent = await findSessions('recent', agentDir, opts)
-    throw err(formatNoMatch(session, recent.matches))
+    // F1 自检行需要发现层实况：无 options 的 resolveSessionRoots 恒实扫（不读 doctor
+    // 缓存，§7B 要点 8），与 find 刚完成的扫描同一数据源（roots.ts 薄包装语义）；
+    // 信号包同源（liveSessionDir 透传）——findSessions 内部对空串/undefined 已有降级 guard。
+    const roots = await resolveSessionRoots({ agentDir, liveSessionDir })
+    throw err(formatNoMatch(session, roots))
   }
   if (matches.length === 1) {
     return { kind: 'ok', sessionId: matches[0].sessionId, fileName: matches[0].fileName }
@@ -380,17 +403,6 @@ const SESSION_ID_PREFIX_LEN = 8
 /** 消歧提示的 uuid 片段长度（比短显略长，引导输入更长片段消歧）。 */
 const HINT_ID_PREFIX_LEN = 12
 
-/** F1 无匹配 message（含最近 10 + 👉）。 */
-function formatNoMatch(query: string, recent: MatchedSession[]): string {
-  const lines: string[] = recent.length
-    ? recent.map((m, i) => `  ${i + 1}. ${m.sessionId.slice(0, SESSION_ID_PREFIX_LEN)}… ${m.firstMessagePreview ?? ''}`.trimEnd())
-    : ['  （无历史 session）']
-  return (
-    `无匹配 session："${query}"。最近 ${recent.length} 个 session：\n${lines.join('\n')}\n` +
-    `👉 用 session_read { action:"find", query:"recent" } 看全量，或换片段重试。`
-  )
-}
-
 /** F2 多匹配消歧结果（不抛错，返回候选 + 👉）。 */
 function disambiguate(query: string, candidates: MatchedSession[]): ToolResult {
   const lines = candidates.map(
@@ -425,20 +437,66 @@ async function safeParse(fileName: string): Promise<ParseResult> {
 // 文本渲染（content）
 // ---------------------------------------------------------------------------
 
-function formatFindContent(
-  query: string,
-  matches: MatchedSession[],
-  truncated: boolean,
-): string {
-  const lines = matches.map((m, i) => {
-    const parts = [`${i + 1}. ${m.sessionId.slice(0, SESSION_ID_PREFIX_LEN)}…`, formatDate(m.mtime)]
-    if (m.cwd) parts.push(shortCwd(m.cwd))
-    if (m.firstMessagePreview) parts.push(m.firstMessagePreview)
-    return parts.join(' · ')
-  })
-  const head = `${matches.length} session(s) matched "${query}"${
-    truncated ? ` (truncated, showing first ${matches.length})` : ''
+/**
+ * find 分组渲染的单组数据（u10，design 2026-09-10 §6.7 子决策 2）。
+ * main 组恒在 groups 首位（置顶），编号跨组连续。
+ */
+interface FindGroup {
+  source: 'main' | 'subagent'
+  /** 配额切片后实际展示的候选 */
+  shown: MatchedSession[]
+  /** 溢出：该组命中数 > shown.length（+1 探测；溢出时精确总数未知，只知更多） */
+  overflow: boolean
+}
+
+/**
+ * find 输出渲染（u10 分组版，design §5.1 形态 + §6.7 子决策 2/3 精确规格）：
+ *
+ * - 按 source 分组、main 段置顶（subagent 噪声不淹没目标），组头标注各组命中数，
+ *   组内编号跨组连续（§5.1 示例：subagent 段从 main 段末尾续号）。
+ * - 候选行打印完整 sessionId（废除 8 字符截断——agent 拿到截断 id 无法粘回做精确调用，
+ *   §3.2 失败模式 D）。SESSION_ID_PREFIX_LEN 常量本体与 result 通路不动（§6.7 范围声明）。
+ * - 每条 main 候选附一行可直接复制执行的 outline 调用串（↳，§6.7 子决策 3）；
+ *   subagent 候选不附（噪声不配指针）。
+ * - 候选行末段文本：标题优先（u11，name 来自 SessionManager.listAll，§5.1 形态
+ *   「… · 福耀玻璃深度研究」），无标题回退首消息预览（现状行为）。
+ * - truncated 按**合并总量**（命中总数 vs 实际输出数）计算，由调用方传入，此处只负责标注。
+ * - subagent 段超配额折叠为一行展开提示（加 source:"subagent" 查看）；main 段溢出
+ *   仅在组头标注（规格的折叠提示只针对 subagent）。
+ */
+function formatFindContent(query: string, groups: FindGroup[], truncated: boolean): string {
+  const shown = groups.flatMap((g) => g.shown)
+  const head = `${shown.length} session(s) matched "${query}"${
+    truncated ? ` (truncated, showing first ${shown.length})` : ''
   }`
+  const lines: string[] = []
+  let index = 0
+  for (const g of groups) {
+    lines.push('')
+    if (g.overflow && g.shown.length === 0) {
+      // main 占满配额、subagent 有命中但 0 条展示（§6.7：「subagent 段为 0 条仅显示计数」；
+      // 命中总数须全量深读首条 user 才能精确计数，recent 形态下 IO 不可接受，只报有命中）
+      lines.push(`${g.source}（有命中未显示——展示配额已被 main 占满）：`)
+    } else if (g.overflow) {
+      lines.push(`${g.source}（>${g.shown.length} 条命中，显示前 ${g.shown.length} 条）：`)
+    } else {
+      lines.push(`${g.source}（${g.shown.length} 条命中）：`)
+    }
+    for (const m of g.shown) {
+      index += 1
+      const parts = [`${index}. ${m.sessionId}`, formatDate(m.mtime)]
+      if (m.cwd) parts.push(shortCwd(m.cwd))
+      if (m.name) parts.push(m.name)
+      else if (m.firstMessagePreview) parts.push(m.firstMessagePreview)
+      lines.push(`  ${parts.join(' · ')}`)
+      if (g.source === 'main') {
+        lines.push(`     ↳ session_read { action:"outline", session:"${m.sessionId}" }`)
+      }
+    }
+    if (g.overflow && g.source === 'subagent') {
+      lines.push('  … 另有 subagent 命中未显示。👉 加 source:"subagent" 查看')
+    }
+  }
   return `${head}\n${lines.join('\n')}`
 }
 
@@ -571,79 +629,6 @@ function formatFamilyText(f: Family): string {
   return lines.join('\n')
 }
 
-// ---------------------------------------------------------------------------
-// search 辅助
-// ---------------------------------------------------------------------------
-
-/**
- * 灾难性正则形态探测（MF-5）：组内含量词/`|` 且组本身又被量词修饰的 pattern
- *（`(a+)+`、`(a*)*`、`(a|aa)+`、`(a{1,3})*` 等）对长文本指数级回溯，可挂死整个 turn（5.4MB session
- * 全文逐 entry 匹配）。内层字符类含 `{` 以捕获 `{m,n}` 范围量词（MF-1）；`(a{1,3})` 单独使用
- *（组后无尾随量词）不命中，仍按正则执行。命中则降级为字面子串匹配（与非法正则同一兜底路径）。
- * 保守拒绝（把合法但形似的 pattern 降级为子串）比挂死可接受。
- */
-function isCatastrophicPattern(pattern: string): boolean {
-  return (
-    /\((?:[^()\\]|\\.)*[+*?{](?:[^()\\]|\\.)*\)[+*?{]/.test(pattern) ||
-    /\((?:[^()\\]|\\.)*\|(?:[^()\\]|\\.)*\)[+*?{]/.test(pattern)
-  )
-}
-
-/** 编译检索 pattern：先当正则，非法/灾难性则转义为字面子串（design §3.4 pattern 子串或正则）。 */
-function compilePattern(pattern: string): RegExp {
-  if (isCatastrophicPattern(pattern)) {
-    return new RegExp(pattern.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i')
-  }
-  try {
-    return new RegExp(pattern, 'i')
-  } catch {
-    return new RegExp(pattern.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i')
-  }
-}
-
-/** 安全序列化：循环引用等异常时返回空串（catch 非空——记默认值）。 */
-function safeStringify(v: unknown): string {
-  try {
-    return JSON.stringify(v)
-  } catch {
-    return '' // 循环引用等致 stringify 失败，跳过该块
-  }
-}
-
-/** search 的可检索文本：含 text/thinking/toolResult 全量（按 scope 过滤由调用方做）。 */
-function searchableText(content: unknown): string {
-  if (typeof content === 'string') return content
-  if (Array.isArray(content)) {
-    const parts: string[] = []
-    for (const b of content) {
-      if (b && typeof b === 'object') {
-        const o = b as Record<string, unknown>
-        if (typeof o.text === 'string') parts.push(o.text)
-        else if (typeof o.thinking === 'string') parts.push(o.thinking)
-        else {
-          const serialized = safeStringify(o)
-          if (serialized) parts.push(serialized)
-        }
-      }
-    }
-    return parts.join('\n')
-  }
-  return safeStringify(content)
-}
-
-/** search 命中片段的前后上下文字符数。 */
-const SNIPPET_CONTEXT_CHARS = 20
-
-function snippet(text: string, idx: number, len: number): string {
-  const start = Math.max(0, idx - SNIPPET_CONTEXT_CHARS)
-  const end = Math.min(text.length, idx + len + SNIPPET_CONTEXT_CHARS)
-  return (
-    (start > 0 ? '…' : '') +
-    text.slice(start, end).replace(/\s+/g, ' ').trim() +
-    (end < text.length ? '…' : '')
-  )
-}
-
 // ===========================================================================
 // 各 action 实现
 // ===========================================================================
@@ -651,23 +636,114 @@ function snippet(text: string, idx: number, len: number): string {
 /** find action 的默认匹配数上限。 */
 const FIND_DEFAULT_LIMIT = 20
 
-/** find：按片段/名称/recent 定位 session（design §3.4 find）。零匹配不抛，返回提示。 */
-async function doFind(params: SessionReadParams, agentDir: string): Promise<ToolResult> {
+/**
+ * find 零匹配：F1 自检行（u9）。计数取本次实扫（无 options 恒实扫，不读 doctor
+ * 缓存——§7B 要点 8 PS-14），完整信号包保证 [live] 根（最高优先级）计数可见。
+ */
+function findNoMatch(query: string, signals: SessionReadSignals): Promise<ToolResult> {
+  // F1 自检行需要发现层实况：resolveSessionRoots 与 find 刚完成的扫描同一数据源。
+  return resolveSessionRoots(signals).then((roots) => ({
+    content: [{ type: 'text', text: formatNoMatch(query, roots) }],
+    details: { matches: [], truncated: false },
+  }))
+}
+
+/**
+ * find：按片段/名称/recent 定位 session（design §3.4 find）。零匹配不抛，返回提示。
+ *
+ * u10 分组（design 2026-09-10 §6.7 子决策 2 精确规格，纯展示层规则）：
+ * - `limit` 作用于**分组后的合并列表**：main 段优先占满（上限 limit），剩余配额给
+ *   subagent 段；main 命中 > limit 时 subagent 段为 0 条仅显示计数 + 展开提示。
+ * - `truncated` 按**合并总量**（命中总数 vs 实际输出数）计算：各 source 独立查询以
+ *   「配额 +1」探测溢出，`hasMore ⟺ 该组命中数 > 该组展示数`，合取即精确等价于
+ *   「命中总数 > 实际输出数」，与单次合并查询的 truncated 语义逐值一致。
+ * - 匹配层 findSessions 不动：分组只是展示规则，各 source 独立查询的组内语义仍是
+ *   mtime 排序 + limit 截断。subagent 溢出时不做精确计数（需对全部命中深读首条 user，
+ *   recent 形态下命中可达全库量级，IO 不可接受），折叠行只报「有更多 + 展开方式」。
+ * - 显式 source 过滤走单组查询（现状语义）：显式 source 本身就是折叠提示所指的展开
+ *   动作，不再折叠。
+ *
+ * u11（design 2026-09-10 §6.6）：metadataProvider / liveSessionDir 透传匹配层——标题
+ * 检索的惰性/窄化/TTL 缓存策略都在发现层与注入包装侧，本函数只负责透传（缺省
+ * undefined = 现状行为）。多次 findSessions 调用（分组探测）经注入侧 TTL 缓存去重，
+ * 标题 listAll 每 TTL 窗口至多一次/目录。
+ */
+async function doFind(
+  params: SessionReadParams,
+  signals: SessionReadSignals,
+  metadataProvider?: SessionMetadataProvider,
+): Promise<ToolResult> {
   const query = requireStr(params.query, 'query', 'find')
-  const { matches, truncated } = await findSessions(query, agentDir, {
-    cwd: params.cwd,
-    limit: params.limit ?? FIND_DEFAULT_LIMIT,
-    ...(params.source ? { source: params.source } : {}),
-  })
-  if (matches.length === 0) {
-    const recent = await findSessions('recent', agentDir, { limit: 10 })
+  const limit = params.limit ?? FIND_DEFAULT_LIMIT
+  const cwd = params.cwd
+
+  // 显式 source：单组，匹配层原语义（mtime 排序 + limit 截断），无分组展示
+  if (params.source !== undefined) {
+    const { matches, truncated } = await findSessions(query, signals.agentDir, {
+      cwd,
+      limit,
+      source: params.source,
+      liveSessionDir: signals.liveSessionDir,
+      metadataProvider,
+    })
+    if (matches.length === 0) return findNoMatch(query, signals)
     return {
-      content: [{ type: 'text', text: formatNoMatch(query, recent.matches) }],
-      details: { matches: [], truncated: false },
+      content: [
+        {
+          type: 'text',
+          text: formatFindContent(
+            query,
+            [{ source: params.source, shown: matches, overflow: false }],
+            truncated,
+          ),
+        },
+      ],
+      details: { matches, truncated },
     }
   }
+
+  // 分组查询：main 段以 limit+1 探测溢出，优先占满配额
+  const mainRes = await findSessions(query, signals.agentDir, {
+    cwd,
+    limit: limit + 1,
+    source: 'main',
+    liveSessionDir: signals.liveSessionDir,
+    metadataProvider,
+  })
+  const mainHasMore = mainRes.matches.length > limit
+  const mainShown = mainHasMore ? mainRes.matches.slice(0, limit) : mainRes.matches
+
+  // subagent 段：remaining>0 → 配额 remaining+1 探测溢出；remaining=0（main 占满/溢出）
+  // → limit:1 仅探测有无命中（折叠计数判据，不做全量深读）
+  const remaining = limit - mainShown.length
+  const subLimit = remaining > 0 ? remaining + 1 : 1
+  const subRes = await findSessions(query, signals.agentDir, {
+    cwd,
+    limit: subLimit,
+    source: 'subagent',
+    liveSessionDir: signals.liveSessionDir,
+    metadataProvider,
+  })
+  const subOverflow = remaining > 0 ? subRes.matches.length > remaining : subRes.matches.length > 0
+  const subShown = subRes.matches.slice(0, Math.max(remaining, 0))
+
+  const matches = [...mainShown, ...subShown]
+  if (matches.length === 0) return findNoMatch(query, signals)
+  const truncated = mainHasMore || subOverflow
   return {
-    content: [{ type: 'text', text: formatFindContent(query, matches, truncated) }],
+    content: [
+      {
+        type: 'text',
+        text: formatFindContent(
+          query,
+          [
+            { source: 'main', shown: mainShown, overflow: mainHasMore },
+            { source: 'subagent', shown: subShown, overflow: subOverflow },
+          ],
+          truncated,
+        ),
+      },
+    ],
     details: { matches, truncated },
   }
 }
@@ -679,8 +755,19 @@ async function doFind(params: SessionReadParams, agentDir: string): Promise<Tool
  * recursive=true → 嵌套执行树（buildExecutionTree + formatExecutionTreeText，任意深度
  * subagent↔workflow-call 相互嵌套，IF4）。错误契约同构：multi→disambiguate；构建抛错→catch 转 👉。
  */
-async function doFamily(params: SessionReadParams, agentDir: string): Promise<ToolResult> {
-  const resolved = await resolveSessionId(params.session, 'family', agentDir, params.source)
+async function doFamily(
+  params: SessionReadParams,
+  agentDir: string,
+  liveSessionDir?: string,
+): Promise<ToolResult> {
+  const resolved = await resolveSessionId(
+    params.session,
+    'family',
+    agentDir,
+    params.source,
+    undefined,
+    liveSessionDir,
+  )
   if (resolved.kind === 'multi') return disambiguate(resolved.query, resolved.candidates)
 
   // recursive=true：嵌套执行树（U7/U8）
@@ -714,8 +801,19 @@ async function doFamily(params: SessionReadParams, agentDir: string): Promise<To
 }
 
 /** outline：turn 级全貌 TOC（design §3.4 outline，~1500 token；render budget 硬编码 2000）。 */
-async function doOutline(params: SessionReadParams, agentDir: string): Promise<ToolResult> {
-  const resolved = await resolveSessionId(params.session, 'outline', agentDir, params.source)
+async function doOutline(
+  params: SessionReadParams,
+  agentDir: string,
+  liveSessionDir?: string,
+): Promise<ToolResult> {
+  const resolved = await resolveSessionId(
+    params.session,
+    'outline',
+    agentDir,
+    params.source,
+    undefined,
+    liveSessionDir,
+  )
   if (resolved.kind === 'multi') return disambiguate(resolved.query, resolved.candidates)
   const { entries, totalBytes, skippedLines } = await safeParse(resolved.fileName)
   const tree = buildTreeView(entries)
@@ -736,8 +834,19 @@ async function doOutline(params: SessionReadParams, agentDir: string): Promise<T
 }
 
 /** expand：单 turn 的 entry 列表（design §3.4 expand）。turn 越界抛 F4。 */
-async function doExpand(params: SessionReadParams, agentDir: string): Promise<ToolResult> {
-  const resolved = await resolveSessionId(params.session, 'expand', agentDir, params.source)
+async function doExpand(
+  params: SessionReadParams,
+  agentDir: string,
+  liveSessionDir?: string,
+): Promise<ToolResult> {
+  const resolved = await resolveSessionId(
+    params.session,
+    'expand',
+    agentDir,
+    params.source,
+    undefined,
+    liveSessionDir,
+  )
   if (resolved.kind === 'multi') return disambiguate(resolved.query, resolved.candidates)
   const turnIdx = parseTurnIndex(requireStr(params.turn, 'turn', 'expand'))
   const { entries } = await safeParse(resolved.fileName)
@@ -758,8 +867,19 @@ async function doExpand(params: SessionReadParams, agentDir: string): Promise<To
 }
 
 /** detail：turns 范围的完整文本（design §3.4 detail）。默认省略 toolResult/thinking。 */
-async function doDetail(params: SessionReadParams, agentDir: string): Promise<ToolResult> {
-  const resolved = await resolveSessionId(params.session, 'detail', agentDir, params.source)
+async function doDetail(
+  params: SessionReadParams,
+  agentDir: string,
+  liveSessionDir?: string,
+): Promise<ToolResult> {
+  const resolved = await resolveSessionId(
+    params.session,
+    'detail',
+    agentDir,
+    params.source,
+    undefined,
+    liveSessionDir,
+  )
   if (resolved.kind === 'multi') return disambiguate(resolved.query, resolved.candidates)
   const range = parseTurnsRange(requireStr(params.turns, 'turns', 'detail'))
   const { entries } = await safeParse(resolved.fileName)
@@ -782,74 +902,43 @@ async function doDetail(params: SessionReadParams, agentDir: string): Promise<To
   }
 }
 
-/** search action 的默认命中数上限。 */
-const SEARCH_DEFAULT_LIMIT = 20
-
-/** search 单条命中（turn 内 entry 定位 + 角色 + 摘要片段）。 */
-interface SearchHit {
-  turnIndex: number
-  entryIndex: number
-  role: string
-  matchSnippet: string
-}
-
-/** search 扫描阶段：遍历 turns 收集命中；每 turn 前检查 abort（MF-5 尽早退出）。 */
-function collectSearchHits(
-  turns: Turn[],
-  regex: RegExp,
-  scope: NonNullable<SessionReadParams['scope']>,
-  signal: AbortSignal | undefined,
-): SearchHit[] {
-  const hits: SearchHit[] = []
-  for (const t of turns) {
-    // MF-5：Esc/abort 后 pi 已丢弃本 turn 结果，尽早退出避免继续扫描长 session
-    if (signal?.aborted) {
-      throw err('搜索已中断（信号 aborted）。👉 重试或换更精确的 pattern。')
-    }
-    for (let i = 0; i < t.entries.length; i++) {
-      const msg = t.entries[i].message
-      if (msg === undefined) continue
-      if (scope !== 'all' && msg.role !== scope) continue
-      const text = searchableText(msg.content)
-      const m = regex.exec(text)
-      if (m !== null) {
-        hits.push({
-          turnIndex: t.index,
-          entryIndex: i,
-          role: msg.role,
-          matchSnippet: snippet(text, m.index, m[0].length),
-        })
-      }
-    }
-  }
-  return hits
-}
-
-/** search 收口阶段：结果文本组装（header 标注降级/scope/截断 + 逐行命中列表）。 */
-function formatSearchText(
-  pattern: string,
-  degraded: boolean,
-  scope: NonNullable<SessionReadParams['scope']>,
-  sliced: SearchHit[],
-  truncated: boolean,
-): string {
-  const lines = sliced.map(
-    (h) => `  T${pad(h.turnIndex)} #${h.entryIndex} ${h.role}: ${h.matchSnippet}`,
-  )
-  return `${sliced.length} hit(s) for /${pattern}/${degraded ? '（已降级为字面子串匹配）' : ''}${
-    scope !== 'all' ? ' scope=' + scope : ''
-  }${truncated ? ` (truncated, showing first ${sliced.length})` : ''}\n${lines.join('\n')}`
-}
-
-/** search：session 内全文检索（design §3.4 search，M3 新实现）。 */
+/** search：全文检索（design §3.4 search，M3 新实现）。
+ *
+ * u12 两种形态（design 2026-09-10 §2 目标 5 / §8.2 V8）：
+ * - session 含逗号 → 跨会话模式（searchAcrossSessions）：候选集 = find 输出的完整 id
+ *   列表，窄化前置 + 字节上限 + 分 session 渲染；
+ * - 否则单会话模式（现状零变化）：session 经 resolveSessionId 解析后对单个 session 检索。
+ */
 async function doSearch(
   params: SessionReadParams,
-  agentDir: string,
+  signals: SessionReadSignals,
   signal?: AbortSignal,
+  metadataProvider?: SessionMetadataProvider,
 ): Promise<ToolResult> {
-  const resolved = await resolveSessionId(params.session, 'search', agentDir, params.source)
-  if (resolved.kind === 'multi') return disambiguate(resolved.query, resolved.candidates)
   const pattern = requireStr(params.pattern, 'pattern', 'search')
+  const rawSession = params.session
+  if (rawSession !== undefined && rawSession.includes(',')) {
+    const ids = rawSession
+      .split(',')
+      .map((s) => stripHash(s.trim()))
+      .filter((s) => s.length > 0)
+    return searchAcrossSessions(ids, pattern, signals, {
+      scope: params.scope,
+      limit: params.limit,
+      signal,
+      metadataProvider,
+    })
+  }
+  const agentDir = signals.agentDir
+  const resolved = await resolveSessionId(
+    rawSession,
+    'search',
+    agentDir,
+    params.source,
+    undefined,
+    signals.liveSessionDir,
+  )
+  if (resolved.kind === 'multi') return disambiguate(resolved.query, resolved.candidates)
   const scope = params.scope ?? 'all'
   const limit = params.limit ?? SEARCH_DEFAULT_LIMIT
   const { entries } = await safeParse(resolved.fileName)
@@ -869,9 +958,20 @@ async function doSearch(
 const EXPORT_SEPARATOR_LEN = 40
 
 /** export：物化摘要到 <agentDir>/tmp/session-view-<id>.md（design §3.4 export，D-8）。 */
-async function doExport(params: SessionReadParams, agentDir: string): Promise<ToolResult> {
+async function doExport(
+  params: SessionReadParams,
+  agentDir: string,
+  liveSessionDir?: string,
+): Promise<ToolResult> {
   const format = params.format ?? 'outline'
-  const resolved = await resolveSessionId(params.session, 'export', agentDir, params.source)
+  const resolved = await resolveSessionId(
+    params.session,
+    'export',
+    agentDir,
+    params.source,
+    undefined,
+    liveSessionDir,
+  )
   if (resolved.kind === 'multi') return disambiguate(resolved.query, resolved.candidates)
 
   let text: string
@@ -937,25 +1037,9 @@ async function doExport(params: SessionReadParams, agentDir: string): Promise<To
 // extract action（v2 O4：跨 turn 按类型提取素材）
 // ===========================================================================
 //
-// design §3.3 D3 的 5 个预设 + F7/F8/F9 错误规格。复用 O1 共享层（extractToolCalls /
-// formatToolCallSummary / basename）与现有 resolveSessionId/safeParse/buildTreeView/
-// segmentTurns/parseTurnsRange。纯提取，不调 LLM。
-
-/** extract 的 5 个合法 what（design §3.3 D3）。 */
-type ExtractWhat = 'user-messages' | 'commands' | 'files' | 'commits' | 'tool-results'
-
-/** extract 结果预算（design §3.3 F9）：8000 字节 ≈ 2000 token。 */
-const EXTRACT_BUDGET_BYTES = 8000
-
-/** 含 path 参数的文件类工具（design §3.3 D3 files scope）。 */
-const FILE_TOOLS = new Set(['read', 'edit', 'write', 'head'])
-
-/** git 命令关键词（commits 预设判定 bash 结果是否来自 git 命令）。 */
-const GIT_CMD_RE = /\bgit\s+(log|show|commit|push|merge|cherry-pick|revert|reset|rebase|diff)\b/
-/** git short hash（commits 预设，保守限定 7-8 位避免 uuid 全量误报）。 */
-const SHORT_HASH_RE = /\b[0-9a-f]{7,8}\b/g
-/** commit 上下文消歧关键词（commits 次路径：hash 附近出现才纳入）。 */
-const COMMIT_CTX_RE = /feat:|fix:|refactor:|chore:|docs:|\b(commit|commits|merged|pushed|merge)\b/i
+// design §3.3 D3 的 5 个预设 + F7/F8/F9 错误规格。预设管线与预算渲染在 extract.ts
+//（max-lines 拆分轮机械提取）；本段保留 F7 what 校验与 doExtract 编排（定位依赖
+// tool-handler 私有的 resolveSessionId/safeParse/segmentTurns）。纯提取，不调 LLM。
 
 /** what 类型守卫（直接比较，避开不安全断言；schema 已校验，此处防御 + 可单测绕过）。 */
 function isExtractWhat(v: unknown): v is ExtractWhat {
@@ -969,406 +1053,24 @@ function isExtractWhat(v: unknown): v is ExtractWhat {
 }
 
 /**
- * 从 message.content 提取纯 text（string 直取；数组拼接 text 块）。
- *
- * 与 render.ts 内部 extractText 同语义，但那未导出；extract 仅需纯 text
- *（user-messages / tool-results 的正文），不要 thinking/toolCall 占位，本地实现。
- * content 是 unknown 做类型守卫。
- */
-function extractContentText(content: unknown): string {
-  if (typeof content === 'string') return content
-  if (Array.isArray(content)) {
-    const parts: string[] = []
-    for (const b of content) {
-      if (b !== null && typeof b === 'object') {
-        const o = b as Record<string, unknown>
-        if (o.type === 'text' && typeof o.text === 'string') parts.push(o.text)
-      }
-    }
-    return parts.join('\n')
-  }
-  return ''
-}
-
-/** 截断到 max 字符，超出加省略号（防爆；tool-results 正文用）。 */
-function truncateText(s: string, max: number): string {
-  return s.length <= max ? s : s.slice(0, max) + '…'
-}
-
-/** turnsLabel 展示的 turn 数上限（超出折叠为 +N）。 */
-const TURNS_LABEL_HEAD_COUNT = 5
-
-/** turns 数组紧凑标签（前 5 个 + +N，避免一行过长撑爆预算）。 */
-function turnsLabel(turns: number[]): string {
-  const head = turns.slice(0, TURNS_LABEL_HEAD_COUNT).map((n) => `T${pad(n)}`)
-  const suffix = turns.length > TURNS_LABEL_HEAD_COUNT ? `+${turns.length - TURNS_LABEL_HEAD_COUNT}` : ''
-  return head.join(',') + suffix
-}
-
-/**
- * 计算工具分布（按出现次数降序），用于 F8 提示 + details.toolDistribution。
- * 遍历 assistant entry 的 toolCall，复用 extractToolCalls。
- */
-function computeToolDistribution(
-  turns: Turn[],
-): Array<{ name: string; count: number }> {
-  const counts = new Map<string, number>()
-  for (const t of turns) {
-    for (const e of t.entries) {
-      if (e.message?.role !== 'assistant') continue
-      for (const tc of extractToolCalls(e)) {
-        counts.set(tc.name, (counts.get(tc.name) ?? 0) + 1)
-      }
-    }
-  }
-  return Array.from(counts.entries())
-    .map(([name, count]) => ({ name, count }))
-    .sort((a, b) => b.count - a.count)
-}
-
-/** F8 提示展示的工具分布条数上限。 */
-const TOOL_DISTRIBUTION_LIMIT = 10
-
-/** F8：commands/tool-results 的 tool 过滤零匹配 → 返回工具分布 + 👉（不抛错，design §3.3 F8）。 */
-function f8ToolNoMatch(what: ExtractWhat, tool: string, turns: Turn[]): ToolResult {
-  const dist = computeToolDistribution(turns).slice(0, TOOL_DISTRIBUTION_LIMIT)
-  const distStr = dist.map((d) => `${d.name}×${d.count}`).join(', ')
-  const text = `what=${what} tool="${tool}" 无匹配。该 session 工具：${distStr}。👉 用存在的工具名重试。`
-  return { content: [{ type: 'text', text }], details: { what, tool, toolDistribution: dist } }
-}
-
-/**
- * 通用预算渲染：逐项累加字节，超 EXTRACT_BUDGET_BYTES 截断（design §3.3 F9）。
- *
- * details.items 放实际展示的子集（截断后），count 放全集长度，测试可断言 shown/count/truncated。
- * emptyHint 仅 items 为空时用（files/commits 无匹配不报错，返空 + 提示）。
- *
- * 预算控制：按 item 累计字节达预算即截断。**首项超大也内部截断**（对单行 slice 到剩余字节预算，
- * 字节→字符 ×3 近似防 UTF8 多字节被切半），保证 body 不超预算——而非放行首项致 body 远超预算。
- * 导出供 tool-handler.test 单测 F9 截断逻辑（首项截断 + 文案含 turn 范围 + 实际 token）。
- *
- * getTurns：从 item 提取 turn 列表（files 是 turns 数组，其余单值包数组），供 F9 文案报 turn 范围。
- */
-
-/** UTF8 单字符最大字节数（预算字节→字符的保守换算基数，防多字节字符被切半）。 */
-const UTF8_MAX_BYTES_PER_CHAR = 3
-/** token 估算换算基数（bytes/4 口径，与 render 层 chars/4 同近似）。 */
-const CHARS_PER_TOKEN = 4
-
-export function renderExtractItems<I>(
-  what: ExtractWhat,
-  items: I[],
-  renderLine: (item: I) => string,
-  getTurns: (item: I) => number[],
-  emptyHint?: string,
-): ToolResult {
-  if (items.length === 0) {
-    const text = emptyHint ?? `what=${what} 无匹配。`
-    return {
-      content: [{ type: 'text', text }],
-      details: { what, count: 0, shown: 0, truncated: false, items: [] },
-    }
-  }
-  const shown: I[] = []
-  const shownLines: string[] = []
-  let bytes = 0
-  let cut = false
-  for (const item of items) {
-    const line = renderLine(item)
-    const lineBytes = Buffer.byteLength(line, 'utf8') + 1 // +\n
-    if (bytes + lineBytes > EXTRACT_BUDGET_BYTES) {
-      // 超预算：对当前 line 内部截断到剩余预算（首项超大也截断，但保留截断后的内容）
-      const remainingBytes = EXTRACT_BUDGET_BYTES - bytes
-      const charBudget = Math.floor(remainingBytes / UTF8_MAX_BYTES_PER_CHAR) // 字节→字符 ×3 近似防 UTF8 切半
-      if (charBudget > 0) {
-        const sliced = line.slice(0, charBudget) + '…'
-        shown.push(item)
-        shownLines.push(sliced)
-      }
-      cut = true
-      break
-    }
-    shown.push(item)
-    shownLines.push(line)
-    bytes += lineBytes
-  }
-  const body = shownLines.join('\n')
-  if (!cut) {
-    return {
-      content: [{ type: 'text', text: body }],
-      details: {
-        what,
-        count: items.length,
-        shown: shown.length,
-        truncated: false,
-        items: shown,
-      },
-    }
-  }
-  // F9：超预算截断。tokens 反映 body 实际体积（非固定 2000）；文案报 shown/count + turn 范围 + 实际 token
-  const shownTurns = shown.flatMap(getTurns)
-  const turnRange =
-    shownTurns.length > 0
-      ? `（T${pad(Math.min(...shownTurns))}-T${pad(Math.max(...shownTurns))}）`
-      : ''
-  const actualTokens = Math.round(Buffer.byteLength(body, 'utf8') / CHARS_PER_TOKEN)
-  const text =
-    body +
-    `\n[what=${what} 已显示 ${shown.length}/${items.length} 项${turnRange}，约 ${actualTokens} token 达预算上限。👉 用较小 turns 范围（如 T000-T005）缩小，或换 what 重试。]`
-  return {
-    content: [{ type: 'text', text }],
-    details: {
-      what,
-      count: items.length,
-      shown: shown.length,
-      truncated: true,
-      items: shown,
-    },
-  }
-}
-
-/** 预设 1：user-messages——收集 role==='user' 的全文（按 turn 排列，design §3.3 D3）。 */
-function extractUserMessages(turns: Turn[]): ToolResult {
-  const items: Array<{ turn: number; text: string }> = []
-  for (const t of turns) {
-    for (const e of t.entries) {
-      if (e.message?.role !== 'user') continue
-      items.push({ turn: t.index, text: extractContentText(e.message.content) })
-    }
-  }
-  return renderExtractItems(
-    'user-messages',
-    items,
-    (it) => `T${pad(it.turn)}: ${it.text}`,
-    (it) => [it.turn],
-  )
-}
-
-/**
- * 预设 2：commands——assistant 的 toolCall，带 name + D1 摘要（design §3.3 D3）。
- * 可选 tool 过滤；过滤后零匹配 → F8（工具分布 + 👉，不抛错）。
- * index = entry 在 turn.entries 内的位置，与 expand 的 [N] 对齐便于定位。
- */
-function extractCommands(turns: Turn[], tool: string | undefined): ToolResult {
-  const items: Array<{ turn: number; index: number; name: string; summary: string }> = []
-  for (const t of turns) {
-    for (let ei = 0; ei < t.entries.length; ei++) {
-      const e = t.entries[ei]
-      if (e.message?.role !== 'assistant') continue
-      for (const tc of extractToolCalls(e)) {
-        if (tool !== undefined && tc.name !== tool) continue
-        items.push({
-          turn: t.index,
-          index: ei,
-          name: tc.name,
-          summary: formatToolCallSummary(tc),
-        })
-      }
-    }
-  }
-  if (tool !== undefined && items.length === 0) return f8ToolNoMatch('commands', tool, turns)
-  return renderExtractItems(
-    'commands',
-    items,
-    (it) => `T${pad(it.turn)} #${it.index} ${it.summary}`,
-    (it) => [it.turn],
-  )
-}
-
-/**
- * 预设 3：files——read/edit/write/head 的 path 去重（design §3.3 D3）。
- * 同 path 多次操作合并，op 聚合成 `read+edit` 形式，turns 记录出现过的轮次。
- * todo/subagent/cw 无 path 不纳入。无匹配不报错（返空 + 提示）。
- */
-function extractFiles(turns: Turn[]): ToolResult {
-  const map = new Map<string, { ops: Set<string>; turns: Set<number> }>()
-  for (const t of turns) {
-    for (const e of t.entries) {
-      if (e.message?.role !== 'assistant') continue
-      for (const tc of extractToolCalls(e)) {
-        if (!FILE_TOOLS.has(tc.name)) continue
-        const p = tc.arguments.path
-        if (typeof p !== 'string') continue
-        let rec = map.get(p)
-        if (rec === undefined) {
-          rec = { ops: new Set(), turns: new Set() }
-          map.set(p, rec)
-        }
-        rec.ops.add(tc.name)
-        rec.turns.add(t.index)
-      }
-    }
-  }
-  const items = Array.from(map.entries()).map(([path, rec]) => ({
-    path,
-    basename: basename(path),
-    op: Array.from(rec.ops).sort().join('+'),
-    turns: Array.from(rec.turns).sort((a, b) => a - b),
-  }))
-  return renderExtractItems(
-    'files',
-    items,
-    (it) => `${it.op}: ${it.path} (${turnsLabel(it.turns)})`,
-    (it) => it.turns,
-    `what=files 无匹配（该 session 无 read/edit/write/head 文件操作）。`,
-  )
-}
-
-/**
- * 预设 4：commits——git 命令 toolResult 的 hash（design §3.3 D3 + D6 误匹配处理）。
- *
- * 保守策略（宁可少召回不要乱报 uuid）：
- * ① 主路径（高置信）：只从 bash 且关联 command 含 git (log|show|commit|push|merge|...) 的
- *    toolResult 文本提取 7-8 位 hex；
- * ② 次路径（中置信）：扫所有 toolResult 文本，hash 前后各 30 字符内含
- *    feat:/fix:/commit/merge 等关键词的才纳入；
- * ③ 去重，git-cmd 置信度优先；不扫 user/assistant 自由文本（uuid/session-id 误报太多）。
- *
- * 已知局限：7-8 位 hex 与 uuid v7 片段形似，靠 git 命令上下文过滤；仍可能漏报
- *（git 操作未被 toolResult 捕获）或误报（git log 输出里的其他 hex）。每条标注来源 turn
- * + source + context，agent 可快速辨认。完全语义判断需 LLM，本工具零 LLM 依赖。
- */
-/** commits 提取的 hash 前后上下文字符数（次路径关键词判定窗口）。 */
-const COMMIT_CONTEXT_CHARS = 30
-
-/** commits 预设的单条提取结果（hash + 来源 turn + 置信来源 + 上下文片段）。 */
-interface CommitItem {
-  hash: string
-  turn: number
-  source: 'git-cmd' | 'commit-context'
-  context: string
-}
-
-/** 建 toolCallId → bash command 映射（用于判定 toolResult 是否来自 git 命令）。 */
-function collectBashCommands(turns: Turn[]): Map<string, string> {
-  const bashCmds = new Map<string, string>()
-  for (const t of turns) {
-    for (const e of t.entries) {
-      if (e.message?.role !== 'assistant') continue
-      for (const tc of extractToolCalls(e)) {
-        if (tc.name === 'bash') {
-          const cmd = tc.arguments.command
-          if (typeof cmd === 'string') bashCmds.set(tc.id, cmd)
-        }
-      }
-    }
-  }
-  return bashCmds
-}
-
-/** 单条 toolResult 文本的 hash 提取：git-cmd 全收（高置信），否则按上下文关键词过滤（次路径）。 */
-function matchCommitsInResult(
-  text: string,
-  turnIndex: number,
-  isGitBash: boolean,
-  high: CommitItem[],
-  low: CommitItem[],
-): void {
-  for (const m of text.matchAll(SHORT_HASH_RE)) {
-    const hash = m[0]
-    const idx = m.index ?? 0
-    const ctx = text
-      .slice(Math.max(0, idx - COMMIT_CONTEXT_CHARS), idx + hash.length + COMMIT_CONTEXT_CHARS)
-      .replace(/\s+/g, ' ')
-      .trim()
-    if (isGitBash) {
-      high.push({ hash, turn: turnIndex, source: 'git-cmd', context: ctx })
-    } else if (COMMIT_CTX_RE.test(ctx)) {
-      low.push({ hash, turn: turnIndex, source: 'commit-context', context: ctx })
-    }
-  }
-}
-
-/** 主扫描阶段：遍历 toolResult entry，分类收集高/低置信 commit 候选。 */
-function collectCommitCandidates(
-  turns: Turn[],
-  bashCmds: Map<string, string>,
-): { high: CommitItem[]; low: CommitItem[] } {
-  const high: CommitItem[] = []
-  const low: CommitItem[] = []
-  for (const t of turns) {
-    for (const e of t.entries) {
-      if (e.message?.role !== 'toolResult') continue
-      const msg = e.message
-      const text = extractContentText(msg.content)
-      if (text === '') continue
-      const cmd = msg.toolCallId !== undefined ? bashCmds.get(msg.toolCallId) : undefined
-      const isGitBash = msg.toolName === 'bash' && cmd !== undefined && GIT_CMD_RE.test(cmd)
-      matchCommitsInResult(text, t.index, isGitBash, high, low)
-    }
-  }
-  return { high, low }
-}
-
-/** 收口阶段：去重，高置信优先，同 hash 保留首次。 */
-function dedupeCommits(high: CommitItem[], low: CommitItem[]): CommitItem[] {
-  const seen = new Set<string>()
-  const items: CommitItem[] = []
-  for (const c of high) {
-    if (seen.has(c.hash)) continue
-    seen.add(c.hash)
-    items.push(c)
-  }
-  for (const c of low) {
-    if (seen.has(c.hash)) continue
-    seen.add(c.hash)
-    items.push(c)
-  }
-  return items
-}
-
-function extractCommits(turns: Turn[]): ToolResult {
-  // 建 toolCallId → bash command 映射（用于判定 toolResult 是否来自 git 命令）
-  const bashCmds = collectBashCommands(turns)
-  const { high, low } = collectCommitCandidates(turns, bashCmds)
-  const items = dedupeCommits(high, low)
-
-  return renderExtractItems(
-    'commits',
-    items,
-    (it) => `T${pad(it.turn)} ${it.hash} [${it.source}] ${it.context}`,
-    (it) => [it.turn],
-    `what=commits 无匹配（该 session 无 git commit hash，或未在 toolResult 中出现）。`,
-  )
-}
-
-/** tool-results 正文截断上限（防爆）。 */
-const TOOL_RESULT_TEXT_MAX_CHARS = 500
-
-/**
- * 预设 5：tool-results——role==='toolResult' 文本（design §3.3 D3）。
- * text 截断到 500 字防爆；可选 tool 过滤（msg.toolName）；过滤零匹配 → F8。
- */
-function extractToolResults(turns: Turn[], tool: string | undefined): ToolResult {
-  const items: Array<{ turn: number; index: number; toolName: string; text: string }> = []
-  for (const t of turns) {
-    for (let ei = 0; ei < t.entries.length; ei++) {
-      const e = t.entries[ei]
-      if (e.message?.role !== 'toolResult') continue
-      const tn = e.message.toolName ?? '?'
-      if (tool !== undefined && tn !== tool) continue
-      const text = truncateText(extractContentText(e.message.content), TOOL_RESULT_TEXT_MAX_CHARS)
-      items.push({ turn: t.index, index: ei, toolName: tn, text })
-    }
-  }
-  if (tool !== undefined && items.length === 0)
-    return f8ToolNoMatch('tool-results', tool, turns)
-  return renderExtractItems(
-    'tool-results',
-    items,
-    (it) => `T${pad(it.turn)} #${it.index} ${it.toolName}: ${it.text}`,
-    (it) => [it.turn],
-  )
-}
-
-/**
  * extract：跨 turn 按类型提取素材（design §3.3 D3 五预设 + F7/F8/F9）。
  *
  * 流程：resolveSessionId（multi 走 disambiguate）→ safeParse → buildTreeView +
  * segmentTurns → 可选 turns 范围限定（复用 parseTurnsRange）→ F7 校验 what → 分发 5 预设。
  */
-async function doExtract(params: SessionReadParams, agentDir: string): Promise<ToolResult> {
-  const resolved = await resolveSessionId(params.session, 'extract', agentDir, params.source)
+async function doExtract(
+  params: SessionReadParams,
+  agentDir: string,
+  liveSessionDir?: string,
+): Promise<ToolResult> {
+  const resolved = await resolveSessionId(
+    params.session,
+    'extract',
+    agentDir,
+    params.source,
+    undefined,
+    liveSessionDir,
+  )
   if (resolved.kind === 'multi') return disambiguate(resolved.query, resolved.candidates)
   const { entries } = await safeParse(resolved.fileName)
   // extract 遍历全量 entry（含旁支/压缩历史），与 outline/expand/detail 的 leaf 视图不同：
@@ -1459,8 +1161,19 @@ interface SkippedRun {
  * step 的 call sessionId/sessionFile 是 LLM 跳 outline/detail 的入口（m0 resolveSessionId
  * 三形态复用：sessionId/绝对路径/sa-id 均可深读，TC-wf-step-sessionfile-link）。
  */
-async function doWorkflow(params: SessionReadParams, agentDir: string): Promise<ToolResult> {
-  const resolved = await resolveSessionId(params.session, 'workflow', agentDir, params.source)
+async function doWorkflow(
+  params: SessionReadParams,
+  agentDir: string,
+  liveSessionDir?: string,
+): Promise<ToolResult> {
+  const resolved = await resolveSessionId(
+    params.session,
+    'workflow',
+    agentDir,
+    params.source,
+    undefined,
+    liveSessionDir,
+  )
   if (resolved.kind === 'multi') return disambiguate(resolved.query, resolved.candidates)
 
   let workflows: WorkflowRef[]
@@ -1548,7 +1261,65 @@ async function doWorkflow(params: SessionReadParams, agentDir: string): Promise<
   return { content: [{ type: 'text', text }], details }
 }
 
-/** result action 的注入依赖（构造期绑定本文件私有 helper，运行时零查找开销）。 */
+// ---------------------------------------------------------------------------
+// u11 标题元数据 TTL 缓存（design 2026-09-10 §6.6 调用策略 ③）
+// ---------------------------------------------------------------------------
+
+/**
+ * 标题缓存条目（SessionMetadataEntry[] keyed by 目录字面路径）。与 doctor 的
+ * doctorScanCache **独立实例**——两者语义不同：doctor 缓存根扫描统计（文件数/耗时），
+ * 本缓存标题元数据（session_info name / firstMessage，低频变更）。
+ */
+interface MetadataCacheEntry {
+  entries: SessionMetadataEntry[]
+  /** 写入时刻（Date.now()），TTL 判定用 */
+  cachedAt: number
+  /** 目录 mtime(ms)；不存在为 null（存在性翻转即失效） */
+  dirMtimeMs: number | null
+}
+
+const metadataCache = new Map<string, MetadataCacheEntry>()
+// §7.5 豁免（development-guide.md「纯性能缓存豁免」）：TTL 纯性能缓存，jiti 双路径加载
+// 分裂成两份仅多一次 miss 重扫，无正确性影响，不升级 globalThis 单例。
+
+/**
+ * 标题缓存 TTL（秒级，§6.6 策略 ③）。量级与 doctor 根扫描缓存同档（DOCTOR_CACHE_TTL_MS），
+ * 待 §11.3a 实测校准；mtime 是主失效通道，TTL 兜「目录内文件追加不改目录 mtime」的陈旧面
+ *（标题恰好随首条消息落盘，同窗口内新增标题最多延迟一个 TTL 可见，可接受）。
+ */
+export const METADATA_CACHE_TTL_MS = DOCTOR_CACHE_TTL_MS
+
+/**
+ * 把注入的 metadataProvider 包上 TTL 缓存（get 失效判定 + set 快照）。
+ *
+ * 只缓存成功结果——provider 抛错原样上抛，由发现层单目录 try/catch 记空继续（guard），
+ * 且瞬态失败不污染缓存（下个查询即重试）。find 的多次 findSessions 调用（u10 分组探测
+ * main/subagent 两路）与连续 keyword 查询都经此处去重，listAll 每 TTL 窗口至多一次/目录。
+ */
+export function withMetadataCache(provider: SessionMetadataProvider): SessionMetadataProvider {
+  return async (dir) => {
+    const hit = metadataCache.get(dir)
+    if (hit !== undefined) {
+      const expired = Date.now() - hit.cachedAt >= METADATA_CACHE_TTL_MS
+      const mtime = await statDirMtimeOrNull(dir)
+      if (!expired && mtime === hit.dirMtimeMs) return hit.entries
+      metadataCache.delete(dir)
+    }
+    const entries = await provider(dir)
+    metadataCache.set(dir, {
+      entries,
+      cachedAt: Date.now(),
+      dirMtimeMs: await statDirMtimeOrNull(dir),
+    })
+    return entries
+  }
+}
+
+/**
+ * result action 的注入依赖（构造期绑定本文件私有 helper，运行时零查找开销）。
+ * resolveSessionId 仅作类型/缺省绑定——入口分发时被 per-call 包装覆盖（闭包捕获
+ * 信号包 liveSessionDir，见 handleSessionRead result case）。
+ */
 const RESULT_ACTION_DEPS: ResultActionDeps = {
   err,
   stripHash,
@@ -1566,45 +1337,71 @@ export { extractFinalAssistantText }
 // ===========================================================================
 
 /**
- * session_read 工具的纯逻辑 handler（agentDir 注入，零 pi 依赖，可单测）。
+ * session_read 工具的纯逻辑 handler（信号包注入，零 pi 依赖，可单测）。
  *
- * 按 params.action 分发到 doFind/doFamily/doOutline/doExpand/doDetail/doSearch/doExport。
+ * 按 params.action 分发到 do* 家族（11 个 action，与本文件各 action 实现一一对应）。
  * F1(resolve)/F4/F5/F6 抛 Error（含 👉）；F2 多匹配与 find 零匹配返回结果不抛。
  *
+ * @param signals 发现层信号包（design §7B：index.ts 采集 { agentDir, liveSessionDir? }，
+ *   采集端全可选链可降级）。兼容接受裸 agentDir string（存量单测与外部深 import 的旧签名
+ *   形态，入口归一化为只含 agentDir 的信号包，行为与旧签名逐字节一致；工具运行路径恒传
+ *   完整信号包）。u9 起 find/F1 路径消费根列表（F1 自检行恒走无 options 实扫，
+ *   不读 doctor 缓存，§7B 要点 8）。
  * @param signal 可选 AbortSignal（MF-5）：仅 search 消费（长扫描可中断）；其余 action 有界，不接。
+ * @param metadataProvider 可选标题元数据注入（u11，design 2026-09-10 §6.6）：index.ts 构造
+ *   `(dir) => SessionManager.listAll(dir)`，此处包 TTL 缓存后透传 find。缺省 = undefined =
+ *   现状行为（标题检索不可用，首条 user 匹配不受影响）；provider 抛错由发现层单目录
+ *   try/catch 降级，不外抛。
  */
 export async function handleSessionRead(
   params: SessionReadParams,
-  agentDir: string,
+  signals: SessionReadSignals | string,
   signal?: AbortSignal,
+  metadataProvider?: SessionMetadataProvider,
 ): Promise<ToolResult> {
+  // 裸 string（存量单测/外部深 import 旧签名，D-8）归一化为信号包；doctor 需要完整
+  // 信号包（liveSessionDir/env/bundleUrl），缺省字段按各自降级语义处理。
+  const norm: SessionReadSignals = typeof signals === 'string' ? { agentDir: signals } : signals
+  const agentDir = norm.agentDir
+  // u11：TTL 缓存包装在注入边界（策略 ③，独立于 doctorScanCache 的实例）；仅 find 消费。
+  const cachedProvider =
+    metadataProvider === undefined ? undefined : withMetadataCache(metadataProvider)
   switch (params.action) {
     case 'find':
-      return doFind(params, agentDir)
+      return doFind(params, norm, cachedProvider)
     case 'family':
-      return doFamily(params, agentDir)
+      return doFamily(params, agentDir, norm.liveSessionDir)
     case 'outline':
-      return doOutline(params, agentDir)
+      return doOutline(params, agentDir, norm.liveSessionDir)
     case 'expand':
-      return doExpand(params, agentDir)
+      return doExpand(params, agentDir, norm.liveSessionDir)
     case 'detail':
-      return doDetail(params, agentDir)
+      return doDetail(params, agentDir, norm.liveSessionDir)
     case 'search':
-      return doSearch(params, agentDir, signal)
+      return doSearch(params, norm, signal, cachedProvider)
     case 'export':
-      return doExport(params, agentDir)
+      return doExport(params, agentDir, norm.liveSessionDir)
     case 'extract':
-      return doExtract(params, agentDir)
+      return doExtract(params, agentDir, norm.liveSessionDir)
     case 'workflow':
-      return doWorkflow(params, agentDir)
+      return doWorkflow(params, agentDir, norm.liveSessionDir)
     case 'result':
-      return doResult(params, agentDir, RESULT_ACTION_DEPS)
+      // per-call 覆盖 deps.resolveSessionId：把信号包中的 liveSessionDir 闭包进解析调用
+      //（ResultActionDeps 接口签名固定 5 参，包装保持同形、末位补传），result 的片段
+      // 形态与 find/outline 消费同一 roots（sa-/绝对路径分支在 resolveSessionId 内不受影响）。
+      return doResult(params, agentDir, {
+        ...RESULT_ACTION_DEPS,
+        resolveSessionId: (rawSession, action, ad, source, prefetchedManifests) =>
+          resolveSessionId(rawSession, action, ad, source, prefetchedManifests, norm.liveSessionDir),
+      })
+    case 'doctor':
+      return doDoctor(params, norm)
     default: {
-      // exhaustive guard：switch 覆盖全部 10 action，此处 params.action 收窄为 never；
+      // exhaustive guard：switch 覆盖全部 11 action，此处 params.action 收窄为 never；
       // 仅防御运行时非法 action（schema 正常校验下不可达）
       const exhaustive: never = params.action
       throw err(
-        `未知 action "${JSON.stringify(exhaustive)}"。👉 合法 action: find/family/outline/expand/detail/search/export/extract/workflow/result。`,
+        `未知 action "${JSON.stringify(exhaustive)}"。👉 合法 action: find/family/outline/expand/detail/search/export/extract/workflow/result/doctor。`,
       )
     }
   }

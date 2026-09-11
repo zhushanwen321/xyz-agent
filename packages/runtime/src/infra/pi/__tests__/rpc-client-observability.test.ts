@@ -99,7 +99,7 @@ vi.mock('../pi-paths.js', async (importOriginal) => {
   return {
     ...actual,
     getSessionsDir: () => '/mock/home/.xyz-agent/sessions',
-    getPiAgentDir: () => '/mock/home/.xyz-agent/pi/agent',
+    getPiAgentDir: () => '/mock/home/.xyz-agent/agent',
   }
 })
 
@@ -151,7 +151,7 @@ describe('RpcClient spawn env：XYZ_AGENT_EXT_LOG 注入（U3-3）', () => {
     vi.stubEnv('XYZ_RUNTIME_TOKEN', 'leaked-token')
     try {
       await startClient()
-      expect(capturedEnv!.PI_CODING_AGENT_DIR).toBe('/mock/home/.xyz-agent/pi/agent')
+      expect(capturedEnv!.PI_CODING_AGENT_DIR).toBe('/mock/home/.xyz-agent/agent')
       expect(capturedEnv!.XYZ_AGENT_EXT_LOG).toBe('1')
       expect(capturedEnv).not.toHaveProperty('XYZ_RUNTIME_TOKEN')
     } finally {

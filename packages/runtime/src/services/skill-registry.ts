@@ -38,7 +38,7 @@ export interface SkillRegistryConfigStore {
    * v2：resolveGlobal/ProjectSkillDirs 直接读显式 scope，不再 isAbsolute 推断（方案 §2.5 路径 A 配套）。
    */
   getSkillPathScopes(): DirScopes
-  /** pi agent 配置目录（~/.xyz-agent/pi/agent）。 */
+  /** pi agent 配置目录（<dataDir>/agent）。 */
   getPiAgentDir(): string
 }
 

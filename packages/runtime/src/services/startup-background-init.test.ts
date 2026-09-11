@@ -17,6 +17,7 @@ import { join } from 'node:path'
 import { runStartupBackgroundInit } from './startup-background-init.js'
 import { getMigrationGate } from './session/session-lifecycle.js'
 import { getSessionsDir, getPiAgentDir } from '../infra/pi/pi-paths.js'
+import { getDataDir } from '@xyz-agent/shared/paths'
 import type { ExtensionService } from './extension-service.js'
 import type { ProcessManager } from '../infra/pi/process-manager.js'
 import type { SkillRegistry } from './skill-registry.js'
@@ -36,7 +37,7 @@ const h = vi.hoisted(() => {
 // ⑨ 孤儿收殓挂载测试用 mock：文件级 vi.mock 同时保护其余用例——若测试文件整体跑超
 // 5s（慢 CI），真实 5s 定时器触发时命中的也是此 mock，不会真扫/真杀本机进程。
 const rh = vi.hoisted(() => ({
-  reapOrphanPiProcesses: vi.fn(async (_options: { sessionsDir: string; ownPid: number }) => ({
+  reapOrphanPiProcesses: vi.fn(async (_options: { dataDir: string; ownPid: number; readSpawnMarkers: () => string[] | null }) => ({
     scanned: 0,
     reaped: [] as number[],
     failed: [] as number[],
@@ -92,6 +93,8 @@ function makeDeps() {
   } as unknown as PluginService
   const appInfo = { appVersion: '1.2.3', piVersion: 'unknown' }
   const broadcastAppInfo = vi.fn(() => { calls.push('broadcastAppInfo') })
+  // u17：spawn 清单读取 port（组合根注入 infra 读侧闭包）；值无意义（reap 全 mock），形态保真。
+  const readSpawnMarkers = vi.fn(() => ['/data/xyz-agent/extensions/pi-agent-ext'])
   const deps = {
     configStore: {} as PiConfigStore,
     authStorage: {} as AuthStorage,
@@ -102,8 +105,9 @@ function makeDeps() {
     broadcastAppInfo,
     skillRegistry,
     pluginService,
+    readSpawnMarkers,
   }
-  return { deps, calls, extensionService, pm, broadcastAppInfo, skillRegistry, pluginService, appInfo }
+  return { deps, calls, extensionService, pm, broadcastAppInfo, skillRegistry, pluginService, appInfo, readSpawnMarkers }
 }
 
 beforeEach(() => {
@@ -187,10 +191,10 @@ describe('runStartupBackgroundInit（D8-1 后台初始化序列）', () => {
 })
 
 describe('⑨ 孤儿 pi 收殓挂载（integrity-hardening §3.4 D4a）', () => {
-  it('启动后延迟 5s 触发一次收殓，参数带本实例 sessionsDir 与 runtime pid', async () => {
+  it('启动后延迟 5s 触发一次收殓，参数带本实例 dataDir、注入的清单读取函数与 runtime pid', async () => {
     vi.useFakeTimers()
     try {
-      const { deps } = makeDeps()
+      const { deps, readSpawnMarkers } = makeDeps()
       await runStartupBackgroundInit(deps)
       // 串行链完成后宽限未到：不收殓（5s 给 pi stdin-EOF 自杀链留时间）
       expect(rh.reapOrphanPiProcesses).not.toHaveBeenCalled()
@@ -198,7 +202,9 @@ describe('⑨ 孤儿 pi 收殓挂载（integrity-hardening §3.4 D4a）', () => 
       expect(rh.reapOrphanPiProcesses).toHaveBeenCalledTimes(1)
       const arg = rh.reapOrphanPiProcesses.mock.calls[0][0]
       expect(arg.ownPid).toBe(process.pid)
-      expect(arg.sessionsDir).toBe(getSessionsDir())
+      expect(arg.dataDir).toBe(getDataDir())
+      // 组合根注入的清单读取 port 原样透传（D6c：services 不自行 import infra 读侧）
+      expect(arg.readSpawnMarkers).toBe(readSpawnMarkers)
     } finally {
       vi.useRealTimers()
     }

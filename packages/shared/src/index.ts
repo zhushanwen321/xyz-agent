@@ -11,6 +11,7 @@ export type {
   SkillCacheScope, SkillCacheInvalidatedPayload,
   SessionTraceHeaderPayload, SessionTraceMalformedLine, SessionTraceSessionEndPayload,
   SessionViewSnapshot,
+  ConnectionTestResultRow,
 } from './protocol'
 export { isMessage, isSessionSummary, isSubagentRecord } from './protocol'
 export type {
@@ -117,8 +118,11 @@ export type {
   QuotaFetchOutcome,
   QuotaFetcherConfig,
   QuotaWorkspaceNormalizeResult,
+  // 凭证来源与 configure payload（D3/§7.1，coding-plan-quota-config-ux）
+  QuotaCredentialSource,
+  QuotaConfigurePayload,
 } from './quota-types'
-export { normalizeQuotaWorkspaceUrl } from './quota-types'
+export { normalizeQuotaWorkspaceUrl, resolveQuotaCredentialSource, supportsExclusiveCredential } from './quota-types'
 export type { QuotaPreset } from './quota-presets'
 export { QUOTA_PRESETS, matchQuotaPreset } from './quota-presets'
 // normalizeSubagentStatus 已下沉至 runtime（packages/runtime/src/services/session/subagent-status.ts，

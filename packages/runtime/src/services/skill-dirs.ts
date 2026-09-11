@@ -31,7 +31,7 @@ export const FORCED_PROJECT_SKILL_DIR = '.xyz-agent/skills'
  * 只需要目录发现相关的方法。
  */
 export interface SkillDirConfigSource {
-  /** pi agent 配置目录（~/.xyz-agent/pi/agent）。 */
+  /** pi agent 配置目录（<dataDir>/agent）。 */
   getPiAgentDir(): string
   /**
    * discovery.json skill 的 v2 分 scope 结构（projectPaths / globalPaths）。

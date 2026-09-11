@@ -9,6 +9,7 @@
  *   - 点击分组头 → 折叠（模型行消失）；再点 → 展开
  *   - 合计行渲染总 token 与总费用
  *   - groups 引用刷新（重试/筛选）→ 展开态重置为前两组展开，不残留旧组状态（D5 watch）
+ *   - 取色 wiring（V4）：分组头色点背景 = providerColors 映射中该 pid 的色值
  */
 import { describe, it, expect } from 'vitest'
 import { mount } from '@vue/test-utils'
@@ -26,8 +27,8 @@ function group(pid: string, input: number, model: string): {
   return { pid, u, models: [{ model, u }] }
 }
 
-function mountTable(groups: ReturnType<typeof group>[], tot: AggMetrics) {
-  return mount(UsageDetailTable, { props: { groups, tot } })
+function mountTable(groups: ReturnType<typeof group>[], tot: AggMetrics, providerColors: Record<string, string> = {}) {
+  return mount(UsageDetailTable, { props: { groups, tot, providerColors } })
 }
 
 describe('UsageDetailTable 分组折叠', () => {
@@ -78,6 +79,15 @@ describe('UsageDetailTable 分组折叠', () => {
     expect(text).toContain('合计')
     expect(text).toContain('1,234')
     expect(text).toContain('$2.50')
+  })
+
+  it('分组头色点取色来自 providerColors 映射（V4：同 pid 同色）', () => {
+    const wrapper = mountTable(groups, tot, { p1: 'var(--chart-p1)', p2: 'var(--chart-p2)', p3: 'var(--chart-p3)' })
+    const dots = wrapper.findAll('span.size-2')
+    expect(dots).toHaveLength(3)
+    expect(dots[0].attributes('style')).toContain('background: var(--chart-p1)')
+    expect(dots[1].attributes('style')).toContain('background: var(--chart-p2)')
+    expect(dots[2].attributes('style')).toContain('background: var(--chart-p3)')
   })
 })
 

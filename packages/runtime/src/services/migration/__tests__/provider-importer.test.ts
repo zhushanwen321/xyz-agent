@@ -78,6 +78,9 @@ describe('provider-importer', () => {
     vi.mocked(parseProviders).mockReturnValue(null)
     vi.mocked(getProviderNames).mockReturnValue([])
     vi.mocked(upsertProvider).mockImplementation(() => ({}))
+    // isCatalogProvider 默认 false（自定义 provider 行为）；显式重置避免上个用例的
+    // mockReturnValue(true) 泄漏（clearAllMocks 只清调用记录，不清实现）
+    vi.mocked(isCatalogProvider).mockReturnValue(false)
   })
 
   // ── T3：脱敏红线 —— preview 不含 apiKey 明文 ──────────────────
@@ -548,6 +551,93 @@ describe('provider-importer', () => {
     if (!('result' in applyOut)) throw new Error('apply should succeed')
     expect(applyOut.result.imported[0]).toMatchObject({ id: 'openai', status: 'skipped' })
     expect(upsertProvider).not.toHaveBeenCalled()
+  })
+
+  // ══ D1④ 防线载体接线：importer 主路径（applyProviderEntry 直调 upsertProvider）══
+  //
+  // 背景：importer 不经过 setProvider（直调 infra upsertProvider），防线必须落在写入点
+  // ——两条 upsert 路径都在 upsert 前调 applyProviderWritePolicy(kind, source='import')。
+  // 覆盖：catalog 源端 provider 级 api/baseUrl 剥除（不产生隐形网关）+ apiKey 不写 +
+  // 空串转译生效 + 剥除后无实质字段不物化空壳。
+
+  it('D1④-catalog: 主路径对 catalog 源端 provider 级 api/baseUrl 不落盘（source=import 剥除）+ apiKey 不写 models.json', async () => {
+    vi.mocked(isCatalogProvider).mockReturnValue(true)
+    vi.mocked(parseProviders).mockReturnValue(result([
+      fp({
+        _sourceName: 'opencode-go',
+        name: 'OpenCode Go',
+        api: 'anthropic-messages',
+        baseUrl: 'https://frozen-artifact.example',
+        apiKey: 'sk-cat-key',
+        models: [{ id: 'm1', name: 'M1' }],
+      }),
+    ]))
+
+    const prev = previewImport('pi')
+    if (!('importId' in prev)) throw new Error('preview should succeed')
+    // 不传 credentialWriter（catalog 无 auth.json 写入通道）→ 走主路径 upsert
+    const applyOut = await applyImport(prev.importId, ['opencode-go'])
+
+    if (!('result' in applyOut)) throw new Error('apply should succeed')
+    expect(upsertProvider).toHaveBeenCalledTimes(1)
+    const [, config] = vi.mocked(upsertProvider).mock.calls[0]
+    // 源端 provider 级 api/baseUrl 是快照 artifact / 外部配置值，不是用户在 UI 设的网关
+    expect(config).not.toHaveProperty('api')
+    expect(config).not.toHaveProperty('baseUrl')
+    // catalog 的 apiKey 只归 auth.json（无 credentialWriter 时宁丢不写错位）
+    expect(config).not.toHaveProperty('apiKey')
+    // 非托管字段与 override models 原样保留
+    expect(config.name).toBe('OpenCode Go')
+    expect(config.models).toEqual([{ id: 'm1', name: 'M1' }])
+  })
+
+  it('D1②: 主路径空串转译生效（provider 级 name/baseUrl/api + 模型级 name/api/baseUrl 不落盘）', async () => {
+    vi.mocked(parseProviders).mockReturnValue(result([
+      fp({
+        _sourceName: 'A',
+        name: '',
+        api: '   ',
+        baseUrl: '',
+        apiKey: 'sk-A',
+        models: [{ id: 'm1', name: '', api: '', baseUrl: '  ' }],
+      }),
+    ]))
+
+    const prev = previewImport('pi')
+    if (!('importId' in prev)) throw new Error('preview should succeed')
+    const applyOut = await applyImport(prev.importId, ['A'])
+
+    if (!('result' in applyOut)) throw new Error('apply should succeed')
+    const [, config] = vi.mocked(upsertProvider).mock.calls[0]
+    expect(config).not.toHaveProperty('name')
+    expect(config).not.toHaveProperty('api')
+    expect(config).not.toHaveProperty('baseUrl')
+    // 空串（含纯空白）在落盘前被剥除——不写空串键即不会毒化整个 models.json
+    expect(config.models).toEqual([{ id: 'm1' }])
+    expect(JSON.stringify(config)).not.toMatch(/:\s*""/)
+  })
+
+  it('D1③: 主路径 catalog 条目剥除后无实质字段 → 不物化空壳（upsert 不被调用 + 条目 failed）', async () => {
+    vi.mocked(isCatalogProvider).mockReturnValue(true)
+    vi.mocked(parseProviders).mockReturnValue(result([
+      fp({
+        _sourceName: 'opencode-go',
+        api: 'anthropic-messages',
+        baseUrl: 'https://frozen-artifact.example',
+        apiKey: 'sk-cat-key',
+        models: undefined, // 无 override models → 剥除 provider 级字段后八字段全缺
+      }),
+    ]))
+
+    const prev = previewImport('pi')
+    if (!('importId' in prev)) throw new Error('preview should succeed')
+    const applyOut = await applyImport(prev.importId, ['opencode-go'])
+
+    if (!('result' in applyOut)) throw new Error('apply should succeed')
+    expect(upsertProvider).not.toHaveBeenCalled()
+    expect(applyOut.result.imported[0]).toMatchObject({ id: 'opencode-go', status: 'failed' })
+    expect(applyOut.result.imported[0].reason).toContain('credential writer')
+    expect(applyOut.result.failedCount).toBe(1)
   })
 
   // ══ W4 补充：分支覆盖缺口锚定 ══

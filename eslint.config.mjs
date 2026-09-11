@@ -512,12 +512,16 @@ export default [
       'max-lines': ['warn', { max: 1000, skipBlankLines: true, skipComments: true }],
     },
   },
-  // provider-config-helper：provider 配置读改/清洗/凭据应用聚合中心（505 行）。
-  // sanitize* 校验组拆分是长期方向，短期 override 与 chat.ts 等聚合中心同模式。
+  // provider-config-helper：provider 配置读改/清洗/凭据应用聚合中心。
+  // 设计 catalog-provider-field-authority §3.3 D1 的写侧防线载体（applyProviderWritePolicy）
+  // 驻本文件，且后续单元（M2b 的 listProviders 迁移、M4 的 resolveCatalogDisplayFields 改造）
+  // 仍会继续追加，故上限抬到 900（先例：download-asset.ts 抬到 1000）。
+  // 沿用既有「sanitize* 校验组拆分是长期方向，短期 override 与 chat.ts 等聚合中心同模式」表述——
+  // 长期仍应拆分（防线载体可拆独立模块）。
   {
     files: ['packages/runtime/src/services/provider-config-helper.ts'],
     rules: {
-      'max-lines': ['warn', { max: 600, skipBlankLines: true, skipComments: true }],
+      'max-lines': ['warn', { max: 900, skipBlankLines: true, skipComments: true }],
     },
   },
   // runtime 组合根 main()：装配顺序带文档化时序耦合（函数内注释逐段说明构造先后
@@ -527,6 +531,22 @@ export default [
     files: ['packages/runtime/src/index.ts'],
     rules: {
       'max-lines-per-function': 'off',
+    },
+  },
+  // [HISTORICAL] session-dead u2/u3b 转移原语+收敛环落地致超限（962→1380），拆分（原语/转移表/收敛环/UserStoppedGate 分域）登记为后续重构项，勿再增行。
+  // 提额而非 off：保留 700 软上限告警，超限即再暴露（与 session-runner/zcode-engine 提额先例同型）。
+  {
+    files: ['packages/runtime/src/services/session/event-interpreter.ts'],
+    rules: {
+      'max-lines': ['warn', { max: 700, skipBlankLines: true, skipComments: true }],
+    },
+  },
+  // [HISTORICAL] session-dead u2/u3b 语义改动致超限（512>500），拆分登记为后续重构项，勿再增行。
+  // 提额至 520 而非 off：微超即提额，保留软上限告警（与 provider-config-helper 提额先例同型）。
+  {
+    files: ['packages/runtime/src/services/session/session-service.ts'],
+    rules: {
+      'max-lines': ['warn', { max: 520, skipBlankLines: true, skipComments: true }],
     },
   },
 ];

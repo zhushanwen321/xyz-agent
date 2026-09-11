@@ -22,7 +22,7 @@ import { useComposerKeydown, type ComposerKeydownDeps } from './composer-keydown
 import type { ShellInputInstance } from './composer-shell'
 import CommandPopover from '@/components/panel/CommandPopover.vue'
 
-// useCommandSync（useCommandPopoverDelivery 内）挂载即可能拉 session.getCommands：
+// useCommandSync（CommandPopover 内直调）挂载即可能拉 session.getCommands：
 // mock '@/api' 避免依赖真实通道（与 command-popover-registry-merge.test.ts 同款）
 vi.mock('@/api', () => ({
   session: { getCommands: vi.fn().mockResolvedValue({ sessionId: '', commands: [] }) },

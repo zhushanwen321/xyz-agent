@@ -10,7 +10,7 @@
  * 轮转的存在性门控需放行）；其余 fs 方法保留真实实现（mkdtempSync 建真实临时目录）。
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { createWriteStream, mkdtempSync, type WriteStream } from 'node:fs'
+import { createWriteStream, mkdtempSync, statSync, type WriteStream } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -321,5 +321,100 @@ describe('logger.ts 轮转顺序（fs mock）', () => {
     expect(allChunks).toContain('line-9999')
     expect(allChunks).not.toContain('line-10000')
     expect(allChunks).toContain('after-rotation')
+  })
+
+  // ── pi stdout tee 丢弃计数降级（R3 S-2：「pi 卡死唯一证据」丢行不计数 / 计数不出声 = 静默丢证据）──
+  //
+  // 与主日志同型，但走 createPiStreamWriter → pushPendingPiLine / rotatePiStream 的 state.dropped
+  // 出口 + pi 专属 warn 文案「dropped N pi log lines」。pi 流惰性打开：首个 createWriteStream
+  // 是 init 行的主日志流，首个 .jsonl 流才是 pi 流。
+  it('pi 流 pending 队列容量上限：轮转窗口超长时超限行丢弃计数、不触发二次轮转，轮转结束合并 warn 一次（R3 S-2①）', async () => {
+    vi.useFakeTimers()
+    process.env.XYZ_LOG_MAX_BYTES = '80'
+    // gzipRotatedFile 前置探测：对 .jsonl 路径 statSync 抛错 → existsSyncSafe 走「文件已不存在，
+    // 无需归档」快速路径。共享 mock 的 statSync 恒 {size:0} 会让 gzip 以为磁盘文件存在，
+    // pipeline 挂在被 mock 的下游 FakeStream 上永不落定，轮转无法完成（closeLogger 随之挂起）。
+    vi.mocked(statSync).mockImplementation(((path: unknown) => {
+      if (String(path).includes('.jsonl')) throw new Error('ENOENT (mock): pi stream file not on disk')
+      return { size: 0 }
+    }) as typeof statSync)
+    const created: InstanceType<typeof FakeStream>[] = []
+    let piOpens = 0
+    vi.mocked(createWriteStream).mockImplementation((file) => {
+      const name = String(file)
+      order.push(`open:${name}`)
+      const s = new FakeStream(name)
+      if (name.includes('.jsonl')) {
+        piOpens += 1
+        if (piOpens === 1) s.closeDelayTicks = -1 // 首个 pi 流永不 close：pi 轮转窗口保持，队列持续累积
+      }
+      created.push(s)
+      return asWriteStream(s)
+    })
+    const logger = await import('../infra/logger.js')
+    logger.initLogger(dataDir)
+    const piLog = logger.createPiSessionLog('drop-cap-sid')
+    // 每行 ~51B：i=0 直写（惰性打开）；i=1 超阈值触发轮转入队；i=2..10000 填满队列；i=10001..10005 被丢弃
+    for (let i = 0; i < 10_006; i++) piLog.write(`{"n":${i},"pad":"${'x'.repeat(38)}"}`)
+    // 推进超 END_AWAIT_TIMEOUT_MS（5s）：挂起流强制销毁 → pi 轮转续体走完（磁盘文件不存在，
+    // gzipRotatedFile 视为已归档）→ 回放 10_000 行 + 超限丢弃计数合并 warn
+    await vi.advanceTimersByTimeAsync(6000)
+    await vi.advanceTimersByTimeAsync(0) // 排空续体微任务链（fake timers 下禁用 setImmediate tick）
+    // 队列满不触发二次轮转：屏障前 pi 流 end 只发生 1 次（首轮），open 2 次（首轮 + 回放重开）；
+    // closeLogger 的 shutdown end 不计（它会对回放流再 end 一次，同文件名）
+    expect(order.filter((o) => o.startsWith('end:') && o.includes('.jsonl'))).toHaveLength(1)
+    expect(piOpens).toBe(2)
+    await logger.closeLogger() // 屏障：await 在途轮转（含回放）→ 断言无竞态
+    // 丢弃计数出声（pi 专属 warn 文案，只一次）
+    const warnChunks = created.flatMap((s) => s.chunks).filter((c) => c.includes('[WARN]') && c.includes('pi log lines'))
+    expect(warnChunks).toHaveLength(1)
+    expect(warnChunks[0]).toContain('dropped 5 pi log lines')
+    // 队列内（未超限）的行全部回放到新流；超限行丢弃不出声
+    const allChunks = created.flatMap((s) => s.chunks).join('')
+    expect(allChunks).toContain('"n":10000')
+    expect(allChunks).not.toContain('"n":10001')
+  })
+
+  it('pi 流轮转后回放目标不可用（新流打开同步抛错）→ 整批 dropped 计数 + 合并 warn 一次（R3 S-2②）', async () => {
+    vi.useFakeTimers()
+    process.env.XYZ_LOG_MAX_BYTES = '80'
+    // 同 S-2①：对 .jsonl 抛错让 gzipRotatedFile 走快速路径（否则 pipeline 挂在 FakeStream 上）
+    vi.mocked(statSync).mockImplementation(((path: unknown) => {
+      if (String(path).includes('.jsonl')) throw new Error('ENOENT (mock): pi stream file not on disk')
+      return { size: 0 }
+    }) as typeof statSync)
+    const created: InstanceType<typeof FakeStream>[] = []
+    const openCounts = new Map<string, number>()
+    vi.mocked(createWriteStream).mockImplementation((file) => {
+      const name = String(file)
+      const count = (openCounts.get(name) ?? 0) + 1
+      openCounts.set(name, count)
+      // pi 文件第 2 次 open = 轮转后的回放流：同步抛错（模拟 EMFILE/目录被删）→
+      // createStreamSafe 归一 undefined → 回放行无目标可写，整批 dropped += pending.length
+      if (name.includes('.jsonl') && count >= 2) throw new Error('EMFILE: too many open files')
+      order.push(`open:${name}`)
+      const s = new FakeStream(name)
+      created.push(s)
+      return asWriteStream(s)
+    })
+    const logger = await import('../infra/logger.js')
+    logger.initLogger(dataDir)
+    const piLog = logger.createPiSessionLog('replay-fail-sid')
+    // i=0 直写（惰性打开，~51B < 80）；i=1 超阈值触发轮转并入队；i=2..4 轮转窗口入队
+    //（首个 pi 流 closeDelay=0：end 同步 close，rotationInFlight 本同步批次内已置位 → 后续 write 走入队分支）
+    for (let i = 0; i < 5; i++) piLog.write(`{"n":${i},"pad":"${'x'.repeat(38)}"}`)
+    await vi.advanceTimersByTimeAsync(0) // pi 轮转续体（gzip 对不存在文件视为已归档 → 回放 open 抛错 → dropped += 4 → 合并 warn）
+    await vi.advanceTimersByTimeAsync(0) // warn 经 writeLogEntry 触发的主日志轮转收尾（warn 行回放进新主日志流）
+    await logger.closeLogger() // 屏障
+    const warnChunks = created.flatMap((s) => s.chunks).filter((c) => c.includes('[WARN]') && c.includes('pi log lines'))
+    expect(warnChunks).toHaveLength(1)
+    expect(warnChunks[0]).toContain('dropped 4 pi log lines')
+    // 整批丢弃：i=1..4 无一行落到任何流（i=0 在轮转前已直写首流）
+    const allChunks = created.flatMap((s) => s.chunks).join('')
+    expect(allChunks).toContain('"n":0')
+    expect(allChunks).not.toContain('"n":1')
+    expect(allChunks).not.toContain('"n":4')
+    // pi 流只成功 open 1 次（回放 open 同步抛错，未记入 order/created）
+    expect(openCounts.get(created.find((s) => s.file.includes('.jsonl'))!.file)).toBe(2)
   })
 })

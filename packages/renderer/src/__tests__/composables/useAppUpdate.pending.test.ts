@@ -12,11 +12,11 @@
  * - PENDING-TC8（I#9）：initAutoCheck 完整启动序列——先同步触发 restorePendingUpdate，30s 后触发 checkForUpdate
  *
  * 测试设计：直接调 restorePendingUpdate（绕过 initAutoCheck 的 30s 定时器，避免 fake timer
- * 与 async/await mock promise 的交互复杂度）。restorePendingUpdate 在 useAppUpdate 返回值中暴露
+ * 与 async/await mock promise 的交互复杂度）。restorePendingUpdate 经 __testing 命名空间暴露
  * 供测试调用，运行时由 initAutoCheck 内部触发。
  *
  * Mock 策略（对齐 useAppUpdate.test.ts）：
- * - vi.mock('@/lib/ipc') 桩 update 相关方法（两阶段 updateDownload/updateInstall +
+ * - vi.mock('@/api/domains/settings') 桩 update 相关方法（两阶段 updateDownload/updateInstall +
  *   预下载 getPreloaded + pending getPendingUpdate + checkForUpdate 等）。getPreloaded 默认
  *   null → initAutoCheck 先 restorePreloadedUpdate 无果，再走 restorePendingUpdate 路径
  * - vi.mock('@/composables/logic/markdown') 桩 renderMarkdown 避免 shiki WASM
@@ -27,7 +27,7 @@
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { effectScope } from 'vue'
-import type { LatestReleaseInfo, UpdateCheckResult } from '@xyz-agent/shared'
+import type { LatestReleaseInfo, LaunchResult, UpdateCheckResult } from '@xyz-agent/shared'
 
 // vi.hoisted：mock factory 内不能引用顶层变量，用 hoisted 拿稳定引用
 const hoisted = vi.hoisted(() => {
@@ -35,12 +35,12 @@ const hoisted = vi.hoisted(() => {
   let errorCb: ((e: { stage: string; message: string; errorCode?: string }) => void) | null = null
   return {
     checkForUpdate: vi.fn<(opts?: { force?: boolean }) => Promise<UpdateCheckResult>>(),
-    performUpdate: vi.fn<(release: LatestReleaseInfo) => Promise<{ triggerRestart: boolean }>>(),
     updateDownload: vi.fn<(release: LatestReleaseInfo) => Promise<{ downloaded: boolean }>>(),
     updateInstall: vi.fn<() => Promise<{ triggerRestart: boolean }>>(),
     getPreloaded: vi.fn<() => Promise<{ release: LatestReleaseInfo; filePath: string } | null>>(),
     getPendingUpdate: vi.fn<() => Promise<LatestReleaseInfo | null>>(),
     getUpdateSettings: vi.fn<() => Promise<{ preDownload: boolean; autoUpdate?: boolean }>>(),
+    getLaunchResult: vi.fn<() => Promise<LaunchResult | null>>(),
     openUpdateFallbackUrl: vi.fn<(url: string) => Promise<void>>(),
     onUpdateProgress: vi.fn((cb: typeof progressCb) => {
       progressCb = cb
@@ -54,14 +54,14 @@ const hoisted = vi.hoisted(() => {
   }
 })
 
-vi.mock('@/lib/ipc', () => ({
+vi.mock('@/api/domains/settings', () => ({
   checkForUpdate: hoisted.checkForUpdate,
-  performUpdate: hoisted.performUpdate,
   updateDownload: hoisted.updateDownload,
   updateInstall: hoisted.updateInstall,
   getPreloaded: hoisted.getPreloaded,
   getPendingUpdate: hoisted.getPendingUpdate,
   getUpdateSettings: hoisted.getUpdateSettings,
+  getLaunchResult: hoisted.getLaunchResult,
   openUpdateFallbackUrl: hoisted.openUpdateFallbackUrl,
   onUpdateProgress: hoisted.onUpdateProgress,
   onUpdateError: hoisted.onUpdateError,
@@ -71,7 +71,7 @@ vi.mock('@/composables/logic/markdown', () => ({
   renderMarkdown: hoisted.renderMarkdown,
 }))
 
-import { useAppUpdate, _resetForTest } from '@/composables/features/settings/useAppUpdate'
+import { useAppUpdate, __testing, _resetForTest } from '@/composables/features/settings/useAppUpdate'
 
 /** 构造测试用 LatestReleaseInfo */
 function makeRelease(version = '0.9.0'): LatestReleaseInfo {
@@ -88,11 +88,12 @@ function makeRelease(version = '0.9.0'): LatestReleaseInfo {
 beforeEach(() => {
   _resetForTest()
   hoisted.checkForUpdate.mockReset()
-  hoisted.performUpdate.mockReset()
   hoisted.updateDownload.mockReset()
   hoisted.updateInstall.mockReset()
   hoisted.getPreloaded.mockReset()
   hoisted.getPendingUpdate.mockReset()
+  // initAutoCheck 恢复链的 checkLaunchResult 消费启动结果（consumed 一次性）；null = 无待通知结果
+  hoisted.getLaunchResult.mockReset().mockResolvedValue(null)
   // u4a：initAutoCheck 读 autoUpdate 开关（默认 true，存量行为不变）
   hoisted.getUpdateSettings.mockReset().mockResolvedValue({ preDownload: false, autoUpdate: true })
   hoisted.openUpdateFallbackUrl.mockReset()
@@ -122,7 +123,7 @@ describe('useAppUpdate 功能1：持久化升级提醒标志', () => {
     hoisted.getPendingUpdate.mockResolvedValue(makeRelease('0.9.0'))
     const { result, stop } = setupUseAppUpdate()
 
-    await result.restorePendingUpdate()
+    await __testing.restorePendingUpdate()
 
     expect(result.state.state).toBe('available')
     expect(result.state.latestRelease?.version).toBe('0.9.0')
@@ -138,7 +139,7 @@ describe('useAppUpdate 功能1：持久化升级提醒标志', () => {
     hoisted.getPendingUpdate.mockResolvedValue(null)
     const { result, stop } = setupUseAppUpdate()
 
-    await result.restorePendingUpdate()
+    await __testing.restorePendingUpdate()
 
     expect(result.state.state).toBe('idle')
     expect(result.state.latestRelease).toBeNull()
@@ -149,7 +150,7 @@ describe('useAppUpdate 功能1：持久化升级提醒标志', () => {
     // 1. 恢复 pending
     hoisted.getPendingUpdate.mockResolvedValue(makeRelease('0.9.0'))
     const { result, stop } = setupUseAppUpdate()
-    await result.restorePendingUpdate()
+    await __testing.restorePendingUpdate()
     expect(result.state.state).toBe('available')
 
     // 2. 模拟 30s 后联网检测失败（网络断开）
@@ -166,7 +167,7 @@ describe('useAppUpdate 功能1：持久化升级提醒标志', () => {
     // 1. 恢复 pending
     hoisted.getPendingUpdate.mockResolvedValue(makeRelease('0.9.0'))
     const { result, stop } = setupUseAppUpdate()
-    await result.restorePendingUpdate()
+    await __testing.restorePendingUpdate()
     expect(result.state.state).toBe('available')
 
     // 2. 模拟 30s 后联网检测无新版（null）
@@ -183,7 +184,7 @@ describe('useAppUpdate 功能1：持久化升级提醒标志', () => {
     // 1. 恢复的 pending 是 v0.9.0
     hoisted.getPendingUpdate.mockResolvedValue(makeRelease('0.9.0'))
     const { result, stop } = setupUseAppUpdate()
-    await result.restorePendingUpdate()
+    await __testing.restorePendingUpdate()
     expect(result.state.latestRelease?.version).toBe('0.9.0')
 
     // 2. 联网检测到更新的 v0.9.5
@@ -200,7 +201,7 @@ describe('useAppUpdate 功能1：持久化升级提醒标志', () => {
     // 无 pending → pendingRestored 保持 false
     hoisted.getPendingUpdate.mockResolvedValue(null)
     const { result, stop } = setupUseAppUpdate()
-    await result.restorePendingUpdate()
+    await __testing.restorePendingUpdate()
     expect(result.state.state).toBe('idle')
 
     // 联网检测失败
@@ -219,7 +220,7 @@ describe('useAppUpdate 功能1：持久化升级提醒标志', () => {
     const { result, stop } = setupUseAppUpdate()
 
     // restorePendingUpdate 是 best-effort：catch 后不 re-throw，state 不变
-    await expect(result.restorePendingUpdate()).resolves.toBeUndefined()
+    await expect(__testing.restorePendingUpdate()).resolves.toBeUndefined()
 
     // state 保持初始 idle，latestRelease 未被污染
     expect(result.state.state).toBe('idle')

@@ -32,7 +32,7 @@ export interface Toast {
 }
 
 /** toast 可选参数 */
-export interface ToastOptions {
+interface ToastOptions {
   sessionLabel?: string
   sessionId?: string
 }

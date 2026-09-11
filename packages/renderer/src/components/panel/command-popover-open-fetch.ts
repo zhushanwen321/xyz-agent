@@ -7,7 +7,7 @@
  *   （ReplicatedState 退避语义同向，不空转）。
  * - subagent：subagentStore.loadSubagents（@ 候选源是 per-session 分区，打开时刷新最新 records）。
  * - file：landing cwd 路（D2/D3）——无 sid 且有 cwd 时 getFileCandidatesByCwd 边沿拉，
- *   结果经 onCwdFileCandidates 回调写入 CommandPopover 本地 ref 进 items。
+ *   结果回写本模块持有的候选 ref（cwdFileCandidates）进 items。
  *   - D7（adversarial-review-fixes §3.4）：失败回写**错误态标志**（非空数组降级——空态
  *     两因「加载失败 vs 无结果」需区分，浮层错误态 + 重试入口）；truncated（DoS 5000
  *     截止）透出供浮层底部条件提示。
@@ -17,6 +17,11 @@
  * - session：不 open 拉（sessionStore 启动常驻 + 广播维护，D1/D7）。
  * 节流（防浮层反复开关刷屏）：各路独立 1s 窗口，窗口内重复打开不重拉；重试入口绕过
  * 节流（用户显式动作，adversarial-review-fixes D7「浮层内重试」）。
+ *
+ * landing cwd 路 $ 候选的组件侧视图态同收本文件（u20 合并原 useCommandPopoverCwdFileView，
+ * 删 open-fetch → 视图态的回调缝）：候选 ref（open 边沿清空在 watch 内直写）+ D7 错误/
+ * 空结果/截断三态可见性派生。仅 file 分支 landing 路（panel 有 sid 走 store 缓存路，
+ * 协议不带 truncated、无此三态）。
  */
 import { computed, ref, watch } from 'vue'
 import type { ComputedRef, Ref } from 'vue'
@@ -25,13 +30,12 @@ import { useSubagentStore } from '@/stores/subagent'
 import { session as sessionApi } from '@/api'
 import { getFileCandidatesByCwd } from '@xyz-agent/core/transport/api/domains/composer'
 import { toFileCandidates } from '@xyz-agent/core'
-import type { FileNode } from '@xyz-agent/shared'
 
 /** 打开主动拉节流窗口（浮层反复开关不刷屏） */
 const FETCH_THROTTLE_MS = 1_000
 
 /** landing cwd 路拉取状态（D7：error/success 两态驱动浮层错误态与空态区分） */
-export type CwdFileFetchStatus = 'idle' | 'success' | 'error'
+type CwdFileFetchStatus = 'idle' | 'success' | 'error'
 
 export function useCommandPopoverOpenFetch(opts: {
   open: () => boolean
@@ -39,15 +43,15 @@ export function useCommandPopoverOpenFetch(opts: {
   sessionId: () => string | undefined
   /** landing 态当前选定目录（Composer 传 flow.currentCwd；file 路 cwd 通道专用，panel 不消费） */
   cwd: () => string | null | undefined
-  /** file 路 landing 拉取结果回传（raw FileNode[]；消费侧 toFileCandidates 转候选形状后入 items） */
-  onCwdFileCandidates: (nodes: FileNode[]) => void
-  /** B5/#10：open 边沿清 landing 候选 ref（消费侧置空——防上一 cwd 的陈旧相对路径候选显示） */
-  onCwdFileCandidatesReset: () => void
 }): {
-  /** D7：landing cwd 路拉取状态（idle=未拉/已清，success=有回执，error=加载失败可重试） */
-  cwdFileStatus: Ref<CwdFileFetchStatus>
-  /** D7：结果超过 5000 项已截断（runtime DoS 上限截止信号） */
-  cwdFileTruncated: Ref<boolean>
+  /** landing cwd 路候选（panel 路 fileCandidates 由 CommandPopover 内 store 缓存路另持） */
+  cwdFileCandidates: Ref<ReturnType<typeof toFileCandidates>>
+  /** 错误态：拉取失败 → 浮层「加载失败，点击重试」（行点击重试） */
+  fileErrorVisible: ComputedRef<boolean>
+  /** 空结果态：拉取成功但目录无文件 →「当前目录无匹配文件」（query 过滤致空不在此列） */
+  fileNoResultsVisible: ComputedRef<boolean>
+  /** 截断提示：runtime DoS 上限 5000 截止（结果非空时列表底部条件提示） */
+  fileTruncatedVisible: ComputedRef<boolean>
   /** D7：浮层内重试（绕过 1s 节流；快照守卫/错误态/截断透出与 open 边沿同路） */
   retryCwdFileFetch: () => void
 } {
@@ -59,6 +63,9 @@ export function useCommandPopoverOpenFetch(opts: {
 
   const cwdFileStatus = ref<CwdFileFetchStatus>('idle')
   const cwdFileTruncated = ref(false)
+  const cwdFileCandidates = ref<ReturnType<typeof toFileCandidates>>([])
+
+  const isLandingFile = () => opts.type() === 'file' && !opts.sessionId()
 
   /** landing cwd 路拉取（open 边沿与重试共用；force=true 绕过节流——用户显式重试） */
   function fetchCwdCandidates(force: boolean): void {
@@ -73,14 +80,14 @@ export function useCommandPopoverOpenFetch(opts: {
         if (opts.cwd() !== cwdAtIssue) return
         cwdFileStatus.value = 'success'
         cwdFileTruncated.value = truncated
-        opts.onCwdFileCandidates(files)
+        cwdFileCandidates.value = toFileCandidates(files)
       })
       .catch((e: unknown) => {
         if (opts.cwd() !== cwdAtIssue) return
         // cwd 目录已删/权限失败（runtime not_found）→ D7 错误态（浮层「加载失败，点击重试」）
         console.warn('[CommandPopover] file open-fetch getFileCandidatesByCwd failed:', e)
         cwdFileStatus.value = 'error'
-        opts.onCwdFileCandidatesReset()
+        cwdFileCandidates.value = []
       })
   }
 
@@ -119,7 +126,7 @@ export function useCommandPopoverOpenFetch(opts: {
         if (sid) return
         // B5/#10：open 边沿先清候选与状态——上一 cwd 的陈旧候选（path 相对旧 cwd）不得
         // 在本次打开显示；错误/截断标志同拍复位（状态与数据同源同寿命）
-        opts.onCwdFileCandidatesReset()
+        cwdFileCandidates.value = []
         cwdFileStatus.value = 'idle'
         cwdFileTruncated.value = false
         fetchCwdCandidates(false)
@@ -131,49 +138,7 @@ export function useCommandPopoverOpenFetch(opts: {
     fetchCwdCandidates(true)
   }
 
-  return { cwdFileStatus, cwdFileTruncated, retryCwdFileFetch }
-}
-
-// ── CommandPopover 侧视图态封装（D7 三态 + B5/#10 清 ref 接线；script 行数约束下沉）──
-
-/**
- * landing cwd 路 `$` 候选的组件侧视图态：候选 ref（open 边沿清空接线在 open-fetch 内
- * 经 onCwdFileCandidatesReset 回调写回）+ D7 错误/空结果/截断三态可见性派生。
- * 仅 file 分支 landing 路（panel 有 sid 走 store 缓存路，协议不带 truncated、无此三态）。
- */
-export function useCommandPopoverCwdFileView(opts: {
-  open: () => boolean
-  type: () => 'file' | 'slash' | 'session' | 'subagent' | 'skill'
-  sessionId: () => string | undefined
-  cwd: () => string | null | undefined
-}): {
-  /** landing cwd 路候选（panel 路 fileCandidates 由 command-popover-file-candidates 另持） */
-  cwdFileCandidates: Ref<ReturnType<typeof toFileCandidates>>
-  /** 错误态：拉取失败 → 浮层「加载失败，点击重试」（行点击重试） */
-  fileErrorVisible: ComputedRef<boolean>
-  /** 空结果态：拉取成功但目录无文件 →「当前目录无匹配文件」（query 过滤致空不在此列） */
-  fileNoResultsVisible: ComputedRef<boolean>
-  /** 截断提示：runtime DoS 上限 5000 截止（结果非空时列表底部条件提示） */
-  fileTruncatedVisible: ComputedRef<boolean>
-  /** 浮层内重试入口（绕过 1s 节流） */
-  retryCwdFileFetch: () => void
-} {
-  const isLandingFile = () => opts.type() === 'file' && !opts.sessionId()
-
-  const cwdFileCandidates = ref<ReturnType<typeof toFileCandidates>>([])
-  const { cwdFileStatus, cwdFileTruncated, retryCwdFileFetch } = useCommandPopoverOpenFetch({
-    open: opts.open,
-    type: opts.type,
-    sessionId: opts.sessionId,
-    cwd: opts.cwd,
-    onCwdFileCandidates: (nodes) => {
-      cwdFileCandidates.value = toFileCandidates(nodes)
-    },
-    onCwdFileCandidatesReset: () => {
-      cwdFileCandidates.value = []
-    },
-  })
-
+  // D7 三态可见性派生（u20 合并原视图态封装 useCommandPopoverCwdFileView，回调缝已删）
   const fileErrorVisible = computed(() => isLandingFile() && cwdFileStatus.value === 'error')
   const fileNoResultsVisible = computed(
     () => isLandingFile() && cwdFileStatus.value === 'success' && cwdFileCandidates.value.length === 0,
@@ -182,11 +147,5 @@ export function useCommandPopoverCwdFileView(opts: {
     () => isLandingFile() && cwdFileTruncated.value && cwdFileCandidates.value.length > 0,
   )
 
-  return {
-    cwdFileCandidates,
-    fileErrorVisible,
-    fileNoResultsVisible,
-    fileTruncatedVisible,
-    retryCwdFileFetch,
-  }
+  return { cwdFileCandidates, fileErrorVisible, fileNoResultsVisible, fileTruncatedVisible, retryCwdFileFetch }
 }

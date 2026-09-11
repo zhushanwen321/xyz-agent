@@ -12,13 +12,13 @@
  * 运行：cd packages/runtime && npx vitest run test/occupancy-runtime.test.ts
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { EventInterpreter, updateSessionOccupancy } from '../src/services/session/event-interpreter.js'
+import { EventInterpreter, applySessionOccupancyTransition } from '../src/services/session/event-interpreter.js'
 import { MessageDispatcher } from '../src/services/session/message-dispatcher.js'
 import { SessionLifecycle } from '../src/services/session/session-lifecycle.js'
 import { MessageBus } from '../src/services/message-bus/message-bus.js'
 import { RpcTimeoutError } from '../src/utils/errors.js'
 import type { ServerMessage } from '@xyz-agent/shared'
-import type { SessionOccupancy } from '../src/services/session/types.js'
+import type { SessionOccupancy, SessionOccupancyTransition } from '../src/services/session/types.js'
 import type { IDispatcherSessionOps, ILifecycleSessionOps, ISessionRegisterDeps } from '../src/services/session/session-internal.js'
 import type { IManagedSessionView } from '../src/services/session/types.js'
 import type { IMessageBus } from '../src/services/message-bus/message-bus.js'
@@ -60,9 +60,12 @@ function frameTypes(publish: ReturnType<typeof vi.fn>): string[] {
   return publish.mock.calls.map((c: unknown[]) => (c[1] as ServerMessage).type)
 }
 
-// ── Part A：updateSessionOccupancy 写原语（幂等写 + 去重） ────────
+// ── Part A：occupancy 写原语（幂等合并 + 去重，经转移原语驱动） ────
+// [u3b 挂点迁移] 原直调 updateSessionOccupancy（现为原语内部机制）的用例等价改写为经
+// applySessionOccupancyTransition 驱动——合并/去重/兜底/null-safe 语义由原语内部复用同一
+// 机制，断言点不变；细粒度逐行派生断言见 test/session-occupancy-transition.test.ts（u2）。
 
-describe('updateSessionOccupancy（写原语）', () => {
+describe('occupancy 写原语（经转移原语驱动）', () => {
   let publish: ReturnType<typeof vi.fn<(sessionId: string, msg: ServerMessage) => void>>
   let session: IManagedSessionView
 
@@ -72,7 +75,7 @@ describe('updateSessionOccupancy（写原语）', () => {
   })
 
   it('写入目标值并广播全量三维帧（payload 与 shared protocol 形状一致）', () => {
-    updateSessionOccupancy(session, { publish }, { turn: 'dispatching' })
+    applySessionOccupancyTransition(session, { publish }, 'dispatching')
     expect(session.occupancy).toEqual({ turn: 'dispatching', compacting: false, bash: false })
     expect(publish).toHaveBeenCalledTimes(1)
     const msg = publish.mock.calls[0][1] as ServerMessage
@@ -81,11 +84,11 @@ describe('updateSessionOccupancy（写原语）', () => {
   })
 
   it('值未变化时不重复广播（④）：重复写同值零帧，跨维度变化才发帧', () => {
-    updateSessionOccupancy(session, { publish }, { turn: 'generating' })
-    updateSessionOccupancy(session, { publish }, { turn: 'generating' }) // 重复
+    applySessionOccupancyTransition(session, { publish }, 'generating')
+    applySessionOccupancyTransition(session, { publish }, 'generating') // 重复
     expect(occupancyFrames(publish)).toHaveLength(1)
-    updateSessionOccupancy(session, { publish }, { bash: true }) // 跨维度（bash）
-    updateSessionOccupancy(session, { publish }, { bash: true }) // 重复
+    applySessionOccupancyTransition(session, { publish }, 'bash-start') // 跨维度（bash）
+    applySessionOccupancyTransition(session, { publish }, 'bash-start') // 重复
     const frames = occupancyFrames(publish)
     expect(frames).toHaveLength(2)
     expect(frames[1]).toMatchObject({ turn: 'generating', bash: true }) // 全量三维合并
@@ -93,25 +96,25 @@ describe('updateSessionOccupancy（写原语）', () => {
 
   it('幂等写（②）：乱序/回退事件直写目标值不产生中间态', () => {
     // settling 中再收 turn-end（乱序重复）→ 仍 settling；agent-settled 迟到 → idle
-    updateSessionOccupancy(session, { publish }, { turn: 'settling' })
-    updateSessionOccupancy(session, { publish }, { turn: 'settling' })
-    updateSessionOccupancy(session, { publish }, { turn: 'idle' })
+    applySessionOccupancyTransition(session, { publish }, 'settling')
+    applySessionOccupancyTransition(session, { publish }, 'settling')
+    applySessionOccupancyTransition(session, { publish }, 'idle')
     expect(session.occupancy?.turn).toBe('idle')
     // retry/followUp 续跑：settling 中收到 turn-start（正常应不可能，幂等写直接落 generating）
-    updateSessionOccupancy(session, { publish }, { turn: 'generating' })
+    applySessionOccupancyTransition(session, { publish }, 'generating')
     expect(session.occupancy?.turn).toBe('generating')
   })
 
   it('occupancy 字段缺省（undefined）按 idle 兜底合并（存量 mock/构造点零改动）', () => {
     expect(session.occupancy).toBeUndefined()
-    updateSessionOccupancy(session, { publish }, { compacting: true })
+    applySessionOccupancyTransition(session, { publish }, 'compacting-start')
     expect(session.occupancy).toEqual({ turn: 'idle', compacting: true, bash: false })
   })
 
   it('publish 未注入（null/undefined）时状态照写、广播跳过（null-safe）', () => {
-    expect(() => updateSessionOccupancy(session, undefined, { turn: 'dispatching' })).not.toThrow()
+    expect(() => applySessionOccupancyTransition(session, undefined, 'dispatching')).not.toThrow()
     expect(session.occupancy?.turn).toBe('dispatching')
-    expect(() => updateSessionOccupancy(session, null, { turn: 'generating' })).not.toThrow()
+    expect(() => applySessionOccupancyTransition(session, null, 'generating')).not.toThrow()
     expect(session.occupancy?.turn).toBe('generating')
   })
 })
@@ -121,28 +124,29 @@ describe('updateSessionOccupancy（写原语）', () => {
 describe('EventInterpreter occupancy 挂点（#2-#6）', () => {
   let sent: ServerMessage[]
   let send: (msg: ServerMessage) => void
-  let onOccupancyTransition: ReturnType<typeof vi.fn<(patch: Partial<SessionOccupancy>) => void>>
+  // [u3b 挂点迁移] 回调传封闭转移枚举值（D2），合并/派生在原语内——断言转移类型而非 patch。
+  let onOccupancyTransition: ReturnType<typeof vi.fn<(transition: SessionOccupancyTransition) => void>>
 
   beforeEach(() => {
     sent = []
     send = (msg) => { sent.push(msg) }
-    onOccupancyTransition = vi.fn<(patch: Partial<SessionOccupancy>) => void>()
+    onOccupancyTransition = vi.fn<(transition: SessionOccupancyTransition) => void>()
   })
 
   const makeInterpreter = () => new EventInterpreter('s1', { send, onOccupancyTransition })
 
-  it('#2 turn-start → {turn:generating}', () => {
+  it('#2 turn-start → generating', () => {
     makeInterpreter().interpret([{ kind: 'turn-start', messageId: 'm1' }])
-    expect(onOccupancyTransition).toHaveBeenCalledWith({ turn: 'generating' })
+    expect(onOccupancyTransition).toHaveBeenCalledWith('generating')
   })
 
-  it('#3 turn-end → {turn:settling}（onTurnFinalize 同点）', () => {
+  it('#3 turn-end → settling（onTurnFinalize 同点）', () => {
     makeInterpreter().interpret([{
       kind: 'turn-end',
       message: { type: 'message.complete', payload: { sessionId: 's1', stopReason: 'end_turn' } } as ServerMessage,
       stopReason: 'end_turn',
     }])
-    expect(onOccupancyTransition).toHaveBeenCalledWith({ turn: 'settling' })
+    expect(onOccupancyTransition).toHaveBeenCalledWith('settling')
   })
 
   it('#3 兜底：turn-end handler 早段抛错（send 抛）仍写 settling（interpret per-event catch）', () => {
@@ -158,40 +162,40 @@ describe('EventInterpreter occupancy 挂点（#2-#6）', () => {
       message: { type: 'message.complete', payload: { sessionId: 's1' } } as ServerMessage,
     }])).not.toThrow()
     expect(onTurnFinalize).toHaveBeenCalledTimes(1)
-    expect(onOccupancyTransition).toHaveBeenCalledWith({ turn: 'settling' })
+    expect(onOccupancyTransition).toHaveBeenCalledWith('settling')
   })
 
-  it('#4 agent-settled → {turn:idle}', () => {
+  it('#4 agent-settled → idle', () => {
     makeInterpreter().interpret([{ kind: 'agent-settled' }])
-    expect(onOccupancyTransition).toHaveBeenCalledWith({ turn: 'idle' })
+    expect(onOccupancyTransition).toHaveBeenCalledWith('idle')
   })
 
-  it('#5 compaction-start → {compacting:true}；⑤ session.compacting 帧保留', () => {
+  it('#5 compaction-start → compacting-start；⑤ session.compacting 帧保留', () => {
     makeInterpreter().interpret([{ kind: 'compaction-start', reason: 'manual' }])
-    expect(onOccupancyTransition).toHaveBeenCalledWith({ compacting: true })
+    expect(onOccupancyTransition).toHaveBeenCalledWith('compacting-start')
     expect(sent.map((m) => m.type)).toContain('session.compacting')
   })
 
-  it('#6 compaction-end 三路复位 → {compacting:false}；⑤ session.compacted 帧保留', () => {
+  it('#6 compaction-end 三路复位 → compacting-end；⑤ session.compacted 帧保留', () => {
     const interpreter = makeInterpreter()
     // aborted 路（无 errorMessage 真值）
     interpreter.interpret([{ kind: 'compaction-end', reason: 'manual', aborted: true }])
-    expect(onOccupancyTransition).toHaveBeenCalledWith({ compacting: false })
+    expect(onOccupancyTransition).toHaveBeenCalledWith('compacting-end')
     expect(sent.map((m) => m.type)).toContain('session.compacted')
     // failed 路（errorMessage 真值）同样复位
     sent = []
     onOccupancyTransition.mockClear()
     interpreter.interpret([{ kind: 'compaction-end', reason: 'manual', aborted: false, errorMessage: 'boom' }])
-    expect(onOccupancyTransition).toHaveBeenCalledWith({ compacting: false })
+    expect(onOccupancyTransition).toHaveBeenCalledWith('compacting-end')
     expect(sent.map((m) => m.type)).toContain('session.compacted')
   })
 
-  it('真实接线形态：onOccupancyTransition → updateSessionOccupancy，端到端帧序与最终三维正确（含乱序重复）', () => {
+  it('真实接线形态：onOccupancyTransition → applySessionOccupancyTransition，端到端帧序与最终三维正确（含乱序重复）', () => {
     const publish = vi.fn()
     const session = makeMockSession()
     const interpreter = new EventInterpreter('s1', {
       send,
-      onOccupancyTransition: (patch) => updateSessionOccupancy(session, { publish }, patch),
+      onOccupancyTransition: (transition) => applySessionOccupancyTransition(session, { publish }, transition),
     })
     const complete = { type: 'message.complete', payload: { sessionId: 's1' } } as ServerMessage
     interpreter.interpret([
@@ -267,7 +271,10 @@ describe('MessageDispatcher occupancy 挂点', () => {
   })
 
   it('#1 预检拒绝（busy）不写 dispatching（prompt 未发出，turn 无变化）', async () => {
-    const { dispatcher, publish } = makeDispatcher({ session: makeMockSession({ isGenerating: true }) })
+    // [u3b 预检改读 occupancy] 预检输入 = occupancy 投影（D1 立场），generating 计忙拒
+    const { dispatcher, publish } = makeDispatcher({
+      session: makeMockSession({ occupancy: { turn: 'generating', compacting: false, bash: false } }),
+    })
     await dispatcher.sendMessage('s1', 'hello')
     expect(occupancyFrames(publish)).toHaveLength(0)
     expect(frameTypes(publish)).toContain('send.rejected')
@@ -399,8 +406,9 @@ describe('MessageDispatcher occupancy 挂点', () => {
     // finally 兜底复位（interpreter 的 compaction_end #6 不到达）。
     const { dispatcher, publish, session, compactFn } = makeDispatcher({ compactBehavior: 'error' })
     compactFn.mockImplementation(async () => {
-      session.isCompacting = true
-      session.occupancy = { turn: 'idle', compacting: true, bash: false }
+      // 模拟 compaction_start 已到达（interpreter #5 语义）：经原语置位（u3c readonly 收口；
+      // publish 传 null 与改前直写一致不广播——本用例焦点是 finally 兜底复位帧）
+      applySessionOccupancyTransition(session, null, 'compacting-start')
       throw new Error('compact transport exploded')
     })
     await expect(dispatcher.compact('s1')).rejects.toThrow('compact transport exploded')

@@ -7,6 +7,8 @@
  * 3. 退出 flush（shutdown 链：await closeLogger() 完成后文件尾部含退出前最后条目，随后才 process.exit）
  * 4. pi session log end() 语义（end 后 write no-op；closeLogger flush 后尾部含最后一行）
  * 5. 保留期清理（KEEP_DAYS 前文件删除，近期 + 非本模块文件保留）
+ * 6. pi 流 size 轮转（2026-09 磁盘膨胀修复）：达阈值 → gzip 单代归档 .1.gz（逐行可 JSON.parse）
+ *    + 新文件续写 + 轮转窗口内的行回放不丢 + 第 2 次轮转只留 1 个 .1.gz + gzip 失败 best-effort
  *
  * 测试框架 vitest（禁止 node:test）。模块级常量（MAX_FILE_BYTES/KEEP_DAYS）在 import
  * 时读 env，故每个用例用 vi.resetModules() + 动态 import 拿新实例。
@@ -15,6 +17,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { mkdtempSync, mkdirSync, readdirSync, readFileSync, writeFileSync, utimesSync, existsSync, statSync, appendFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { gunzipSync } from 'node:zlib'
 
 // ESM 命名空间不可配置，vi.spyOn 会抛错；用 vi.mock 拦截 appendFileSync 记录调用并委托真实实现。
 vi.mock('node:fs', async () => {
@@ -22,6 +25,24 @@ vi.mock('node:fs', async () => {
   return {
     ...actual,
     appendFileSync: vi.fn(actual.appendFileSync),
+  }
+})
+
+/**
+ * gzip 失败注入开关（pi 流轮转 best-effort 用例）：createGzip 由此开关控制，默认委托真实实现；
+ * 其余 zlib 导出（gunzipSync 等）原样透传——断言侧靠它解压轮转产物。
+ * vi.hoisted：mock 工厂在模块 import 期执行，普通模块级声明尚在 TDZ。
+ */
+const gzipFailure = vi.hoisted(() => ({ enabled: false }))
+
+vi.mock('node:zlib', async () => {
+  const actual = await vi.importActual<typeof import('node:zlib')>('node:zlib')
+  return {
+    ...actual,
+    createGzip: (...args: Parameters<typeof actual.createGzip>) => {
+      if (gzipFailure.enabled) throw new Error('injected gzip failure')
+      return actual.createGzip(...args)
+    },
   }
 })
 
@@ -232,6 +253,158 @@ describe('logger.ts WriteStream 化（D10-1/D10-2）', () => {
     expect(existsSync(recent)).toBe(true)
     expect(existsSync(unrelated)).toBe(true) // 非本模块产出的文件不清理
     await logger.closeLogger()
+  })
+})
+
+describe('pi 流 size 轮转（2026-09 日志膨胀修复）', () => {
+  const MAX = 512
+  /** 固定字节长度的 JSONL 行（seq 补零 → 按字节数预算轮转时机，判据不随索引位数漂移）。 */
+  function piLine(i: number): string {
+    return JSON.stringify({ type: 'message_update', seq: String(i).padStart(3, '0'), pad: 'x'.repeat(24) })
+  }
+  const LINE_BYTES = Buffer.byteLength(piLine(0) + '\n')
+  /** 窗口行数：写满 WINDOW_LINES 行 ≤ MAX，第 WINDOW_LINES+1 行触发轮转。 */
+  const WINDOW_LINES = Math.floor(MAX / LINE_BYTES)
+
+  function piFiles(): string[] {
+    return readdirSync(logsDir()).filter((n) => n.startsWith('pi-')).sort()
+  }
+  function gzFiles(): string[] {
+    return piFiles().filter((n) => n.endsWith('.1.gz'))
+  }
+  function piMainName(): string {
+    return piFiles().find((n) => !n.endsWith('.1.gz'))!
+  }
+  function readPiLines(name: string): string[] {
+    return readFileSync(join(logsDir(), name), 'utf8').trim().split('\n').filter((l) => l.trim())
+  }
+  function gunzipLines(name: string): string[] {
+    return gunzipSync(readFileSync(join(logsDir(), name))).toString('utf8').trim().split('\n').filter((l) => l.trim())
+  }
+  /** 逐行 JSON.parse 取 seq——解压产物必须仍是可解析的 JSONL（诊断者可读性断言）。 */
+  function seqs(lines: string[]): number[] {
+    return lines.map((l) => Number((JSON.parse(l) as { seq: string }).seq))
+  }
+  function range(from: number, count: number): number[] {
+    return Array.from({ length: count }, (_, k) => from + k)
+  }
+  /** 主日志（含滚动件）全文——gzip 失败的 warn 出口断言用。 */
+  function runtimeLogText(): string {
+    return readdirSync(logsDir()).filter((n) => n.startsWith('runtime-'))
+      .map((n) => readFileSync(join(logsDir(), n), 'utf8')).join('\n')
+  }
+
+  beforeEach(() => { gzipFailure.enabled = false })
+  afterEach(() => { gzipFailure.enabled = false })
+
+  it('达阈值 → 轮转：旧段进 .1.gz（逐行可 JSON.parse）、新文件续写、无行丢失', async () => {
+    logger = await loadLogger({ XYZ_LOG_MAX_BYTES: String(MAX) })
+    logger.initLogger(dataDir)
+    const pi = logger.createPiSessionLog('rot-basic')
+    const total = WINDOW_LINES * 2 // 恰好 1 次轮转（第 2 窗口写满但不越阈值）
+    for (let i = 0; i < total; i++) pi.write(piLine(i))
+    pi.end()
+    await logger.closeLogger()
+
+    const gzs = gzFiles()
+    expect(gzs).toHaveLength(1) // ① 发生轮转
+    const archived = gunzipLines(gzs[0])
+    expect(archived).toHaveLength(WINDOW_LINES) // ④ 旧段行数完整（未合并 / 未采样 / 未丢弃）
+    expect(seqs(archived)).toEqual(range(0, WINDOW_LINES)) // ⑤ 解压后逐行 JSON.parse 且顺序原样
+    const live = readPiLines(piMainName())
+    expect(seqs(live)).toEqual(range(WINDOW_LINES, WINDOW_LINES)) // ③ 新文件继续接收写入
+    expect(archived[0]).toBe(piLine(0)) // 内容形态不变：仍是原行（未重写 / 未加信封）
+    expect(live[live.length - 1]).toBe(piLine(total - 1))
+    expect(statSync(join(logsDir(), piMainName())).size).toBeLessThanOrEqual(MAX) // size 上限生效
+  })
+
+  it('轮转窗口内到达的行被按序回放（不丢）', async () => {
+    logger = await loadLogger({ XYZ_LOG_MAX_BYTES: String(MAX) })
+    logger.initLogger(dataDir)
+    const pi = logger.createPiSessionLog('rot-replay')
+    const total = WINDOW_LINES * 2
+    for (let i = 0; i < total; i++) pi.write(piLine(i))
+    // 同步断言（无 await，事件循环未转动）：此刻 .1.gz 尚未出现 = 轮转（end 等 flush → gzip）
+    // 仍在进行中——即第 WINDOW_LINES..total-1 行都是「轮转窗口内到达的行」，只能靠回放落盘
+    expect(gzFiles()).toHaveLength(0)
+    await logger.closeLogger() // closeLogger 必须等完在途轮转（不等则窗口内的行随 process.exit 丢）
+    expect(seqs(readPiLines(piMainName()))).toEqual(range(WINDOW_LINES, WINDOW_LINES))
+  })
+
+  it('第二次轮转后磁盘上只有 1 个 .1.gz（单代保留，不是无限累积）', async () => {
+    logger = await loadLogger({ XYZ_LOG_MAX_BYTES: String(MAX) })
+    logger.initLogger(dataDir)
+    const pi = logger.createPiSessionLog('rot-single-gen')
+    let next = 0
+    const writeAndTick = async (): Promise<void> => {
+      pi.write(piLine(next))
+      next += 1
+      await tick()
+    }
+    // 先写满两个窗口（第 2 窗口的行在轮转窗口内入队），随后逐 tick 续写直到观测到「第 2 代」——
+    // 判据 = .1.gz 里已不含 seq 0（第 1 代必从 seq 0 开始，被第 2 次轮转 rename 覆盖即证明
+    // 旧代是被替换而非并列保留）
+    for (let i = 0; i < WINDOW_LINES * 2; i++) await writeAndTick()
+    const deadline = Date.now() + 5000
+    while (Date.now() < deadline) {
+      const g = gzFiles()[0]
+      if (g !== undefined) {
+        try {
+          if (seqs(gunzipLines(g))[0] > 0) break
+        } catch { /* 压缩进行中（半截 gzip 不可读），继续写 */ }
+      }
+      await writeAndTick()
+    }
+    await logger.closeLogger()
+
+    const gzs = gzFiles()
+    expect(gzs).toHaveLength(1) // 单代保留：更早的压缩代被 rename 覆盖
+    expect(piFiles().filter((n) => n.endsWith('.tmp'))).toHaveLength(0) // 无临时残骸
+    const archived = seqs(gunzipLines(gzs[0]))
+    expect(archived[0]).toBeGreaterThan(0) // 第 2 次轮转真实发生（旧代已删，不是累积）
+    const live = seqs(readPiLines(piMainName()))
+    expect(live.at(-1)).toBe(next - 1) // 最后一行已落盘（退出 flush 生效）
+    const visible = [...archived, ...live]
+    for (let i = 1; i < visible.length; i++) expect(visible[i]).toBe(visible[i - 1] + 1) // 跨边界连续无缺行
+  })
+
+  it('gzip 失败 best-effort：写入不中断、原文件保留不删、记一次 warn', async () => {
+    gzipFailure.enabled = true
+    logger = await loadLogger({ XYZ_LOG_MAX_BYTES: String(MAX) })
+    logger.initLogger(dataDir)
+    const pi = logger.createPiSessionLog('rot-gzip-fail')
+    const total = WINDOW_LINES * 3
+    expect(() => {
+      for (let i = 0; i < total; i++) pi.write(piLine(i))
+    }).not.toThrow()
+    expect(() => pi.write(piLine(total))).not.toThrow() // 压缩失败后写入仍可用（不抛错）
+    pi.end()
+    await expect(logger.closeLogger()).resolves.toBeUndefined() // 退出 flush 不被压缩失败阻塞
+
+    expect(gzFiles()).toHaveLength(0) // 无压缩产物
+    // 原文件保留（未删除）+ 后续写入继续落盘：全部行按序仍在同一文件（不丢数据）
+    expect(seqs(readPiLines(piMainName()))).toEqual(range(0, total + 1))
+    // 降级不静默：主日志有 warn 出口
+    expect(runtimeLogText()).toContain('gzip failed')
+  })
+
+  it('relay 原始字节镜像（Uint8Array）：轮转后字节级保真（无改写 / 无合并 / 无丢失）', async () => {
+    logger = await loadLogger({ XYZ_LOG_MAX_BYTES: String(MAX) })
+    logger.initLogger(dataDir)
+    const relay = logger.createPiRelayLog('relay-rot-1')
+    const chunk = (i: number): Buffer => Buffer.from(JSON.stringify({ type: 'up', seq: String(i).padStart(3, '0'), pad: 'y'.repeat(24) }) + '\n')
+    const total = Math.floor(MAX / chunk(0).length) * 2
+    for (let i = 0; i < total; i++) relay.write(chunk(i))
+    relay.end()
+    await logger.closeLogger()
+
+    expect(gzFiles()).toHaveLength(1)
+    // 轮转边界把字节流切成两段：.1.gz（旧段）+ 主文件（新段）——拼回来必须与原字节流逐字节相等
+    const onDisk = Buffer.concat([
+      gunzipSync(readFileSync(join(logsDir(), gzFiles()[0]))),
+      readFileSync(join(logsDir(), piMainName())),
+    ])
+    expect(onDisk.equals(Buffer.concat(Array.from({ length: total }, (_, i) => chunk(i))))).toBe(true)
   })
 })
 

@@ -18,6 +18,8 @@ import { promisify } from 'node:util'
 
 import type { LlmRetryConfig } from '@xyz-agent/shared'
 import { ConfigService } from '../src/services/config-service.js'
+import { AuthStorage } from '../src/services/auth/auth-storage.js'
+import { ProviderCredentialResolver } from '../src/services/auth/provider-credential-resolver.js'
 import type { ILlmRetrySettings, LlmRetryConfigSnapshot } from '../src/services/ports/llm-retry-settings.js'
 import { PiConfigStore } from '../src/infra/pi/pi-config-store.js'
 import { XyzProviderStore } from '../src/services/provider-extras-store.js'
@@ -36,16 +38,28 @@ let tmpDir: string
 let configStore: PiConfigStore
 let configService: ConfigService
 
+/**
+ * M2fg 恒注入形态：凭据判定经 resolver 批量 sync 版（D3 唯一通道）。
+ * auth.json 腿指向临时目录（零凭据 miss），models.json 腿经真 configStore。
+ */
+function makeResolver(store: PiConfigStore): ProviderCredentialResolver {
+  return new ProviderCredentialResolver({
+    authService: { getCredential: async () => undefined },
+    authStorage: new AuthStorage(join(tmpDir, 'agent', 'auth.json')),
+    configStore: store,
+  })
+}
+
 beforeEach(async () => {
   tmpDir = await mkdtempP(join(tmpdir(), 'config-service-test-'))
-  mkdirSync(join(tmpDir, 'pi', 'agent'), { recursive: true })
-  // 指向临时目录，避免污染真实 ~/.xyz-agent/pi/agent
-  setModelsPath(join(tmpDir, 'pi', 'agent', 'models.json'))
-  setSettingsPath(join(tmpDir, 'pi', 'agent', 'settings.json'))
+  mkdirSync(join(tmpDir, 'agent'), { recursive: true })
+  // 指向临时目录，避免污染真实 ~/.xyz-agent/agent
+  setModelsPath(join(tmpDir, 'agent', 'models.json'))
+  setSettingsPath(join(tmpDir, 'agent', 'settings.json'))
   refreshModels()
   // ConfigService 接受 IConfigStore；用真实 PiConfigStore 走完整读写链路
   configStore = new PiConfigStore()
-  configService = new ConfigService(tmpDir, configStore)
+  configService = new ConfigService(tmpDir, configStore, undefined, undefined, undefined, makeResolver(configStore))
 })
 
 afterEach(async () => {
@@ -158,7 +172,7 @@ describe('ConfigService · provider 级 enabled 读写链路（U2，enabledModel
     // 直接读盘验证（绕过 service 缓存）：enabledModels 白名单落盘到 settings.json（非 models.json）
     // eslint-disable-next-line @typescript-eslint/no-require-imports -- 动态读盘验证
     const raw = require('node:fs').readFileSync(
-      join(tmpDir, 'pi', 'agent', 'settings.json'),
+      join(tmpDir, 'agent', 'settings.json'),
       'utf-8',
     )
     const parsed = JSON.parse(raw) as { enabledModels?: string[] }
@@ -234,8 +248,8 @@ describe('ConfigService.setProvider · model 级字段写路径（U3b，修复 r
 
     // [G3] enabled 落 providers.json modelStates——注入 extrasStore（生产恒注入）；
     // 未注入时 enabled 丢弃 + warn（宁丢不写错位，provider-write-side-switch.test.ts 覆盖）
-    const extrasStore = new XyzProviderStore(join(tmpDir, 'pi', 'agent', 'config', 'providers.json'))
-    const svc = new ConfigService(tmpDir, configStore, undefined, extrasStore)
+    const extrasStore = new XyzProviderStore(join(tmpDir, 'agent', 'config', 'providers.json'))
+    const svc = new ConfigService(tmpDir, configStore, undefined, extrasStore, undefined, makeResolver(configStore))
 
     // setProvider 传入含 enabled 的 model（新模型，base={}）。modelStates 写入经
     // withFileLock 异步 RMW——必须 await 落盘后再断言
@@ -253,7 +267,7 @@ describe('ConfigService.setProvider · model 级字段写路径（U3b，修复 r
     expect(models.find(m => m.id === 'm2')?.enabled).toBe(true)
 
     // models.json 不再序列化 enabled（pi schema 外寄生字段禁复活）
-    const raw = JSON.parse(readFileSync(join(tmpDir, 'pi', 'agent', 'models.json'), 'utf-8'))
+    const raw = JSON.parse(readFileSync(join(tmpDir, 'agent', 'models.json'), 'utf-8'))
     const rawModels = raw.providers.p1.models as Array<Record<string, unknown>>
     expect(rawModels.find(m => m.id === 'm1')).not.toHaveProperty('enabled')
     expect(rawModels.find(m => m.id === 'm2')).not.toHaveProperty('enabled')
@@ -382,7 +396,7 @@ describe('ConfigService.loadAgents · sourceType 随来源推断（W1，修复 t
     mockFiles: Array<{ name: string; path: string; content: string; sourceType: string }>,
   ) {
     return {
-      getPiAgentDir: () => '/fake/pi/agent',
+      getPiAgentDir: () => '/fake/agent',
       getAgentDirs: () => [] as string[],
       listAgentFiles: () => mockFiles,
       // 以下方法 loadAgents 不会触达，给空实现满足 ConfigService 构造签名
@@ -455,7 +469,7 @@ describe('ConfigService.loadAgents · sourceType 随来源推断（W1，修复 t
       },
       {
         name: 'default',
-        path: '/h/.xyz-agent/pi/agent/agents/default.md',
+        path: '/h/.xyz-agent/agent/agents/default.md',
         content: '---\nname: Default\n---',
         sourceType: 'pi',
       },
@@ -495,6 +509,26 @@ describe('ConfigService.loadAgents · sourceType 随来源推断（W1，修复 t
 
 // ── LLM retry 域委托（llm-retry-settings 设计 §3.4：单行委托注入 port）──────────
 
+describe('ConfigService · resolver 显式守卫访问器（R2 S-1 修复契约机器锁定，R3 S-4 补测）', () => {
+  it('两参构造 + 调 provider 三方法 → 带恢复指引的 Error（非静默成功 / 非深处 TypeError）', async () => {
+    // 与上方 llmRetrySettings 未注入抛错用例同模式：少参构造 = 测试构造错误，报错指向恢复动作
+    const svc = new ConfigService(tmpDir, configStore)
+    const expected = '[config-service] providerCredentialResolver 未注入'
+    expect(() => svc.listProviders()).toThrow(expected)
+    expect(() => svc.toggleProviderEnabled('p1', true)).toThrow(expected)
+    // removeProviderByKind 是 async 方法：同步段抛错 → 拒绝的 Promise，用 rejects 断言
+    await expect(svc.removeProviderByKind('p1', 'custom')).rejects.toThrow(expected)
+    // 恢复指引文案可操作：指向注入 resolver / 改用 provider 无关实例（错误 → 权威源 → 重试闭环）
+    try {
+      svc.listProviders()
+      expect.unreachable('listProviders should have thrown')
+    } catch (e) {
+      expect((e as Error).message).toContain('注入 resolver')
+      expect((e as Error).message).toContain('listProviders / toggleProviderEnabled / removeProviderByKind')
+    }
+  })
+})
+
 describe('ConfigService · LLM retry 域（llmRetrySettings port）', () => {
   it('未注入 port：getRetryConfig / setRetryConfig 抛错（可选注入防御，生产恒注入）', () => {
     // beforeEach 构造的 configService 只传 2 个参数（未注入 llmRetrySettings）
@@ -522,5 +556,49 @@ describe('ConfigService · LLM retry 域（llmRetrySettings port）', () => {
     const arg: LlmRetryConfig = { enabled: true, maxRetries: 1, baseDelayMs: 1000 }
     expect(svc.setRetryConfig(arg)).toEqual({ ok: true })
     expect(setRetryConfig).toHaveBeenCalledWith(arg)
+  })
+})
+
+// ── M2c：D3 链 5 接线（构造器注入 → listProviders 消费）────────────────────────
+// 「装配点真的传了」的落点 = ConfigService 构造器（组合根 index.ts 以第 6 参传入）与
+// listProviders 的透传。本组用真实 ConfigService 构造 + 真实 PiConfigStore，证明 resolver
+// 经构造器到达 listProvidersImpl 并真实参与凭据判定（而非只测「listProvidersImpl 注入了就生效」）。
+describe('M2c: ConfigService 构造器注入 providerCredentialResolver（D3 链 5 接线）', () => {
+  /** 假 resolver：仅暴露接口三方法（批量方法返回值可控，用于证明其输出被消费）。 */
+  function makeSetResolver(credentialIds: string[]) {
+    const listCredentialBackedProviderIds = vi.fn(() => new Set(credentialIds))
+    return {
+      resolver: {
+        hasProviderCredential: vi.fn(() => false),
+        listCredentialBackedProviderIds,
+        resolveProviderCredential: vi.fn(async () => undefined),
+      },
+      listCredentialBackedProviderIds,
+    }
+  }
+
+  it('注入后 listProviders 经 resolver 批量 sync 版判定凭据（调用 + 输出被消费）', () => {
+    // 该 provider 在 models.json 无 apiKey：status=connected 只能来自 resolver 的批量结果
+    writeModels({ providers: { 'custom-no-key': { name: 'NoKey', models: [{ id: 'm1' }] } } })
+    refreshModels()
+    const { resolver, listCredentialBackedProviderIds } = makeSetResolver(['custom-no-key'])
+    const svc = new ConfigService(tmpDir, configStore, undefined, undefined, undefined, resolver)
+
+    const providers = svc.listProviders()
+
+    expect(listCredentialBackedProviderIds).toHaveBeenCalledTimes(1)
+    expect(providers.find(p => p.id === 'custom-no-key')?.status).toBe('connected')
+    expect(providers.find(p => p.id === 'custom-no-key')?.apiKeySet).toBe(false)
+  })
+
+  it('对照：resolver 空集 → 同一份数据不判 connected（差异证明 resolver 输出被消费；M2fg 恒注入形态）', () => {
+    writeModels({ providers: { 'custom-no-key': { name: 'NoKey', models: [{ id: 'm1' }] } } })
+    refreshModels()
+    const { resolver } = makeSetResolver([])
+    const svc = new ConfigService(tmpDir, configStore, undefined, undefined, undefined, resolver)
+
+    const providers = svc.listProviders()
+
+    expect(providers.find(p => p.id === 'custom-no-key')?.status).toBe('not_configured')
   })
 })

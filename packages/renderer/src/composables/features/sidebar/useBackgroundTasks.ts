@@ -41,7 +41,7 @@ import type { BackgroundTaskEntry } from '@/lib/background-task-bucket'
 const UPDATED_TYPE = 'backgroundTask:updated'
 
 /** per-session 分区形态。 */
-export interface BackgroundTasksPartition {
+interface BackgroundTasksPartition {
   /** registry 全量投影（list reply / 广播 payload 原样，不做二次加工）。 */
   tasks: BackgroundTaskEntry[]
   /** 是否成功拉到过一次 list reply（空表也算）——区分「从未拉取」与「拉到空表」。 */
@@ -122,12 +122,11 @@ interface ListReplySnapshot {
 
 /**
  * list reply 形状收窄：生产路径为 api domain 透传的全形对象（backgroundTask.tasks payload：
- * { sessionId, tasks, corrupted? }，corrupted 语义见协议 SSOT）；数组形态为前向兼容防御分支
- * （防 api domain 折叠回纯数组的旧契约回退）。返回 null = 契约外形状——按失败拍处理
- * （fetchInto 置 fetchFailed=true 并保留分区缓存，不空表降级不清缓存，外部格式不信任防线）。
+ * { sessionId, tasks, corrupted? }，corrupted 语义见协议 SSOT）。返回 null = 契约外形状——
+ * 按失败拍处理（fetchInto 置 fetchFailed=true 并保留分区缓存，不空表降级不清缓存，
+ * 外部格式不信任防线）。
  */
 function parseListReply(raw: unknown): ListReplySnapshot | null {
-  if (Array.isArray(raw)) return { tasks: raw, corrupted: false }
   if (typeof raw === 'object' && raw !== null && Array.isArray((raw as { tasks?: unknown }).tasks)) {
     const reply = raw as { tasks: BackgroundTaskEntry[]; corrupted?: unknown }
     return { tasks: reply.tasks, corrupted: reply.corrupted === true }

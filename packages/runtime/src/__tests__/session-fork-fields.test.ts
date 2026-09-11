@@ -18,7 +18,7 @@
  */
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { mkdtempSync, writeFileSync, readFileSync, existsSync, rmSync } from 'node:fs'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import { tmpdir } from 'node:os'
 
 // shared 类型（U1）
@@ -34,6 +34,9 @@ import {
 
 // session-fork（U4）
 import { createForkedSessionFile } from '../services/session/session-fork.js'
+
+// pi-paths（U15：encodeCwd 子目录形态断言）
+import { encodeCwd } from '../infra/pi/pi-paths.js'
 
 // ports 第二处 ScannedSessionMeta（U6）
 import type { ScannedSessionMeta as ScannedSessionMetaPort } from '../services/ports/session.js'
@@ -191,6 +194,31 @@ describe('W1 fork 字段透传', () => {
     const firstLine = readFileSync(filePath, 'utf-8').split('\n')[0]
     const header = JSON.parse(firstLine)
     expect(header.forkEntryId).toBe('a1')
+  })
+
+  // ── U15：fork 产物写入 encodeCwd 子目录（方案 B 布局对齐 pi）───────
+
+  it('U15: createForkedSessionFile 产物写入 <targetDir>/<encodeCwd(header.cwd)>/ 子目录（与 import-service 写入形态对齐）', async () => {
+    const sourceFile = join(dir, 'source-subdir.jsonl')
+    writeFileSync(
+      sourceFile,
+      [
+        { type: 'session', version: 3, id: 'src-subdir', timestamp: '2026-07-07T01:00:00.000Z', cwd: '/test' },
+        { type: 'message', id: 'u1', parentId: null, timestamp: '2026-07-07T01:00:01.000Z', message: { role: 'user', content: [{ type: 'text', text: 'hi' }] } },
+        { type: 'message', id: 'a1', parentId: 'u1', timestamp: '2026-07-07T01:00:02.000Z', message: { role: 'assistant', content: [{ type: 'text', text: 'hello' }] } },
+      ].map((l) => JSON.stringify(l)).join('\n') + '\n',
+    )
+
+    const { filePath } = await createForkedSessionFile(sourceFile, 'a1', true, dir)
+
+    // 产物落在 encodeCwd 子目录内——写平铺根会被 pi 原生 listAll（只枚举子目录）漏掉
+    expect(dirname(filePath)).toBe(join(dir, encodeCwd('/test')))
+    // 子目录由 mkdir(recursive) 自动创建（首个该 cwd 的 fork 产物不 ENOENT）
+    expect(existsSync(filePath)).toBe(true)
+    // 产物 header 完整可读（用户可见后果：fork session 合法落盘）
+    const header = JSON.parse(readFileSync(filePath, 'utf-8').split('\n')[0])
+    expect(header.type).toBe('session')
+    expect(header.id).not.toBe('src-subdir')
   })
 
   // ── U5：parentSession fallback（源 session 未落盘时用源 sessionId）──

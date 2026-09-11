@@ -16,7 +16,7 @@
     ——是 pi 0.84.1 提取的静态常量，不是运行时实时生效值
 
 卡 2 追加注入额外提示词（append）
-  → builtin npm 扩展 @zhushanwen/pi-system-prompt（extensions/system-prompt/，
+  → builtin npm 扩展 @zhushanwen/pi-system-prompt（extensions/taiji/system-prompt/，
      infrastructure 级 mandatory，清单 SSOT = packages/shared/src/mandatory-extensions.json）
      注册 before_agent_start hook
   → 每轮读 <dataDir>/system-prompt.json（不缓存），append 段追加到 event.systemPrompt 末尾
@@ -173,11 +173,11 @@ cd packages/runtime && npx vitest run test/system-prompt-config.test.ts test/set
 |---------|---------|
 | [`system-prompt-extension.test.ts`](../../packages/runtime/test/system-prompt-extension.test.ts) | append 开启且非空 → BASE+全局段+\n\n+EXTRA / append 关闭 → undefined / 配置缺失 → undefined / JSON 损坏 → undefined / append.prompt 纯空白 → undefined / 全局指令注入（存在→带头部、空白→跳过、候选顺延） / --no-context-files 在 argv → 全局不注入（append 仍生效） / XYZ_AGENT_DATA_DIR 与 PI_CODING_AGENT_DIR 回退定位 |
 | [`extension-service-system-prompt.test.ts`](../../packages/runtime/test/extension-service-system-prompt.test.ts) | builtin npm 包经 mandatory-extensions.json 机制加载（@zhushanwen/pi-system-prompt 等）；旧文件型扩展机制已移除 |
-| [`extensions/system-prompt/src/__tests__/system-prompt.test.ts`](../../extensions/system-prompt/src/__tests__/system-prompt.test.ts) | 包内占位测试（真实 hook 断言在 runtime 侧文件） |
+| [`extensions/taiji/system-prompt/src/__tests__/system-prompt.test.ts`](../../extensions/taiji/system-prompt/src/__tests__/system-prompt.test.ts) | 包内占位测试（真实 hook 断言在 runtime 侧文件） |
 
-**扩展源码**：[`extensions/system-prompt/src/index.ts`](../../extensions/system-prompt/src/index.ts)（npm 包 `@zhushanwen/pi-system-prompt`，root `index.ts` 再导出。打包：`scripts/bundle-extensions.mjs` esbuild bundle 后 staging 到 `apps/electron/resources/extensions/@zhushanwen/pi-system-prompt/`，数量与清单以 `packages/shared/src/mandatory-extensions.json` SSOT 为准）
+**扩展源码**：[`extensions/taiji/system-prompt/src/index.ts`](../../extensions/taiji/system-prompt/src/index.ts)（npm 包 `@zhushanwen/pi-system-prompt`，root `index.ts` 再导出。打包：`scripts/bundle-extensions.mjs` esbuild bundle 后 staging 到 `apps/electron/resources/extensions/@zhushanwen/pi-system-prompt/`，数量与清单以 `packages/shared/src/mandatory-extensions.json` SSOT 为准）
 
-**关键 hook 行为**（`extensions/system-prompt/src/index.ts:202`）：
+**关键 hook 行为**（`extensions/taiji/system-prompt/src/index.ts:202`）：
 - 每轮 `before_agent_start` 读 `<dataDir>/system-prompt.json`（不缓存）
 - 注入顺序：base → 全局指令（`~/.agents/AGENTS.md` 候选精确匹配真实目录条目，防 APFS 大小写不敏感误报）→ append.prompt
 - append.enabled && append.prompt 非空白 → 追加后返回 `{ systemPrompt: newPrompt }`；与原值相同 → `undefined`（放行）
@@ -220,7 +220,7 @@ cd packages/runtime && npx vitest run test/system-prompt-extension.test.ts test/
 - 数据层：[`api/domains/config.ts`](../../packages/renderer/src/api/domains/config.ts) §System prompt config
 - runtime 配置：[`services/config-service.ts`](../../packages/runtime/src/services/config-service.ts) + [`services/system-prompt-config-helper.ts`](../../packages/runtime/src/services/system-prompt-config-helper.ts)
 - WS 路由：[`transport/settings-message-handler.ts`](../../packages/runtime/src/transport/settings-message-handler.ts)（`config.getSystemPrompt` / `config.setSystemPrompt` case）
-- 扩展源码：[`extensions/system-prompt/src/index.ts`](../../extensions/system-prompt/src/index.ts)（npm 包 `@zhushanwen/pi-system-prompt`）
+- 扩展源码：[`extensions/taiji/system-prompt/src/index.ts`](../../extensions/taiji/system-prompt/src/index.ts)（npm 包 `@zhushanwen/pi-system-prompt`）
 - builtin 清单 SSOT：[`packages/shared/src/mandatory-extensions.json`](../../packages/shared/src/mandatory-extensions.json)（打包经 `scripts/bundle-extensions.mjs` staging 到 `apps/electron/resources/extensions/`）
 - 集成测试：[`__tests__/settings/system-prompt-page.test.ts`](../../packages/renderer/src/__tests__/settings/system-prompt-page.test.ts) · [`__tests__/settings/default-prompt-reference.test.ts`](../../packages/renderer/src/__tests__/settings/default-prompt-reference.test.ts)
 - 架构约束：[AGENTS.md §Builtin pi-extensions 打包内置](../../AGENTS.md)

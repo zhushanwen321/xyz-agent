@@ -2,7 +2,7 @@
  * DiscoveryStore — discovery.json 的唯一读写层（ADR-0021 §1 落地）。
  *
  * discovery.json 是 skill/agent/extension 加载路径的**唯一真相源（SSOT）**：
- *   - 路径：`<piAgentDir>/discovery.json`（~/.xyz-agent/pi/agent/discovery.json）
+ *   - 路径：`<piAgentDir>/discovery.json`（<dataDir>/agent/discovery.json）
  *   - schema v2：{ version:2, skill/agent/extension: { projectPaths, globalPaths } }
  *   - 每个 kind 拆 project（项目级，跟随 cwd，可含相对路径如 .agents/skills）
  *     与 global（全局级，限绝对路径如 ~/.pi/agent/skills）。

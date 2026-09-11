@@ -112,19 +112,17 @@ export function useProviderPageOauth(options: {
   }
 
   /** auth.success 收尾（编辑体来源）：持久化 authMethod='oauth' + 刷新 OAuth presence。
-   *  name/api/baseUrl 随行携带（对齐 QuickSetup payload 形态，避免 models.json 空壳条目）。 */
+   *  只传 authMethod（防线⑤ 设计 D1）：name/type/baseUrl 是 ProviderInfo 的展示派生值/快照
+   *  artifact，回传会把 artifact 冻进 models.json override；authMethod 落 providers.json extras，
+   *  凭据由 pi OAuth flow 写 auth.json，runtime 侧「不物化空壳」防线保证该调用不产生 models.json
+   *  条目。 */
   async function onOAuthAuthorized(providerId: string): Promise<void> {
     if (oauthLoginSource.value !== 'edit') return
     const target = editOauthTarget.value
     editOauthTarget.value = null
     if (!target) return
     try {
-      await config.setProvider(target.id, {
-        name: target.name,
-        type: target.api,
-        baseUrl: target.baseUrl,
-        authMethod: 'oauth',
-      })
+      await config.setProvider(target.id, { authMethod: 'oauth' })
       toast.info(t('settings.provider.builtinTemplate.oauthAuthorized', { name: target.name }))
     } catch (e) {
       toast.error(e instanceof Error ? e.message : String(e))

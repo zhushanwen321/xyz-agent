@@ -74,7 +74,7 @@ vi.mock('@/stores/panel', async () => {
   const { ref } = await import('vue')
   return {
     usePanelStore: () => ({
-      currentLeaf: { type: 'panel', id: 'panel-root', sessionId: null },
+      currentLeaf: { id: 'panel-root', sessionId: null },
       activePanelId: 'panel-root',
       focusedSessionId: ref<string | null>(null),
       findPanelBySession: () => null,
@@ -122,8 +122,7 @@ vi.mock('@/composables/features/chat/useChat', () => ({ useChat: () => ({ abort:
 vi.mock('@/composables/features/chat/useSessionDerivations', () => ({
   useSessionDerivations: () => ({ derivedStatus: () => ({ value: 'done' }) }),
 }))
-vi.mock('@/composables/features/chat/useSubagentListSync', () => ({ useSubagentListSync: vi.fn() }))
-vi.mock('@/composables/features/chat/useWorkflowListSync', () => ({ useWorkflowListSync: vi.fn() }))
+vi.mock('@/composables/features/chat/useListSync', () => ({ useListSync: vi.fn() }))
 vi.mock('@/composables/features/sidebar/useSidebarSubagentActions', () => ({
   useSidebarSubagentActions: () => ({ onSelectSubagent: vi.fn(), onCancelSubagent: vi.fn(), onRetrySubagents: vi.fn() }),
 }))

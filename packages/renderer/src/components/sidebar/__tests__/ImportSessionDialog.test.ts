@@ -262,7 +262,7 @@ beforeEach(() => {
   })
   apiMocks.importSession.mockImplementation(async (req: { sourcePath: string }) => ({
     sessionId: 'imported-new-session-id',
-    targetPath: `/Users/test/.xyz-agent/pi/sessions/${STOCK_DIR}/copied.jsonl`,
+    targetPath: `/Users/test/.xyz-agent/agent/sessions/${STOCK_DIR}/copied.jsonl`,
     sourcePath: req.sourcePath,
   }))
   // 默认取消（对齐真实 pickDirectory 无 electronAPI 时的降级契约），选中场景用例内覆写

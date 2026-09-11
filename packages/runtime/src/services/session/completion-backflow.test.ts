@@ -18,6 +18,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { createSessionDeliveryRegistry } from './session-delivery-registry.js'
 import { createCompletionBackflow, buildBackflowContent } from './completion-backflow.js'
+import { applySessionOccupancyTransition } from './event-interpreter.js'
 import type { IManagedSessionView } from './types.js'
 
 // ─── harness：真 kernel + 真 registry + 真 backflow，材料层 mock ──────────
@@ -257,7 +258,8 @@ describe('U6_SINGLETON_REUSE 同父 session 的 send 排队与回流共用同一
 
     // 父跑完第一条（sendChecked 的 D7 置位 isGenerating=true）→ 父 settled 后 idle；
     // 随后子 session 的回流 settled 到达（时序：父先处理完 agent 消息再收回流）
-    h.parent.isGenerating = false
+    // 父 settled 边沿 idle 复位（u3c readonly 收口：经原语 'idle' 行，isIdle 读同源三布尔）
+    applySessionOccupancyTransition(h.parent, null, 'idle')
     h.emitSettled(h.child.id)
     await h.flush()
 
@@ -277,7 +279,8 @@ describe('U6_SINGLETON_REUSE 同父 session 的 send 排队与回流共用同一
     expect(h.client.prompt).not.toHaveBeenCalled()
 
     // 父 run 结束：settled 边沿 + idle 复核 → 同一 handle flush 注入
-    h.parent.isGenerating = false
+    // 父 settled 边沿 idle 复位（u3c readonly 收口：经原语 'idle' 行，isIdle 读同源三布尔）
+    applySessionOccupancyTransition(h.parent, null, 'idle')
     h.emitSettled(h.parent.id)
     await h.flush()
     expect(h.client.prompt).toHaveBeenCalledTimes(1)
@@ -294,7 +297,8 @@ describe('U6_MULTI_RUN 两次 settled 两次回流（每次投递任务完成各
     h.emitSettled(h.child.id)
     await h.flush()
     // 父被唤醒后跑完又 idle（D7 置位 → 父 settled 复位），run 2
-    h.parent.isGenerating = false
+    // 父 settled 边沿 idle 复位（u3c readonly 收口：经原语 'idle' 行，isIdle 读同源三布尔）
+    applySessionOccupancyTransition(h.parent, null, 'idle')
     h.emitSettled(h.child.id)
     await h.flush()
 
@@ -311,7 +315,8 @@ describe('U6_MULTI_RUN 两次 settled 两次回流（每次投递任务完成各
     const h = makeHarness({ outcome: 'done' })
     h.emitSettled(h.child.id)
     await h.flush()
-    h.parent.isGenerating = false
+    // 父 settled 边沿 idle 复位（u3c readonly 收口：经原语 'idle' 行，isIdle 读同源三布尔）
+    applySessionOccupancyTransition(h.parent, null, 'idle')
     // 第二个 run 以 error 收场（session_end outcome 被覆盖为 error）
     h.outcomeByPath.set('/tmp/child-1.jsonl', 'error')
     h.emitSettled(h.child.id)

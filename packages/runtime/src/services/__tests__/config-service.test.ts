@@ -10,10 +10,27 @@
  */
 import { describe, it, expect, vi, afterEach } from 'vitest'
 import { ConfigService } from '../config-service.js'
+import { ProviderCredentialResolver } from '../auth/provider-credential-resolver.js'
+import type { IProviderCredentialResolver } from '../ports/provider-credential-resolver.js'
 import type { IConfigStore } from '../ports/config.js'
 import type { BuiltinProviderTemplate } from '@xyz-agent/shared'
 import type { AuthStorage } from '../auth/auth-storage.js'
 import type { XyzProviderStore } from '../provider-extras-store.js'
+
+/**
+ * M2fg 恒注入形态：凭据判定经 resolver 批量 sync 版（D3 唯一通道）。
+ * authStorage 缺省用空集 stub（auth.json 无凭据），configStore 传用例的 mock store。
+ */
+function makeResolver(
+  store: IConfigStore,
+  authStorage?: Pick<AuthStorage, 'hasCredentialSync' | 'listCredentialIds'>,
+): IProviderCredentialResolver {
+  return new ProviderCredentialResolver({
+    authService: { getCredential: async () => undefined },
+    authStorage: authStorage ?? { hasCredentialSync: () => false, listCredentialIds: () => [] },
+    configStore: store,
+  })
+}
 
 // mock isCatalogProvider → false: keep existing test behavior (custom provider path)。
 // wave2：保留 deriveEnabled 真实实现（listProviders 消费），只 override isCatalogProvider。
@@ -230,7 +247,7 @@ describe('ConfigService authMethod 透传与推断（I6，wave-quick-setup-c TC7
       getExtrasSync: vi.fn(() => undefined),
       readAllSync: vi.fn(() => ({ 'with-mark': { authMethod: 'oauth' } })),
     } as unknown as Pick<XyzProviderStore, 'modify' | 'getExtrasSync' | 'readAllSync' | 'delete' | 'getScopedModelsSync' | 'modifyScopedModels' | 'cleanScopedModelsResidue'>
-    const svc = new ConfigService('/tmp/project', mockStore, undefined, extrasStore)
+    const svc = new ConfigService('/tmp/project', mockStore, undefined, extrasStore, undefined, makeResolver(mockStore))
     const providers = svc.listProviders()
     const byId = Object.fromEntries(providers.map(p => [p.id, p]))
     expect(byId['with-mark'].authMethod).toBe('oauth')
@@ -255,7 +272,7 @@ describe('ConfigService status 派生与 models 合并（M6/T9，wave-list-badge
       // B3：custom status 改用 authIdSet（listCredentialIds），需返回 anthropic 才判 connected
       listCredentialIds: vi.fn(() => ['anthropic']),
     } as unknown as Pick<AuthStorage, 'set' | 'remove' | 'hasOAuth' | 'hasOAuthSync' | 'hasCredentialSync' | 'listCredentialIds'>
-    const svc = new ConfigService('/tmp/project', mockStore, authStorage)
+    const svc = new ConfigService('/tmp/project', mockStore, authStorage, undefined, undefined, makeResolver(mockStore, authStorage))
     const providers = svc.listProviders()
     expect(providers[0].status).toBe('connected')
   })
@@ -274,7 +291,7 @@ describe('ConfigService status 派生与 models 合并（M6/T9，wave-list-badge
       // wave2：补齐 listCredentialIds（isCatalogProvider mock 恒 false → 走 custom，防真实调用崩）
       listCredentialIds: vi.fn(() => []),
     } as unknown as Pick<AuthStorage, 'set' | 'remove' | 'hasOAuth' | 'hasOAuthSync' | 'hasCredentialSync' | 'listCredentialIds'>
-    const svc = new ConfigService('/tmp/project', mockStore, authStorage)
+    const svc = new ConfigService('/tmp/project', mockStore, authStorage, undefined, undefined, makeResolver(mockStore, authStorage))
     expect(svc.listProviders()[0].status).toBe('not_configured')
   })
 
@@ -290,7 +307,7 @@ describe('ConfigService status 派生与 models 合并（M6/T9，wave-list-badge
       // wave2：listProviders 读 enabledModels 派生 enabled（DM3），空数组 = 全启用
       getEnabledModels: vi.fn(() => []),
     } as unknown as IConfigStore
-    const svc = new ConfigService('/tmp/project', mockStore)
+    const svc = new ConfigService('/tmp/project', mockStore, undefined, undefined, undefined, makeResolver(mockStore))
     const providers = svc.listProviders()
     const byId = Object.fromEntries(providers.map(p => [p.id, p]))
     // openai 是 builtin provider：models 兜底非空
