@@ -2,7 +2,7 @@
  * SystemPage 集成测试共享 helper（system-page-rename-model / system-page-smart-context）。
  *
  * 提取两测试文件重复的构造样板：
- *  - settings API mock 集（auto-rename 4 + smart-context 5 函数）与 '@xyz-agent/core/transport/api/domains/settings'
+ *  - settings API mock 集（auto-rename 6 + smart-context 5 函数）与 '@xyz-agent/core/transport/api/domains/settings'
  *    mock 模块工厂（含 getSystem/updateSystem 空实现——stores/settings → '@/api' → mock/index
  *    转发引用 real 域导出，工厂缺导出会在模块加载时抛 "No export defined"）。
  *  - useToast / useCommandStore / lib/ipc 三组模块 mock 工厂。
@@ -24,6 +24,8 @@ export function createSettingsApiMocks() {
     setAutoRenameEnabled: vi.fn(),
     getRenameModel: vi.fn(),
     setRenameModel: vi.fn(),
+    getRenameMode: vi.fn(),
+    setRenameMode: vi.fn(),
     getSmartContextConfig: vi.fn(),
     setSmartContextEnabled: vi.fn(),
     setSmartContextCompactModel: vi.fn(),
@@ -139,14 +141,16 @@ export async function mountSystemPage(): Promise<ReturnType<typeof mount>> {
   return wrapper
 }
 
-/** beforeEach 统一重置 + 默认解析值（auto-rename 开 + rename-model 未设置 + smart-context 全默认）。
- *  用例特定覆写在各自文件 beforeEach 之后 mockResolvedValue 覆盖。 */
+/** beforeEach 统一重置 + 默认解析值（auto-rename 开 + rename-model 未设置 + rename-mode 默认 + smart-context 全默认）。
+ *  用例特定覆写在各自文件 beforeEach 之后 mockResolvedValue 覆写。 */
 export function resetSettingsApiMocks(m: SettingsApiMocks): void {
   for (const fn of Object.values(m)) fn.mockReset()
   m.getAutoRenameEnabled.mockResolvedValue({ enabled: true })
   m.setAutoRenameEnabled.mockResolvedValue({ enabled: true })
   m.getRenameModel.mockResolvedValue({ model: '' })
   m.setRenameModel.mockResolvedValue({ model: '' })
+  m.getRenameMode.mockResolvedValue({ mode: 'first-stop' })
+  m.setRenameMode.mockResolvedValue({ mode: 'first-stop' })
   m.getSmartContextConfig.mockResolvedValue(smartContextFixture())
   m.setSmartContextCompactModel.mockResolvedValue({ model: '' })
   m.setSmartContextThresholds.mockResolvedValue({ thresholds: [...SMART_CONTEXT_DEFAULT_THRESHOLDS] })

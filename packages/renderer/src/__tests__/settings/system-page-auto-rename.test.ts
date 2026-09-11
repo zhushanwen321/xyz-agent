@@ -5,6 +5,9 @@
  *  - 首屏冒烟：DOM 含 auto-rename Switch（data-testid=setting-auto-rename-session）。
  *  - 初始态：getAutoRenameEnabled 返回 true → Switch 开；返回 false → Switch 关。
  *  - 切换交互：切 Switch → setAutoRenameEnabled 被调用。
+ *  - 触发模式 Select：DOM 含 trigger（data-testid=setting-rename-mode）+ getRenameMode 回显 +
+ *    三模式选项点选 setRenameMode；开关关闭时仍可用（agent-tool 工具注册不受开关 flag 门控，
+ *    与 model Select 随开关 disabled 的差异行为）。
  *
  * 覆盖（SystemPage 容器）：
  *  - 首屏冒烟：4 个 Section 组件渲染 + auto-rename Switch 在 DOM（用户可见断言）。
@@ -27,12 +30,14 @@ import SystemAppearanceSection from '@/components/settings/system/SystemAppearan
 import SystemSoundSection from '@/components/settings/system/SystemSoundSection.vue'
 import SystemShortcutSection from '@/components/settings/system/SystemShortcutSection.vue'
 
-/** mock 捕获 auto-rename / rename-model / smart-context API 调用。vi.hoisted 保证在 vi.mock 工厂执行前就绪。 */
+/** mock 捕获 auto-rename / rename-model / rename-mode / smart-context API 调用。vi.hoisted 保证在 vi.mock 工厂执行前就绪。 */
 const settingsMock = vi.hoisted(() => ({
   getAutoRenameEnabled: vi.fn(() => Promise.resolve({ enabled: true })),
   setAutoRenameEnabled: vi.fn(() => Promise.resolve({ enabled: true })),
   getRenameModel: vi.fn(() => Promise.resolve({ model: '' })),
   setRenameModel: vi.fn(() => Promise.resolve({ model: '' })),
+  getRenameMode: vi.fn(() => Promise.resolve({ mode: 'first-stop' })),
+  setRenameMode: vi.fn((mode: string) => Promise.resolve({ mode })),
   // SystemPage 现挂 SystemSmartContextSection（onMounted 读全量配置）——缺导出会告警
   getSmartContextConfig: vi.fn(() =>
     Promise.resolve({ enabled: true, compactModel: '', reminderThresholds: [200_000, 400_000, 600_000], excludedModels: [] }),
@@ -48,6 +53,8 @@ vi.mock('@xyz-agent/core/transport/api/domains/settings', () => ({
   setAutoRenameEnabled: settingsMock.setAutoRenameEnabled,
   getRenameModel: settingsMock.getRenameModel,
   setRenameModel: settingsMock.setRenameModel,
+  getRenameMode: settingsMock.getRenameMode,
+  setRenameMode: settingsMock.setRenameMode,
   getSmartContextConfig: settingsMock.getSmartContextConfig,
   setSmartContextEnabled: settingsMock.setSmartContextEnabled,
   setSmartContextCompactModel: settingsMock.setSmartContextCompactModel,
@@ -103,11 +110,15 @@ beforeEach(() => {
   settingsMock.setAutoRenameEnabled.mockReset()
   settingsMock.getRenameModel.mockReset()
   settingsMock.setRenameModel.mockReset()
-  // 默认解析值：与组件默认 ref(true) / ref('') 一致
+  settingsMock.getRenameMode.mockReset()
+  settingsMock.setRenameMode.mockReset()
+  // 默认解析值：与组件默认 ref(true) / ref('') / ref('first-stop') 一致
   settingsMock.getAutoRenameEnabled.mockResolvedValue({ enabled: true })
   settingsMock.setAutoRenameEnabled.mockResolvedValue({ enabled: true })
   settingsMock.getRenameModel.mockResolvedValue({ model: '' })
   settingsMock.setRenameModel.mockResolvedValue({ model: '' })
+  settingsMock.getRenameMode.mockResolvedValue({ mode: 'first-stop' })
+  settingsMock.setRenameMode.mockImplementation((mode: string) => Promise.resolve({ mode }))
 })
 
 afterEach(() => {
@@ -158,6 +169,53 @@ describe('SystemAutoRenameSection 会话自动重命名开关', () => {
     await flushPromises()
     expect(settingsMock.setAutoRenameEnabled).toHaveBeenCalledTimes(1)
     expect(settingsMock.setAutoRenameEnabled).toHaveBeenCalledWith(false)
+  })
+
+  it('mount 后 DOM 含 rename-mode Select 且 getRenameMode 被调用', async () => {
+    wrapper = mount(SystemAutoRenameSection, { props: { system: systemFixture() } })
+    await flushPromises()
+    expect(wrapper.find('[data-testid="setting-rename-mode"]').exists()).toBe(true)
+    expect(settingsMock.getRenameMode).toHaveBeenCalled()
+  })
+
+  it('getRenameMode 返回 first-prompt 时 trigger 显示「首次请求时」', async () => {
+    settingsMock.getRenameMode.mockResolvedValue({ mode: 'first-prompt' })
+    wrapper = mount(SystemAutoRenameSection, { props: { system: systemFixture() } })
+    await flushPromises()
+    const trigger = wrapper.find('[data-testid="setting-rename-mode"]')
+    expect(trigger.text()).toContain('首次请求时')
+  })
+
+  it('下拉含三模式选项；点选 agent 自主命名 → setRenameMode 收到 "agent-tool"', async () => {
+    wrapper = mount(SystemAutoRenameSection, { props: { system: systemFixture() } })
+    await flushPromises()
+
+    // reka-ui SelectContent 仅 open 时挂载（teleport 到 body），happy-dom 需显式 dispatch
+    const trigger = wrapper.find('[data-testid="setting-rename-mode"]').element as HTMLElement
+    trigger.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }))
+    trigger.click()
+    await flushPromises()
+
+    const options = document.body.querySelectorAll('[role="option"]')
+    const labels = Array.from(options).map((el) => el.textContent ?? '')
+    expect(labels).toContain('首次请求时')
+    expect(labels).toContain('首轮回复完成')
+    expect(labels).toContain('agent 自主命名')
+
+    const target = Array.from(options).find((el) => (el.textContent ?? '').includes('agent 自主命名'))
+    expect(target).toBeTruthy()
+    target!.dispatchEvent(new PointerEvent('pointerup', { bubbles: true }))
+    target!.click()
+    await flushPromises()
+    expect(settingsMock.setRenameMode).toHaveBeenCalledWith('agent-tool')
+  })
+
+  it('auto-rename 开关关闭时 mode Select 仍可用（agent-tool 不受 flag 门控）', async () => {
+    settingsMock.getAutoRenameEnabled.mockResolvedValue({ enabled: false })
+    wrapper = mount(SystemAutoRenameSection, { props: { system: systemFixture() } })
+    await flushPromises()
+    const trigger = wrapper.find('[data-testid="setting-rename-mode"]')
+    expect(trigger.attributes('disabled')).toBeUndefined()
   })
 })
 

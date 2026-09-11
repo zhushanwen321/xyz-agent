@@ -88,12 +88,12 @@ describe('SystemPage 重命名模型 Select', () => {
     expect(trigger.text()).toContain('（不可用）')
   })
 
-  it('未设置时 trigger 显示「未设置」', async () => {
+  it('未设置时 trigger 显示「跟随会话模型」', async () => {
     settingsMock.getRenameModel.mockResolvedValue({ model: '' })
     seedStore()
     await mountPage()
     const trigger = wrapper!.find('[data-testid="setting-rename-model"]')
-    expect(trigger.text()).toContain('未设置')
+    expect(trigger.text()).toContain('跟随会话模型')
   })
 
   it('auto-rename 关闭时 trigger disabled，开启时可用', async () => {
@@ -126,7 +126,7 @@ describe('SystemPage 重命名模型 Select', () => {
     // 有凭证 provider 的模型在列；无凭证 provider 的模型被过滤
     expect(labels).toContain('Model One')
     expect(labels).not.toContain('Model Two')
-    expect(labels).toContain('未设置')
+    expect(labels).toContain('跟随会话模型')
 
     // 点选 Model One → setRenameModel 收到 "providerId/modelId" 复合串
     const target = Array.from(options).find((el) => (el.textContent ?? '').includes('Model One'))

@@ -16,7 +16,7 @@ import * as configDomain from './config'
 import * as extensionDomain from './extension'
 import { command } from '../request'
 import { RPC_BACKSTOP_TIMEOUT_MS } from '../pending'
-import type { ServerMessageMap } from '@xyz-agent/shared'
+import type { RenameMode, ServerMessageMap } from '@xyz-agent/shared'
 
 // [W4] SystemSettings 类型 + SYSTEM_KEY/DEFAULT_SYSTEM/getSystem/updateSystem 持久化已迁
 // @xyz-agent/core（domain/settings system-storage + types）。本文件仅保留 transport 转发
@@ -52,6 +52,8 @@ export type DefaultBaseBranchReply = ServerMessageMap['config.defaultBaseBranch'
 export type AutoRenameEnabledReply = ServerMessageMap['config.autoRenameEnabled']
 /** rename 标题生成模型配置 reply 类型。 */
 export type RenameModelReply = ServerMessageMap['config.renameModel']
+/** rename 触发模式配置 reply 类型。 */
+export type RenameModeReply = ServerMessageMap['config.renameMode']
 /** 智能上下文压缩配置（get 全量）reply 类型。 */
 export type SmartContextConfigReply = ServerMessageMap['config.smartContextConfig']
 /** 智能上下文压缩开关配置 reply 类型。 */
@@ -141,6 +143,16 @@ export async function setRenameModel(model: string): Promise<RenameModelReply> {
 /** 读取 rename 标题生成模型（"provider/modelId"，空串 = 未设置）。 */
 export async function getRenameModel(): Promise<RenameModelReply> {
   return command('config.getRenameModel', {}, RPC_BACKSTOP_TIMEOUT_MS)
+}
+
+/** 设置 rename 触发模式（非法值由 runtime 侧归一为默认 first-stop）。 */
+export async function setRenameMode(mode: RenameMode): Promise<RenameModeReply> {
+  return command('config.setRenameMode', { mode }, RPC_BACKSTOP_TIMEOUT_MS)
+}
+
+/** 读取 rename 触发模式（归一后生效值，默认 first-stop）。 */
+export async function getRenameMode(): Promise<RenameModeReply> {
+  return command('config.getRenameMode', {}, RPC_BACKSTOP_TIMEOUT_MS)
 }
 
 /** 读取智能上下文压缩配置全量（compactModel 空串 = 未设置；thresholds 为 token 绝对数）。 */
