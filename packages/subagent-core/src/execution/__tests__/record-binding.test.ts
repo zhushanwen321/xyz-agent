@@ -369,7 +369,7 @@ describe("[UF-1] SubagentService 集成：回填点绑定落盘 + 跨重启 mess
     const record = makeChatRecord("sa-bind-live", sessionFile);
     store.register(record);
 
-    await service.chatActions.deliverChatMessage(record, "second round", false);
+    await service.chatActions.deliverChatMessage(record, "second round");
     await vi.waitFor(() => expect(fake.runs.length).toBe(1));
     fake.runs[0]!.settle({ content: "second round reply", sessionFile });
 
@@ -399,7 +399,7 @@ describe("[UF-1] SubagentService 集成：回填点绑定落盘 + 跨重启 mess
     fs.chmodSync(readOnlyDir, 0o555); // 轮应答（绑定写点）前锁只读——写失败面就位
     store.register(record);
 
-    await service.chatActions.deliverChatMessage(record, "round on read-only dir", false);
+    await service.chatActions.deliverChatMessage(record, "round on read-only dir");
     await vi.waitFor(() => expect(fake.runs.length).toBe(1));
     fake.runs[0]!.settle({ content: "reply", sessionFile });
 
@@ -428,9 +428,9 @@ describe("[UF-1] SubagentService 集成：回填点绑定落盘 + 跨重启 mess
 
     // 可 message：续聊 run 以原 sessionFile 为 resume 锚点（续写原文件）。
     // chat 会话形态参数挂在 RunContext（协议 run.params.chat 的承载位），非 task。
-    await service.chatActions.deliverChatMessage(record, "resume after restart", false);
+    await service.chatActions.deliverChatMessage(record, "resume after restart");
     await vi.waitFor(() => expect(fake.runs.length).toBe(1));
-    const chatParams = fake.runs[0]!.ctx.chat;
+    const chatParams = fake.runs[0]!.ctx.resume;
     expect(chatParams?.resume?.sessionRef["sessionFile"]).toBe(file);
     expect(chatParams?.recordId).toBe("sa-bind-1");
   });

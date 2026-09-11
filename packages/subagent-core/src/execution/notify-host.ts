@@ -177,7 +177,8 @@ export function createNotifyHost(deps: NotifyHostDeps): NotifyHost {
      *  收不到带指针行的终态通知（审查 C-1）。故 round 置 undefined（key 回退为裸 id），
      *  轮数改经 totalRounds 进文案 "completed after N rounds."（C-2）。
      *
-     *  仅 chatMode close 语义调用（closeChatIdle / closeAfterRoundSettled 终态化成功后）。
+     *  仅 chatMode close 语义调用（closeChatIdle 终态化成功后；[H1 U6] 旧
+     *  closeAfterRoundSettled 消费点已随 chat 域退役）。
      *  one-shot 显式拒绝（G4：one-shot close 路径现状无终态通知，字节不变）；cancel 走
      *  cancelBackground 自己的 notifyComplete，不经本方法。幂等性：两条 close 路径均由
      *  closeSubagent 的 status 分流守卫（closed 后幂等 no-op）/ CAS 抢锁保证只执行一次，

@@ -144,11 +144,9 @@ export interface EngineHandleData {
 /**
  * [v1.x] 冷续 resume 锚点——EngineHandleData 定位键的投影子集（诊断字段
  * v/engineVersion/adapterVersion 不属锚点语义，不随锚点走）。消费点：
- *   - run.params.chat.resume / run.params.resume（宿主 → 引擎：冷续重开已 idle 的
- *     session，pi 消费 sessionRef.sessionFile —— 对照 core SpawnResumeOpts.sessionFile
- *     的锚点面）。
- * [H1] 双键过渡（U1）：新增 run.params.resume 与 chat.resume 同载荷并存（载荷
- * 不变，仅键名泛化），U6 单批切换读写端后 `chat` 键退役、本锚点仅经 resume 键携带。
+ *   - run.params.resume（宿主 → 引擎：冷续重开已 idle 的 session，pi 消费
+ *     sessionRef.sessionFile —— 对照 core SpawnResumeOpts.sessionFile 的锚点面）。
+ * [H1 U6 已切换] 键切换单批完成（读写端同批），锚点仅经 resume 键携带。
  * 类型层与 EngineHandleData 定位形态的对照由测试断言（Pick 可赋值闭包）锁定。
  */
 export interface ResumeAnchor {

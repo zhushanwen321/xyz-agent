@@ -155,18 +155,17 @@ export const FORBIDDEN_CREDENTIAL_KEY_FRAGMENTS = [
 export const REVERSE_CHANNEL_NAMES: readonly ReverseChannel[] = REVERSE_CHANNELS;
 
 // ============================================================
-// [H1] run 会话形态参数载荷 schema（chat / resume 双键同形校验权威）
+// [H1] run 会话形态参数载荷 schema（resume 单键校验权威）
 // ============================================================
 
 /**
  * run.params 的会话形态参数载荷 schema（draft-07 深载荷片段）。设计权威源：
- * docs/design/subagent-chat-run-unification.md §3.3 D3 + §5 U1 行。
+ * docs/design/subagent-chat-run-unification.md §3.3 D3 + §5 U1/U6 行。
  *
- * H1 双键过渡（U1）：`chat` 与 `resume` 两键载荷同形（`RunChatParams` ≡
- * `RunResumeParams`：recordId + 可选 ResumeAnchor），故共用同一 schema——「schema
- * 校验同时接受 chat 与 resume」的载体。帧级 schema（requestFrameSchema.params）
+ * [H1 U6 已切换] 键切换单批完成后本 schema 面向唯一键 `resume`（RunResumeParams：
+ * recordId + 可选 ResumeAnchor），形状不变。帧级 schema（requestFrameSchema.params）
  * 刻意不做深校验（见本文件头注释），本片段供消费方（引擎读端结构化报错 / 测试正负
- * 样本）按需深校验；U6 切换并删除 `chat` 键后本 schema 面向单键 `resume`，形状不变。
+ * 样本）按需深校验。
  */
 export const runSessionParamsSchema = {
   $schema: "http://json-schema.org/draft-07/schema#",

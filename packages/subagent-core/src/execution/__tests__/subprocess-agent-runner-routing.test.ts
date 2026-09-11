@@ -79,7 +79,6 @@ function makeFakeZcodeEngine(probeOk: boolean, poolKey: string = FAKE_POOL_KEY):
         outcome: { engineId: "zcode", content: "from-zcode" },
       });
     },
-    interact: () => Promise.resolve({ ok: false, code: "engine_capability_unsupported", message: "stub" }),
     read: () => Promise.resolve({ engineId: "zcode", turns: [], source: "outcome-only" }),
   };
   return { engine, calls };
@@ -169,7 +168,6 @@ function makeDelegatingPiPort(getService: () => SubagentService | undefined): En
         outcome,
       };
     },
-    interact: async () => ({ ok: false, code: "engine_interact_failed", message: "not supported in this test" }),
     read: async () => ({ engineId: "pi", turns: [], source: "outcome-only" }),
   };
 }

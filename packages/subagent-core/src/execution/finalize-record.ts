@@ -45,11 +45,10 @@ export interface FinalizeDeps {
   /**
    * [F-5 修复] record 终态化的宿主侧收口钩子（recordId；best-effort，抛错由调用方
    * 在闭包内自行兜底）。单一汇聚点：doFinalizeRecord 是全部 closed 终态的必经路径
-   * （finalizeRecord / closeChatIdle / closeAfterRoundSettled / finalizeFailed /
-   * finalizeAborted / consumeCloseAfterRound），chat 轮路由注销（chatRoundRoutes）
-   * 由 SubagentService 经此钩子统一执行——此前仅 cancelBackground 注销，chat record
-   * 经 finalize 链终态化后路由闭包（持 record/stream/守护引用）泄漏。finalizeRoundToIdle
-   * 不经本钩子（回 idle 非终态，续聊仍需路由）。
+   *（finalizeRecord / closeChatIdle / finalizeFailed / finalizeAborted /
+   * consumeCloseAfterRound）。收口面现 = Continuation 实例清理（[H1 U6] 旧 chat 轮
+   * 路由注销面已随 interact 面退役）。finalizeRoundToIdle 不经本钩子（回 idle 非终态，
+   * 续聊仍需容器）。
    */
   onFinalized?: (recordId: string) => void;
   /**

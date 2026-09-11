@@ -532,12 +532,10 @@ export async function cancelHandler(
 /**
  * message action handler：向对话模式 subagent 续聊/插入消息。
  *
- * 状态 × interrupt 自动映射（agent 只表达意图）：
- *   running → deliverChatMessage 热路径（进程活：prompt + streamingBehavior，interrupt=true
- *             抢占 / false 排队）
- *   进程死  → deliverChatMessage 冷路径（resumeRound 重开 session + prompt，interrupt 自动
- *             退化，agent 无感）
- *   终态    → throw ended（正常路径不命中——终态 record 已 archive，getRecordForAction 先 throw not found）
+ * [H1 U6] 状态分流面收敛：running → Continuation 派发新轮（新 run + resume 锚点）；
+ * 在途轮存在 → D2 打断（abort + 入队）；终态 → throw ended（正常路径不命中——终态
+ * record 已 archive，getRecordForAction 先 throw not found）。interrupt 输入保留解析
+ * 但不参与分派（D2 统一打断语义）。
  *
  * 归属守卫：getRecordForAction 内部校验 rootSessionId。
  *
@@ -587,11 +585,11 @@ export async function messageHandler(
     (record as Mutable<ExecutionRecord>).chatMode = true;
   }
 
-  // chatMode 统一投递：按进程死活分流（热路径 prompt+streamingBehavior / 冷路径 resume），
-  // 不按 record.status（进程长驻，idle 态进程仍活，续聊走热路径 prompt 而非重开 session）。
-  // upgrade 后 record.chatMode 已为 true，统一进此分支。
+  // chatMode 统一投递：Continuation 编排（§3.4——D4 状态迁移表 / D2 打断语义）。
+  // [H1 U6] 旧「进程死活分流热/冷路径」消亡（每轮 = 新 run + resume 锚点），
+  // interrupt 参数随 D2 打断统一语义退役（在途轮存在即打断入队，不区分抢占/排队）。
   if (record.chatMode) {
-    await service.chatActions.deliverChatMessage(record, text, interrupt);
+    await service.chatActions.deliverChatMessage(record, text);
   } else {
     // 终态（closed/cancelled）：防御性兜底（终态 record 已 archive，正常走 not found）
     throw new Error(

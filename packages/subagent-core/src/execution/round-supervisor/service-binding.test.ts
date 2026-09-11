@@ -32,7 +32,7 @@ import * as path from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { COLD_LOOKUP_SCAN_LIMIT } from "../cold-resurrect.ts";
+import { COLD_LOOKUP_SCAN_LIMIT } from "../cold-lookup.ts";
 import * as stateMarker from "../state-marker.ts";
 import type { PiLike } from "../notify-host.ts";
 import type { RecordStore } from "../record-store.ts";

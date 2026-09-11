@@ -111,7 +111,6 @@ function makeHarness(
     capabilities: () => CAPABILITIES,
     probe: async (): Promise<ProbeReport> => ({ ok: true, engineVersion: "fake", checks: [] }),
     run: runSpy,
-    interact: async () => ({ ok: false, code: "engine_interact_failed", message: "not supported in this test" }),
     read: async () => ({ engineId: "pi", turns: [], source: "outcome-only" }),
   };
   clearEngines();

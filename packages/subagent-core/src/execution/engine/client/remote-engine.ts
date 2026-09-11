@@ -1,7 +1,8 @@
 // src/execution/engine/client/remote-engine.ts
 //
 // RemoteEngine：cli 形态 EnginePort 适配（W2，impl-plan §2.2「RemoteEngine 同步成员
-// 形态映射」必写死）。把 core EnginePort 的 9 成员映射到 EngineClient 协议请求；
+// 形态映射」必写死；[H1 U6] 交互控制面与 recordId 键路由面已随 chat 域退役删除）。
+// 把 core EnginePort 的成员映射到 EngineClient 协议请求；
 // 同步成员（capabilities / listModels / validateModel）**只读 manifest 注册期快照**
 // ——单源化原则（设计 §3.3「同步成员清单」v6 减法）：无握手缓存、无失效时机，
 // initialize 应答仅诊断（warn 由 EngineClient 留痕）。
@@ -18,8 +19,6 @@ import {
   type AgentCallOpts as SdkAgentCallOpts,
   type AgentOutcome as SdkAgentOutcome,
   type EngineHandleData as SdkEngineHandleData,
-  type InteractAction as SdkInteractAction,
-  type InteractResult as SdkInteractResult,
   type ModelCatalogEntry,
   type ProbeReport as SdkProbeReport,
   type SessionView as SdkSessionView,
@@ -31,12 +30,10 @@ import type {
   EngineCapabilities,
   EngineHandle,
   EngineHandleData,
-  InteractAction,
-  InteractResult,
   ProbeReport,
   SessionView,
 } from "../types.ts";
-import type { ChatRoundRoute, EnginePort, EngineRunResult, RunContext } from "../port.ts";
+import type { EnginePort, EngineRunResult, RunContext } from "../port.ts";
 import type { EngineClient, RunRoute } from "./engine-client.ts";
 
 /** manifest 注册期快照（发现器/注册表读取，构造时注入——同步成员唯一源）。 */
@@ -232,24 +229,6 @@ export class RemoteEngine implements EnginePort {
     }
   }
 
-  async interact(handle: EngineHandle, action: InteractAction): Promise<InteractResult> {
-    await this.opts.client.ensureConnected();
-    const result = (await this.opts.client.request("interact", {
-      handle: handle.data,
-      action: action as SdkInteractAction,
-    })) as SdkInteractResult;
-    return result;
-  }
-
-  /**
-   * [W3 v1.x] chat 轮次反向通道路由注册（recordId 键，EnginePort 可选面实现）：
-   * interact 续聊轮的 streamDelta / roundLifecycle 分发目标。薄委托 EngineClient
-   * 的 recordRoutes（键分发见 reverse-router.ts）。
-   */
-  registerChatRoundRoute(recordId: string, route: ChatRoundRoute): () => void {
-    return this.opts.client.registerRecordRoute(recordId, route as RunRoute);
-  }
-
   /** 协议 read（dataDir 必填——引擎数据根，构造注入）。 */
   async read(handle: EngineHandle): Promise<SessionView> {
     await this.opts.client.ensureConnected();
@@ -310,15 +289,15 @@ interface WireRunParams {
     streamMode: "stream" | undefined;
     sessionRootId?: string;
   };
-  chat?: NonNullable<RunContext["chat"]>;
+  resume?: NonNullable<RunContext["resume"]>;
 }
 
 /**
  * run 帧 wire 载荷构建。协议 ctx 承载（RunContext 字段映射表）：cwd 取任务声明值
  * （缺省进程 cwd）；ctxModel 投影 canonical 词形（provider/id，ModelInfo 字段裁决）。
- * [W3 v1.x] chat 会话形态参数直传（RunContext.chat → run.params.chat；结构由
- * RunContext.chat 注释与 SDK RunChatParams 的 implements 互证承载）。非 chat 轮
- * ctx.chat === undefined → wire 上不出现该键（协议 additive 语义）。
+ * [H1 U6] 会话形态参数直传（RunContext.resume → run.params.resume；结构由
+ * RunContext.resume 注释与 SDK RunResumeParams 的 implements 互证承载）。一次性轮
+ * ctx.resume === undefined → wire 上不出现该键（协议 additive 语义）。
  */
 function buildRunParams(task: AgentCallOpts, ctx: RunContext, runId: string): WireRunParams {
   const ctxModelRef = ctx.ctxModel ? `${ctx.ctxModel.provider}/${ctx.ctxModel.id}` : undefined;
@@ -337,20 +316,17 @@ function buildRunParams(task: AgentCallOpts, ctx: RunContext, runId: string): Wi
       //（additive 语义，与顶层 chat 参数同写法）。
       ...(ctx.sessionRootId !== undefined ? { sessionRootId: ctx.sessionRootId } : {}),
     },
-    ...(ctx.chat !== undefined ? { chat: ctx.chat } : {}),
+    ...(ctx.resume !== undefined ? { resume: ctx.resume } : {}),
   };
 }
 
-/** run 作用域事件路由（event / streamDelta / poolResolved / handleReady / roundLifecycle）。 */
+/** run 作用域事件路由（event / streamDelta / poolResolved / handleReady）。 */
 function buildRunRouteHandlers(ctx: RunContext): RunRoute {
   return {
     onEvent: (event) => ctx.onEvent?.(event as Parameters<NonNullable<RunContext["onEvent"]>>[0]),
     onStreamDelta: (delta) => ctx.stream?.onDelta(delta),
     onPoolResolved: (poolKey) => ctx.onPoolResolved?.(poolKey),
     onHandleReady: (partial) => ctx.onHandleReady?.(partial),
-    // [W3 v1.x] 首轮（run 会话形态）轮次生命周期帧（runId 键）→ 宿主消费口。
-    onRoundLifecycle: (phase) =>
-      ctx.onRoundLifecycle?.(phase as Parameters<NonNullable<RunContext["onRoundLifecycle"]>>[0]),
   };
 }
 

@@ -12,7 +12,7 @@
 // 不 spawn 真子进程的形态随 inproc pi 引擎目录删除消亡）+ logger；record-store /
 // state-marker 走真实实现（fixture 用临时目录写真实 .jsonl + sidecar）。
 // 执行链观测点从 runAndFinalize 边界捕获（rafCapture）换成 fake.runs 捕获（协议 engine.run
-// 的 task/ctx——冷路径 resume 锚点在 ctx.chat.resume，fork/续写语义落点）。
+// 的 task/ctx——冷路径 resume 锚点在 ctx.resume.resume，fork/续写语义落点）。
 //
 // 注意：本测试进程可能运行在 pi subagent 环境（PI_SUBAGENT_* env 被继承会污染
 // rootSessionId 基线与 rootCwd 编码），beforeEach/afterEach 清理同 IDENTITY_ENV_KEYS。
@@ -153,10 +153,9 @@ describe("[v8.5] ended-message 分流文案 + fork-from 恢复通道", () => {
     service = new SubagentService({ cwd: agentDir, modelService });
     service.initSession({ pi: makePi(), sessionId: "root-session-cur" });
 
-    // 协议替身引擎：重生/续聊轮的引擎侧活会话缺省不存在（interact 拒绝 not_resumable
-    // → 冷路径 resume）——与本文件全部执行链场景一致。
+    // 协议替身引擎（[H1 U6] 旧 interact 冷路径拒绝注入随 interact 面退役——续聊恒
+    // 派发新 run + resume 锚点，与本文件全部执行链场景一致）。
     fake = registerFakePiEngine();
-    fake.interactMessageResult = { ok: false, code: "engine_session_not_resumable", message: "no live session" };
   });
 
   afterEach(async () => {
@@ -212,10 +211,10 @@ describe("[v8.5] ended-message 分流文案 + fork-from 恢复通道", () => {
       const res = await messageHandler(service, { subagentId: "sa-a2-legacy", text: "hi" });
       expect(res.response.delivered).toBe(true);
       // [W3 观测点改写] 冷路径续写锚点：原 rafCapture（runAndFinalize args[8].sessionFile）
-      // 换成协议 engine.run 的 ctx.chat.resume.sessionRef.sessionFile（--session 续写原
+      // 换成协议 engine.run 的 ctx.resume.resume.sessionRef.sessionFile（--session 续写原
       // 文件的协议承载位）。
       await vi.waitFor(() => expect(fake.runs.length).toBe(1));
-      expect(fake.runs[0].ctx.chat?.resume?.sessionRef["sessionFile"]).toBe(file);
+      expect(fake.runs[0].ctx.resume?.resume?.sessionRef["sessionFile"]).toBe(file);
     });
 
     it("sidecar 内容非法（外部损坏/手写垃圾）→ 兜底 disconnected", () => {

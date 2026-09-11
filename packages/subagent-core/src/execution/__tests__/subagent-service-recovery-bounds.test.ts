@@ -1,20 +1,18 @@
 // src/execution/__tests__/subagent-service-recovery-bounds.test.ts
 //
 // [u-svc / T2] 服务侧回收上界与 kill 收敛：
-//   - T2④/LC-2：closeChatIdle / closeAfterRoundSettled / cancelBackground 三条终止路径
-//     收敛到 killRecordChildWithEscalation（spy 断言调用点与参数）+ [W3] 引擎侧终止
-//     意图（协议 interact cancel/close fire-and-forget）；
+//   - T2④/LC-2：closeChatIdle / cancelBackground 终止路径收敛到
+//     killRecordChildWithEscalation（spy 断言调用点与参数）；
 //   - T2⑥/PS-1：disposeAllRecords 补三回收面（controller.abort + kill + disarm idle timer
 //     + disarm settled watchdog）；
-//   - T2③/LC-1 + D9：热路径投递 armMidRoundNoProgress（挂载点在编排层
-//     deliverChatMessage 的 interact 受理点；中段无进展检测 + 到期处置：kill + 失败
-//     终态化 + error 含 'settled watchdog' 标记与恢复指引）。
+//   - T2③/LC-1 + D9：Continuation 轮 armMidRoundNoProgress（挂载点在 kickOffChatRound
+//     轮开跑；中段无进展检测 + 到期处置经 Continuation.onWatchdogFire → run 收敛失败
+//     分支统一收口，error 含 'settled watchdog' 标记与恢复指引）。
 //
-// [W3 改写] 替身从 inproc session-runner/stdin-writer mock 改为协议 seam
-//（registerFakePiEngine）：投递 = engine.interact(message) 受理；终止意图 =
-// engine.interact(cancel/close)。T2⑧（非 EPIPE 写失败 re-arm idle timer）随
-// inproc pi 引擎目录 删除归 pi-subagent-cli 包内（写失败语义在引擎进程内，core 已无
-// 可泄漏的本地方案进程），core 侧不再可等价改写。
+// [W3 改写 → H1 U6] 替身 = 协议 seam（registerFakePiEngine）。[H1 U6] interact 断言
+//（cancel/close 终止意图受理）随 interact 面退役删除：真实杀链 = 轮级 abort signal →
+// 协议 cancel 帧（引擎侧杀链）+ 镜像置死记账 + 引擎退出链收割（红线①）；
+// closeAfterRoundSettled 用例随载体退役删除（T2⑧ 段同前批登记归 pi 包）。
 //
 // mock 形态：真实 SubagentService + ServiceInternals cast 暴露 store + logger +
 // spawned-children 的 kill 入口换 spy（importOriginal 保留镜像真实现）。
@@ -102,23 +100,21 @@ function privateFn<K extends string>(service: SubagentService, key: K): (...args
 }
 
 /**
- * message 投递入口（[W3] 协议形态：编排层私有 deliverChatMessage → engine.interact(message)；
- * 冷路径 = engine_session_not_resumable → run chat + resume）。
+ * message 投递入口（[H1 U6] Continuation 编排：deliverChatMessage → onMessage →
+ * 新 run + resume 锚点）。
  */
 async function deliverChat(
   service: SubagentService,
   record: ExecutionRecord,
   text: string,
-  interrupt: boolean,
 ): Promise<void> {
   return (
     privateFn(service, "deliverChatMessage") as (
       this: SubagentService,
       r: ExecutionRecord,
       t: string,
-      i: boolean,
     ) => Promise<void>
-  ).call(service, record, text, interrupt);
+  ).call(service, record, text);
 }
 
 describe("T2④ service-side kill convergence", () => {
@@ -149,10 +145,8 @@ describe("T2④ service-side kill convergence", () => {
     const ok = service.cancel(record.id);
     expect(ok).toBe(true);
     expect(killChildSpy).toHaveBeenCalledWith(record.id, "cancelBackground");
-    // [W3] 实际终止在引擎进程内：协议 interact cancel fire-and-forget
-    await vi.waitFor(() => {
-      expect(fake.interacts.some((c) => c.action.kind === "cancel")).toBe(true);
-    });
+    // [H1 U6] 在途 run 的实际终止经 controller.abort → 轮级 signal（cancel 帧 + 杀链）；
+    // 旧 interact cancel 受理断言随 interact 面退役。
   });
 
   it("closeChatIdle (via closeSubagent force:false on idle) routes through killRecordChildWithEscalation and disarms timers", async () => {
@@ -164,19 +158,8 @@ describe("T2④ service-side kill convergence", () => {
     expect(killChildSpy).toHaveBeenCalledWith(record.id, "closeChatIdle");
     expect(hasIdleTimer(record.id)).toBe(false);
     expect(hasSettledWatchdog(record.id)).toBe(false);
-    // [W3] 引擎侧 close force（idle 进程回收）
-    await vi.waitFor(() => {
-      const close = fake.interacts.find((c) => c.action.kind === "close");
-      expect(close?.action).toMatchObject({ kind: "close", payload: { force: true } });
-    });
-  });
-
-  it("closeAfterRoundSettled routes through killRecordChildWithEscalation", async () => {
-    const record = makeRecord({ id: "sa-close-round" });
-    await (
-      privateFn(service, "closeAfterRoundSettled") as (this: SubagentService, r: ExecutionRecord) => Promise<void>
-    ).call(service, record);
-    expect(killChildSpy).toHaveBeenCalledWith(record.id, "closeAfterRoundSettled");
+    // [H1 U6] 旧引擎侧 close force 受理断言随 interact 面退役（无在跑轮无需进程回收，
+    // Path A 保活进程由镜像记账 + reaper 兜底回收）。
   });
 
   it("disposeAllRecords applies all recovery surfaces: abort + escalation kill + disarm idle/settled timers", () => {
@@ -234,9 +217,8 @@ describe("T2③ hot-path settled watchdog", () => {
     const record = makeRecord({ id: "sa-hot-arm", sessionFile: path.join(agentDir, "sa-hot-arm.jsonl") });
     fs.writeFileSync(record.sessionFile!, "{}\n", "utf-8");
     store.register(record);
-    await deliverChat(service, record, "hello", false);
+    await deliverChat(service, record, "hello");
     await vi.waitFor(() => expect(fake.runs.length).toBe(1));
-    expect(fake.interacts.length).toBe(0); // interact 热路径退役——Continuation 轮派发 run
     expect(hasSettledWatchdog(record.id)).toBe(true);
   });
 
@@ -247,7 +229,7 @@ describe("T2③ hot-path settled watchdog", () => {
     const record = makeRecord({ id: "sa-hot-timeout", sessionFile: path.join(agentDir, "sa-hot-timeout.jsonl") });
     fs.writeFileSync(record.sessionFile!, "{}\n", "utf-8");
     store.register(record);
-    await deliverChat(service, record, "hello", false);
+    await deliverChat(service, record, "hello");
     await vi.waitFor(() => expect(fake.runs.length).toBe(1));
     expect(hasSettledWatchdog(record.id)).toBe(true);
 
@@ -279,8 +261,7 @@ describe("T2③ hot-path settled watchdog", () => {
     const sendMessageCalls = (pi.sendMessage as unknown as ReturnType<typeof vi.fn>).mock.calls as Array<[{ content?: string }]>;
     const notifyContent = sendMessageCalls[0]?.[0]?.content ?? "";
     expect(notifyContent).toContain("settled watchdog");
-    // [W3] 引擎侧终止意图（watchdog fire 的 cancel；fake timers 下只断言受理动作已发出）
-    const cancel = fake.interacts.find((c) => c.action.kind === "cancel");
-    expect(cancel).toBeDefined();
+    // [H1 U6] 引擎侧终止意图（watchdog fire 的 cancel 受理断言）随 interact 面退役——
+    // fire 的真实 kill = killRoundChildForWatchdog（镜像置死）+ abort 轮 signal → cancel 帧。
   });
 });

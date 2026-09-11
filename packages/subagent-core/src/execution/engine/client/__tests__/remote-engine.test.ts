@@ -410,7 +410,7 @@ describe("gate 位多声明 run 期判定（W3 契约⑤接线：manifest vs ini
   });
 });
 
-describe("interact / read / probe / dispose 门面", () => {
+describe("read / probe / dispose 门面（[H1 U6] interact 断言随 interact 面退役删除）", () => {
   it("read 协议帧携带 dataDir（必填：存量池时代相对 dbPath 定位）", async () => {
     const { engine, cleanup } = makeEngine();
     const view = await engine.read({
@@ -428,21 +428,11 @@ describe("interact / read / probe / dispose 门面", () => {
     await cleanup();
   });
 
-  it("probe → ProbeReport；interact → delivered；dispose → client 停机（幂等）", async () => {
+  it("probe → ProbeReport；dispose → client 停机（幂等）", async () => {
     const { engine, cleanup } = makeEngine();
     const report = await engine.probe();
     expect(report.ok).toBe(true);
     expect(report.engineVersion).toBe("fake-1.0.0");
-    const interact = await engine.interact({
-      data: {
-        v: 1,
-        engineId: "fake",
-        sessionRef: { sessionId: "s-1" },
-        poolKey: "shared",
-        adapterVersion: "fake-adapter",
-      },
-    }, { kind: "message", payload: "hi" });
-    expect(interact).toEqual({ ok: true, delivered: true });
     await engine.dispose();
     await expect(engine.dispose()).resolves.toBeUndefined(); // 幂等
     await cleanup();

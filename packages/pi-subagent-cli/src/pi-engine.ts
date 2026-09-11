@@ -190,7 +190,7 @@ export class PiEngine implements EnginePort {
       buildRunParams(task, ctx, dataDir, cwd),
       buildRunCallbacks(ctx, this.askUserHandler),
     );
-    return buildEngineRunResult(ctx.chat?.recordId ?? ctx.taskId, result);
+    return buildEngineRunResult(ctx.resume?.recordId ?? ctx.taskId, result);
   }
 
   /**
@@ -233,25 +233,25 @@ function resolveEngineDataRootOrThrow(explicit: string | undefined): string {
   );
 }
 
-/** run 的 spawn 入参还原（协议 RunParams → SpawnRunParams；一次性 run 与 chat 轮
- * 共用同一派发形态——[H1 U3] chat-run 统一，设计 §3.3 D6/D7）：
- *   - record 锚：chat 轮 = ctx.chat.recordId（interact/close 路由与 childSpawned 帧
- *     的关联键），一次性 run = runId；
- *   - resume 锚点穿透：ctx.chat.resume.sessionRef.sessionFile → resumeSessionFile →
+/** run 的 spawn 入参还原（协议 RunParams → SpawnRunParams；一次性 run 与续聊轮
+ * 共用同一派发形态——[H1 U3/U6] chat-run 统一 + resume 键为唯一会话形态键，设计 §3.3 D6/D7）：
+ *   - record 锚：续聊轮 = ctx.resume.recordId（childSpawned 帧的关联键），
+ *     一次性 run = runId；
+ *   - resume 锚点穿透：ctx.resume.resume.sessionRef.sessionFile → resumeSessionFile →
  *     spawn-args `--session` 续写原文件（首轮无锚点 = 新建）；
- *   - chatMode（agent_settled resolve + 收割，D7）仅在 chat 轮置位。 */
+ *   - chatMode（agent_settled resolve + 收割，D7）仅在会话形态轮置位。 */
 function buildRunParams(
   task: AgentCallOpts,
   ctx: RunContext,
   dataDir: string,
   cwd: string,
 ): SpawnRunParams {
-  const chat = ctx.chat;
-  const resumeFile = chat === undefined ? undefined : refString(chat.resume?.sessionRef ?? {}, "sessionFile");
+  const resumeParams = ctx.resume;
+  const resumeFile = resumeParams === undefined ? undefined : refString(resumeParams.resume?.sessionRef ?? {}, "sessionFile");
   return {
-    recordId: chat?.recordId ?? ctx.taskId,
+    recordId: resumeParams?.recordId ?? ctx.taskId,
     task: task.prompt,
-    agentName: task.description ?? task.agent ?? (chat !== undefined ? "chat-agent" : "workflow-agent"),
+    agentName: task.description ?? task.agent ?? (resumeParams !== undefined ? "chat-agent" : "workflow-agent"),
     model: ctx.ctxModel !== undefined
       ? `${(ctx.ctxModel as EngineCtxModel).provider}/${(ctx.ctxModel as EngineCtxModel).id}`
       : task.model,
@@ -264,12 +264,12 @@ function buildRunParams(
     ...(ctx.signal !== undefined ? { signal: ctx.signal } : {}),
     ...(task.skillPath !== undefined ? { skillPaths: [task.skillPath] } : {}),
     ...(task.appendSystemPrompt !== undefined ? { appendSystemPrompt: task.appendSystemPrompt } : {}),
-    // fork-from 显式分叉源（协议 task.forkSource → --fork）。fork-from 与 chat 轮
-    // 互不相交（fork-from 无 chat 键——宿主保证，chat 轮续写走 resumeSessionFile）。
+    // fork-from 显式分叉源（协议 task.forkSource → --fork）。fork-from 与会话形态轮
+    // 互不相交（fork-from 无 resume 键——宿主保证，续写走 resumeSessionFile）。
     ...(task.forkSource !== undefined ? { forkSource: task.forkSource } : {}),
     // [F6] 根 session id 透传（relay 归属键 SESSION_ID 权威源；undefined 不挂键）。
     ...(ctx.sessionRootId !== undefined ? { sessionRootId: ctx.sessionRootId } : {}),
-    ...(chat !== undefined ? { chatMode: true } : {}),
+    ...(resumeParams !== undefined ? { chatMode: true } : {}),
     ...(resumeFile !== undefined ? { resumeSessionFile: resumeFile } : {}),
   };
 }

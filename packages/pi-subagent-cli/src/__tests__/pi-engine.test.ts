@@ -432,8 +432,8 @@ describe("PiEngine.run（一次性任务形态）", () => {
   });
 });
 
-describe("PiEngine.run（chat 轮 run 派发形态）", () => {
-  it("chat 轮：recordId 锚定 + resume 锚点透传（--session 穿透）+ chatMode 分派，不经 ChatSessionRegistry", async () => {
+describe("PiEngine.run（会话形态轮 run 派发形态）", () => {
+  it("会话形态轮：recordId 锚定 + resume 锚点透传（--session 穿透）+ chatMode 分派，不经 ChatSessionRegistry", async () => {
     const { engine, captured } = makeEngine();
     const runP = engine.run(
       { prompt: "chat turn" },
@@ -441,7 +441,7 @@ describe("PiEngine.run（chat 轮 run 派发形态）", () => {
         taskId: "run-chat-1",
         poolKey: PI_POOL_KEY,
         sessionRootId: "root-sess-f6",
-        chat: {
+        resume: {
           recordId: "rec-chat-9",
           resume: { sessionRef: { recordId: "rec-chat-9", sessionFile: "/tmp/sess-c9.jsonl" }, poolKey: PI_POOL_KEY },
         },
@@ -451,7 +451,7 @@ describe("PiEngine.run（chat 轮 run 派发形态）", () => {
     expect(cap.params).toMatchObject({
       recordId: "rec-chat-9",
       task: "chat turn",
-      // [H1 U3] chat 轮 = run 派发形态：chatMode 仅作 spawn-runner 的 agent_settled
+      // [H1 U3] 会话形态轮 = run 派发形态：chatMode 仅作 spawn-runner 的 agent_settled
       // resolve+收割分派（D7），不再经 ChatSessionRegistry.startRound
       chatMode: true,
       resumeSessionFile: "/tmp/sess-c9.jsonl",
@@ -460,7 +460,7 @@ describe("PiEngine.run（chat 轮 run 派发形态）", () => {
     });
     expect(cap.params.agentName).toBe("chat-agent");
 
-    // chat 轮回调：onEvent / onHandleReady / onChildSpawned / onChildStateChanged
+    // 会话形态轮回调：onEvent / onHandleReady / onChildSpawned / onChildStateChanged
     // 全走 ctx 直通（与 one-shot 共用 buildRunCallbacks）
     cap.callbacks.onEvent?.({ type: "turn_end" });
     cap.callbacks.onHandleReady?.({ sessionRef: { sessionFile: "/tmp/sess-c9.jsonl" }, poolKey: PI_POOL_KEY });
@@ -473,17 +473,17 @@ describe("PiEngine.run（chat 轮 run 派发形态）", () => {
     cap.resolve(spawnRunResult({ sessionId: "sess-c9", sessionFile: "/tmp/sess-c9.jsonl" }));
     await Promise.resolve();
     const { handle, outcome } = await runP;
-    // chat 轮 handle 以 recordId 锚定（非 runId）
+    // 会话形态轮 handle 以 recordId 锚定（非 runId）
     expect(handle.data.sessionRef.recordId).toBe("rec-chat-9");
     expect(outcome.content).toBe("done");
   });
 
-  it("chat 轮无 resume 锚点（首轮新建）→ resumeSessionFile 不挂键", async () => {
+  it("会话形态轮无 resume 锚点（首轮新建）→ resumeSessionFile 不挂键", async () => {
     const { engine, captured } = makeEngine();
     const runP = engine.run({ prompt: "first" }, {
       taskId: "run-chat-2",
       poolKey: PI_POOL_KEY,
-      chat: { recordId: "rec-new" },
+      resume: { recordId: "rec-new" },
     });
     expect(captured[0]!.params.resumeSessionFile).toBeUndefined();
     expect(captured[0]!.params.chatMode).toBe(true);
@@ -494,7 +494,7 @@ describe("PiEngine.run（chat 轮 run 派发形态）", () => {
     expect(handle.data.sessionRef.recordId).toBe("rec-new");
   });
 
-  it("chat 轮 bindAskUser 注入后回调转发 host handler（per-run 绑定与 one-shot 同构）", async () => {
+  it("会话形态轮 bindAskUser 注入后回调转发 host handler（per-run 绑定与 one-shot 同构）", async () => {
     const { engine, captured } = makeEngine();
     const asked: string[] = [];
     engine.bindAskUser(async (req) => {
@@ -504,7 +504,7 @@ describe("PiEngine.run（chat 轮 run 派发形态）", () => {
     const runP = engine.run({ prompt: "chat" }, {
       taskId: "run-chat-ask",
       poolKey: PI_POOL_KEY,
-      chat: { recordId: "rec-ask" },
+      resume: { recordId: "rec-ask" },
     });
     const answer = await captured[0]!.callbacks.askUser?.({ method: "select", id: "ui-4", title: "q", options: ["a"] });
     expect(answer).toEqual({ value: "picked" });

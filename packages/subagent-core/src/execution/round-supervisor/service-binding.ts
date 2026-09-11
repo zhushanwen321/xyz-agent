@@ -11,7 +11,7 @@
 // 对齐 notify-host.ts createNotifyHost 的 deps 惰性求值先例）。
 
 import { bestEffort } from "../best-effort.ts";
-import { COLD_LOOKUP_SCAN_LIMIT } from "../cold-resurrect.ts";
+import { COLD_LOOKUP_SCAN_LIMIT } from "../cold-lookup.ts";
 import { tryTransition } from "../execution-record.ts";
 import { writeFinalizedState } from "../state-marker.ts";
 import { hasLiveProcessHandle } from "../lifecycle-predicates.ts";

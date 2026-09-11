@@ -10,7 +10,7 @@
 //      streamMode onDelta → host/streamDelta / 事件通知 seq 单调 / cancel abort /
 //      onChildSpawned 记录键锚定（非 chat = runId，chat = recordId）；
 //   ④ pi 专有通道：bindAskUser 两阶段绑定体（run 前绑定 + run 结束解绑；[H1 U3]
-//      chat 轮 = run 派发形态同走 per-run 绑定）、run.chat recordId 前置校验 +
+//      会话形态轮 = run 派发形态同走 per-run 绑定）、run.resume recordId 前置校验 +
 //      conversation 能力位 gate（[H1 U5] bindHostChannels 构造期三分通道面已随
 //      chat-session.ts 删除）；
 //   ⑤ 反向请求客户端：rev-N 帧形状 / {ack:true} 两阶段第一段只 ack 不终结等待
@@ -387,7 +387,7 @@ describe("run：协议载荷 → 本地 AgentCallOpts/RunContext", () => {
     expect(captured?.ctx.sessionRootId).toBe("root-sess-9");
     expect(captured?.ctx.stream).toBeDefined();
     expect(captured?.ctx.signal).toBeInstanceOf(AbortSignal);
-    expect(captured?.ctx.chat).toBeUndefined();
+    expect(captured?.ctx.resume).toBeUndefined();
 
     // 一次性 run：onChildSpawned 以 runId 锚定；pid 缺省不发包
     captured?.ctx.onChildSpawned?.({ pid: 4242, killed: false });
@@ -499,7 +499,7 @@ describe("run：协议载荷 → 本地 AgentCallOpts/RunContext", () => {
   });
 });
 
-// ── pi 专有：askUser 绑定面 + run.chat 帧校验 ──
+// ── pi 专有：askUser 绑定面 + run.resume 帧校验 ──
 
 describe("bindAskUser 两阶段绑定体（pi 专有）", () => {
   it("非 chat run：run 前绑定 askUser 等待体（host/askUser 载荷 {runId, request}），run 结束解绑", async () => {
@@ -554,16 +554,16 @@ describe("bindAskUser 两阶段绑定体（pi 专有）", () => {
         runId: "run-chat",
         task: { prompt: "hi", conversation: true },
         ctx: { poolKey: "shared", cwd: "/w" },
-        chat: { recordId: "rec-chat-9" },
+        resume: { recordId: "rec-chat-9" },
       },
     });
     await vi.waitFor(() => expect(vi.mocked(engine.bindAskUser)).toHaveBeenCalledTimes(1));
     const handler = vi.mocked(engine.bindAskUser).mock.calls[0]![0]!;
     expect(handler).toBeTypeOf("function");
 
-    // chat 轮 ctx.chat 透传（引擎读端锚定 recordId）
+    // 会话形态轮 ctx.resume 透传（引擎读端锚定 recordId）
     const ctx = (engine.run as Mock).mock.calls[0]![1] as RunContext;
-    expect(ctx.chat).toEqual({ recordId: "rec-chat-9" });
+    expect(ctx.resume).toEqual({ recordId: "rec-chat-9" });
 
     // run 期间 askUser 等待体可用（per-run 绑定与 one-shot 同构——chat 轮短命 run）
     const req: UiRequest = { method: "select", id: "ui-2", title: "选一个" };
@@ -573,12 +573,12 @@ describe("bindAskUser 两阶段绑定体（pi 专有）", () => {
     server.handleFrame({ id: ask.id, result: { value: "B" } });
     await expect(answerP).resolves.toEqual({ value: "B" });
 
-    // chat run：onChildSpawned 以 chat recordId 锚定（区别于一次性 run 的 runId 锚定）
+    // 会话形态轮 run：onChildSpawned 以 recordId 锚定（区别于一次性 run 的 runId 锚定）
     ctx.onChildSpawned?.({ pid: 777, killed: false });
     const spawned = await sink.waitFor((f) => f.method === "host/childSpawned", "childSpawned");
     expect(spawned.params).toEqual({ pid: 777, recordId: "rec-chat-9" });
 
-    // [SR-4] chat 形态同键锚定：childStateChanged 用 chat recordId（非 runId）
+    // [SR-4] 会话形态同键锚定：childStateChanged 用 recordId（非 runId）
     ctx.onChildStateChanged?.({ pid: 777, recordId: "rec-chat-9", state: "exited", killed: true });
     const exitedChat = await sink.waitFor((f) => f.method === "host/childStateChanged", "childStateChanged");
     expect(exitedChat.params).toEqual({
@@ -591,7 +591,7 @@ describe("bindAskUser 两阶段绑定体（pi 专有）", () => {
     expect(vi.mocked(engine.bindAskUser)).toHaveBeenLastCalledWith(undefined);
   });
 
-  it("run.chat 空 recordId → engine_protocol_bad_frame（前置校验，run 不进引擎）", async () => {
+  it("run.resume 空 recordId → engine_protocol_bad_frame（前置校验，run 不进引擎）", async () => {
     const engine = makeEngine();
     const { server, sink } = makeServer(engine);
     await request(server, sink, 1, "initialize", INIT_PARAMS);
@@ -599,14 +599,14 @@ describe("bindAskUser 两阶段绑定体（pi 专有）", () => {
       runId: "run-bad",
       task: { prompt: "p" },
       ctx: { poolKey: "shared", cwd: "/w" },
-      chat: { recordId: "" },
+      resume: { recordId: "" },
     });
     expect(resp.error?.code).toBe("engine_protocol_bad_frame");
     expect(resp.error?.message).toContain("recordId");
     expect(vi.mocked(engine.run)).not.toHaveBeenCalled();
   });
 
-  it("run.chat conversation 位 unsupported 引擎 → engine_capability_unsupported（能力位 gate）", async () => {
+  it("run.resume conversation 位 unsupported 引擎 → engine_capability_unsupported（能力位 gate）", async () => {
     const engine = makeEngine({
       capabilities: vi.fn((): EngineCapabilities => ({ ...CAPABILITIES, conversation: "unsupported" })),
     });
@@ -616,7 +616,7 @@ describe("bindAskUser 两阶段绑定体（pi 专有）", () => {
       runId: "run-gate",
       task: { prompt: "hi", conversation: true },
       ctx: { poolKey: "shared", cwd: "/w" },
-      chat: { recordId: "rec-gate" },
+      resume: { recordId: "rec-gate" },
     });
     expect(resp.error?.code).toBe("engine_capability_unsupported");
     expect(vi.mocked(engine.run)).not.toHaveBeenCalled();

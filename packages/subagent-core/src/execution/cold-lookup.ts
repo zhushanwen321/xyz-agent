@@ -1,9 +1,13 @@
-// [D4-③ 冷路径复活职责轴] message action 冷查/复活链（原 SubagentService 私有的
-// findColdLookupCandidate / assertReconnectAllowed / resurrectColdRecord /
-// coldLookupForAction + isReconnectableClosed 判定）整体搬移至 record-store 邻接处
-// （行为逐字节等价：搬移 + 依赖注入，不重写逻辑）。变化轴：改跨重启重建 /
-// 透明重生回边 / 可重连守卫语义，只改本文件；Service 的 getRecordForAction 保留
-// 归属校验编排（内存未命中分支委托 coldLookupForAction）。
+// [D4-③ 冷路径查询职责轴 / H1 U6 改名] message action 冷查链（原 SubagentService
+// 私有的 findColdLookupCandidate / assertReconnectAllowed / resurrectColdRecord /
+// coldLookupForAction + isReconnectableClosed 判定，W3 后寄居 cold-resurrect.ts）。
+// [H1 U6] cold-resurrect.ts 随 chat 域退役改名落位本文件：其中「跨重启磁盘重建无条件
+// 置 chatMode=true」的升级语义已迁 Continuation D4 revive 格 + D5 gate
+//（conversation-continuation.ts reviveOrThrow / subagent-actions-core messageHandler
+// 双写点），本文件只保留冷查定位 / 可重连守卫 / 磁盘重建注册链——UF-1 跨重启续聊
+// 绑定链（getRecordForAction → coldLookupForAction → 绑定重建 → Continuation）的
+// 宿主侧解析承载。变化轴：改跨重启重建 / 透明重生回边 / 可重连守卫语义，只改本文件；
+// Service 的 getRecordForAction 保留归属校验编排（内存未命中分支委托 coldLookupForAction）。
 
 import * as fs from "node:fs";
 
@@ -19,7 +23,7 @@ import { isReconnectableFinalReason, ResurrectDeniedError } from "./types.ts";
 export const COLD_LOOKUP_SCAN_LIMIT = 1000;
 
 /** 冷查/复活的依赖注入（Service 侧供给，store 查询 + 归属上下文）。 */
-export interface ColdResurrectDeps {
+export interface ColdLookupDeps {
   /** store 的 idToFile 索引直查（light 快照）。 */
   findLightById: (id: string) => SubagentRecord | undefined;
   /** store 的磁盘全扫（内存未命中 / 索引未热时兜底）。rootFilter 恒 undefined
@@ -48,7 +52,7 @@ export interface ColdResurrectDeps {
  *  探针命中即拒绝（ResurrectDeniedError，与 closed 候选守卫同异常类型，错误含 pid
  *  与恢复指引）。 */
 function findColdLookupCandidate(
-  deps: ColdResurrectDeps,
+  deps: ColdLookupDeps,
   id: string,
   allowReconnect: boolean,
 ): SubagentRecord | undefined {
@@ -106,7 +110,7 @@ function assertReconnectAllowed(found: SubagentRecord, id: string): void {
 
 /** 磁盘候选重建为可变 record 并 register + 上报（coldLookupForAction 步骤 4）。 */
 function resurrectColdRecord(
-  deps: ColdResurrectDeps,
+  deps: ColdLookupDeps,
   found: SubagentRecord,
   id: string,
 ): ExecutionRecord {
@@ -121,10 +125,11 @@ function resurrectColdRecord(
     rootSessionId: found.rootSessionId,
     parentRecordId: found.parentRecordId,
     depth: found.depth,
-    // [v4 A-3] 跨重启恢复入口——message 路径磁盘重建无条件置 chatMode=true（现状机制，
-    // V3 方案 A 方向兑现）。改动此处必须带 S3 回归场景（跨重启 message 续聊验证）。
-    // V3 SP-5 探针定案：机制已存在，本注释即定案，不再悬置。
-    chatMode: true,
+    // [v4 A-3 → H1 U6 / D4-D5] 水合保留持久化 chatMode（UF-1 绑定 sidecar 的身份域
+    // 投影，record-store buildRecord 已承载）：磁盘上是什么就是什么。原「无条件置
+    // chatMode=true」的升级语义迁 Continuation D4 revive 格 + D5 gate 双写点
+    //（one-shot 跨重启重建 chatMode=false 后收到 message → gate 放行 → 升级置位再续聊）。
+    chatMode: found.chatMode === true,
     controller: new AbortController(),
   });
   record.sessionFile = found.sessionFile;
@@ -169,7 +174,7 @@ function resurrectColdRecord(
  *  @throws ResurrectDeniedError 可重连候选被 worktree/异进程活实例守卫拦截
  *  @throws Error parentRecordId 跨层不匹配（direct parent 错误，与外层校验同文案） */
 export function coldLookupForAction(
-  deps: ColdResurrectDeps,
+  deps: ColdLookupDeps,
   id: string,
   allowReconnect: boolean,
 ): ExecutionRecord | undefined {

@@ -418,7 +418,7 @@ interface RunNoProgressGuard {
  * disarmSettledWatchdog），不自造第二套计时器：键 = taskId（'sa-' 前缀，per-call 唯一；
  * executeAgentCall 重试递归 = 全新 SAR.run 调用 → 天然重挂新窗口）。
  *
- * fire 回调契约（对齐 onHotPathSettledWatchdogTimeout 先例）：本回调在 timer 同步
+ * fire 回调契约（对齐 chat 域 watchdog fire 载体先例，[H1 U6] 该载体已迁 Continuation）：本回调在 timer 同步
  * 上下文执行，同步段只做「warn + AbortController.abort()」（abort 幂等不抛）——错误
  * 逃出回调 = uncaughtException 崩宿主。真正终止由 abort 经 mergedSignal →
  * RemoteEngine wireAbortSignal 阶梯（cancel 帧 → 收敛窗 → killAll）承载，本层不直接

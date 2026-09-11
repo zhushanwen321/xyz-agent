@@ -429,8 +429,9 @@ describe("ConversationContinuation — 轮末分流（D7）与通知面", () => 
     cont.onRunSettled(makeOutcome({ content: "round text" }));
 
     await vi.waitFor(() => expect(calls.routed.length).toBe(1));
-    expect(record.roundBaseTurnIndex).toBeUndefined();
-    expect(record.turnCount).toBe(5); // 不触碰 turns 记账
+    // [H1 U6] base 死记账（roundBaseTurnIndex）已随字段退役——负向断言锚点改为
+    // turns 记账不触碰（round 推进不携带 base 副作用）。
+    expect(record.turnCount).toBe(5);
   });
 
   it("stale-child 兜底先于派发（红线②——killStaleChild 在 dispatch 之前的 order 断言）", async () => {
@@ -577,7 +578,7 @@ describe("集成：chat 轮末分流（D7）——成功轮 / 失败轮 / 空正
       },
     });
 
-    await service.chatActions.deliverChatMessage(record, "round two", false);
+    await service.chatActions.deliverChatMessage(record, "round two");
     await vi.waitFor(() => expect(fake.runs.length).toBe(1));
     fake.runs[0]!.settle({ content: "round two reply" });
 
@@ -595,7 +596,7 @@ describe("集成：chat 轮末分流（D7）——成功轮 / 失败轮 / 空正
     record.lastError = "stale engine_crashed: previous failure";
     store.register(record);
 
-    await service.chatActions.deliverChatMessage(record, "again", false);
+    await service.chatActions.deliverChatMessage(record, "again");
     await vi.waitFor(() => expect(fake.runs.length).toBe(1));
     fake.runs[0]!.settle({ content: "" });
 
@@ -609,7 +610,7 @@ describe("集成：chat 轮末分流（D7）——成功轮 / 失败轮 / 空正
     record.result = "first round output"; // 前值（有最后成功正文则保留）
     store.register(record);
 
-    await service.chatActions.deliverChatMessage(record, "round two", false);
+    await service.chatActions.deliverChatMessage(record, "round two");
     await vi.waitFor(() => expect(fake.runs.length).toBe(1));
     fake.runs[0]!.settle({ content: "", error: "engine_round_crashed: child died", exitCode: null });
 
@@ -632,8 +633,8 @@ describe("集成：chat 轮末分流（D7）——成功轮 / 失败轮 / 空正
     expect(content).toContain("Recovery");
     const details = calls[0]?.[0]?.details as { notifyId?: string } | undefined;
     expect(details?.notifyId).toBe(`${record.id}:2`);
-    // 失败通知不经 route(record)——route 零调用（防旧正文冒充失败通知）
-    expect(record.roundBaseTurnIndex).toBeUndefined();
+    // 失败通知不经 route(record)——route 零调用（防旧正文冒充失败通知）。
+    // [H1 U6] roundBaseTurnIndex 负向断言随 base 死记账字段退役删除。
   });
 
   it("首轮失败（无前值）→ result = 失败摘要（非 undefined——renderer hasRunning 判据保持）", async () => {
@@ -676,7 +677,7 @@ describe("集成：close 抢先（S7）与 closeAfterRound 退役（D4 close = a
   it("轮在途 close(force:false) → 立即终态化 closed/user-close + notifyClosed + 无挂起标志（closeAfterRound 退役）", async () => {
     const record = makeChatRecord("sa-close-mid", agentDir);
     store.register(record);
-    await service.chatActions.deliverChatMessage(record, "long round", false);
+    await service.chatActions.deliverChatMessage(record, "long round");
     await vi.waitFor(() => expect(fake.runs.length).toBe(1));
 
     await service["closeSubagent"](record, false);
@@ -697,17 +698,17 @@ describe("集成：close 抢先（S7）与 closeAfterRound 退役（D4 close = a
       notifyCountAfterClose,
     );
     // 队列消息被 close 清空（close 前到达的排队消息不派发）
-    await service.chatActions.deliverChatMessage(record, "after close", false).catch(() => {});
+    await service.chatActions.deliverChatMessage(record, "after close").catch(() => {});
     expect(fake.runs.length).toBe(1); // 无僵尸轮
   });
 
   it("close 抢先后队列消息不派发、Continuation 实例随终态化清理", async () => {
     const record = makeChatRecord("sa-close-queue", agentDir);
     store.register(record);
-    await service.chatActions.deliverChatMessage(record, "round", false);
+    await service.chatActions.deliverChatMessage(record, "round");
     await vi.waitFor(() => expect(fake.runs.length).toBe(1));
     // 在途轮打断入队
-    await service.chatActions.deliverChatMessage(record, "queued msg", false);
+    await service.chatActions.deliverChatMessage(record, "queued msg");
     const conts = (service as unknown as { continuations: Map<string, { pendingCount: number }> }).continuations;
     expect(conts.get(record.id)?.pendingCount).toBe(1);
 
@@ -838,7 +839,7 @@ describe("集成：引擎死亡 → Continuation 单发失败通知（D8 监督�
       "adoptOnProcessDeath",
     );
 
-    await service.chatActions.deliverChatMessage(record, "risky round", false);
+    await service.chatActions.deliverChatMessage(record, "risky round");
     await vi.waitFor(() => expect(fake.runs.length).toBe(1));
     fake.runs[0]!.fail(
       Object.assign(new Error("engine process exited unexpectedly: signal SIGKILL"), {
@@ -889,13 +890,11 @@ describe("集成：stale-child 派发前兜底（红线②）", () => {
     // 模拟上一轮子进程滞留（引擎存活期状态错配——Continuation 无在途 run 但镜像有活项）
     registerSpawnedChildForRecord(record.id, { pid: 999999, killed: false } as never);
 
-    await service.chatActions.deliverChatMessage(record, "next round", false);
+    await service.chatActions.deliverChatMessage(record, "next round");
 
-    // kill 记账（镜像置死）+ 协议 cancel（引擎侧杀链）
+    // kill 记账（镜像置死——[H1 U6] 协议 cancel 帧随 interact 面退役，真实杀链 =
+    // 轮级 abort signal → cancel 帧 + 引擎轮末收割）
     expect(killChildSpy).toHaveBeenCalledWith(record.id, "stale-child guard (dispatch)");
-    await vi.waitFor(() => {
-      expect(fake.interacts.some((c) => c.action.kind === "cancel")).toBe(true);
-    });
     // 有界退出窗（STALE_CHILD_EXIT_WAIT_MS=300ms）后派发——双写窗收敛
     await vi.waitFor(() => expect(fake.runs.length).toBe(1));
     expect(fake.runs[0]!.task.prompt).toBe("next round");
@@ -905,10 +904,9 @@ describe("集成：stale-child 派发前兜底（红线②）", () => {
     const record = makeChatRecord("sa-no-stale", agentDir);
     store.register(record);
 
-    await service.chatActions.deliverChatMessage(record, "next round", false);
+    await service.chatActions.deliverChatMessage(record, "next round");
 
     expect(killChildSpy).not.toHaveBeenCalledWith(record.id, "stale-child guard (dispatch)");
     await vi.waitFor(() => expect(fake.runs.length).toBe(1));
-    expect(fake.interacts.length).toBe(0);
   });
 });

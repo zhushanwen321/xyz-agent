@@ -619,7 +619,7 @@ describe("⛔4 messageHandler（守卫 + upgrade + 投递，快照 = pi-sw 实�
     });
   });
 
-  it("chatMode record → deliverChatMessage(text trim + interrupt) + 领域对象", async () => {
+  it("chatMode record → deliverChatMessage(text trim) + 领域对象（[H1 U6] interrupt 退役）", async () => {
     const deliverChatMessage = vi.fn(async () => {});
     const chatRecord = makeExecRecord({ id: "bg-1", chatMode: true, slug: "src-slug" });
     const r = await messageHandler(
@@ -632,7 +632,7 @@ describe("⛔4 messageHandler（守卫 + upgrade + 投递，快照 = pi-sw 实�
       slug: "src-slug",
       response: { delivered: true },
     });
-    expect(deliverChatMessage).toHaveBeenCalledWith(chatRecord, "go on", true);
+    expect(deliverChatMessage).toHaveBeenCalledWith(chatRecord, "go on");
   });
 
   it("one-shot upgrade：非 chatMode running record 收 message → 置位 chatMode 后投递", async () => {
@@ -643,7 +643,7 @@ describe("⛔4 messageHandler（守卫 + upgrade + 投递，快照 = pi-sw 实�
       { subagentId: "bg-1", text: "hi" },
     );
     expect(upgradeRec.chatMode).toBe(true);
-    expect(deliverChatMessage).toHaveBeenCalledWith(upgradeRec, "hi", false);
+    expect(deliverChatMessage).toHaveBeenCalledWith(upgradeRec, "hi");
   });
 
   it("[H1 U2 / D5 双写点①] one-shot upgrade gate 拒绝：unsupported 引擎（canUpgradeToConversation=false）→ 硬拒 + fork/重派指引，chatMode 不置位", async () => {

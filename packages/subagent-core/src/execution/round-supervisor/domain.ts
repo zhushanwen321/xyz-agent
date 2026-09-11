@@ -66,7 +66,7 @@ export function isAwakeWarrantedShape(
 /**
  * boot 分区「already-resumable-idle」重认领谓词（与裁决表同源——设计 D4 连带面 2
  * ②「启动扫描 resumable 且无进程驱动且非 conversation 形态」的单一权威实现；
- * cold-resurrect.ts 的 message 冷查链不承载启动扫描，本谓词即其「cold-resurrect
+ * cold-lookup.ts 的 message 冷查链不承载启动扫描，本谓词即其「cold-resurrect
  * 扩展」落点，record-store 孤儿恢复的保留分支与 supervisor.bootPartition 共同消费
  * 同一判据形态）。
  *

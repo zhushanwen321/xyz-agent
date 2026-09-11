@@ -1,11 +1,13 @@
-// src/execution/__tests__/cold-resurrect.test.ts
+// src/execution/__tests__/cold-lookup.test.ts
 //
 // [D4-③] coldLookupForAction 单元测试（依赖注入直测）。
 //
-// 背景：cold-resurrect.ts 自 SubagentService 搬移后按 ColdResurrectDeps 依赖注入
-// 设计，此前仅有经 subagent-service 集成路径的 running 重建覆盖——closed 可重连
-// 候选的「恢复失败守卫 / 部分恢复回边」（assertReconnectAllowed / resurrectColdRecord
-// 的 wasClosed 分支）零直测。本文件锁定这些路径的可观察行为：
+// 背景：冷查链自 SubagentService 搬移后按 ColdLookupDeps 依赖注入设计，此前仅有经
+// subagent-service 集成路径的 running 重建覆盖——closed 可重连候选的「恢复失败守卫 /
+// 部分恢复回边」（assertReconnectAllowed / resurrectColdRecord 的 wasClosed 分支）
+// 零直测。[H1 U6] 文件随 cold-resurrect.ts → cold-lookup.ts 改名（chatMode 无条件
+// 置位语义迁 Continuation D4 revive 格 + D5 gate，重建只水合持久化 chatMode）。
+// 本文件锁定这些路径的可观察行为：
 //   - 恢复失败：worktree 绑定丢失 / 异进程活实例（closed 与 running 候选）→
 //     ResurrectDeniedError 且内存无残留（register 不被调用）；
 //   - 部分恢复：closed 可重连记录 → resurrectClosed 回边翻回 running + 磁盘终态位
@@ -22,7 +24,7 @@ import * as path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { readAliveMarker, writeAliveMarker } from "../alive-store.ts";
-import { COLD_LOOKUP_SCAN_LIMIT, coldLookupForAction, type ColdResurrectDeps } from "../cold-resurrect.ts";
+import { COLD_LOOKUP_SCAN_LIMIT, coldLookupForAction, type ColdLookupDeps } from "../cold-lookup.ts";
 import type { SubagentRecord } from "../types.ts";
 import { ResurrectDeniedError } from "../types.ts";
 
@@ -63,7 +65,7 @@ interface DepOverrides {
 }
 
 /** 构造依赖注入桩（register / reportRecordTransition 可断言副作用）。 */
-function makeDeps(o: DepOverrides = {}): ColdResurrectDeps {
+function makeDeps(o: DepOverrides = {}): ColdLookupDeps {
   return {
     findLightById: vi.fn(() => o.direct),
     collectRecords: vi.fn(() => o.disk ?? []),
@@ -78,7 +80,7 @@ describe("[D4-③] coldLookupForAction 冷查/复活链", () => {
   let dir: string;
 
   beforeEach(() => {
-    dir = fs.mkdtempSync(path.join(os.tmpdir(), "cold-resurrect-"));
+    dir = fs.mkdtempSync(path.join(os.tmpdir(), "cold-lookup-"));
   });
 
   afterEach(() => {
@@ -111,8 +113,9 @@ describe("[D4-③] coldLookupForAction 冷查/复活链", () => {
     expect(record.status).toBe("running");
     expect(record.closedReason).toBeUndefined();
     expect(record.endedAt).toBeUndefined();
-    // [v4 A-3] 跨重启恢复入口：chatMode 无条件 true
-    expect(record.chatMode).toBe(true);
+    // [v4 A-3 → H1 U6 / D4-D5] 水合保留持久化 chatMode：候选未持久化 chatMode
+    //（undefined）→ 重建 false（升级置位归 Continuation revive 格 + gate，不在重建层）
+    expect(record.chatMode).toBe(false);
     // 身份/续聊字段从磁盘候选回填
     expect(record.sessionFile).toBe(sessionFile);
     expect(record.round).toBe(2);
@@ -141,6 +144,17 @@ describe("[D4-③] coldLookupForAction 冷查/复活链", () => {
     expect(record.status).toBe("running");
     expect(vi.mocked(deps.collectRecords)).toHaveBeenCalledTimes(1);
     expect(vi.mocked(deps.register)).toHaveBeenCalledWith(record);
+  });
+
+  it("候选持久化 chatMode=true（chat 容器）→ 水合保留 true（续聊直接走，无需升级格）", () => {
+    const sessionFile = writeSessionFixture();
+    const deps = makeDeps({ disk: [makeFound({ sessionFile, status: "running", chatMode: true })] });
+
+    const record = coldLookupForAction(deps, "sa-cold-1", true)!;
+
+    expect(record.status).toBe("running");
+    expect(record.chatMode).toBe(true);
+    expect(vi.mocked(deps.register)).toHaveBeenCalledTimes(1);
   });
 
   it("closed disconnected（.finalized 空内容兜底死因）同样落在可重连集内", () => {

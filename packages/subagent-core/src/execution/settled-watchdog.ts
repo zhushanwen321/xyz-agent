@@ -37,16 +37,14 @@
 // warn 文案已明示该连带后果（env 开关语义本身不动：设计明文「中段阈值 v1 不开 env」，
 // 有界兜底的处置必须可解释，规则 19）。
 //
-// 双挂载点共用同一原语——同一组常量 + 同一组挂载/交棒/清除 helper，仅两个 prompt
-// 发出点（设计 T2-③ 明示架构，两处各写一套恰是被否的「散布姿势」微缩复发）：
-//   - chat 域：subagent-service.ts——首轮/冷续轮 kickOffChatRound（run 派发前 arm
-//     中段）+ 热路径 deliverChatMessage（发出新一轮 prompt 后 arm 中段）
+// 挂载点（同一原语——同一组常量 + 同一组挂载/交棒/清除 helper；[H1 U6] 收敛为单挂载）：
+//   - 会话形态轮：subagent-service.ts kickOffChatRound（轮开跑 arm 中段；[H1 U6] 旧
+//     热路径 deliverChatMessage 第二挂载点随 interact 面退役）
 //   - workflow 域：subprocess-agent-runner.ts SAR.run per-call 守护（M3 起复用）
-// 事件侧接线（chat 域 = chatRoundRoutes 协议帧：recordId 键 streamDelta /
-// roundLifecycle；workflow 域 = subprocess-agent-runner 事件 handler）：
+// 事件侧接线（[H1 U6] 刷新源 = run 事件通道既有事件；交棒 = run 应答驱动）：
 //   - 有效协议事件行 → refreshMidRoundNoProgress / refreshFromProtocolEvent（中段刷新）
-//   - settled 相位（roundLifecycle）→ noteRoundSettledFromProtocol（交棒收尾段）
-//   - idle 相位 / close / 终态化 → disarmRoundFromProtocol / disarmSettledWatchdog（两段一并清）
+//   - run 应答收敛 → noteRoundSettledFromProtocol（交棒收尾段，Continuation onRunSettled）
+//   - 轮终簿记 / close / 终态化 → disarmRoundFromProtocol / disarmSettledWatchdog（两段一并清）
 //
 // 与 lifecycle-manager 的 idle timer 互补：idle timer 管 settled 已到达后的空闲
 // 回收，本原语管 settled 永不到达的 wedged——两条正交通道不互相替代。
@@ -357,34 +355,34 @@ export function _resetSettledWatchdogsForTest(): void {
 //
 // 设计权威源：docs/design/chat-domain-v1x-liveness-governance.md §3.2 D2 前置 1 +
 // D5「settled-watchdog 生产接线重接」：两段守护的 refresh 源随 chat 域 cli 化改挂
-// 协议事件流（arm 点 = 轮开始；refresh 源 = host/streamDelta + host/roundLifecycle
+// 协议事件流（arm 点 = 轮开跑；中段刷新源 = host/streamDelta 与 run 事件通道
 // 事件；kill/终态 = 既有杀链）。旧 inproc stdout-pump 接线（session-runner.ts）已随
 // W3 删件移除，下面三个命名入口是协议事件面的唯一驱动入口。
 //
 // 命名入口与既有原语的映射（刻意薄委托、零新语义）：
 //   refreshFromProtocolEvent      ↔ refreshMidRoundNoProgress（协议事件行到达）
-//   noteRoundSettledFromProtocol  ↔ handoverMidRoundToSettled（roundLifecycle
+//   noteRoundSettledFromProtocol  ↔ handoverMidRoundToSettled（轮次收敛交棒
 //                                    settled 相位 = 轮收敛，中段让位收尾段）
 //   disarmRoundFromProtocol       ↔ disarmSettledWatchdog（idle 相位 / close / 终态）
 //
 // 监督器域 resume 轮的 refresh 覆盖：resume 轮的 arm 点在 subagent-service
 // deliverChatMessage（interact 返回点，冷热路径同点），其轮内协议事件（streamDelta /
-// roundLifecycle）到达时经 refreshFromProtocolEvent 刷新——W3 接线后两域轮（chat 轮
+// 协议事件行）到达时经 refreshFromProtocolEvent 刷新——W3 接线后两域轮（chat 轮
 // 与监督器域 resume 轮）共用同一事件面。
 
-/** [W4 协议事件面] 协议事件行（host/streamDelta / host/roundLifecycle）到达：刷新
+/** [W4 协议事件面] 协议事件行（host/streamDelta / run 事件通道）到达：刷新
  *  中段无进展计时。未挂载 / 已交棒（收尾段不刷新）/ 已 fire 时幂等 no-op。 */
 export function refreshFromProtocolEvent(recordId: string): void {
   refreshMidRoundNoProgress(recordId);
 }
 
-/** [W4 协议事件面] roundLifecycle settled 相位（轮收敛）：中段让位收尾段
+/** [W4] 轮次收敛（run 应答 settle，[H1 U6] run 应答驱动交棒）：中段让位收尾段
  *  （两段独立计时，交棒语义见 handoverMidRoundToSettled）。未挂载时幂等 no-op。 */
 export function noteRoundSettledFromProtocol(recordId: string): void {
   handoverMidRoundToSettled(recordId);
 }
 
-/** [W4 协议事件面] roundLifecycle idle 相位 / close / 终态化处置：两段一并清。
+/** [W4] 轮终簿记 / close / 终态化处置：两段一并清。
  *  不存在 armed entry 时幂等 no-op。 */
 export function disarmRoundFromProtocol(recordId: string): void {
   disarmSettledWatchdog(recordId);

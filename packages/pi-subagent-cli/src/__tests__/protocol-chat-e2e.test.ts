@@ -165,7 +165,7 @@ describe("pi-subagent-cli chat 轮 run 派发形态 e2e（bin 真机 NDJSON 往�
       runId: "run-chat-1",
       task: { prompt: "hello", conversation: true, description: "chat-e2e" },
       ctx: { poolKey: "shared", cwd: dataDir, model: "fake-provider/fake-model", streamMode: "stream" },
-      chat: { recordId: "rec-chat-1" },
+      resume: { recordId: "rec-chat-1" },
     });
     const poolResolved = await host.waitForReverse("host/poolResolved");
     expect((poolResolved.params as { poolKey: string }).poolKey).toBe("shared");
@@ -212,7 +212,7 @@ describe("pi-subagent-cli chat 轮 run 派发形态 e2e（bin 真机 NDJSON 往�
       runId: "run-resume-1",
       task: { prompt: "continue", conversation: true },
       ctx: { poolKey: "shared", cwd: dataDir, model: "fake-provider/fake-model" },
-      chat: {
+      resume: {
         recordId: "rec-chat-1",
         resume: { sessionRef: { recordId: "rec-chat-1", sessionFile }, poolKey: "shared" },
       },

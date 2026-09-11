@@ -208,7 +208,7 @@ export class EngineProtocolServer {
         "The host must complete the initialize handshake before dispatching runs.",
       );
     }
-    if (params.chat !== undefined) this.assertChatRunFrame(params.chat);
+    if (params.resume !== undefined) this.assertResumeRunFrame(params.resume);
     const { runId, task, ctx } = params;
     const controller = new AbortController();
     this.activeRuns.set(runId, { controller, seq: 0 });
@@ -228,7 +228,7 @@ export class EngineProtocolServer {
     try {
       const r = await this.engine.run(
         fullTask,
-        this.buildRunContext(params, controller, params.chat?.recordId),
+        this.buildRunContext(params, controller, params.resume?.recordId),
       );
       return { handle: r.handle.data, outcome: r.outcome };
     } finally {
@@ -237,16 +237,17 @@ export class EngineProtocolServer {
     }
   }
 
-  /** run.chat 帧校验 + chat 能力位 gate（A6 方向防御）：recordId 非空 + conversation
-   *  位 unsupported 同步拒——判据单源 = SDK assertChatConversationSupported（与 core
-   *  capability-gate 同一能力位，防两侧判据漂移）。本引擎 manifest 声明 native，
-   *  此处仅防御 manifest/实装漂移。[H1] 协议键 U1-U5 维持 `chat`（U6 切 `resume`）。 */
-  private assertChatRunFrame(chat: { recordId: unknown }): void {
-    if (typeof chat.recordId !== "string" || chat.recordId === "") {
+  /** run.resume 帧校验 + conversation 能力位 gate（A6 方向防御）：recordId 非空 +
+   *  conversation 位 unsupported 同步拒——判据单源 = SDK assertChatConversationSupported
+   *  （与 core capability-gate 同一能力位，防两侧判据漂移；[H1 D5] 位语义已收窄为
+   *  resume 能力位，判据与消费方不变）。本引擎 manifest 声明 native，此处仅防御
+   *  manifest/实装漂移。[H1 U6] 协议键已切 `resume`（唯一会话形态键）。 */
+  private assertResumeRunFrame(resumeParams: { recordId: unknown }): void {
+    if (typeof resumeParams.recordId !== "string" || resumeParams.recordId === "") {
       throw new EngineSdkError(
         "engine_protocol_bad_frame",
-        `run.chat requires a non-empty recordId (got: ${JSON.stringify(chat.recordId)})`,
-        "The host must mint a record id before dispatching a chat-form run; it keys the record-anchored handle (interact/close routing and child mirror frames).",
+        `run.resume requires a non-empty recordId (got: ${JSON.stringify(resumeParams.recordId)})`,
+        "The host must mint a record id before dispatching a session-form run; it keys the record-anchored handle and child mirror frames.",
       );
     }
     assertChatConversationSupported(this.engine.id, this.engine.capabilities());
@@ -275,7 +276,7 @@ export class EngineProtocolServer {
       ...(ctx.engineFallback !== undefined ? { engineFallback: ctx.engineFallback } : {}),
       // [F6] 根 session id 还原（relay 归属键 SESSION_ID 权威源；undefined 不挂键）
       ...(ctx.sessionRootId !== undefined ? { sessionRootId: ctx.sessionRootId } : {}),
-      ...(params.chat !== undefined ? { chat: params.chat } : {}),
+      ...(params.resume !== undefined ? { resume: params.resume } : {}),
       onPoolResolved: (poolKey) => {
         void this.reverseRequestInternal("host/poolResolved", { runId, poolKey });
       },

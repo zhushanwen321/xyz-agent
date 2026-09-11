@@ -84,35 +84,21 @@ export interface RunContextParams {
 }
 
 // ============================================================
-// [v1.x] run 的 chat 会话形态参数（chat-domain 设计 §3.2 D1-A）
+// [H1] run 的 resume 会话形态参数（chat-run 统一终态；原 v1.x chat 键已退役）
 // ============================================================
 
 /**
- * [v1.x] chat 会话形态参数——HostChatRoundTicket 五字段过协议映射中「record」的
- * 承载位（docs/design/chat-domain-v1x-liveness-governance.md §3.2 D1 五字段映射）：
+ * [H1] run 的 resume 会话形态参数（设计 docs/design/subagent-chat-run-unification.md
+ * §3.3 D3 + §5 U1/U6 行）：原 RunChatParams（v1.x chat 会话形态参数）的泛化改名终态，
+ * 载荷同形（recordId + resume 锚点，ResumeAnchor 不变），仅键名从「chat 会话形态」
+ * 泛化为「resume 续聊」。
  *   - recordId：core 预建 record 的关联键（引擎据此回填 handle.sessionRef、上报
  *     host/childSpawned|childStateChanged 的 record 键形态）；
  *   - resume：冷续锚点（重开已 idle 的 session 续聊；缺省 = 新 session）。对照
  *     core SpawnResumeOpts——sessionFile 经 anchor.sessionRef 携带，model/
  *     thinkingLevel 防漂移覆盖走既有 task/ctx 字段，不双写。
- * task.conversation === true 时必传（chat 路由前置 gate：manifest conversation 位
- * unsupported 的引擎同步拒 engine_capability_unsupported——见 error-codes.ts）。
- */
-export interface RunChatParams {
-  recordId: string;
-  resume?: ResumeAnchor;
-}
-
-/**
- * [H1] run 的 resume 会话形态参数——RunChatParams 的泛化改名双键（设计
- * docs/design/subagent-chat-run-unification.md §3.3 D3 + §5 U1 行）：载荷同形
- * （recordId + resume 锚点，ResumeAnchor 不变），仅键名从「chat 会话形态」泛化为
- * 「resume 续聊」。与 `chat` 键并存（U1 只加键不改读端）：
- *   - U2-U5 过渡期：core 恒构造旧 `chat` 键，pi 引擎恒读 `ctx.chat`（现状不变）；
- *   - U6 单批切换：core 写端与 pi 读端同批改 `resume` 键并删除 `chat` 键——
- *     不存在「写新读旧」窗口（错配 = resume 静默失效、每轮新文件、sessionFile 被覆盖）。
- * 同形关系由类型层 AssertMutuallyAssignable + 载荷级 runSessionParamsSchema
- * （schema.ts，两键共用同一 schema）双重锁定。
+ * [H1 U6 已切换] `chat` 键整体退役（读写端同批切换，无「写新读旧」窗口），本键为
+ * 唯一会话形态参数。载荷 schema 权威 = runSessionParamsSchema（schema.ts）。
  */
 export interface RunResumeParams {
   recordId: string;
@@ -150,17 +136,9 @@ export interface RunParams {
   task: AgentCallOpts;
   ctx: RunContextParams;
   /**
-   * [v1.x 可选增量] chat 会话形态参数（task.conversation=true 的 chat 路由承载）。
-   * 缺省 = 一次性任务形态，v1 引擎/宿主语义不变（向后兼容：旧引擎忽略未知字段，
-   * 帧级 schema params 不做深校验）。
-   * [H1] 退役倒计时：chat-run 统一后本键整体退役（U6 删除，读/写端同批切 `resume`）。
-   */
-  chat?: RunChatParams;
-  /**
-   * [H1 可选增量] resume 续聊参数——`chat` 键的泛化改名双键（载荷同形，见
-   * RunResumeParams）。本单元（U1）只加键不改读端：pi 引擎继续消费 `ctx.chat`，
-   * 本键在 U6 前 core 侧恒不构造；U6 单批切换后成为唯一键。additive 可选：旧引擎
-   * 忽略未知字段，undefined 不上 wire。
+   * [H1 U6 终态] resume 续聊参数（唯一会话形态键；原 v1.x `chat` 键已随键切换退役，
+   * 见 RunResumeParams）。缺省 = 一次性任务形态（向后兼容：旧引擎忽略未知字段，
+   * 帧级 schema params 不做深校验）。additive 可选：undefined 不上 wire。
    */
   resume?: RunResumeParams;
 }

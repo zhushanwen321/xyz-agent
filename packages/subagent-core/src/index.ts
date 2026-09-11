@@ -66,8 +66,6 @@ export type {
   EngineCapabilities,
   EngineHandle,
   EngineHandleData,
-  InteractAction,
-  InteractResult,
   ProbeReport,
   ReplayedTurn,
   SessionView,

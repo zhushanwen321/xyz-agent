@@ -17,7 +17,7 @@
 // mock 手法（[W3 改写]）：registerFakePiEngine 协议替身 + logger；record-store /
 // state-marker / alive-store 走真实实现（fixture 用临时目录写真实
 // .jsonl + sidecar）。执行链观测点从 runAndFinalize 边界捕获（rafCapture/drainChains）
-// 换成 fake.runs 捕获（协议 engine.run 的 task/ctx——冷路径 resume 锚点在 ctx.chat.resume）。
+// 换成 fake.runs 捕获（协议 engine.run 的 task/ctx——resume 锚点在 ctx.resume.resume，[H1 U6] 键切换后唯一会话形态键）。
 //
 // 注意：本测试进程可能运行在 pi subagent 环境（PI_SUBAGENT_* env 被继承会污染
 // rootSessionId 基线与 rootCwd 编码），beforeEach/afterEach 清理同 IDENTITY_ENV_KEYS；
@@ -164,10 +164,9 @@ describe("[v8.5 D] 透明重生：ended 记录同 id 续写原 session", () => {
     pi = makePi();
     service.initSession({ pi, sessionId: "root-session-cur" });
 
-    // 协议替身引擎：重生记录的引擎侧活会话不存在（interact 拒绝 not_resumable → 冷路径
-    // resume run）——与本文件全部执行链场景一致。
+    // 协议替身引擎（[H1 U6] 旧 interact 冷路径拒绝注入随 interact 面退役——续聊恒
+    // 派发新 run + resume 锚点，与本文件全部执行链场景一致）。
     fake = registerFakePiEngine();
-    fake.interactMessageResult = { ok: false, code: "engine_session_not_resumable", message: "no live session" };
   });
 
   afterEach(async () => {
@@ -206,7 +205,7 @@ describe("[v8.5 D] 透明重生：ended 记录同 id 续写原 session", () => {
       expect(snap?.chatMode).toBe(true);
 
       // resume 触达（[W3 观测点改写] 原 runAndFinalize 边界捕获 → 协议 engine.run 捕获）：
-      // 原 sessionFile 作为续写锚点传递（ctx.chat.resume.sessionRef.sessionFile = --session
+      // 原 sessionFile 作为续写锚点传递（ctx.resume.resume.sessionRef.sessionFile = --session
       // 续写目标的协议承载位）；model 从 record identity 复原（fixture 的 model_change
       // entry → ctxModel 解析兜底）。thinkingLevel 锚点随协议化归引擎侧覆盖解析
       //（resume.sessionRef 只承载 sessionFile——引擎从 session 历史的 thinking_level_change
@@ -214,7 +213,7 @@ describe("[v8.5 D] 透明重生：ended 记录同 id 续写原 session", () => {
       await vi.waitFor(() => expect(fake.runs.length).toBe(1));
       expect(fake.runs[0].ctx.taskId).toBe("sa-d-happy");
       expect(fake.runs[0].task.prompt).toBe("continue the work");
-      expect(fake.runs[0].ctx.chat?.resume?.sessionRef["sessionFile"]).toBe(file);
+      expect(fake.runs[0].ctx.resume?.resume?.sessionRef["sessionFile"]).toBe(file);
       expect(fake.runs[0].ctx.ctxModel).toMatchObject({ provider: "p", id: "m-1" });
 
       // subagent-record entry 落盘（register/reportRecordTransition）→ live/reload 视图恢复。
@@ -235,7 +234,7 @@ describe("[v8.5 D] 透明重生：ended 记录同 id 续写原 session", () => {
       const result = await messageHandler(service, { subagentId: "sa-d-shut", text: "pick up where left" });
       expect(result.response.delivered).toBe(true);
       await vi.waitFor(() => expect(fake.runs.length).toBe(1));
-      expect(fake.runs[0].ctx.chat?.resume?.sessionRef["sessionFile"]).toBe(file);
+      expect(fake.runs[0].ctx.resume?.resume?.sessionRef["sessionFile"]).toBe(file);
     });
 
     it("完成后第二条完成通知 dedup key 含 round（round 从 0 重建 → key=id:1），不与终态通知互吞", async () => {
@@ -363,7 +362,7 @@ describe("[v8.5 D] 透明重生：ended 记录同 id 续写原 session", () => {
     const result = await messageHandler(service, { subagentId: "sa-d-legacy", text: "legacy continues" });
     expect(result.response.delivered).toBe(true);
     await vi.waitFor(() => expect(fake.runs.length).toBe(1));
-    expect(fake.runs[0].ctx.chat?.resume?.sessionRef["sessionFile"]).toBe(file);
+    expect(fake.runs[0].ctx.resume?.resume?.sessionRef["sessionFile"]).toBe(file);
   });
 
   // ============================================================

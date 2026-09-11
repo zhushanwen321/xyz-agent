@@ -137,7 +137,6 @@ function createMockService(impl?: typeof vi.fn): SubagentService {
         outcome,
       };
     },
-    interact: async () => ({ ok: false, code: "engine_interact_failed", message: "not supported in this test" }),
     read: async () => ({ engineId: "pi", turns: [], source: "outcome-only" }),
   };
   clearEngines();

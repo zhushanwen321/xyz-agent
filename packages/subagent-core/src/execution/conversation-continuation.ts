@@ -124,7 +124,7 @@ export class ConversationContinuation {
     private readonly host: ContinuationHost,
   ) {}
 
-  /** 当前绑定的 record（service 侧缓存刷新判定用——cold-resurrect 重建新对象）。 */
+  /** 当前绑定的 record（service 侧缓存刷新判定用——跨重启冷查重建新对象）。 */
   get boundRecord(): ExecutionRecord {
     return this.record;
   }
@@ -449,7 +449,7 @@ export class ConversationContinuation {
    *   - 可重连终态（disconnected/parent-shutdown，RECONNECTABLE_FINAL_REASONS）→
    *     非 chatMode 升级格（D4 revive 格 v4 显式化：水合保留持久化 chatMode 后，
    *     `chatMode !== true` 的 record 收到 message → 升级置位 chatMode=true 再续聊；
-   *     语义承接现状 cold-resurrect 的无条件置位——session shutdown 时被
+   *     语义承接原 cold-resurrect 的无条件置位（U6 已删）——session shutdown 时被
      *     disposeAllRecords 关成 parent-shutdown 的在途 one-shot 正靠此路径保持可续）
    *     + D5 gate 前置（conversation 位检查，gate 不过 → 硬拒 + fork/重派指引）；
    *   - 其余 closed（gc/parent-new/parent-fork）→ 按不可重连硬拒（fork-from 指引）。
