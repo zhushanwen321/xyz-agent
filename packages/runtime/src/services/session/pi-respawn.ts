@@ -33,6 +33,12 @@
  * 经 messageBus session 级 publish（stream topic 入 ring，断连重连回放可见）。
  */
 import type { ServerMessage } from '@xyz-agent/shared'
+// D1 台账（crash-forensics §3.3 D1）：auto-respawn 四态决策点与决策日志同点双写
+//（决策日志给 grep，台账给结构化消费——设计 D1 写入点矩阵「pi crash / auto-respawn 四态」行）。
+import { getCrashJournal } from '../../infra/crash-journal.js'
+
+/** 台账 detailDigest 上限（设计 D1 防漏设计①：内嵌摘要 ≤2KB）。 */
+const RESPAWN_DIGEST_MAX_CHARS = 2048
 
 /** 崩溃 → 自动恢复的延迟（D7-②，设计定值 5s：避开崩溃现场的连坐终止窗口——relay kill /
  *  reapSessionBackgroundTasks 在崩溃时同步收割子任务，立即 respawn 会与之竞争）。 */
@@ -98,6 +104,16 @@ export class RespawnOrchestrator {
     this.clearTimer(sessionId)
     const attempt = this.consecutiveFailures.get(sessionId) ?? 0
     console.log(`[pi-respawn] session ${sessionId} pi process died unexpectedly — auto restore scheduled in ${RESPAWN_DELAY_MS}ms (attempt ${attempt + 1})`)
+    // D1 台账「scheduled」态：携带 attempt 序号与延迟 ms（schema 无专字段，摘要入
+    // detailDigest ≤2KB）。守卫 early-return 路径（in-flight / 熔断）是「不调度」决策，
+    // 不属四态，不产生事件。
+    getCrashJournal().append({
+      layer: 'pi',
+      event: 'auto-respawn',
+      reason: 'scheduled',
+      sessionId,
+      detailDigest: `attempt=${attempt + 1} delayMs=${RESPAWN_DELAY_MS}`,
+    })
     this.armTimer(sessionId)
   }
 
@@ -118,6 +134,14 @@ export class RespawnOrchestrator {
     if (this.isTripped(sessionId)) return
     const attempt = (this.consecutiveFailures.get(sessionId) ?? 0) + 1
     console.log(`[pi-respawn] session ${sessionId} auto restore starting (attempt ${attempt}/${RESPAWN_MAX_CONSECUTIVE_FAILURES})`)
+    // D1 台账「attempt」态：恢复动作实际发起时点。
+    getCrashJournal().append({
+      layer: 'pi',
+      event: 'auto-respawn',
+      reason: 'attempt',
+      sessionId,
+      detailDigest: `attempt=${attempt}/${RESPAWN_MAX_CONSECUTIVE_FAILURES}`,
+    })
     try {
       // 经 ensureRestored 执行（不直呼 deps.restore）：恢复期间登记 in-flight 注册表，
       // spawn+attach 秒级窗口内用户发消息（ensureActive→ensureRestored）join 同一
@@ -128,6 +152,18 @@ export class RespawnOrchestrator {
       const willRetry = attempt < RESPAWN_MAX_CONSECUTIVE_FAILURES
       this.consecutiveFailures.set(sessionId, attempt)
       console.error(`[pi-respawn] session ${sessionId} auto restore failed (attempt ${attempt}/${RESPAWN_MAX_CONSECUTIVE_FAILURES}, willRetry=${willRetry}):`, message)
+      // D1 台账「failed」终态：事件名 auto-respawn-failed 与成功态可区分；reason 二值区分
+      // 后续走向（续排重试 / 熔断放弃）。错误消息截断内嵌（≤2KB 防线，取头部保留根因首现）。
+      const errorDigest = message.length > RESPAWN_DIGEST_MAX_CHARS - 128
+        ? `${message.slice(0, RESPAWN_DIGEST_MAX_CHARS - 128)}…`
+        : message
+      getCrashJournal().append({
+        layer: 'pi',
+        event: 'auto-respawn-failed',
+        reason: willRetry ? 'retry-scheduled' : 'breaker-tripped',
+        sessionId,
+        detailDigest: `attempt=${attempt}/${RESPAWN_MAX_CONSECUTIVE_FAILURES} willRetry=${willRetry} error=${errorDigest}`,
+      })
       this.deps.publish(sessionId, {
         type: 'session.restoreFailed',
         payload: { sessionId, attempts: attempt, willRetry, reason: message },
@@ -143,6 +179,14 @@ export class RespawnOrchestrator {
     // 成功：计数清零（连续失败语义归零）+ 推 restored（前端插恢复提示条 + 复位 dead 态）。
     this.consecutiveFailures.delete(sessionId)
     console.log(`[pi-respawn] session ${sessionId} auto restore succeeded (attempt ${attempt})`)
+    // D1 台账「success」态：reason=succeeded 与 failed 态事件（auto-respawn-failed）可区分。
+    getCrashJournal().append({
+      layer: 'pi',
+      event: 'auto-respawn',
+      reason: 'succeeded',
+      sessionId,
+      detailDigest: `attempt=${attempt}`,
+    })
     this.deps.publish(sessionId, {
       type: 'session.restored',
       payload: { sessionId, attempts: attempt },

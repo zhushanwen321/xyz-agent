@@ -42,6 +42,8 @@ import { resolveSkillPaths, resolveExtensionPaths, resolveReplaceSystemPrompt, r
 import { buildSessionSummary } from './session-summary.js'
 import { createProjectionBusView } from './projection-bus-view.js'
 import { persistModelBinding, readModelBinding } from '../../infra/pi/session-file-utils.js'
+// D1 台账（crash-forensics §3.3 D1）：crash / deleted 事件的 runtime 侧双写源。
+import { getCrashJournal } from '../../infra/crash-journal.js'
 // main（file-lock-unification reaper 下沉，D2 触发面 A）：removeSessionEntry 汇聚点收殓
 // 孤儿后台任务——重构仅迁域，触发面挂点语义不变，import 随调用点留 Facade。
 import { reapSessionBackgroundTasks } from './background-task-reaper.js'
@@ -353,6 +355,18 @@ export class SessionService implements ISessionService, ILifecycleSessionOps, ID
     this.pm.onSessionExit((sessionId, code, stderr) => {
       const session = this.lifecycle.get(sessionId)
       if (!session) return
+      // D1 台账（crash-forensics §3.3 D1 写入点矩阵「pi crash」行）：onSessionExit 链是 pi
+      // 意外死亡的唯一通知路径（intentional destroy 被 process-manager 进程表守卫拦截不经
+      // 此链），在此记 crash 与既有 session.exited 推送同点双写。stderr 为 rpc-client 透传的
+      // 尾部 10 行摘要（getStderrTail 同源形态）；exitCode=null 表达信号致死（回调链不携带
+      // signal 名，digest 兜底行注明形态）。fire-and-forget，不阻塞死亡清理链。
+      getCrashJournal().append({
+        layer: 'pi',
+        event: 'crash',
+        sessionId,
+        exitCode: code,
+        detailDigest: buildCrashDetailDigest(code, stderr),
+      })
       session.adapter.detach()
 
       // 构建人类可读的退出原因（含 stderr 尾部，诊断价值 > 敏感性风险，本地工具场景）
@@ -1034,6 +1048,11 @@ export class SessionService implements ISessionService, ILifecycleSessionOps, ID
   }
 
   removeSessionEntry(sessionId: string): void {
+    // D1 台账（crash-forensics §3.3 D1 写入点矩阵 deleted 行）：deleted 事件唯一挂点 = 本
+    // 汇聚点（lifecycle.delete 主动删与 onSessionExit 异常退收殓的公共收口，注释自述即此
+    // 语义）。不能挂 onSessionExit 链：用户主动删走 destroySession 先删进程表 → exit handler
+    // 反查无条目静默返回，不经该链，挂错点事件永不产生（抑制语义，设计 D1 deleted 行）。
+    getCrashJournal().append({ layer: 'pi', event: 'deleted', sessionId })
     // S3-W2：删除前缓存 summary（插件 didDestroy 通知需要 SessionInfo；删除后 Map 查不到）。
     // Map 无条目（防御路径）时构造最小形状——id 之外的字段无从得知，宁发少知不发错。
     const session = this.lifecycle.get(sessionId)
@@ -1297,4 +1316,26 @@ export class SessionService implements ISessionService, ILifecycleSessionOps, ID
   async writeSegmentsMetadata(sessionId: string, entry: SegmentsMetadataEntry): Promise<void> {
     return this.attachmentStore.writeSegmentsMetadata(sessionId, entry)
   }
+}
+
+// ── D1 台账 helper（crash-forensics §3.3 D1 防漏设计①）───────────────────────
+
+/** 台账 detailDigest 内嵌上限（设计 D1：「末 10 行 stderr 摘要内嵌（≤2KB）」）。 */
+const CRASH_DETAIL_DIGEST_MAX_CHARS = 2048
+
+/**
+ * crash 事件的 detailDigest：stderr 尾部摘要截断内嵌（取尾不取头——崩溃根因通常在输出末尾，
+ * 与 rpc-client getStderrTail 的尾部形态同向）。stderr 为空（信号死亡无输出）时兜底一行
+ * 退出形态描述——digest 恒非空，崩溃行的最小归因信息不因 stderr 缺失而全空。
+ */
+function buildCrashDetailDigest(code: number | null, stderr: string | undefined): string {
+  const tail = (stderr ?? '').trim()
+  const digest = tail
+    || (code === null
+      ? 'process died by signal (no stderr captured)'
+      : `process exited with code ${code} (no stderr captured)`)
+  // 超限取尾部（保留最接近崩溃现场的输出），换行结构原样保留
+  return digest.length > CRASH_DETAIL_DIGEST_MAX_CHARS
+    ? digest.slice(-CRASH_DETAIL_DIGEST_MAX_CHARS)
+    : digest
 }
