@@ -32,6 +32,7 @@ import {
 	estimateTextTokens,
 	formatFileOperationsLike,
 	getCurrentModelId,
+	isGatingActive,
 	isSummaryInflated,
 	pickMode,
 	pickReinjectFiles,
@@ -274,9 +275,7 @@ export function createBeforeCompactHandler(
 		const currentModelId = getCurrentModelId(ctx.model);
 
 		// D5 门控：禁用/排除 → 空返回（pi 原生生成）
-		if (config.enabled !== true || currentModelId === "" || config.excludedModels.includes(currentModelId)) {
-			return {};
-		}
+		if (!isGatingActive(config, currentModelId)) return {};
 		const state = getState();
 
 		// D13-3 熔断：连续失败 ≥3 → 本 session 停止接管
