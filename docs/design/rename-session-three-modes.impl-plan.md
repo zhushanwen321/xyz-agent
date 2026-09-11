@@ -109,16 +109,17 @@ graph TD
 ## 7 残留风险与变更历史
 
 **残留风险**：
-- **[Gate A 已知失败·存量非本区间] session-reader `TC-m3b-real-data-guard`**（execution-tree.test.ts:695）：硬编码本机 `~/.pi/agent` 真实数据 + 固定 sessionId，断言旧机制 flat-fallback，本机数据演化后确定红（隔离重跑确定性失败）；区间 0 文件改动（最后改动 f482e73b0 为 base 祖先），与本次流水线零关联。处置：范围外不修，建议后续单独修复（改固定 fixture 或放宽断言）；在含本包的全量 Gate 中将持续红，消费方注意甄别。改动区全绿（runtime 459/5202、core 120/1951、renderer 384/4183（含 C-U1 review fix c630ef103 新增 2 例，§6 状态表 u6 行 4181 为其 commit 时点数）、subagent-core 190/2834、rename-session 6/203、shared 28/335、pi-subagent-cli 22/304），零绕过（区间 diff grep skip/disable 模式零匹配）。
+- **[Gate A 已知失败·存量非本区间] session-reader `TC-m3b-real-data-guard`**（execution-tree.test.ts:695）：硬编码本机 `~/.pi/agent` 真实数据 + 固定 sessionId，断言旧机制 flat-fallback，本机数据演化后确定红（隔离重跑确定性失败）；区间 0 文件改动（最后改动 f482e73b0 为 base 祖先），与本次流水线零关联。处置：范围外不修，建议后续单独修复（改固定 fixture 或放宽断言）；在含本包的全量 Gate 中将持续红，消费方注意甄别。改动区全绿（runtime 459/5202、core 120/1951、renderer 384/4183（含 C-U1 review fix c630ef103 新增 2 例，§6 状态表 u6 行 4181 为其 commit 时点数）、subagent-core 190/2834、rename-session 6/203（含 B-U1 review fix 7693f1a05 新增 TC-T8 1 例，§6 状态表 u2 行 202 为其 commit 时点数；终态 = 203，实跑 203/203 绿）、shared 28/335、pi-subagent-cli 22/304），零绕过（区间 diff grep skip/disable 模式零匹配）。
 - 探针 P1-P3 已全部闭环（P1/P2 = u1 实测通过零降级，dcc189dc4；P3 = u4 单测级通过同步调用安全，帧序归 Gate B V4/V5）
 - ~~e2e/README.md（不在任何单元领地）仍写 A1-A5 计数~~ **已清账（7693f1a05 修复 A-U2 时更新为 A1-A7 + 函数清单）**；同类注释级残留 3 处（scenarios.test.mjs:2 / vitest.e2e.config.ts:3 / harness.mjs:42 仍写 A1-A5）+ 包 README:77 工具守卫排序描述滞后（B-U1 后 subagent 守卫为第一步）——**已清账（design-code-sync 第 1 轮组 A，2026-09-12：3 处 A1-A7 + 守卫链排序描述对齐 index.ts 实装）**
 - run-a3.mjs 内部 countLlmRequests/countSessionInfos 与 harness 新导出（countLlmRequestLogs/countSessionInfoEntries）同构并存——后续触及 a3 的单元顺手收敛，不阻塞
 - CHANGELOG.md 条目归 merge/release 流程（项目惯例）
 - GUI「跟随会话模型」文案与既有 RenameModelNotSet i18n 键的关系——**已闭环（2026-09-12 u6）：新键 renameModelFollow，旧键删除 0 残留**
-- V10 场景需 GUI dev 双 session + 模式切换实操，依赖 u5/u6 完成后联调（Gate B 收口）
+- ~~V10 场景需 GUI dev 双 session + 模式切换实操，依赖 u5/u6 完成后联调（Gate B 收口）~~ **已清账（Gate B 收口，2026-09-12：V10 四判据闭环——live 双向、工具面按起动 mode、守卫文案逐字命中、count≥2 一次性窗口拦截，见 §6 阶段 5）**
 
 **变更历史**：
 - 2026-09-12：初版（来源设计 v3.2；tech-design 审查收敛轨迹：主审 2 轮 0 must-fix、影响面审 3 轮 1 must-fix 全修 + 第 4 轮聚焦复审）。
 - 2026-09-12：阶段 2 收口（fcde41628）——6/6 单元 committed，状态表 + 证据指针落位（含 u4 领地外提取 / u5 接线扩张等偏差裁决回写）。
 - 2026-09-12：阶段 3-4 review 修复与定向复审（8a61fb9b0）——定向复审 7/7 判定、无新 must-fix；残留台账结算（i18n 键闭环、e2e README A1-A7 清账）；同期来源设计升 v3.3（181fc2197 实施期校准）。
 - 2026-09-12：阶段 5 双绿（55fec6746）——Gate A 改动区全绿（唯一失败 = session-reader 存量环境用例，登记残留）+ Gate B 10/10 场景 pass；V9 改道发现（pi 0.84.4 RPC 拒空串）登记。
+- 2026-09-12：design-code-sync 第 2 轮修复（impl-plan 组）——V10 残留风险清账（Gate B 四判据 pass）+ rename-session 计数差异披露（202→203，对齐 renderer 同款说明）。
