@@ -87,6 +87,14 @@ graph TD
 | UF-1 | 红2（写失败不阻塞用例红）根因 = 测试桩缺陷（mkdir 后漏 chmod 0o555，目录实际可写），非实现缺陷——同文件 A 组同款用例绿证明 writeRecordBinding 只读目录行为正确 | 合理——修测试桩不改实现 |
 | UF-1 | 红3（跨重启全链断言错位）根因 = 首任测试断言挖错协议承载位：chat 会话形态参数（recordId/resume）挂 RunContext（port.ts:146）不在 task；修正后与 delivery-methods.test.ts:191 既有绿测试同口径 | 合理——协议承载位以 port.ts 既有契约为准 |
 | UF-1 | typecheck 验收口径调整：typecheck exit 0 在 U6 前不可达（U5 过渡态 9 处 TS2305），调整为「恰好 9 且逐条为已登记分布、零新增」 | 已知——U6 落地后收敛到 exit 0 |
+| U6 | closeChatIdle 未删 + deliverChatMessage 保留为活入口（interrupt 三参→两参清理） | 合理——两者均为活代码（D4 close 承载三处消费 / chatActions messageHandler 活入口），符合「仍被新链路引用的死代码候选不硬删」条款；resumeColdRound 整删（守卫链已在 Continuation） |
+| U6 | cold-resurrect.ts 删除落地为改名迁移 cold-lookup.ts：UF-1 跨重启活链消费面不可连语义删除；resurrectColdRecord 的 chatMode 无条件置位改为 found.chatMode 水合保留 | 合理——升级置位归 Continuation revive 格 + messageHandler gate 双写点（D4/D5 意图），行为变化 = one-shot 跨重启升级现过 gate，正是 D5 设计 |
+| U6 | 领地延伸三处（均有背书）：①SDK 删 RunChatParams/RunParams.chat + resume-schema 双键同形断言族删（U1 偏差「纳入 U6 处置」+ U6「删 chat 键」职责）②pi 读端 ctx.chat→ctx.resume + assertResumeRunFrame（设计「读写两端切换」含读端）③extensions 处置实为 8 文件（任务 3 + 处置表 2 + 连带编译修复 3） | 合理——登记领地清单省略，U5 有同款先例 |
+| U6 | UF-1 record-binding.test.ts 机械适配 2 行（三参→两参调用 + ctx.chat→ctx.resume）：U6 删 deliverChatMessage 三参签名与 RunContext.chat 键后原两行必然编译失败 | 合理——语义断言零变化（绑定重建→续写原文件→resume 锚点），13 用例全绿实证 |
+| U6 | terminateChatSession（interact cancel/close）调用点删除：U5 删引擎侧 interact dispatch 后已是「发帧必失败」死通道；stale-child 守卫退化为镜像检查 + 有界等待（STALE_CHILD_EXIT_WAIT_MS）后派发 | 已知——残余窗口由红线③宿主重启窗登记与 S4 实测承接，与 U2 建路后 U5 已造成的现状一致，非本批新引入 |
+| U6 | backfillChatAnchor（idle 相位帧锚点回填）随相位机整删：chat 轮 sessionFile 锚点唯一落点 = run 应答 outcome.sessionFile（既有写点 + UF-1 绑定落盘） | 合理——S6/UF-1 用例实证；read 降级链对该形态落 ③outcome-only |
+| U6 | session-reader TC-m3b-real-data-guard 两轮打回修复：①sourceMode 硬编码断言改合法集 ['flat-fallback','precise'] ②FAM 家族记录已从本机消失致 totalNodes 恒红 → 裁决落地动态选根（关联 record 最多者作根）+ 无合适根诚实 skip | 教训入账——守卫用例对可变外部状态（本机真实数据）做硬编码断言必随数据演化腐烂；守卫意图 = 不抛错 + 树非空，数据形态描述不是断言目标 |
+| U6 | git 操作申报（违反「禁一切 git 写操作」约束）：git mv（改名 staging，替代方案丢 rename 语义）+ git add -N（统计行数，立即 reset 还原）；未 commit/push/切分支 | 已知——编排者核验时 staged rename 已并入流转，无实质损害；纪律提醒已入账 |
 
 ## 6 状态表
 
@@ -97,7 +105,7 @@ graph TD
 | U3 | committed | 1 | commit 2b7bf4f11：pi CLI 9 文件；重跑 336 passed（26 文件）+ typecheck exit 0；e2e 构造性历史召回 + 收割上报断言 |
 | U4 | committed | 1 | 基线轮完成（见 §2 U4 行逐场景签收）；S6 ❌ 触发 UF-1 单元（证据链 + 归属裁定 + 修复路由登记 §5） |
 | U5 | committed | 1 | commit 465bb7d0d：26 文件 +396/-2996；grep 门三包源码+测试双方向零命中；sdk 133 / pi 303 / zcode 243+3 skipped 全绿 + 三 typecheck 0（主 agent 独立重跑逐字相符）；处置表前 8 行清零；7 偏差登记 §5；UF-1 并行在途改动共存未触碰 |
-| U6 | pending | 0 | — |
+| U6 | committed | 1+2 打回 | commit bbed5fcfa：64 文件 +617/-2049（净删 ~1474）；grep 门全仓零命中；四包测试全绿 + tsc 0（TS2305 归零）；extensions 三连绿（subagent-workflow 906/906 + session-reader 修复）；UF-1 绑定 13 用例保持全绿；主 agent 独立重跑相符；偏差登记 §5（含两轮打回） |
 | U7 | pending | 0 | — |
 | UF-1 | committed | 2 | commit f70dc2da4：4 文件（state-marker 载体 / record-store 消费 / service 写点 / record-binding.test 13 用例）；主 agent 独立重跑 13/13 + 全量 2896 passed \| 4 skipped + typecheck 恰 9 处已登记过渡态；接替 dev 修 3 红（1 实现缺口 + 2 测试缺陷）后 5 验收项 clause_map 全覆盖；4 偏差登记 §5 |
 
@@ -115,3 +123,4 @@ graph TD
   - 2026-09-11 **U5 流转 committed（465bb7d0d）**：删路①引擎侧完成——SDK 通道族 9→8/方法 10→9、pi chat-session.ts 删、zcode interact 桩删、处置表前 8 行清零，grep 门三包零命中；三包测试/typecheck 独立重跑全绿。U5→U6 过渡态（core 6 处 TS2305 type-only import）登记 §5，U6 收敛。UF-1 与 U5 同批派发（领地不相交），U5 硬核验时文件集严格二分，UF-1 在途 4 文件未触碰。
   - 2026-09-11 **UF-1 首任 dev 限流阵亡 → 接替派出**：主体实现已完成（+249/-19，13 用例 10 绿），账户限流 1302 中断于收尾段；残留 3 红用例钉位（collectRecords 重建分支消费缺口 / 写失败不阻塞 warn 路径 / service 跨重启集成链）。按接替程序补派（失败明细 + TS2305 过渡态禁触清单随 task 附上）。U6 仍锁于 UF-1（subagent-service.ts 串行）。
   - 2026-09-11 **UF-1 流转 committed（f70dc2da4）**：接替 dev 修 3 红后 13/13 绿、全量 2896 passed、typecheck 恰 9 处已登记过渡态零新增；5 验收项 clause_map 全覆盖（回填点落盘 / collectRecords+findLightById 解析 / coldLookupForAction 全链 / .state 终态优先级 / 写失败不阻塞）。就绪集重算：**U6 就绪**（U5+UF-1 双 committed）——此后 S6 三变体跨重启续聊的真机复验移至 Gate B（UF-1 单测已覆盖全链，真机留验收签收）。
+  - 2026-09-11 **U6 流转 committed（bbed5fcfa，含两轮打回）**：删路② + chat→resume 键读写两端同批切换完成，净删 ~1474 行，S5 grep 门全仓零命中，四包 tsc 归零全绿，extensions 三连绿。打回轮 1 = extensions:test 唯一红（session-reader TC-m3b-real-data-guard）钉位为测试对真实数据快照硬编码；打回轮 2 = totalNodes 断言的第二层硬编码（FAM 家族记录已消失）触发裁决 → 动态选根 + 诚实 skip 落地。教训：环境守卫用例禁烤数据快照。就绪集重算：**U7 就绪**（U6 committed），U7 后进入阶段 3 一致性审查。
