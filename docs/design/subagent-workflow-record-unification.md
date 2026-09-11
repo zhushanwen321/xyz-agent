@@ -3,6 +3,7 @@
 > **层声明**：技术方案层设计——当前层 = 方案决策与接口/数据模型规格，下一层 = 可实施的 PR 单元（§5）。
 > **前置依赖**：H1（chat 域统一，[subagent-chat-run-unification.md](subagent-chat-run-unification.md)）先行落地。本文档依赖 H1 的方向性决策（record 单一模型 / Continuation 存在 / 守护单点 arm / settleOneShotOutcome 四分支保留）。
 > **行号基线（v2）**：本文件引用行号基于 commit `22f77c157` 工作区；H1 落地后 subagent-service.ts 行号将漂移，实施时以符号 grep 锚定为准。
+> **实施状态（2026-09-11 W1-W5 全部 committed）**：W1 f57d1a687 / W2（含 mergeRunSignals 提取 run-signals.ts）/ W3（含 streaming 返工一轮）/ W4（SAR 530→94 行壳化）——实施口径偏差（D3 现状表述过时、TUI 零改动达成 D1④、pump 回退分支保留理由等）逐条登记于 [impl-plan §5](subagent-workflow-record-unification.impl-plan.md)；阶段 3 一致性审查与 Gate A/B 见 impl-plan 状态表。
 >
 > **一句话结论**：workflow 脚本里的 `agent()` 调用**现状已有真实执行 record 进 RecordStore 并走共享池**——问题不在「record 游离」，而在三处：① pump 为 TUI 进度自建的第二个游离 progress record（挂在 trace.live，与真实 record 并存双 record）；② 真实 record 的成功收口语义寄生于 subagent-tool 的 SP-5（成功恒 running-idle 等 message 升级），对无 message 对端的 workflow agent 是错误语义（hasRunning 被绑架 / 30 天堆积 / 可被误升级为对话容器）；③ 编排层双轨（SubprocessAgentRunner 平行接线 vs service runEngineTask 族）。本设计：进度通道退役改 store 订阅、workflow origin record 成功即终态化、编排归一、可见性隐藏。
 

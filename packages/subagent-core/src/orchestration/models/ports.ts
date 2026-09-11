@@ -167,8 +167,10 @@ export interface LifecycleDeps {
   * 保持本 ports 文件零 infra/execution 依赖。由组合根（extension index.ts makeDeps）
   * 注入：闭包捕获 getSubagentService() 单例，parentRunId 由 pump 侧补 run.runId。
   *
-  * 可选——未注入时（旧测试 deps）dispatchAgentCall 回退 deps.runner（SAR 旧编排，
-  * W4 归位时随 SAR.run 掏空统一）。生产装配两字段同时注入，dispatch 恒优先。
+  * 可选——未注入时（旧测试 deps）dispatchAgentCall 回退 deps.runner（[H2 W4] 后
+  * SAR 已掏空为纯转调 executeWorkflowAgent，两分支执行体归一非双轨，差异仅 parentRunId
+  * 来源：注入 = 真实 run.runId，回退 = SAR_UNATTACHED_PARENT_RUN_ID 占位；生产装配
+  * 两字段同时注入，dispatch 恒优先）。
   */
   workflowAgentDispatch?: (
     opts: AgentCallOpts,

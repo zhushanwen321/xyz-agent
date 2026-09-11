@@ -703,10 +703,11 @@ describe("settled-watchdog 原语守护（自 SAR full-chain 测试迁移）", (
       .map((args) => String(args[0]))
       .find((message) => message.includes(SETTLED_WATCHDOG_ENV));
     expect(warn).toBeDefined();
-    // 文案必须覆盖 M3 复用同一原语带来的 workflow 域连带后果（修复前只提 chat 域）。
+    // 文案必须覆盖 M3 复用同一原语带来的 workflow 域连带后果（修复前只提 chat 域）；
+    // [H2 W5] 挂载点表述随 W4 掏空更新为 service 派发点（原 SAR.run 表述退役）。
     expect(warn).toContain("workflow");
     expect(warn).toContain("no-progress");
-    expect(warn).toContain("SAR.run");
+    expect(warn).toContain("runWorkflowEngineTask");
 
     // 开关语义不动：arm 仍 no-op（本条目只补文案与注释，不新增 env、不改行为）。
     const fired: string[] = [];

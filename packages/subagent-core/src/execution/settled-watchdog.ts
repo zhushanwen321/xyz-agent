@@ -31,8 +31,9 @@
 // spawn watchdog 默认关」的三无窗口，warn 明示后果），未设/非法 = 默认 600s。
 // 中段阈值 v1 不开 env（减法：与 keep-alive 先例同为纯常量）。
 //
-// [M3 耦合登记] 本原语自 M3 起被 workflow 域复用（subprocess-agent-runner 的 SAR.run
-// per-run 守护，armMidRoundNoProgress 同一入口）——故 env ≤0 的「关闭两段」不再是
+// [M3 耦合登记] 本原语自 M3 起被 workflow 域复用（[H2 W2/W4] 起挂载点 = subagent-service.ts
+// armWorkflowNoProgressWatchdog（runWorkflowEngineTask 内 arm；原 SAR.run per-run 守护
+// 随 W4 掏空归位），armMidRoundNoProgress 同一入口）——故 env ≤0 的「关闭两段」不再是
 // chat 域局部行为：workflow 域 G1 熔断（静默楔死 run 的 30min 无进展回收）一并失效。
 // warn 文案已明示该连带后果（env 开关语义本身不动：设计明文「中段阈值 v1 不开 env」，
 // 有界兜底的处置必须可解释，规则 19）。
@@ -40,7 +41,8 @@
 // 挂载点（同一原语——同一组常量 + 同一组挂载/交棒/清除 helper；[H1 U6] 收敛为单挂载）：
 //   - 会话形态轮：subagent-service.ts kickOffChatRound（轮开跑 arm 中段；[H1 U6] 旧
 //     热路径 deliverChatMessage 第二挂载点随 interact 面退役）
-//   - workflow 域：subprocess-agent-runner.ts SAR.run per-call 守护（M3 起复用）
+//   - workflow 域：subagent-service.ts armWorkflowNoProgressWatchdog（[H2 W2]；原
+//     SAR.run per-call 守护随 [H2 W4] 掏空归位，M3 起复用）
 // 事件侧接线（[H1 U6] 刷新源 = run 事件通道既有事件；交棒 = run 应答驱动）：
 //   - 有效协议事件行 → refreshMidRoundNoProgress / refreshFromProtocolEvent（中段刷新）
 //   - run 应答收敛 → noteRoundSettledFromProtocol（交棒收尾段，Continuation onRunSettled）
@@ -115,8 +117,9 @@ export function _setMidRoundNoProgressWindowMsForTest(ms: number | undefined): v
  * 收尾段定值的用户覆盖 env（规则 19：用户显式指定才生效）。
  *
  * >0 覆盖收尾段（SETTLED_WATCHDOG_TIMEOUT_MS 默认）；≤0 关闭两段（回到三无窗口，
- * warn 明示后果——[M3 耦合登记] 自 M3 起该 no-op 同时关掉 workflow 域 G1 熔断：SAR.run
- * 的 per-run no-progress 守护经 armMidRoundNoProgress 同一入口挂载，watchdog 不 arm
+ * warn 明示后果——[M3 耦合登记] 自 M3 起该 no-op 同时关掉 workflow 域 G1 熔断：
+ * subagent-service.ts armWorkflowNoProgressWatchdog（原 SAR.run per-run 守护，[H2 W4]
+ * 掏空归位）的 no-progress 守护经 armMidRoundNoProgress 同一入口挂载，watchdog 不 arm
  * 则 workflow 域静默楔死同样无独立回收计时）；未设 = 默认 600s；非数字 = 非法回落
  * 默认 + warn 留痕（对齐 XYZ_SUBAGENT_IDLE_TIMEOUT_MS 的 LC-7 教训：非法回落必须
  * 可见）。前缀用 XYZ_SUBAGENT_*（ENV_WHITELIST_PREFIXES 白名单，PI_ 前缀在桌面
@@ -169,7 +172,8 @@ function resolveSettledWatchdogEnv(): { disabled: boolean; overrideMs?: number }
         `no-progress + settled phase limit) for ALL domains. Consequences: (1) a wedged chatMode round ` +
         `(no agent_end, or agent_settled never arriving) has NO independent recovery timer — the process ` +
         `leaks until the host exits (the "three-no-window" shape); (2) the workflow-domain no-progress ` +
-        `fuse (M3: SAR.run arms through this same primitive) is silently disabled too — a wedged workflow ` +
+        `fuse (M3: workflow dispatch arms through this same primitive — ` +
+        `SubagentService.runWorkflowEngineTask, see [H2 W4]) is silently disabled too — a wedged workflow ` +
         `run then stalls with no terminal notification even though the chat-domain docs only describe (1). ` +
         `Recovery: unset the env or set a positive ms value.`,
     );
