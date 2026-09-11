@@ -121,7 +121,7 @@ export function getAgentsDir(): string {
  *
  * 规则：'--' + cwd 去掉首斜杠 + 所有 / \ : 替换为 - + '--'
  * 例：/Users/x/proj → --Users-x-proj--
- *     C:\Users\x\proj → --C-Users-x-proj--
+ *     C:\Users\x\proj → --C--Users-x-proj--（盘符冒号与反斜杠各替换为一个 -）
  *
  * 用于定位 subagent session 目录：<piAgentDir>/subagents/<encodeCwd(cwd)>/sessions/
  */

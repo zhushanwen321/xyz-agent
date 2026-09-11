@@ -591,7 +591,7 @@ export function refreshAll(): void {
 // ── Barrel re-export（Phase 1 拆分：保 import 路径不变）──────────────────
 // 以下函数已拆到 pi-maintenance / pi-enabled-models / pi-skill-paths / pi-provider-repair，
 // re-export 保 import 路径不变（现有测试零改动即全绿 = 行为零变化证据）。
-export { migrateToPiSubdir, isLeakedPackage, cleanLeakedPackages } from './pi-maintenance.js'
+export { isLeakedPackage, cleanLeakedPackages } from './pi-maintenance.js'
 export {
   getEnabledModels,
   setEnabledModels,

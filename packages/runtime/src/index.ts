@@ -191,7 +191,7 @@ async function main(): Promise<void> {
   // 打包模式 bundled 资源同步（skills/extensions，全仓唯一 bundled skills 同步点，
   // 打包版全新安装依赖）+ 旧布局残留探测（WARN 指引 scripts/migrate-pi-layout-v2.mjs，
   // 不迁移不阻塞启动）。
-  // [HISTORICAL] 原为 migrateToPiSubdir() 一次性目录迁移——迁移使命终结后退役
+  // [HISTORICAL] 此处曾为一次性目录迁移的启动调用位——迁移使命终结后退役删除
   // （v9 布局对齐，设计 §6.11），残留交手工迁移脚本 + WARN 指引承接。
   // D8-1（perf W29）：同步段保持 listen 前——「首次配置读取前」硬约束（06 §3.3 证据）。
   const tSyncMigrations = performance.now()

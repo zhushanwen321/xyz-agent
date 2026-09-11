@@ -124,27 +124,35 @@ describe('R3 词法巧合排除', () => {
 // ---------- R4 文件范围边界 ----------
 
 describe('R4 文件范围', () => {
-  it('收集结果全部落在 packages/ apps/ scripts/ + 两明列 .md 内，且无 node_modules/dist/test-results', () => {
+  it('收集结果全部落在 packages/ apps/ scripts/ + 三明列 .md 内，且无 node_modules/dist/test-results', () => {
     const files = collectFiles()
     expect(files.length).toBeGreaterThan(1000)
     for (const abs of files) {
       const rel = relative(ROOT, abs)
       expect(
-        /^(packages|apps|scripts)\//.test(rel) || rel === 'AGENTS.md' || rel === 'docs/troubleshooting.md',
+        /^(packages|apps|scripts)\//.test(rel) ||
+          rel === 'AGENTS.md' ||
+          rel === 'docs/troubleshooting.md' ||
+          rel === 'docs/architecture/data-source-registry.md',
         `越界文件: ${rel}`,
       ).toBe(true)
       expect(rel).not.toMatch(/node_modules|^packages\/[^/]+\/dist\//)
     }
   })
-  it('明列 .md 入域（AGENTS.md / docs/troubleshooting.md）', () => {
+  it('明列 .md 入域（AGENTS.md / docs/troubleshooting.md / docs/architecture/data-source-registry.md）', () => {
     const files = collectFiles()
     expect(files.some((f) => f === join(ROOT, 'AGENTS.md'))).toBe(true)
     expect(files.some((f) => f === join(ROOT, 'docs/troubleshooting.md'))).toBe(true)
+    expect(files.some((f) => f === join(ROOT, 'docs/architecture/data-source-registry.md'))).toBe(true)
   })
   it('普通 .md 不入域（fixtures README / probe 历史报告属时点性记录，出守卫域）', () => {
     const files = collectFiles()
     const mds = files.filter((f) => f.endsWith('.md'))
-    expect(mds.every((f) => f.endsWith('AGENTS.md') || f.endsWith('troubleshooting.md'))).toBe(true)
+    expect(
+      mds.every(
+        (f) => f.endsWith('AGENTS.md') || f.endsWith('troubleshooting.md') || f.endsWith('data-source-registry.md'),
+      ),
+    ).toBe(true)
   })
 })
 
@@ -155,5 +163,18 @@ describe('真实仓抽查（改写后基线）', () => {
     const rel = 'packages/runtime/src/infra/pi/pi-paths.ts'
     const text = readFileSync(join(ROOT, rel), 'utf8')
     expect(scanFile(rel, text)).toEqual([])
+  })
+  it('data-source-registry.md 入域且当前零命中；§6 主键旧字面量回流必被拦（F2 补录裁决）', () => {
+    const rel = 'docs/architecture/data-source-registry.md'
+    // 入域证明：collectFiles 明列收录
+    expect(collectFiles().some((f) => f === join(ROOT, rel))).toBe(true)
+    // 当前实况基线：F1 已把 §6 两行主键改 <piAgentDir>/ 符号写法，零命中
+    const text = readFileSync(join(ROOT, rel), 'utf8')
+    expect(scanFile(rel, text)).toEqual([])
+    // 回流拦截：曾实际发生的主键失真形态（§6 settings.json / auth.json 行）在域内必红
+    expect(
+      scanFile(rel, '| `~/.xyz-agent/pi/agent/settings.json` | pi 子进程 + xyz runtime | ... |'),
+    ).toHaveLength(1)
+    expect(scanFile(rel, '数据源主键 ~/.xyz-agent/pi/agent/auth.json 登记行')).toHaveLength(1)
   })
 })

@@ -9,10 +9,10 @@
  * - cleanLeakedPackages / isLeakedPackage / getPiGlobalAgentDir：settings.json.packages
  *   泄漏到 pi 全局目录的相对路径清理（架构约定 #1 xyz-agent/pi 数据隔离）
  *
- * [RETIRED] migrateToPiSubdir 的目录迁移段已退役（v9 布局对齐，设计 §6.11「既有函数处置」）：
- * `<configDir>/sessions → pi/sessions` 等迁移使命终结，改由一次性手工迁移脚本
- * scripts/migrate-pi-layout-v2.mjs + 启动残留探测 warnLegacyPiLayout 承接；无预兆
- * mkdirSync 前置段随之消亡。仅保留 no-op 空壳兼容 pi-provider-store barrel re-export。
+ * [HISTORICAL] 一次性目录迁移函数已整体退役删除（v9 布局对齐，设计 §6.11「既有函数
+ * 处置」；空壳清除 = 2026-09 design-code-sync round1 F7 收尾）：`<configDir>/sessions →
+ * pi/sessions` 等迁移使命终结，改由一次性手工迁移脚本 scripts/migrate-pi-layout-v2.mjs +
+ * 启动残留探测 warnLegacyPiLayout 承接；无预兆 mkdirSync 前置段随之消亡。
  *
  * 抽出原因：pi-provider-store.ts 超 ESLint max-lines(500)。本模块含迁移类纯函数
  *（不碰 modelsStore 模块级缓存），移到本模块后 pi-provider-store 经 barrel re-export
@@ -24,19 +24,6 @@ import { getDataDir } from '@xyz-agent/shared/paths'
 import { isPackaged } from '../../utils/runtime-env.js'
 import { getPiAgentDir, getExtensionsDir } from './pi-paths.js'
 import { updateSettingsFields } from './pi-settings-store.js'
-
-/**
- * [RETIRED] 目录迁移段已退役（v9 布局对齐，设计 §6.11「既有函数处置」）。
- * 目录迁移与 mkdirSync 前置逻辑已全部移除：旧布局残留由启动探测 warnLegacyPiLayout
- * 告警 + scripts/migrate-pi-layout-v2.mjs 手工迁移；bundled 资源同步拆为
- * syncBundledResources 直挂 runtime 启动。
- *
- * 保留 no-op 空壳仅为兼容 pi-provider-store.ts 的 barrel re-export（该文件不在
- * 本单元领地）；re-export 清理后本函数可整体删除。
- */
-export function migrateToPiSubdir(): void {
-  // retired: 目录迁移逻辑已全部移除（见 syncBundledResources / warnLegacyPiLayout）
-}
 
 /** 判定路径存在且为目录（探测「子目录形态」用；文件同名占位不算命中）。 */
 function isDirectory(p: string): boolean {
@@ -61,7 +48,7 @@ export function warnLegacyPiLayout(dataDir: string = getDataDir()): void {
 }
 
 /**
- * 打包模式：从 bundled 资源同步 skills/extensions（自 migrateToPiSubdir 拆出，直挂
+ * 打包模式：从 bundled 资源同步 skills/extensions（直挂
  * runtime 启动）。全仓唯一 bundled skills 同步点，打包版全新安装依赖，不得丢失。
  *
  * bundled 源 `join(process.cwd(), 'pi', 'agent')` 是 app 资源布局（打包时 stage 进

@@ -16,9 +16,11 @@
  *     - 字母前缀（`api/agent-api` 含 `pi/agent` 子串，纯词法巧合）
  *
  * 文件范围（显式，非 rglob 全仓）：packages/ apps/ scripts/ 源码（.ts/.tsx/.mjs/.cjs/
- * .js/.jsx/.sh/.py）+ AGENTS.md + docs/troubleshooting.md；node_modules/dist/test-results
- * 等生成物目录排除。.md 默认不在范围（两明列文件除外）——fixtures README / probe 历史
- * 报告属时点性历史记录，不属源码。
+ * .js/.jsx/.sh/.py）+ AGENTS.md + docs/troubleshooting.md + docs/architecture/data-source-registry.md；
+ * node_modules/dist/test-results 等生成物目录排除。.md 默认不在范围（三明列文件除外）
+ * ——fixtures README / probe 历史报告属时点性历史记录，不属源码。registry 补录裁决
+ * （2026-09 design-code-sync round1 F2）：U18 范围声明先于 data-source-registry.md 成为
+ * 活跃维护面，属实现期盲区——registry §6 数据源主键是布局字面量回流的高危位，必须入域。
  *
  * 豁免：集中常量表 LAYOUT_LITERAL_EXEMPT（file 级 + 行内理由，对齐 R1 check_pi_direct_write.py
  * ALLOWLIST 的 file 级先例——行号键随编辑漂移永不生效，教训见 impl-plan D-10）。
@@ -35,7 +37,7 @@ const ROOT = join(fileURLToPath(new URL('..', import.meta.url)))
 
 /** 扫描范围：目录根（递归）+ 明列单文件。.md 仅两个明列文件入域。 */
 const RANGE_DIRS = ['packages', 'apps', 'scripts']
-const RANGE_FILES = ['AGENTS.md', 'docs/troubleshooting.md']
+const RANGE_FILES = ['AGENTS.md', 'docs/troubleshooting.md', 'docs/architecture/data-source-registry.md']
 
 const SOURCE_EXTS = new Set(['.ts', '.tsx', '.mts', '.cts', '.mjs', '.cjs', '.js', '.jsx', '.sh', '.py'])
 const SKIP_DIRS = new Set(['node_modules', 'dist', 'test-results', '.git', 'build', 'release', 'out'])

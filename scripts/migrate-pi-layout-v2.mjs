@@ -541,6 +541,9 @@ export function parseSessionHeader(file, fsMod) {
  * sidecar 随行 = <basename>. 前缀的全部兄弟文件（前缀匹配而非后缀白名单——.handoff.json 等
  * 仓内功能 sidecar 白名单必漏）；sidecar 判定排除 .jsonl 后缀（.jsonl 一律按主文件独立走
  * header 分发，杜绝同一文件被双规则处理）。目标已存在同名 → 跳过并计数。
+ * 主文件跳过不吞 sidecar 随行（2026-09 design-code-sync F3）：skip 仍执行随行循环——
+ * 中断续传/双源同名场景下主文件已在位而 sidecar 未搬时，随行循环是 sidecar 补搬的
+ * 唯一通路；sidecar 自身的目标已存在检查保证幂等（已搬侧 sidecarSkipped，零重复动作）。
  */
 export function distributeSessions(srcRoot, destRoot, report, fsMod) {
   if (!fsMod.existsSync(srcRoot)) return
@@ -556,13 +559,13 @@ export function distributeSessions(srcRoot, destRoot, report, fsMod) {
     const targetDir = cwd ? join(destRoot, encodeCwd(cwd)) : join(destRoot, NO_CWD_DIR)
     const d = join(targetDir, e.name)
     if (fsMod.existsSync(d)) {
-      report.counts.sessionSkipped++
-      continue
+      report.counts.sessionSkipped++ // 主文件不搬（目标已在位），sidecar 随行继续执行
+    } else {
+      fsMod.mkdirSync(targetDir, { recursive: true })
+      fsMod.renameSync(s, d)
+      if (cwd) report.counts.sessionDistributed++
+      else report.counts.sessionNoCwd++
     }
-    fsMod.mkdirSync(targetDir, { recursive: true })
-    fsMod.renameSync(s, d)
-    if (cwd) report.counts.sessionDistributed++
-    else report.counts.sessionNoCwd++
     for (const sib of entries) {
       if (!sib.name.startsWith(e.name + '.') || sib.name.endsWith('.jsonl')) continue
       const sd = join(targetDir, sib.name)
