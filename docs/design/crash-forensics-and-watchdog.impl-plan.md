@@ -1,0 +1,199 @@
+# 崩溃取证闭环与看门狗（E 组）实施计划
+
+基线: 3aa211936 | 来源设计: docs/design/crash-forensics-and-watchdog.md（v8） | 日期: 2026-09-11
+
+对抗审查证据：tech-design 双审循环 7 轮收敛，R7 主审 0 must-fix / 影响面审 0 must-fix，双报告显式判定「设计就绪」（终轮 suggestion + INFO 已全部清偿，收敛记录见设计文档附录 C v8，随 commit 3aa211936 提交）。
+
+## 0 章节映射
+
+| 内容 | 设计文档实际位置 |
+|------|------------------|
+| 背景/目标 | 开篇 SCQA + §1 背景目标（G-A/G-B/G-C/G-D，§1.2）+ In/Out-of-scope（§1.2 末） |
+| 终态/机制 | §3.1 终态（场景一/二/三 + 失败路径）· §3.3 关键决策 D1-D9（D1 台账写入点矩阵 :126-141 · D2 评估器 · D3 checkpoint 五契约 · D4 看门狗 · D5 滚动重启执行链 · D6 诊断导出 · D7 tee 轮转 · D8 入站守卫 · D9 supersession/守卫）· §3.4 探针表 P-A1~A7 |
+| 验收场景表 | §4 验收（A1-A8 + A3b/A3c，场景/步骤/通过标准三列，:250-265） |
+| 下一层拆分 | §5 下一层拆分（u1-u10 三批次 + 文件改动地图 + env 旋钮 + 清理声明 + checkpoint 五契约 + 待验证检查点 + 约束登记义务 + 文档同步义务，:267-290） |
+| 待验证检查点 | §5「待验证检查点」（退出码 86 跨平台 / 三类意外孤儿 reap 判据 / reattach 并发峰值 / memPressure 跨平台 API / 收割等待上界）+ §3.4 探针表「实施期门」列 |
+| 触发条件清单 SSOT | 附录 A（20 条） |
+| 版本与审查记录 | 附录 C（v1-v8） |
+
+所有 dev task 的坐标以本表为准；task 内引用设计段落时用「§3.3 D<n>」形式。
+
+## 1 目标快照（逐字摘录设计 §1.2）
+
+- **G-A 崩溃归因一键可达**：任何一次崩溃后，用户（或接报障的开发者）导出一个诊断包，里面直接回答「哪层、哪个 session、为什么、影响了谁、最近趋势」——不再人工翻五处日志。
+- **G-B 自愈可观测、触发条件有人算**：每次自愈动作（respawn / reload / 回收 / 重启 / 滚动重启）都在台账里可数；两份设计文档登记的全部重审触发条件有一个纯函数评估器周期性/按需计算，越线即出声（摘要行 + 诊断包内状态表）。
+- **G-C 内存压力走计划内路径、runtime 死后自动恢复**：水位临界先降级再优雅滚动重启（relay 在途任务推迟但有界可升级）；runtime 崩溃/滚动重启后新 runtime 按 checkpoint 自动恢复崩溃前的活跃 session（不再等用户逐个触碰）。
+- **G-D 批次补课清偿**：pi tee 单文件 size 上限（198MB 实证问题收口）、renderer 入站 parse 防御纵深、截断反转的 supersession 裁决、stale-ctx 审计覆盖的机器守卫。
+
+**Out-of-scope（设计 §1.2 显式裁决，实施不得扩入）**：E3/E4 架构级增量（崩溃分类差异化 respawn、在途 turn 一键重发、草稿持久化、面板级错误边界、getAppMetrics 联动）；base64 剥离；runtime 多进程隔离；联网上报/崩溃遥测后端。
+
+## 2 单元列表
+
+命名规则：设计 §5 的 u1-u10 为种子；因「单个 dev subagent ≤5 文件」约束拆分为子字母（偏差登记 #1-#3）。领地均为本次已核实存在的真实路径（核实日 2026-09-11）。
+
+| Unit | 职责 | 领地（精确文件路径；「新」=新建） | 依赖 | 隔离 | 验收条款（可机械核验） |
+|------|------|----------------------------------|------|------|------------------------|
+| u1a | 台账 schema SSOT（foundation）：layer/event/reason 枚举 + 字段集 + writer 接口类型 | `packages/shared/src/crash-journal-schema.ts`（新）+ `packages/shared/src/__tests__/crash-journal-schema.test.ts`（新）+ `packages/shared/src/index.ts`（导出行） | — | plain | shared vitest 绿：event 枚举 21 值 = 设计 §3.3 D1 schema（:116）逐一断言；字段全可空；JSON 往返不丢字段 |
+| u1b | runtime 台账 writer：10MB×3 段级联轮转 + append API + 风暴限流复用 | `packages/runtime/src/infra/crash-journal.ts`（新）+ `packages/runtime/src/infra/__tests__/crash-journal.test.ts`（新） | u1a | plain | runtime vitest 绿：写满 10MB 触发 `.jsonl`→`.jsonl.1`→`.jsonl.2` 级联、末 3 段保留；写目标仅 tmpdir（fs-guard 合规）；append 原子性（单行 JSONL） |
+| u1c | main 台账 writer 双胞胎 | `apps/electron/main/logs/crash-journal.ts`（新）+ `apps/electron/main/logs/__tests__/crash-journal.test.ts`（新） | u1a | plain | main 池 vitest 绿：同 u1b 轮转行为；与 runtime writer 共享 u1a 类型不复制定义 |
+| u1d1 | session 生命周期事件接线：pi crash / auto-respawn 四态 / deleted / pi 计划内终止（杀链发起处） | `packages/runtime/src/services/session/session-service.ts`（onSessionExit 链 + removeSessionEntry :130 汇聚点）+ `packages/runtime/src/services/session/pi-respawn.ts`（四态决策点）+ `packages/runtime/src/infra/pi/process-manager.ts`（destroySession/destroyAll 杀链发起处，与杀链决策日志同点双写） | u1a,u1b | plain | runtime vitest 绿：①抑制语义下（destroySession 先删 Map）deleted/shutdown 事件仍产生（exit handler 静默路径不经过的挂点断言）；②异常退出 crash 事件含 detailDigest；③计划内 SIGTERM 记 shutdown 不记 crash（#3/#16 归因保护） |
+| u1d2 | 收割/回收/worker 事件接线：reaped / reclaimed / plugin-worker crash | `packages/runtime/src/services/reap-orphan-pi.ts`（杀链命中处）+ `packages/runtime/src/services/session/idle-pi-reaper.ts`（reclaimManagedSession 摘除步）+ `packages/runtime/src/services/plugin-service/plugin-host-process.ts`（worker 退出计数器） | u1a,u1b | plain | runtime vitest 绿：三挂点各一条事件断言（reaped 含 pid/argv 判据摘要；reclaimed 含 idleMs/lastViewedAt） |
+| u1e | 条件信号事件接线：frame-truncated / registry-miss / watermark-daily | `packages/runtime/src/services/message-bus/message-bus.ts`（guardOutboundPushFrame 告警档 + miss 分支）+ `packages/runtime/src/transport/message-broker.ts`（reply 超限分支）+ `packages/runtime/src/infra/logger.ts`（既有 5min 水位定时器处聚合 watermark-daily：自然日窗口 min/max/avg + coverage 起止戳） | u1a,u1b,u9 | plain | runtime vitest 绿：8MB 告警帧→frame-truncated(reason=warn-tier)；注册表 miss→registry-miss；watermark-daily 单条/日、重启后 coverage 截断、40MB→trunc-tier |
+| u2 | 触发条件评估器（纯函数）+ main 每日巡检 | `apps/electron/main/diagnostics/trigger-evaluator.ts`（新，无 electron import）+ `apps/electron/main/diagnostics/__tests__/trigger-evaluator.test.ts`（新）+ `apps/electron/main/main.ts`（whenReady 启动巡检定时器 1-2 行） | u1a | plain | main 池 vitest 绿：附录 A 20 条全状态表（计数类 8 条数事件 / 趋势类 2 条消费 watermark-daily 含 coverage<50% 降权 / #17 恒 no-data 标 Gate W / 用户反馈型 requires-user-report 标注）；#8 四子句含 defer-limit 占比且分子排除 reason=absent-report；读不到台账→no-data 非静默；越线→WARN 行 + trigger-review 事件 |
+| u1f | main 侧事件接线：runtime 自身死亡四挂点 + renderer 事件 | `apps/electron/main/supervisor/runtime-supervisor.ts`（onRuntimeExit 判别式【非 before-quit 且 ≠86 且 stopping=false→crash】+ planned 86 行 + liveness 第四挂点 forceRestartForLiveness 同点双写 unresponsive）+ `apps/electron/main/window/window-factory.ts`（render-process-gone→reload/oom 事件）+ `apps/electron/main/window/recovery-policy.ts`（熔断转静态页事件）+ `apps/electron/main/main.ts`（before-quit 上下文 shutdown 行） | u1c | plain | main 池 vitest 绿：判别式真值表（stopping 早退分支不写 crash；86→shutdown；liveness 路径→unresponsive）；render-process-gone→reload 事件含 reason 分类 |
+| u3a | 诊断导出 main 侧：zip 打包（台账+日志尾部+水位+版本+评估器状态表+DiagnosticReports 指引）+ IPC | `apps/electron/main/diagnostics/export-diagnostic-bundle.ts`（新）+ `apps/electron/main/diagnostics/diagnostics-export-ipc.ts`（新，log-retention-ipc.ts 先例）+ `apps/electron/preload/preload.ts` + `packages/shared/src/ipc-channels.ts` + `packages/shared/src/ipc-payloads.ts` + `apps/electron/main/main.ts`（注册行） | u2,u4 | plain | main 池 vitest 绿（打包逻辑纯函数部分：文件收集清单/zip 结构/失败路径返回具体 errno）；知情提示文案常量存在 |
+| u3b | 诊断导出 renderer 入口：设置→系统分区 + 死态 UI 入口 | `packages/renderer/src/components/settings/system/SystemPage.vue`（新 Section 组件 + 挂载）+ `packages/renderer/src/api/domains/diagnostics.ts`（新）+ `packages/renderer/src/components/panel/MessageStream.vue`（死态块导出入口）+ i18n settings 命名文件 `packages/renderer/src/i18n/locales/{zh-CN,en-US}/settings.ts` | u3a | plain | renderer vitest 绿：入口组件渲染断言（用户可见 DOM）；导出按钮触发 IPC 调用断言；失败路径错误提示可见 |
+| u4 | checkpoint 持续维护 + marker + main 删除属主 | `packages/runtime/src/services/session/runtime-checkpoint.ts`（新：原子写 tmp+rename + 五契约 + 残留隔离 rename 幂等【ENOENT=已隔离/EACCES=原地残留】）+ `packages/runtime/src/services/session/session-service.ts`（attach/detach/respawn 维护钩子）+ `packages/runtime/src/services/session/idle-pi-reaper.ts`（5min tick 搭车刷新 lastActivityAt/lastViewedAt）+ `apps/electron/main/main.ts`（marker 启动写【单实例锁后】/will-quit 清 + before-quit 专属 await 链成功段删 checkpoint） | u1d1,u1d2 | plain | runtime+main vitest 绿：原子写中途崩溃读旧版；解析失败→checkpoint-corrupt 事件+退 lazy；失败现场 checkpoint-failed-<ts> 保留 3 份新覆盖旧；隔离 rename 幂等（同 err 重放不重复记事件）；偏漏恢复口径注释与实现一致 |
+| u5 | reattach 编排 + memPressure 即时查询 | `packages/runtime/src/services/startup-reattach.ts`（新：真补集过滤【occupancy/backgroundTasks/relayChildren/idleMs/lastViewedAt】+ 分批并发 2 + staleness guard + 高水位延迟即时查询）+ `packages/runtime/src/services/startup-background-init.ts`（收割 promise 暴露）+ `packages/runtime/src/infra/mem-pressure.ts`（新：os 级 swap/空闲内存，u7c 消费）+ `packages/runtime/src/index.ts`（WS listen 后独立并行挂编排） | u4 | plain | runtime vitest 绿：过滤公式逐条真值表（含快照布尔反向形态多恢复自收敛）；live 孤儿未收割完不 spawn；高水位延迟不依赖采样环历史（冷启动零数据可用）；reattach-skipped 事件逐 session |
+| u6 | 看门狗采样环 + 两级阈值 + memory-relief 降级 | `packages/runtime/src/infra/watchdog.ts`（新：60s process.memoryUsage 环 + heap_size_limit 百分比阈值 + 连续 2 周期持续才 relief + renderer LRU WS 通知）+ `packages/runtime/src/index.ts`（接线）+ `packages/renderer/src/composables/useMemoryPressure.ts`（新，LRU 收紧消费） | u1b,u5 | plain | runtime vitest 绿（fake timers）：70%/85% 阈值判定；relief 持续性条件（单周期不触发）；memory-relief 事件落台账；降级反弹缓解（执行后未回落不重复执行）；renderer composable 消费断言 |
+| u7a | 在途上报通道（extension/subagent-core 侧）：绝对计数 + 初始上报 + EnginePort 快照 | `packages/extension-protocol/src/extensions/`（新 marker 常量 + 上报 schema 文件）+ `extensions/universal/subagent-workflow/src/`（聚合上报出口：生命周期事件推送 + 初始上报 count=0【extension 加载完成时点】+ select 失败折叠重试）+ `packages/subagent-core/src/execution/engine/port.ts`（`inFlightSnapshot?` 可选成员 :153 EnginePort）+ `packages/subagent-core/src/execution/engine/engines/zcode/zcode-engine.ts`（实现快照）+ `packages/subagent-core/src/execution/engine/`（core→壳事件出口，core 闭包红线：core 不 import pi SDK） | — | plain | extensions 三连绿（typecheck/lint/test）+ subagent-core vitest 绿：绝对计数非增量；初始上报时点=加载完成；出口不进 agent_settled await 链；zcode 空闲常驻≠在途（activeSessions 空判定）；pi 引擎不实现 undefined 缺省 |
+| u7b | runtime 在途镜像 + marker 路由 + 协议面 | `packages/runtime/src/services/session/inflight-mirror.ts`（新：per-session 镜像 + 五 spawn 形态预置 0 + 生命周期对账重置 + errs 判别【已注入且从未收到上报】）+ `packages/runtime/src/infra/pi/event-adapter.ts`（marker 路由分支，不广播前端）+ `packages/shared/src/protocol.ts`（rollingRestart.status RPC + deferred/forced 事件类型） | u7a | plain | runtime vitest 绿：五形态预置 0 真值表；对账重置（crash/respawn/reattach/删除→0）；errs 判别不误伤常态 session；镜像条目与 session 生命周期同删 |
+| u7c | 滚动重启执行链 | `packages/runtime/src/services/session/rolling-restart.ts`（新：推迟判定【pi 谓词镜像 ∪ zcode inFlightSnapshot ∪ relay-registry】/30min 上限/双维硬升级 92%+memPressure/T-30s 二次预告/状态只读 RPC/专用退出码 86/deferred 事件字段语义【null+absent-report】）+ `packages/runtime/src/index.ts`（完整 shutdown 序逐行继承 + 步骤打点 + 引擎 dispose【server.stop 后 closeLogger 前】+ 取消推迟定时器首步）+ `apps/electron/main/supervisor/restart-policy.ts`（recordPlanned 分支）+ `apps/electron/main/supervisor/runtime-supervisor.ts`（86→立即重启零退避零计数） | u7b,u6,u5 | plain | runtime+main vitest 绿：谓词推迟/硬升级/30min 到点 reason=defer-limit 三形态；Path A 保活（settled 无在途）不推迟（!hasIdleTimer）；deferred 计数在场=数字/errs=null+absent-report；planned 边不进 counting 状态机；步骤打点序列完整 |
+| u7d | renderer 滚动重启横幅 | `packages/renderer/src/components/ui/RollingRestartBanner.vue`（新，复用 CrashRecoveredBar 视觉形态）+ `packages/renderer/src/composables/useRollingRestartStatus.ts`（新：重连/刷新拉取恢复）+ `packages/renderer/src/components/shell/AppShell.vue`（挂载 + 窗口级互斥）+ `packages/renderer/src/i18n/locales/{zh-CN,en-US}/rollingRestart.ts`（新命名空间）+ `packages/renderer/src/i18n/locales/{zh-CN.ts,en-US.ts}`（聚合行） | u7c,u3b | plain | renderer vitest 绿：预告/推迟中/红牌/已恢复转绿 30s 清除四态渲染断言；断连重连后拉取恢复横幅；重启完成窗口内重连横幅消失不重现 |
+| u8 | **Gate W（非代码门）**：水位复审 + 武装裁决（Gate W 复审产物落设计文档变更历史；`XYZ_RUNTIME_WATCHDOG_ARMED` 默认 off） | 无代码领地 | u6,u7c 交付 | — | 交付后挂起，输入 = V6 soak 水位数据 + 评估器 watermark-daily 趋势；裁决记录落档即关闭。**不阻塞 u6/u7 代码交付**（设计 §3.2 方案 B：代码完整交付、武装挂门） |
+| u9 | tee size 轮转（logger.ts 裁决推翻登记） | `packages/runtime/src/infra/logger.ts`（createPiSessionLog size 轮转 + `pi-` 前缀不变量 + 「不轮转」注释修订）+ `packages/runtime/src/infra/relay/relay-tee.ts`（同款轮转） | — | plain | runtime vitest 绿：50MB 上限触发旋段、`pi-` 前缀保持（cleanExpiredLogs 白名单可清）、正常退出尾部行完整（flush 走新流） |
+| u10a | 入站 parse 守卫 + 终止阀 | `packages/core/src/transport/ws-client.ts`（80MB 守卫 + 同 session 连续 3 次终止阀 + 切走切回重试订阅）+ `packages/core/src/transport/__tests__/`（新用例）+ `apps/electron/main/logs/renderer-log-handler.ts`（结构化标记→main.jsonl inbound-frame-dropped）+ renderer 静态错误提示（复用 useCrashRecoveryNotice 邻域，实施时定位最小挂点） | u1c | plain | core+main vitest 绿：超界帧丢弃不崩；第 3 次后该 session 静态提示、其余 session 不连坐；切走切回重试一次；inbound-frame-dropped 事件 ×4 |
+| u10b | stale-ctx 审计覆盖守卫 + O3-C supersession | `scripts/check-stale-ctx-audit-coverage.mjs`（新：解析 stale-ctx-audit.md §3 全仓普查清单 vs extensions/{taiji,universal,shared}/ 三组实际包列表，合并行斜杠拆分）+ `extensions/shared/ext-guards/docs/stale-ctx-audit.md`（O3-C 行 superseded-by 注记；注意权威表在该文件 §3）+ `package.json`（scripts 接线） | — | plain | 脚本行为验证：三组任一新建空包→红；普查表全含→绿；O3-C 注记 grep 可见 |
+
+## 3 DAG 图
+
+```mermaid
+graph TD
+  subgraph W1[Wave1 根单元]
+    U1A["u1a schema SSOT<br/>shared/crash-journal-schema.ts"]
+    U9["u9 tee 轮转<br/>infra/logger.ts + relay-tee.ts"]
+    U10B["u10b 审计守卫<br/>scripts + stale-ctx-audit.md"]
+    U7A["u7a 上报通道<br/>extension-protocol + subagent-workflow + subagent-core"]
+  end
+  subgraph W2[Wave2 writer 层]
+    U1B["u1b runtime writer<br/>infra/crash-journal.ts"]
+    U1C["u1c main writer<br/>main/logs/crash-journal.ts"]
+    U2["u2 评估器<br/>main/diagnostics/trigger-evaluator.ts"]
+  end
+  subgraph W3[Wave3 接线层]
+    U1D1["u1d1 session 事件<br/>session-service/pi-respawn/process-manager"]
+    U1D2["u1d2 收割回收事件<br/>reap-orphan-pi/idle-pi-reaper/plugin-host"]
+    U1E["u1e 条件信号<br/>message-bus/broker/logger(watermark-daily)"]
+    U10A["u10a 入站守卫<br/>core ws-client + renderer-log-handler"]
+    U1F["u1f main 侧事件<br/>supervisor/window + main.ts"]
+  end
+  subgraph W4[Wave4 恢复链]
+    U4["u4 checkpoint+marker<br/>runtime-checkpoint.ts + main.ts"]
+  end
+  subgraph W5[Wave5 编排+导出]
+    U5["u5 reattach 编排<br/>startup-reattach.ts + mem-pressure.ts + index.ts"]
+    U3A["u3a 导出 main 侧<br/>export-diagnostic-bundle + IPC"]
+    U7B["u7b 镜像+协议<br/>inflight-mirror + event-adapter + protocol.ts"]
+  end
+  subgraph W6[Wave6 看门狗+入口]
+    U6["u6 看门狗<br/>watchdog.ts + index.ts"]
+    U3B["u3b 导出入口<br/>SystemPage + MessageStream + i18n"]
+  end
+  subgraph W7[Wave7 武装链]
+    U7C["u7c 滚动重启执行<br/>rolling-restart.ts + index.ts + supervisor"]
+  end
+  subgraph W8[Wave8 收尾]
+    U7D["u7d 横幅<br/>RollingRestartBanner + i18n"]
+    U8{{"u8 Gate W<br/>非代码门"}}
+  end
+  U1A -->|"schema 类型"| U1B
+  U1A -->|"schema 类型"| U1C
+  U1A -->|"event 枚举"| U2
+  U1B -->|"writer API"| U1D1
+  U1B -->|"writer API"| U1D2
+  U9 -->|"同文件 logger.ts 串行"| U1E
+  U1B -->|"writer API"| U1E
+  U1C -->|"writer API"| U1F
+  U1C -->|"writer API"| U10A
+  U2 -->|"同文件 main.ts 串行"| U4
+  U1F -->|"同文件 main.ts 串行"| U4
+  U1D1 -->|"同文件 session-service.ts / idle-pi-reaper.ts 串行"| U4
+  U1D2 -->|"同文件 idle-pi-reaper.ts 串行"| U4
+  U4 -->|"checkpoint 格式"| U5
+  U2 -->|"状态表消费"| U3A
+  U4 -->|"同文件 main.ts 串行"| U3A
+  U7A -->|"marker 契约"| U7B
+  U5 -->|"同文件 index.ts 串行"| U6
+  U3A -->|"IPC 契约"| U3B
+  U1F -->|"同文件 runtime-supervisor.ts 串行"| U7C
+  U7B -->|"镜像查询 + 协议"| U7C
+  U6 -->|"阈值触发 + 同文件 index.ts 串行"| U7C
+  U5 -->|"memPressure + reattach"| U7C
+  U7C -->|"RPC 语义"| U7D
+  U3B -->|"同文件 i18n 聚合行串行"| U7D
+  U6 -.->|"武装输入"| U8
+  U7C -.->|"武装输入"| U8
+```
+
+关键路径：u1a→u1b→u1d2→u4→u5→u6→u7c→u7d（深度 8）。**任务本质串行声明**：恢复链→武装链是设计 §5 的批次结构本体（checkpoint 先于 reattach、reattach 先于滚动重启恢复语义），且 index.ts / session-service.ts / idle-pi-reaper.ts / main.ts 为热点共享文件按「同文件共改=串行边」处理；契约先行压扁不适用（非纯平移/重构，是新写代码）。并行宽度由 W1 四根单元保障（≥3 达标）。
+
+## 4 测试策略
+
+**框架红线**（项目 AGENTS.md）：vitest 唯一（禁 node:test / tsx --test）；配置在子包 vitest.config.ts，从子包目录运行；timer 用例用 fake timers；runtime 测试禁止触碰真实数据目录（global-setup fail-fast + fs-guard 切面，写删目标必须 `mkdtempSync(join(tmpdir(),...))` 自建自删）；main 池只测纯逻辑（electron 依赖模块不进 vitest）。
+
+**增量（单元开发期）**：
+
+| 包 | 命令（从仓库根） |
+|----|------------------|
+| packages/shared | `cd packages/shared && pnpm vitest run <file>` |
+| packages/runtime | `cd packages/runtime && pnpm vitest run <file>` |
+| packages/core | `cd packages/core && pnpm vitest run <file>` |
+| packages/subagent-core | `cd packages/subagent-core && pnpm vitest run <file>` |
+| apps/electron main | `cd apps/electron/main && npx vitest run <file>` |
+| packages/renderer | `cd packages/renderer && pnpm vitest run <file>` |
+| extensions（u7a） | `pnpm extensions:typecheck && pnpm extensions:lint && cd extensions/universal/subagent-workflow && pnpm test` |
+| 类型检查 | 对应包 `pnpm typecheck`（renderer 为 vue-tsc） |
+
+**全量（阶段 5 Gate A，项目收尾场景）**：`pnpm test`（根 script：packages+apps+extensions 全池 --no-bail）+ `pnpm lint` + extensions 三连 + `bash scripts/validate-runtime-bundle.sh`（u1b/u1c/u1e/u9 动过 runtime infra 打包面，bundle 深度验证必跑）。
+
+**门禁对应**：Gate A = 全量命令族全绿；Gate B = 设计 §4 场景表 A1-A8/A3b/A3c 在 dev app + 真实 pi 逐行执行（A4 依赖 `XYZ_RUNTIME_WATCHDOG_ARMED` / `XYZ_ROLLING_RESTART_DEFER_LIMIT_MS` 等 env 旋钮注入，不 mock 判定逻辑）。
+
+## 5 合理偏差登记表
+
+| # | 偏差 | 理由 | 状态 |
+|---|------|------|------|
+| 1 | 设计 u1 拆为 u1a/u1b/u1c/u1d1/u1d2/u1e 六个派发单元 | 全局 subagent 约束 ≤5 文件/单元；u1 原始领地 10+ 文件。单元语义与验收对应关系不变（A1/A8） | 初始登记 |
+| 2 | 设计 u3 拆为 u3a（main+IPC+shared）/u3b（renderer 入口） | 跨进程三层（shared/preload/main/renderer）单单元超 5 文件 | 初始登记 |
+| 3 | 设计 u7 拆为 u7a/u7b/u7c/u7d | u7 原始领地 12+ 文件，最大单元；拆后每单元 ≤5 文件 | 初始登记 |
+| 4 | 设计「滚动重启编排模块并入看门狗模块」→ watchdog.ts（u6）与 rolling-restart.ts（u7c）两个模块文件 | 领地互斥需要（两单元并行度）；模块边界比设计措辞更细，行为契约不变 | 初始登记 |
+| 5 | 评估器落位选「main 侧独立文件」（设计给 shared/main 两选项） | 消费双出口（导出+巡检）都在 main；main vitest 纯函数池现成；避免 shared 混入 main-only 关注点 | 初始登记 |
+| 6 | 本环境 Agent 工具不暴露 model 参数，无法按全局路由表指定 glm-5.3-flash；编码统一派 `u-dev`（dev-flow 编码执行 agent，模型挂已配置 provider） | 环境无该旋钮；u-dev 即本 skill 指定编码执行体 | 初始登记 |
+| 7 | u7d i18n 走独立命名空间文件 rollingRestart.ts（非 panel/sidebar 追加） | 与 u3b 的 settings.ts 键文件领地互斥，消除并行写冲突面 | 初始登记 |
+| 8 | 新增 u1f（main 侧事件接线单元） | 计划自检发现 D1 矩阵 main 侧挂点（runtime crash 判别式 / planned 86 / liveness 第四挂点 / renderer reload/oom / before-quit shutdown）无领地属主；从 u7c 与 u4 中析出，取证链批内完成不被武装链阻塞 | 初始登记 |
+
+## 6 状态表
+
+| Unit | 状态 | 轮次 | 证据指针 |
+|------|------|------|----------|
+| u1a | pending | — | — |
+| u1b | pending | — | — |
+| u1c | pending | — | — |
+| u1d1 | pending | — | — |
+| u1d2 | pending | — | — |
+| u1e | pending | — | — |
+| u1f | pending | — | — |
+| u2 | pending | — | — |
+| u3a | pending | — | — |
+| u3b | pending | — | — |
+| u4 | pending | — | — |
+| u5 | pending | — | — |
+| u6 | pending | — | — |
+| u7a | pending | — | — |
+| u7b | pending | — | — |
+| u7c | pending | — | — |
+| u7d | pending | — | — |
+| u8 (Gate W) | blocked-on-data（非代码门，不阻塞交付） | — | — |
+| u9 | pending | — | — |
+| u10a | pending | — | — |
+| u10b | pending | — | — |
+
+## 7 残留风险与变更历史
+
+**残留风险**：
+- 设计 §5「待验证检查点」五项（退出码 86 跨平台语义 / zcode appserver·sandbox fork·忽略 SIGHUP 终端三类意外孤儿 reap 判据 / reattach 并发 2 的 spawn 峰值 / memPressure 跨平台 API / 收割等待上界实测）——u5/u7c 实施期内验证，无法机械判定的落入 Gate B 场景执行。
+- 约束登记义务五项（设计 §5 末）随对应单元交付在阶段 6 终态同步前集中登记 constraints.json；文档同步义务（AGENTS.md / feature-map / TEST-STRATEGY / EnginePort 权威源）同批。
+- renderer 死态 UI 的最小挂点在 crash-resilience 交付物内，u3b 实施时定位（领地已限定 MessageStream.vue 死态块）。
+- A3c 判死时窗最坏 10-15 分钟（undici 300s×3）：AbortSignal.timeout 补齐前该验收用例等待上界按此口径（设计 §4 A3c 原文）。
+
+**变更历史**：
+- v1（2026-09-11）：初版基线。20 单元（17 代码 + 1 门 + 拆分产生子单元映射设计 u1-u10）；W1 四根并行；关键路径深度 8 已声明本质串行原因；模型路由环境限制登记（偏差 #6）。
