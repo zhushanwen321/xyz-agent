@@ -65,13 +65,20 @@ graph TD
 | U3 | e2e 历史召回为构造性断言（fixture 回显历史行数） | 合理——真实 LLM 召回归 U4 真机 S1 |
 | U3 | server 删除 chat run 跳过 per-run askUser 绑定的特判；pi-engine 删三个 chat 私有死函数 | 合理——链路解耦后死代码（TS noUnusedLocals 拦截无法保留）；registry 本体与 interact 删除仍归 U5 |
 | U3 | 过渡期事实：U3 已落而 U2 未合入期间，chat 流的 core 旧链路在首轮收割后无法经 interact 续聊 | 已知——DAG 定义 U4 依赖 U2+U3，双单元合入后链路完整；U2 在途 |
+| U2 | doFinalizeRoundToIdle 入口未加 status==='running' 硬 assert（设计 §3.4 配套断言） | 合理——与旧 chat 载体死代码共存矛盾（watchdog/spawnFailure/roundFailed 均 tryTransition(closed) 后调 roundToIdle），硬 assert 使死代码不可编译；Continuation 终态守卫 early-return 构造性保证 + close 抢先用例覆盖；U6 删死代码后补硬断言 |
+| U2 | D7 失败轮「前值 ?? 失败摘要」的前值保留分支在 Continuation 主链不可达 | 合理——Continuation 轮始清 result（承接 resumeColdRound 的 §5.4 执行态语义，先于失败簿记）→ 主链失败轮 result 恒写失败摘要；「前值 ??」规则在 doFinalizeRoundToIdle 载荷层完整实现（专用用例在），集成用例按主链实际形态断言 |
+| U2 | notifyGate 门在 finalize 之后判 closedReason，B#19 竞态窗改由 early-return 构造性拦截 | 合理——真实 doFinalizeRoundToIdle 会清 closedReason；early-return（status 终态面，先于门）已拦 cancelled/parent-new 注入；门按设计保留为正交第二闸（防御），门语义用例以「running + closedReason 残留」形态验证 |
+| U2 | Continuation 轮不挂 idle timer（armChatIdleTimer 不再被新编排触发） | 合理——轮末进程随 agent_settled 回收、轮间无保活进程，「5min idle 关闭」语义随长驻消亡（设计 §2.2#5 预告）；30 天 idle-gc 只归档不终态化不变；旧 arm 点死代码 U6 删 |
+| U2 | 旧测试最小适配 5 文件（删 3 用例 + 改写 5 用例） | 合理——delivery-methods 删 EPIPE（interact 面退役，覆盖归 pi 包）与 disarm idle timer（挂载面退役）；first-round-watchdog 删未知相位静默（相位消费面退役）；其余为签名/锚点/mock 最小适配；大规模删除仍归 U6 处置表 |
+| U2 | extensions 5 用例破损留 U6 处置（未越界修） | 已知过渡态——subagent-message-close 3 + one-shot-upgrade 1（mock 缺 canUpgradeToConversation）+ chatmode-round-notify-real-chain 1（anchor 回填退役，sessionFile 回填改由 run 应答 outcome.sessionFile 承载，kickOffChatRound resolve 段已实现）；同根因均为 U2 编排改写，处置表已排 U6 批；extensions 其余 901 用例绿 |
+| U2 | Windows 收割通道经私有方法 reapOrphansViaMirrorSnapshot 直调覆盖 | 合理——vitest worker 内 process.platform 不可 stub；platform→通道一行字面分派由 U4 真机 Windows 验收承接（本基线轮在 macOS 跑），通道语义（置死前快照过滤活孤儿 + 异步 taskkill + 无 spawnSync）已全测 |
 
 ## 6 状态表
 
 | Unit | 状态 | 轮次 | 证据指针 |
 |------|------|------|---------|
 | U1 | committed | 1 | commit bc9322d05：SDK 7 文件 + resume-schema.test.ts 12 用例；重跑 152 passed；typecheck exit 0；读端三包零改动。解冻前置 = C-pi-14 守卫落地（e7740ca39，过渡豁免 104 文件） |
-| U2 | in-progress | 1 | 接替程序在途：前任 dev 完成实现后汇报随上下文压缩丢失（工作区在途 diff 11 文件 +653/-344 全在领地内，新增 conversation-continuation.ts + 两测试文件 39/39 绿主会话探测通过，settled-watchdog.ts 未动属 U6 面）；接替 dev 复核现状 + 补缺 + 全量验证中 |
+| U2 | committed | 1 | commit 51e971a82：14 文件 +2265/-344（新增 conversation-continuation.ts + 2 测试文件 39 用例）；主 agent 独立重跑 2886 passed \| 4 skipped（193 文件）+ tsc 0；前任 dev 汇报随压缩丢失、接替 dev 派出 200s 即召回（未产生编辑）后按前任迟到送达的完整汇报硬核验流转；7 偏差登记 §5 |
 | U3 | committed | 1 | commit 2b7bf4f11：pi CLI 9 文件；重跑 336 passed（26 文件）+ typecheck exit 0；e2e 构造性历史召回 + 收割上报断言 |
 | U4 | pending | 0 | — |
 | U5 | pending | 0 | — |
@@ -87,3 +94,4 @@ graph TD
   - 2026-09-11 **解冻（用户裁决「cherry pick」后发现新事实修正为守卫+豁免路线）**：完整 cherry-pick d484b3dac 时发现其携带方案 B 数据布局迁移（`<dataDir>/pi/agent` → `<dataDir>/agent`，含 migrate-pi-layout-v2 迁移脚本，属未合并的 session-reader 分支 U18）——把未合并的布局迁移拖进 H1 基座超出授权，已 abort。改行**守卫落地 + 过渡豁免**路线（e7740ca39）：守卫脚本+单测从 sweep 分支原样引入，3 个方案 B 交付物专属豁免条目剔除（随其合并再回），104 个含 pi/ 字面量文件登记过渡豁免（统一理由：本分支尚为 pi/ 子层布局，方案 B 合并时随 sweep 清理后回收）；R2 放行 fixture 换本分支既有豁免文件。守卫复跑 0 命中（2699 文件/112 豁免）、单测 19/19 绿。
   - 2026-09-11 **L 组 session 遗留收尾**（用户指令 sess_47c1bc22 完整处理）：① f6-third-site-wip stash 已消失，其内容经取证被 HEAD 的 F6 提交（d647b289e + 5186f6356）覆盖，无残留；剩余 3 条 stash 均属其他分支工作（dev-0.9.14 / cw/scoped-model / dev-0.9.5），不在本分支融合范围、未动。② childStateChanged 行为契约已登记 **C-pi-15**（constraints.json + constraints.md 再生，98 条）——引擎任务子进程 spawn/退出必须上报 host/childSpawned/childStateChanged（killed 类型层必含），宿主镜像置死 + SR-4 dialog 取消双依赖。
   - 2026-09-11 **sess_8590cc5a（subagent 通知机制）遗留并入**（用户指令当前 session 一并处理）：唯一未修遗留「pi 热路径续聊轮零通知」的处置 = 本设计自身（该 session 呈现的选项 1「等 H1 落地自然修复」）——D7 每轮 run 应答驱动 settle + 轮末分流通知，热路径整族随 U5/U6 删除；登记为 U4 真机 S1 显式回归目标（S1 执行须压子进程存活窗口）。附带观察「主轮 error 终态后 UI 流式气泡冻结不重置」列入 U4 真机核验项（复现则 renderer 侧独立修复，不扩 H1 scope）。U2 前任 dev 汇报随上下文压缩丢失，按接替程序补派（在途 diff 核验为领地内、新增用例 39/39 绿）。
+  - 2026-09-11 **U2 流转 committed（51e971a82）**：接替 dev 派出 200s 即召回（原 ID 截断致 TaskOutput 查无——完整 ID 下前任 dev 仍在跑并正常送达完整汇报），按前任汇报硬核验（文件集合 ⊆ 领地逐一对上、全量独立重跑 2886 passed 与汇报逐字相符、tsc 0）后流转。教训入账：后台 agent 句柄查询必须用完整 agentId；「通知未到 ≠ agent 已死」。就绪集重算：U4 就绪（U2+U3 双 committed），U5 仍锁于 U4。
