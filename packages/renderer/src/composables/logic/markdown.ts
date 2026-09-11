@@ -281,7 +281,8 @@ async function getMarkdown(): Promise<MarkdownIt> {
   // 消费成 code_inline token，core rule 接触不到（code_inline 不是 text），只能在渲染期二次识别。
   // 走与 core rule 对称的候选正则 + 白名单（env 透传），产出
   // <code>...<a class="md-filepath" data-path="...">path</a>...</code>——
-  // 保留等宽 code 视觉，路径可点击（点击处理统一走 useMarkdownInteractions）。
+  // 保留等宽 code 视觉，路径可点击（点击处理由 ui 包 MarkdownRenderer.vue 的 onClick
+  // 事件委托原生实现：代码块复制 / .md-filepath / .md-ambiguous / 外链四路分流）。
   md.renderer.rules.code_inline = (tokens, idx, _options, env) => {
     const mdEnv = env as MarkdownEnv | undefined
     return `<code>${linkifyFilePathsHtml(tokens[idx].content, mdEnv?.filePaths, mdEnv?.localFiles)}</code>`
