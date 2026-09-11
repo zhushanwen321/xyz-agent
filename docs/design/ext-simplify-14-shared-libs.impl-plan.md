@@ -69,3 +69,4 @@ graph TD
 - 残留风险：①file-lock-external-removal.test.ts 改 sync 后断言形态以测试绿确认（§7.4 ①）；②worker 改 sync 竞争时序等价性由 V1 终值断言兜底（§7.4 ②）；③版本 bump 后 pnpm-lock.yaml 若因 workspace 协议需要更新，随单元 commit 带上。
 - 变更历史：2026-09-12 初版（来源设计 v4，双审查 0 must-fix 证据齐）。
 | 6 | u1/u2 | V2（pi CLI 实测 permission/rename-session 保存链路）与 V4（cache-probe 采集 + analyze.py）无实跑证据 | 待执行（阶段 5 Gate B 统一补跑，不静默跳过） | 14 区审查 unreasonable #2（medium） |
+- 2026-09-12 Gate B 组 2 证据（阶段 5）：V2 = pass（隔离 agentDir 下 pi CLI 实测：/permission strict 触发 saveConfig→withFileLockSync 写 permission-ext-config.json 正确落盘；/auto-rename off 触发 rename-session-ext-config.json 落盘；config 目录 0 个 .lock 残留；两会话 0 个 ELOCKED 报错）；V4 = pass（3 个真实会话采集：baseline entry {v:2, seq:1, baseline:true, changed:['*']} + normal entry 增量形态 {seq:2, changed:['spFull']} + 跨 session skill 文件修改致 skills hash 变化；analyze.py exit 0 五部分输出正常）。本计划偏差 #6（V2/V4 待执行）就此关闭。
