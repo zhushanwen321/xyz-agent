@@ -137,6 +137,12 @@ export type StartHandlerResult = {
 
 export interface ListHandlerInput {
   includeFinished?: boolean;
+  /**
+   * [H2 W1，设计 subagent-workflow-record-unification §3.3 D1①] 同时列出 workflow
+   * 脚本 agent() 派发的 record（origin="workflow"）。缺省 false——list 默认只展示
+   * 手动 tool 派发的 subagent；排查 workflow 子代理时显式传 true。
+   */
+  includeWorkflow?: boolean;
   limit?: number;
 }
 
@@ -234,7 +240,7 @@ export function endedMessageGuard(service: SubagentService, id: string, original
       return new Error(
         `subagent ${id} was deliberately closed by user (closedReason: ${snap.closedReason}) — ` +
         `it cannot be messaged or resumed; nothing can reattach to it. ` +
-        `Recovery: start a new subagent (action:'start'); use action:'list' with includeFinished:true to review its final output.`,
+        `Recovery: start a new subagent (action:'start'); use action:'list' with includeFinished:true to review its final output (add includeWorkflow:true to also see workflow-dispatched subagents).`,
       );
     }
     return new Error(
@@ -443,15 +449,17 @@ function countPendingSyncRecords(service: SubagentService): number {
 
 /**
  * list 数据源（诚实声明）：
- * collectRecords(limit, statusFilter) 合并内存(running) + 磁盘(重建)。磁盘源天然
- * 跨 session 可见——/new /resume /fork 后前 session 的终态 record 仍在 sessions
- * 目录里（直到 GC）。内存源仅当前 session 的 running record。
+ * collectRecords(limit, statusFilter, includeWorkflow) 合并内存(running) + 磁盘(重建)。
+ * 磁盘源天然跨 session 可见——/new /resume /fork 后前 session 的终态 record 仍在
+ * sessions 目录里（直到 GC）。内存源仅当前 session 的 running record。
+ * [H2 W1] origin==="workflow" 的 record 默认过滤（D1①），includeWorkflow:true 放行。
  */
 export function listHandler(
   service: SubagentService,
   input: ListHandlerInput | undefined,
 ): ListHandlerResult {
   const includeFinished = input?.includeFinished === true;
+  const includeWorkflow = input?.includeWorkflow === true;
   // limit 夹紧：下限 1，上限 MAX_LIST_LIMIT
   const rawLimit = input?.limit ?? DEFAULT_LIST_LIMIT;
   const limit = Math.max(1, Math.min(rawLimit, MAX_LIST_LIMIT));
@@ -459,7 +467,7 @@ export function listHandler(
   // collectRecords 是 service 核心能力：statusFilter 决定 running-only 还是全部。
   // 防截断（先多取再过滤）已下沉到 store 层——这里直接传 limit + filter。
   const filter = includeFinished ? "all" : "running";
-  const all = service.queries.collectRecords(limit, filter);
+  const all = service.queries.collectRecords(limit, filter, includeWorkflow);
   // collectRecords 磁盘源是 light（无 totalTokens/model 等）：SubagentListItem 对
   // LLM 消费方暴露 totalTokens/model，逐项 getFullRecord 补全（per-file 缓存，仅首次
   // 全量解析；显式 tool 调用非渲染热路径，成本可接受）。
@@ -497,7 +505,7 @@ export async function cancelHandler(
           `cancel only works for subagents spawned by the current process.`,
       );
     }
-    throw new Error(`No subagent record with id "${id}". It may have finished — use action:'list' with includeFinished:true to verify.`);
+    throw new Error(`No subagent record with id "${id}". It may have finished — use action:'list' with includeFinished:true to verify (add includeWorkflow:true to also see workflow-dispatched subagents).`);
   }
   // step 2: controller 检查（controller 为 undefined 表示 record 已终态或未启动）
   if (rec.mode !== "background") {
@@ -696,7 +704,7 @@ function assertAndLookupForkFromSource(service: SubagentService, id: string): Su
   if (!source) {
     throw new Error(
       `No subagent record with id "${id}". It may never have existed or been garbage-collected — ` +
-      `use action:'list' with includeFinished:true to verify the id.`,
+      `use action:'list' with includeFinished:true to verify the id (add includeWorkflow:true to also see workflow-dispatched subagents).`,
     );
   }
 
@@ -720,7 +728,7 @@ function assertAndLookupForkFromSource(service: SubagentService, id: string): Su
     throw new Error(
       `subagent ${id} was deliberately closed by user (closedReason: ${source.closedReason}) — ` +
       `deliberately-closed records cannot be resumed or branched from; nothing can reattach to them. ` +
-      `Recovery: start a fresh subagent (action:'start'); use action:'list' with includeFinished:true to review its final output.`,
+      `Recovery: start a fresh subagent (action:'start'); use action:'list' with includeFinished:true to review its final output (add includeWorkflow:true to also see workflow-dispatched subagents).`,
     );
   }
 

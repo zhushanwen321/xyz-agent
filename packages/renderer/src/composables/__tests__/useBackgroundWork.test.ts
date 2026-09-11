@@ -121,6 +121,36 @@ describe('useBackgroundWork', () => {
     const { hasBackgroundWork } = useBackgroundWork()
     expect(hasBackgroundWork('s1')).toBe(true)
   })
+
+  // H2 W1（record-unification D1③）：workflow 脚本派发的 subagent（origin='workflow'）
+  // 不算本 session 的后台工作——其生命周期由 workflow run 承载，混入会让主 session
+  // 在 workflow 运行期间被误判 working（列表恒亮「工作中」）。
+  it('W1: 仅 workflow origin 的 subagent running → false（不被 workflow 派发 record 绑架）', () => {
+    const sub = useSubagentStore()
+    sub.applyRecords('s1', [
+      makeSubagent({ subagentId: 'sub-wf-1', status: 'running', origin: 'workflow' }),
+      makeSubagent({ subagentId: 'sub-wf-2', status: 'running', origin: 'workflow' }),
+    ])
+    const { hasBackgroundWork } = useBackgroundWork()
+    expect(hasBackgroundWork('s1')).toBe(false)
+  })
+
+  it('W1: workflow origin + 手动 tool running 混合 → true（tool record 判定不受影响）', () => {
+    const sub = useSubagentStore()
+    sub.applyRecords('s1', [
+      makeSubagent({ subagentId: 'sub-wf-1', status: 'running', origin: 'workflow' }),
+      makeSubagent({ subagentId: 'sub-tool-1', status: 'running' }),
+    ])
+    const { hasBackgroundWork } = useBackgroundWork()
+    expect(hasBackgroundWork('s1')).toBe(true)
+  })
+
+  it('W1: origin 缺省（存量 record，undefined = tool 语义）仍参与判定（零迁移保障）', () => {
+    const sub = useSubagentStore()
+    sub.applyRecords('s1', [makeSubagent({ subagentId: 'sub-legacy', status: 'running' })])
+    const { hasBackgroundWork } = useBackgroundWork()
+    expect(hasBackgroundWork('s1')).toBe(true)
+  })
 })
 
 /**
@@ -176,6 +206,24 @@ describe('TC9: useSessionDerivations.derivedStatus working 态回归（useBackgr
 
     // 轮终回写 running + result（resumable）→ 不算 working，回落 done
     sub.applyRecords(sessionId, [makeSubagent({ subagentId: 'sub-tc9c', status: 'running', result: '本轮产出' })])
+    expect(derivedStatus(sessionId).value).toBe('done')
+  })
+
+  // [H2 W1] 仅 workflow origin 的 subagent running → derivedStatus 不进 working
+  //（用户可见行为：session 列表不亮「工作中」——workflow 派发 record 由 run 视图承载）。
+  it('W1: 仅 workflow origin subagent running → derivedStatus = done（非 working）', async () => {
+    const { useSessionDerivations, invalidateStatusCache } = await import(
+      '@/composables/features/chat/useSessionDerivations'
+    )
+    invalidateStatusCache()
+
+    const { derivedStatus } = useSessionDerivations()
+    const sub = useSubagentStore()
+    const sessionId = 's-wf-only'
+
+    sub.applyRecords(sessionId, [
+      makeSubagent({ subagentId: 'sub-wf-only', status: 'running', origin: 'workflow' }),
+    ])
     expect(derivedStatus(sessionId).value).toBe('done')
   })
 

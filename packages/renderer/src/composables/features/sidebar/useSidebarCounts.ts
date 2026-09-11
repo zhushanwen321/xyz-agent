@@ -32,8 +32,13 @@ export function useSidebarCounts(focusedSessionId: Ref<string | null>) {
   // D8 口径收窄：badge 判据 =「进行中」桶 SSOT（subagentBucket === 'active'，D6 #5）——
   // 与 SubagentList/FilterBar 的 active 计数恒同源（含 done 投影排除 + waiting 计入语义），
   // 消除 badge 与列表计数口径漂移
+  // H2 W1（record-unification D1②）：workflow 脚本派发的 record（origin==='workflow'）
+  // 不计入 subagent badge——workflow 进度由 workflow tab/run 视图承载，混入会虚亮
+  // subagent 徽标。origin 缺省（undefined = tool 语义，存量 record）恒计入。
   const subagentRunningCount = computed(
-    () => subagentList.value.filter((r) => subagentBucket(r) === 'active').length,
+    () =>
+      subagentList.value.filter((r) => r.origin !== 'workflow' && subagentBucket(r) === 'active')
+        .length,
   )
   const workflowCount = computed(() => workflowStore.recordsOf(focusedSessionId.value ?? '').value.length)
   const workflowRunningCount = computed(

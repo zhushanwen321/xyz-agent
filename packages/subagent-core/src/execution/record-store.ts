@@ -270,6 +270,19 @@ function entryNum(d: Record<string, unknown>, k: string): number | undefined {
   return typeof d[k] === "number" ? (d[k] as number) : undefined;
 }
 
+/**
+ * 来源域投影（H2 W1，设计 subagent-workflow-record-unification §3.3 D1）：origin 经
+ * 字面量守卫（非法值/缺省 → undefined = "tool" 语义，存量 entry 零迁移）；parentRunId
+ * 经安全 string 读取。缺省语义对齐 ExecutionRecord.origin 注释——消费面按
+ * `=== "workflow"` 负向判定，缺省（undefined）恒视为手动 tool 派发。
+ */
+function readEntryOriginFields(d: Record<string, unknown>): Pick<SubagentRecord, "origin" | "parentRunId"> {
+  return {
+    origin: d.origin === "workflow" || d.origin === "tool" ? d.origin : undefined,
+    parentRunId: entryStr(d, "parentRunId"),
+  };
+}
+
 /** 终态域投影：status 只认 "closed" 字面量（其余含缺省 → "running"，旧调用方行为不变）；
  *  closedReason 经枚举守卫（非法/缺省 → undefined）。 */
 function readEntryTerminalFields(
@@ -342,6 +355,9 @@ function rebuildEntryRecord(id: string, d: Record<string, unknown>): SubagentRec
     rootSessionId: entryStr(d, "rootSessionId"),
     parentRecordId: entryStr(d, "parentRecordId"),
     depth: entryNum(d, "depth") ?? 0,
+    // [H2 W1] 来源域透传（origin/parentRunId）：漏本行则主 session entry 重建路径
+    // 丢 origin，重启后 workflow record 逃过投影过滤（D1 ①-④ 全失效）。
+    ...readEntryOriginFields(d),
     endedAt: entryNum(d, "endedAt"),
     turns: entryNum(d, "turns") ?? 0,
     totalTokens: entryNum(d, "totalTokens") ?? 0,
@@ -625,12 +641,64 @@ export class RecordStore {
    *
    * session 隔离：同一 cwd 下多个 Pi session 共享 sessionsDir，靠 rootSessionId
    * 区分。内存与磁盘源都按 rootSessionFilter 过滤后再 merge/sort/slice。
+   *
+   * [H2 W1] includeWorkflow（设计 subagent-workflow-record-unification §3.3 D1）：
+   * 缺省 false = 过滤 origin==="workflow" 的 record（subagents tool list / TUI
+   * /subagents 等消费面默认不展示 workflow 派发的 record）；true = 全量（排查通道）。
+   * 过滤只在查询消费面——治理路径（recoverOrphanRecords / recoverEntryOnlyOrphans /
+   * revive）与本参数无关，永远全量可见（D1 ⑥ 负向规格）。
    */
   collectRecords(
     limit: number,
     statusFilter: StatusFilter = "all",
     rootSessionFilter?: string,
+    includeWorkflow: boolean = false,
   ): SubagentRecord[] {
+    let result = [...this.mergedRecords(rootSessionFilter).values()];
+
+    // 3. statusFilter。
+    if (statusFilter === "running") {
+      result = result.filter((r) => r.status === "running");
+    }
+
+    // 3.5 [H2 W1] origin 过滤（缺省排除 workflow 来源）。负向判定：origin 缺省
+    // （undefined = "tool" 语义）与显式 "tool" 均保留。
+    if (!includeWorkflow) {
+      result = result.filter((r) => r.origin !== "workflow");
+    }
+
+    // 4-5. 排序 + slice。
+    return result
+      .sort(RecordStore.compareRecords)
+      .slice(0, limit);
+  }
+
+  /**
+   * [H2 W1] 按 workflow run id 列 record（parentRunId 查询入口，W2 run 视图进度 /
+   * W3 下钻消费）。查询域 = collectRecords 现状口径（内存 ∪ 磁盘重建 ∪ manifest 补充，
+   * 设计 D2「查询域显式」）。不过滤 origin——按 parentRunId 显式查询即下钻/治理语义
+   * （tool 来源 record parentRunId 恒 undefined，不会被误中）。
+   *
+   * 返回排序与 slice 口径同 collectRecords（STATUS_PRIORITY + startedAt desc + limit）。
+   */
+  collectRecordsByParentRunId(
+    parentRunId: string,
+    limit: number,
+    rootSessionFilter?: string,
+  ): SubagentRecord[] {
+    return [...this.mergedRecords(rootSessionFilter).values()]
+      .filter((r) => r.parentRunId === parentRunId)
+      .sort(RecordStore.compareRecords)
+      .slice(0, limit);
+  }
+
+  /**
+   * collectRecords / collectRecordsByParentRunId 共用的三源合并（磁盘重建 ∪ manifest
+   * 补充 ∪ 内存覆盖）。返回 byId Map（内存优先——running record 是活态比磁盘重建新）。
+   * [D1 ⑤] 磁盘重建投影本身不做任何 origin 过滤——record 全量重建，过滤只在上层
+   * 查询消费面按参数生效。
+   */
+  private mergedRecords(rootSessionFilter?: string): Map<string, SubagentRecord> {
     const byId = new Map<string, SubagentRecord>();
 
     // 1. 磁盘源（重建终态 record）。 reconstructAll 已按 rootSessionFilter 过滤。
@@ -672,16 +740,7 @@ export class RecordStore {
       byId.set(r.id, RecordStore.recordToSubagent(r));
     }
 
-    // 3. statusFilter。
-    let result = [...byId.values()];
-    if (statusFilter === "running") {
-      result = result.filter((r) => r.status === "running");
-    }
-
-    // 4-5. 排序 + slice。
-    return result
-      .sort(RecordStore.compareRecords)
-      .slice(0, limit);
+    return byId;
   }
 
   // ── 孤儿终态恢复（residual-fixes 设计 §6.1.2）──────────────────
@@ -1520,10 +1579,16 @@ export class RecordStore {
       // U2：engineHandle 经 entry 持久化（register/archive 双写点均经本投影），无则 undefined 自然省略
       engineHandle: r.engineHandle,
       // [U5 修复 U2 披露的投影缺口] 同步收集两字段随本投影持久化（register entry /
-      // archive entry 双写点）——原缺失时闭合判定 flushBatch 重建、E1 重建扫描等消费方
-      // 读不到原始值。undefined 经 JSON.stringify 自然缺省，旧 entry 零迁移。
+      // archive entry 双写点均经本投影），原缺失时闭合判定 flushBatch 重建、E1 重建扫描等
+      // 消费方读不到原始值。undefined 经 JSON.stringify 自然缺省，旧 entry 零迁移。
       collectMode: r.collectMode,
       batchFinalized: r.batchFinalized,
+      // [H2 W1] 来源身份两字段随本投影持久化（register/archive/reportRecordTransition
+      // 全部写点均经本投影 → toSubagentRecordEntry）。漏投影则 entry 无 origin，重启后
+      // 重建链拿不到来源、D1 投影过滤全失效（同型先例：H1 U5 缺字段事故）。
+      // undefined 经 JSON.stringify 自然缺省，存量 record 序列化字节不变（零迁移）。
+      origin: r.origin,
+      parentRunId: r.parentRunId,
     };
   }
 }

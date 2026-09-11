@@ -151,8 +151,13 @@ export interface SubagentQueries {
   /** [v8.5 A1/B] 全态查找：任意状态 × 任意归属的 record 快照（message 拒绝文案分流
    *  与 fork-from 源解析共用）。id 在内存与磁盘均不存在返回 undefined。 */
   lookupRecordAnyState(id: string): SubagentRecord | undefined;
-  /** 合并内存 + 磁盘 record（/subagents list + tool list 消费，按 rootSessionId 过滤）。 */
-  collectRecords(limit: number, statusFilter?: StatusFilter): SubagentRecord[];
+  /** 合并内存 + 磁盘 record（/subagents list + tool list 消费，按 rootSessionId 过滤）。
+   *  [H2 W1] includeWorkflow 缺省 false = 过滤 origin==="workflow"（D1 投影过滤①③④）；
+   *  true = 排查通道全量。 */
+  collectRecords(limit: number, statusFilter?: StatusFilter, includeWorkflow?: boolean): SubagentRecord[];
+  /** [H2 W1] 按 workflow run id 列 record（内存 ∪ 磁盘重建 ∪ manifest 口径，不过滤
+   *  origin——W2 run 视图进度 / W3 下钻消费）。 */
+  collectRecordsByParentRunId(parentRunId: string, limit: number): SubagentRecord[];
   /** [perf] 单 record 详情懒加载（全量：eventLog/displayItems/result/turns/tokens）。 */
   getFullRecord(id: string): SubagentRecord | undefined;
   /** 订阅 store 变更（widget/list requestRender）。返回取消订阅。 */
@@ -454,7 +459,16 @@ export class SubagentService {
   readonly queries: SubagentQueries = {
     findRecord: (id) => this.findRecord(id),
     lookupRecordAnyState: (id) => this.lookupRecordAnyState(id),
-    collectRecords: (limit, statusFilter) => this.collectRecords(limit, statusFilter),
+    collectRecords: (limit, statusFilter, includeWorkflow) =>
+      this.collectRecords(limit, statusFilter, includeWorkflow),
+    // [H2 W1] parentRunId 查询入口：rootSessionFilter 口径与 private collectRecords 一致
+    //（sessionRootId → sessionId → undefined 兜底），委托 store（不过滤 origin）。
+    collectRecordsByParentRunId: (parentRunId, limit) =>
+      this.store.collectRecordsByParentRunId(
+        parentRunId,
+        limit,
+        this.sessionRootId ?? this.sessionId ?? undefined,
+      ),
     getFullRecord: (id) => this.getFullRecord(id),
     onChange: (listener) => this.onChange(listener),
   };
@@ -1797,8 +1811,12 @@ export class SubagentService {
    *  子进程=env 贯穿的真 ROOT（sessionRootId≠sessionId）→ 看到整棵 ROOT 树（决策 3）。
    *  [perf] 磁盘源为 light（头部 identity + 状态，无 eventLog/result/turns 等重数据）
    *  ——列表/补全/hasRunning 够用；详情场景调 getFullRecord(id) 懒加载补齐。 */
-  private collectRecords(limit: number, statusFilter: StatusFilter = "all"): SubagentRecord[] {
-    return this.store.collectRecords(limit, statusFilter, this.sessionRootId ?? this.sessionId ?? undefined);
+  private collectRecords(
+    limit: number,
+    statusFilter: StatusFilter = "all",
+    includeWorkflow: boolean = false,
+  ): SubagentRecord[] {
+    return this.store.collectRecords(limit, statusFilter, this.sessionRootId ?? this.sessionId ?? undefined, includeWorkflow);
   }
 
   /**

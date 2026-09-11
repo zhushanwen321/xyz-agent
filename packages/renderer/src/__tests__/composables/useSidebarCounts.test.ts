@@ -59,6 +59,34 @@ describe('useSidebarCounts D8 badge 口径（subagentRunningCount）', () => {
     expect(counts.subagentRunningCount.value).toBe(1)
   })
 
+  // H2 W1（record-unification D1②）：workflow 脚本派发的 record（origin='workflow'）
+  // 不点亮 subagent badge——workflow 进度由 workflow tab 承载。用户可见行为 = 徽标
+  // 数字只数手动派发的进行中 subagent。
+  it('origin=workflow 的 record 不计入 badge（tool record 正常计入）', () => {
+    const sid = ref<string | null>('sess-wf')
+    const store = useSubagentStore()
+    store.applyRecords('sess-wf', [
+      makeRecord({ subagentId: 'bg-tool-live', status: 'running' }),
+      makeRecord({ subagentId: 'bg-wf-live', status: 'running', origin: 'workflow' }),
+      makeRecord({ subagentId: 'bg-wf-wait', status: 'running', resumable: true, origin: 'workflow' }),
+    ])
+
+    const counts = useSidebarCounts(sid)
+    // 3 条记录里仅手动派发的 bg-tool-live 点亮 badge；workflow 来源（含 waiting 形态）全被滤除
+    expect(counts.subagentRunningCount.value).toBe(1)
+  })
+
+  it('origin 缺省（存量 record，undefined = tool 语义）不受过滤影响（W1 零迁移保障）', () => {
+    const sid = ref<string | null>('sess-legacy')
+    const store = useSubagentStore()
+    store.applyRecords('sess-legacy', [
+      makeRecord({ subagentId: 'bg-legacy-1', status: 'running' }),
+    ])
+
+    const counts = useSidebarCounts(sid)
+    expect(counts.subagentRunningCount.value).toBe(1)
+  })
+
   it('无焦点 session（null）→ 0；空分区 → 0', () => {
     const sid = ref<string | null>('sess-empty')
     const counts = useSidebarCounts(sid)

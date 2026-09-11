@@ -515,7 +515,7 @@ export class ConversationContinuation {
       throw new Error(
         `subagent ${record.id} was deliberately closed by user${reasonDesc} — ` +
         `it cannot be messaged or resumed; nothing can reattach to it. ` +
-        `Recovery: start a new subagent (action:'start'); use action:'list' with includeFinished:true to review its final output.`,
+        `Recovery: start a new subagent (action:'start'); use action:'list' with includeFinished:true to review its final output (add includeWorkflow:true to also see workflow-dispatched subagents).`,
       );
     }
     if (record.chatMode !== true) {

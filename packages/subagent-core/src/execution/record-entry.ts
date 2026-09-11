@@ -17,6 +17,7 @@ import type {
   DisplayItem,
   ExecutionMode,
   ExecutionStatus,
+  RecordOrigin,
   SubagentRecord,
 } from "./types.ts";
 
@@ -109,6 +110,18 @@ export interface SubagentRecordEntryData {
    * 未离开批 / 旧 entry 零迁移。消费方：U5 E1 重建扫描只收无标记成员（防双重通知）。
    */
   batchFinalized?: boolean;
+  /**
+   * 来源身份（H2 W1，设计 subagent-workflow-record-unification §3.3 D1）。
+   * undefined（存量 entry）= "tool" 语义，消费方零迁移。重启后 origin 过滤面
+   * （subagents list / renderer / TUI）生效的唯一持久化载体——漏本字段则重启后
+   * workflow record 逃过全部投影过滤。
+   */
+  origin?: RecordOrigin;
+  /**
+   * origin="workflow" 时所属 workflow run id（W2 写入）；tool 来源恒缺省。
+   * W2/W3 run 视图按 collectRecordsByParentRunId 从本字段回查本 run 的 record 集。
+   */
+  parentRunId?: string;
 }
 
 /** SubagentRecord → 自描述 entry data（快照投影，不 mutate 源）。
@@ -150,5 +163,9 @@ export function toSubagentRecordEntry(record: SubagentRecord): SubagentRecordEnt
     // 旧记录/旧 entry 序列化产物字节不变（零迁移）。
     collectMode: record.collectMode,
     batchFinalized: record.batchFinalized,
+    // 来源身份两字段（H2 W1）：undefined 经 JSON.stringify 自然缺省，存量 entry
+    // 序列化字节不变（零迁移）。
+    origin: record.origin,
+    parentRunId: record.parentRunId,
   };
 }

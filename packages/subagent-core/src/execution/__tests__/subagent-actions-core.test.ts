@@ -439,7 +439,7 @@ describe("⛔4 listHandler（limit 夹紧 + 过滤 + enrich，快照 = pi-sw 实
         ],
       },
     });
-    expect(collectRecords).toHaveBeenCalledWith(20, "all");
+    expect(collectRecords).toHaveBeenCalledWith(20, "all", false);
     // light record（getFullRecord undefined）回退原样投影
     expect(getFullRecord).toHaveBeenCalledWith("bg-2");
   });
@@ -447,17 +447,17 @@ describe("⛔4 listHandler（limit 夹紧 + 过滤 + enrich，快照 = pi-sw 实
   it("缺省 → collectRecords(20,'running')", () => {
     const collectRecords = vi.fn(() => [] as SubagentRecord[]);
     listHandler(makeService({ collectRecords }), undefined);
-    expect(collectRecords).toHaveBeenCalledWith(20, "running");
+    expect(collectRecords).toHaveBeenCalledWith(20, "running", false);
   });
 
   it("limit 夹紧：500 → 100 上限；0 → 1 下限（非默认值）", () => {
     const high = vi.fn(() => [] as SubagentRecord[]);
     listHandler(makeService({ collectRecords: high }), { includeFinished: true, limit: 500 });
-    expect(high).toHaveBeenCalledWith(100, "all");
+    expect(high).toHaveBeenCalledWith(100, "all", false);
 
     const low = vi.fn(() => [] as SubagentRecord[]);
     listHandler(makeService({ collectRecords: low }), { includeFinished: true, limit: 0 });
-    expect(low).toHaveBeenCalledWith(1, "all");
+    expect(low).toHaveBeenCalledWith(1, "all", false);
 
     expect(DEFAULT_LIST_LIMIT).toBe(20);
     expect(MAX_LIST_LIMIT).toBe(100);
@@ -479,7 +479,7 @@ describe("⛔4 cancelHandler（守卫 + 归属判定 + CAS 失败映射，快照
     expect(await errOf(() => cancelHandler(makeService(), { subagentId: "bg-x" }))).toEqual({
       errorName: "Error",
       message:
-        'No subagent record with id "bg-x". It may have finished — use action:\'list\' with includeFinished:true to verify.',
+        'No subagent record with id "bg-x". It may have finished — use action:\'list\' with includeFinished:true to verify (add includeWorkflow:true to also see workflow-dispatched subagents).',
     });
   });
 
@@ -511,7 +511,7 @@ describe("⛔4 cancelHandler（守卫 + 归属判定 + CAS 失败映射，快照
     ).toEqual({
       errorName: "Error",
       message:
-        'No subagent record with id "bg-9". It may have finished — use action:\'list\' with includeFinished:true to verify.',
+        'No subagent record with id "bg-9". It may have finished — use action:\'list\' with includeFinished:true to verify (add includeWorkflow:true to also see workflow-dispatched subagents).',
     });
   });
 
@@ -720,14 +720,14 @@ describe("⛔4 messageHandler（守卫 + upgrade + 投递，快照 = pi-sw 实�
       message:
         "subagent bg-1 was deliberately closed by user (closedReason: user-close) — " +
         "it cannot be messaged or resumed; nothing can reattach to it. " +
-        "Recovery: start a new subagent (action:'start'); use action:'list' with includeFinished:true to review its final output.",
+        "Recovery: start a new subagent (action:'start'); use action:'list' with includeFinished:true to review its final output (add includeWorkflow:true to also see workflow-dispatched subagents).",
     });
     expect(await errOf(() => messageHandler(mkSvc("cancelled"), { subagentId: "bg-1", text: "hi" }))).toEqual({
       errorName: "Error",
       message:
         "subagent bg-1 was deliberately closed by user (closedReason: cancelled) — " +
         "it cannot be messaged or resumed; nothing can reattach to it. " +
-        "Recovery: start a new subagent (action:'start'); use action:'list' with includeFinished:true to review its final output.",
+        "Recovery: start a new subagent (action:'start'); use action:'list' with includeFinished:true to review its final output (add includeWorkflow:true to also see workflow-dispatched subagents).",
     });
   });
 
@@ -864,7 +864,7 @@ describe("⛔4 forkFromHandler（守卫链 + slug 派生 + prompt 包装，快�
       errorName: "Error",
       message:
         'No subagent record with id "bg-404". It may never have existed or been garbage-collected — ' +
-        "use action:'list' with includeFinished:true to verify the id.",
+        "use action:'list' with includeFinished:true to verify the id (add includeWorkflow:true to also see workflow-dispatched subagents).",
     });
   });
 
@@ -911,7 +911,7 @@ describe("⛔4 forkFromHandler（守卫链 + slug 派生 + prompt 包装，快�
         message:
           `subagent bg-1 was deliberately closed by user (closedReason: ${closedReason}) — ` +
           "deliberately-closed records cannot be resumed or branched from; nothing can reattach to them. " +
-          "Recovery: start a fresh subagent (action:'start'); use action:'list' with includeFinished:true to review its final output.",
+          "Recovery: start a fresh subagent (action:'start'); use action:'list' with includeFinished:true to review its final output (add includeWorkflow:true to also see workflow-dispatched subagents).",
       });
     }
   });

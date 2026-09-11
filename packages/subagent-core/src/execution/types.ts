@@ -58,6 +58,16 @@ export const DEFAULT_AGENT_NAME = "general-purpose";
 export type ExecutionStatus = "running" | "closed";
 
 /**
+ * record 来源身份（H2 W1，设计 subagent-workflow-record-unification §3.3 D1 建议新增）：
+ *   "tool"     — 主 agent 经 subagent 工具手动派发（现状全部 record）；
+ *   "workflow" — workflow 脚本内 agent() 调用派发（生产写入方 W2 executeWorkflowAgent 接线）。
+ * 缺省语义 = "tool"：存量 record / 未传字段的 entry 反序列化产物一律视为手动派发，
+ * 四个投影消费面（subagents tool list / renderer 侧栏计数 / renderer 后台工作指示 /
+ * TUI /subagents）对缺省 record 的可见性与历史行为完全一致（零迁移）。
+ */
+export type RecordOrigin = "tool" | "workflow";
+
+/**
  * closed 终态的 L2 关闭原因子枚举。
  *
  * 与 ExecutionStatus="closed" 配合使用，表达「为什么关闭」：
@@ -365,6 +375,19 @@ export interface ExecutionRecord {
   readonly parentRecordId: string | undefined;
   /** subagent 递归深度。顶层（主 session 直接创建）=0，每层嵌套 +1。 */
   readonly depth: number;
+  /**
+   * 来源身份（H2 W1，D1）。缺省（undefined）语义 = "tool"（存量 record 零迁移）；
+   * "workflow" = workflow 脚本 agent() 派发（生产写入方 W2 接线）。过滤在投影/查询
+   * 消费面（list 默认滤 workflow origin），store 治理面（孤儿恢复/revive）全量可见。
+   * 持久化经 subagent-record entry。
+   */
+  readonly origin?: RecordOrigin;
+  /**
+   * origin="workflow" 时所属 workflow run 的 id（W2 写入）；tool 来源恒 undefined。
+   * W2 run 视图进度 / W3 下钻按本 id 查询本 run 的 record 集（内存 ∪ 磁盘重建口径，
+   * collectRecordsByParentRunId）。持久化经 subagent-record entry。
+   */
+  readonly parentRunId?: string;
   /**
    * 对话模式标志（可持续对话 subagent）。true = 轮次完成进 idle 态（保留 record +
    * worktree）等待续聊，而非一次性终态化。
@@ -780,6 +803,17 @@ export interface SubagentRecord {
   parentRecordId: string | undefined;
   /** subagent 递归深度。顶层 =0，每层嵌套 +1。 */
   depth: number;
+  /**
+   * 来源身份（H2 W1，D1，与 ExecutionRecord.origin 同源投影/entry 重建）。
+   * 缺省（undefined / 存量磁盘重建源）语义 = "tool"；消费面按 `=== "workflow"`
+   * 负向判定，list 查询缺省过滤（includeWorkflow 缺省 false）。
+   */
+  origin?: RecordOrigin;
+  /**
+   * origin="workflow" 时所属 workflow run id（与 ExecutionRecord.parentRunId 同源）。
+   * W2/W3 run 视图下钻按 collectRecordsByParentRunId 查询；tool 来源恒 undefined。
+   */
+  parentRunId?: string;
   endedAt: number | undefined;
   turns: number;
   totalTokens: number;
