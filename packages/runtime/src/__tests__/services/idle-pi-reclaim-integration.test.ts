@@ -214,7 +214,7 @@ describe.skipIf(!REAL_PI_READY)(
               const toIdle = t === 'idle' || t === 'full-reset' || t === 'reject-other' || t === 'abort-stall-converged' || t === 'abort-stall-force-kill'
               const resetAll = t === 'full-reset' || t === 'abort-stall-force-kill'
               rec.occupancy = {
-                turn: t === 'dispatching' || t === 'generating' || t === 'settling' || t === 'reject-processing' ? t : (toIdle ? 'idle' : occ.turn),
+                turn: t === 'dispatching' || t === 'generating' || t === 'settling' ? t : t === 'reject-processing' ? 'generating' : (toIdle ? 'idle' : occ.turn),
                 compacting: t === 'compacting-start' ? true : t === 'compacting-end' || resetAll ? false : occ.compacting,
                 bash: t === 'bash-start' ? true : t === 'bash-end' || resetAll ? false : occ.bash,
               }
