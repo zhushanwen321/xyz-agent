@@ -45,7 +45,7 @@
 
 | Unit | 职责 | 领地（精确文件路径） | 依赖 | 隔离 | 验收条款 |
 |---|---|---|---|---|---|
-| u1 | 仓库内原子删包 commit：unified-hooks 整包删除（E1）+ 登记 5 处清理（E2①②）+ guard 文档注记与历史表回写（E2③④）+ AGENTS.md 废弃段删除（E3）+ lock 重算（E4）+ 悬空注释清扫（E5）+ llm-shared 死导出移除附 minor changeset（E6）+ docs 活文档清扫（E8）＝设计 §5.1 步骤 1-7，单 commit 交付 | 见下方 u1 领地全清单（删 11 文件 + 改 12 文件 + 重算 1 文件 + 新增 1 文件） | 无 | plain | A1-A12（见下表，覆盖设计场景 1/2/3） |
+| u1 | 仓库内原子删包 commit：unified-hooks 整包删除（E1）+ 登记 5 处清理（E2①②）+ guard 文档注记与历史表回写（E2③④）+ AGENTS.md 废弃段删除（E3）+ lock 重算（E4）+ 悬空注释清扫（E5）+ llm-shared 死导出移除附 minor changeset（E6）+ docs 活文档清扫（E8）＝设计 §5.1 步骤 1-7，单 commit 交付 | 见下方 u1 领地全清单（删 11 文件 + 改 10 文件 + 重算 1 文件 + 新增 1 文件） | 无 | plain | A1-A12（见下表，覆盖设计场景 1/2/3） |
 | u2 | 本机退役与运行时终验：`pi uninstall`（E7）+ 设计场景 4/5 + 探针 P-single / P-npm 复核（仓库外操作，不进 commit） | 仓库外：`~/.pi/agent/settings.json`（经 pi uninstall 间接变更）；`~/.pi/agent/npm/node_modules/@zhushanwen/pi-unified-hooks`（卸载对象）；`~/.pi/agent/sessions/`（只读检索）；npm registry（`npm view` 只读）；探针用临时 session 目录（mkdtemp 自建自删） | u1 | plain | B1-B4（覆盖设计场景 4/5） |
 
 **u1 领地全清单**（全部实读核实存在）：
@@ -136,6 +136,7 @@ graph TD
 | u1 | guard 文档 v8 行日期列填 2026-09-11 | 设计注记文案均为「2026-09」粒度，未指定表内具体日 | 无 | 合理偏差，接受 |
 | u2 | B3 渲染验证口径：以 session-reader 源码驱动 renderExpand 端到端替代「pi 打开旧 session」 | npm 安装版 pi-session-reader 0.2.4 为未 bundle TS 源码与仓库实现同源，口径等价；另核实 pi 本体 --export 不渲染 custom entry（与断言无关） | 无 | 合理偏差，接受 |
 | u2 | B2 探针未带 `--extension <bte 本地路径>` | P-single 本义验证本机安装态单通道；带本地 bte 会与 settings.json 已装 bte 双装污染断言 | 无（两断言按安装态直验均达成） | 合理偏差，接受 |
+| u1 | E8① logging-conventions.md:158 改写在设计指定文案基础上保留「明确记录：」谓语接续 | 原句以「明确记录：」引出 blockquote，照抄设计字面文案会产生无谓语句 | 行号悬空消除与教训可读性目标均达成（设计 E8① 为语义指定非逐字锁定） | 合理偏差，接受（阶段 3 一致性审查 R1 确认） |
 
 ## 6 状态表
 

@@ -203,7 +203,7 @@
 | 同文件 :2,:7,:20；`force-patterns.ts:5,28`；`bash-tool.ts:178`；`index.ts:51` | 注释 | bte 能力出处与迁移语义说明（解释代码为什么长这样） |
 | `base-tool-enhance/src/__tests__/{force-patterns,tool-error-audit}.test.ts` | 测试注释/断言 | 断言 customType 协议字符串，与生产承诺绑定 |
 | `subagent-workflow/src/index.ts:166`、`src/injectors/subagent-list-injector.ts:2` | 注释 | 文件归位出处（「迁移自 unified-hooks」） |
-| `extensions/shared/extension-logger/src/index.ts:222` | JSDoc 举例 | 参数用法示例（名字举例，非路径引用，不悬空） |
+| `extensions/shared/extension-logger/src/index.ts:226` | JSDoc 举例 | 参数用法示例（名字举例，非路径引用，不悬空；2026-09-12 时点行号，14 号流水线文件头部 +4 行注释致原 :222 漂移） |
 | `packages/runtime/scripts/record-get-entries-fixtures.mjs:30` | 注释 | 历史事故说明（录制混入 `unified-hooks:loaded` 的教训） |
 | `AGENTS.md:33`（bte 条目内）、`packages/shared/src/mandatory-extensions.json:18`（bte 描述 "(migrated from unified-hooks)"） | 文档/登记描述 | 历史出处表述，非包登记本体 |
 | 各包 CHANGELOG.md、docs/ 已归档与纯历史记录（archive/、impl-plan、验收/探针历史记录、同系列 ext-simplify-\* 设计对自身执行对象的登记） | 历史记录 | 变更史不改写。**docs/ 不整体豁免**（第 1 轮审查修正原失实归类）：现行 SSOT / 现行设计文档 / todo 待执行设计 / 架构文档中的路径、链接、行号引用是活引用，删包后悬空，由 E8 逐处清扫；纯字样形态（历史出处、协议、教训叙述）豁免 |

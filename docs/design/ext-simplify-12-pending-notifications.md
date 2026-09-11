@@ -39,7 +39,7 @@
 ## 2. 设计目标
 
 1. **entries 单一权威源**：本包内不再存在第二份 pending 状态——工具投影与写入侧判断与 goal/bte/subagent-workflow 读同一份 entries 差集；「落盘了什么」与「查询到什么」在结构上不可分歧。
-2. **主链路零回归**：注册/注销落盘契约（entry 形态）、`countActiveFromEntries` 签名与行为、`pending_notifications` 工具 count/list 输出语义，全部与现状一致；写侧去重语义与现状**语义等价**，附带两条显式登记的边缘差异（fork 残留跨 session 注销口径、id 复用去重窗口——均被 per-session EventBus / id 全局唯一前提约束为理论窗口，见 §6.1 边缘差异登记）。
+2. **主链路零回归**：注册/注销落盘契约（entry 形态）、`countActiveFromEntries` 签名与行为、`pending_notifications` 工具 count/list 输出语义，全部与现状一致；写侧去重语义与现状**语义等价**，附带三条显式登记的边缘差异（fork 残留跨 session 注销口径、fork 残留同 id 重复注册口径、id 复用去重窗口——均被 per-session EventBus / id 全局唯一前提约束为理论窗口，见 §6.1 边缘差异登记）。
 3. **删 session 档死机器**：PENDING_TTL_MS、isExpiredEntry、expiredToFlush、TTL 回填、session_start 补 flush 循环、session_shutdown handler 及其测试用例整体移除；分档常量 `PENDING_LIFECYCLE` 一并删除（D2 裁决）。
 4. **导出面收敛**：npm 具名导出从 14 个收敛到 5 个（default 出口不计；唯一消费函数 + 其签名所需类型）。
 5. **SSOT 同步**：C-proc-13 ③ 的读侧消费枚举随 rebuild 删除同批回写（C-proc-10 纪律）。
@@ -146,7 +146,7 @@ session 注销在运行。
 
 ### 5.1 成功路径
 
-对 LLM 与各运行方，终态交互与 §3.1 逐字相同（事件 → 注册 → 查询 → 注销 → 归零）——**写侧协议与工具输出语义零变更**。变化全部在机制层：工具回答「1 pending operation(s)」时读的是 entries 差集而非内存态；bte 对账直接 appendEntry 的注销在同一份 entries 里，工具、goal、对账三方看到的结果**构造性一致**（同一份扫描），§3.1 的「尽力补 emit 同步内存视图」退化为纯日志性质（本包 listener 收到后再次落盘前置判断会发现已注销、跳过，不再产生重复 entry——现状会）。写侧去重的两条理论窗口边缘差异见 §6.1 边缘差异登记——主链路交互（本节轨迹）与现状不可区分。
+对 LLM 与各运行方，终态交互与 §3.1 逐字相同（事件 → 注册 → 查询 → 注销 → 归零）——**写侧协议与工具输出语义零变更**。变化全部在机制层：工具回答「1 pending operation(s)」时读的是 entries 差集而非内存态；bte 对账直接 appendEntry 的注销在同一份 entries 里，工具、goal、对账三方看到的结果**构造性一致**（同一份扫描），§3.1 的「尽力补 emit 同步内存视图」退化为纯日志性质（本包 listener 收到后再次落盘前置判断会发现已注销、跳过，不再产生重复 entry——现状会）。写侧去重的三条理论窗口边缘差异见 §6.1 边缘差异登记——主链路交互（本节轨迹）与现状不可区分。
 
 ### 5.2 失败路径（带恢复指引）
 
@@ -160,10 +160,11 @@ session 注销在运行。
 
 ### 6.1 D1：查询与写侧判断的权威源（选定：entries 现算）
 
-- **采用**：① `pending_notifications` 工具 execute 改为 `countActiveFromEntries(ctx.sessionManager.getEntries(), { currentSessionId })`（闭包 `currentSessionId` 为空串——session_start 未到的防御场景——时不传基准，保持现状「宁放行不误逐」口径）；② register listener 落盘前置判断改为 `hasPendingId(entries, id)`（entries 中已存在该 id 的 register entry——无论注销与否——则忽略，等价现状内存 `operations.has(id)` 语义）；③ unregister listener 落盘前置判断改为 `isPendingActive(entries, id)`（单趟扫描：该 id 有 register 且无任何 unregister 则 active，等价现状内存 `status === "active"` 语义）；④ 删 PendingRegistry/createRegistry/register/unregister/getActive/rebuildFromEntries 与 session_start rebuild；⑤ session_start handler 缩为设置 `currentSessionId` 一行；session_shutdown handler 整体删除（对现存类型本就是 no-op）。写侧事件 → appendEntry 的协议面与 entry 形态逐字段保留；去重语义与现状等价（两条边缘差异见下方登记，均为主链路不可区分的理论窗口）。
-- **边缘差异登记（「语义等价」声明的组成部分，两条均为理论窗口）**：
+- **采用**：① `pending_notifications` 工具 execute 改为 `countActiveFromEntries(ctx.sessionManager.getEntries(), { currentSessionId })`（闭包 `currentSessionId` 为空串——session_start 未到的防御场景——时不传基准，保持现状「宁放行不误逐」口径）；② register listener 落盘前置判断改为 `hasPendingId(entries, id)`（entries 中已存在该 id 的 register entry——无论注销与否——则忽略，等价现状内存 `operations.has(id)` 语义）；③ unregister listener 落盘前置判断改为 `isPendingActive(entries, id)`（单趟扫描：该 id 有 register 且无任何 unregister 则 active，等价现状内存 `status === "active"` 语义）；④ 删 PendingRegistry/createRegistry/register/unregister/getActive/rebuildFromEntries 与 session_start rebuild；⑤ session_start handler 缩为设置 `currentSessionId` 一行；session_shutdown handler 整体删除（对现存类型本就是 no-op）。写侧事件 → appendEntry 的协议面与 entry 形态逐字段保留；去重语义与现状等价（三条边缘差异见下方登记，均为主链路不可区分的理论窗口）。
+- **边缘差异登记（「语义等价」声明的组成部分，三条均为理论窗口）**：
   1. **跨 session unregister 落盘口径**：现状 rebuild 对 fork 继承残留「跳过不入 registry」（state.ts:317-329「跳过不补注销」），残留 id 的 unregister 事件按 unknown id 静默忽略；终态 `isPendingActive` 查全量 entries（含 fork 继承的 register），同 id 事件若可达会在当前 session 补落一条跨 session 注销 entry。差异窗口 = 跨 session 事件可达——pi per-session EventBus（session 替换重建全新 bus，本包 index.ts:90-98 实装注释）使该窗口在真实链路不可达，差异理论性；方向良性（若未来可达，补落使差集更真实），与 W4「跨 session 落盘收口归 core sweep / bte 对账通道」的分工以此边界说明消解。V4a 场景以「子 session JSONL 无本包新写 entry」断言钉住该口径。
   2. **id 复用场景的 register 去重**：同 id register→unregister→register——现状进程内同样忽略（registry 保留 completed 条目，`operations.has(id)` 命中）；差异仅在重启后出现（rebuildFromEntries 差集只回填 active 项，completed 条目不入 registry → 现状放行第二次落盘且守卫不可见 = 盘上假数据）；终态 `hasPendingId`「无论注销与否」恒忽略。差异窗口 = 重启与 id 复用同时发生，id 全局唯一（时间戳+随机，state.ts:234-236 自注）使窗口纯理论；终态方向更优（少写噪音 entry、不产生守卫不可见的假数据）。
+  3. **fork 残留同 id 的 register 去重口径**：现状 rebuild 对 fork 继承残留「跳过不入 registry」，同 id 的 register 事件若可达会放行落盘第二条 register entry 且入 registry 投影；终态 `hasPendingId` 查全量 entries（含 fork 继承的 register，无论其 sessionId），残留 id 的 register 事件恒忽略。差异窗口与边缘差异 1 同构（per-session EventBus 使跨 session 事件不可达），纯理论窗口；方向良性（终态少噪音写入）。V4a 断言（子 session JSONL 零本包新写）同时钉住该口径。（阶段 3 一致性审查补登）
 - **被否**：
   - **方案 A（保留内存 registry，现状）**——双状态分歧已被 bte 事故证实为真实失败模式，且落盘失败窗口的分裂（工具见活跃、goal 守卫不见）在 registry 形态下无法根治，只能靠更多同步代码缓解——准则 8 的「by clever mechanism」反方向。若用它，§3.2 F2 的两个分歧窗口永续，bte 的「尽力补 emit」仪式（本可省的一跳）也要永久保留。
   - **方案 B（仅工具现算，写侧前置判断保留查内存）**——半吊子：读侧统一了但写侧判断仍依赖 registry，registry 机器（含 rebuild）删不掉，「第二份状态」还在，只是消费者从 2 处减到 1 处。若用它，§4 终态图里写侧仍是两份状态，D1 的根治效果减半而删除收益（约 -60 行）近乎不实现。
@@ -301,6 +302,7 @@ M2 与 M1 可同 PR 分 commit。13 号协调约束（§6.4 采用⑤，双登�
 - v1（2026-09-11）：初稿。覆盖审计候选 4（C4-a 死代码区 Strong / C4-b registry 现算化 contested→裁决现算）+ 导出面收敛 + PENDING_LIFECYCLE 注释失实；两项审计修正（conformance 连带面、C-proc-13 回写项）+ 一项登记定位修正（impl-plan §5 → §2 W4 交付项）。
 - v2（2026-09-11）：第 1 轮审查修复（逐条对照见文末修订记录）：V3 重写为强杀续存三步场景 + V2 增补伴生收口段、V4a 降级单测层、docs/design 悬空引用面补全为 4 文件 10 处并自闭环（E8-E10）、D4 推翻移交方案登记被否谱系 + 13 号协调约束、§5.2 bash 收口通道口径修正、npm 代价四要素补全 + 版本裁决改 minor、V5 增基线采集、D1 边缘差异登记两条、导出面计数修正（14 具名 + default）。
 - v3（2026-09-11）：第 2 轮审查修复（纯 suggestion 轮，两报告均 0 must-fix；逐条对照见文末修订记录第 2 轮）：E9 清单补 base-tool-enhance.md:192 行为断言行、§9.3 清扫口径显式化（全部被删符号 × docs/ 全目录 + 历史快照豁免清单，R9 报告 :5 豁免登记）、13 号协调约束双登记（ext-simplify-index.md 13 号行注记 + §6.4/§9.1 校准）、E10 登记清扫/回护不对称与扩映射实测受阻证据、E8 措辞指代修正、docs/design 引用计数按行口径修正（11 行）、v1 日期笔误修正。
+- v4（2026-09-12）：实施后阶段 3 一致性审查修复（dev-flow）：§6.1 边缘差异登记补第三条（fork 残留同 id 的 register 去重口径——终态 hasPendingId 全量扫描使残留 id register 恒忽略，与现状 rebuild 跳过语义存在同构理论窗口，per-session EventBus 不可达、方向良性；§2 目标 2 与 :149/:163 计数「两条」随之校准为「三条」）。终态行为零变更，纯登记完备性。
 
 ## 修订记录
 
