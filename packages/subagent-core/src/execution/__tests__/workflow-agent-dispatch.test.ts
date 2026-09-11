@@ -307,7 +307,8 @@ describe("executeWorkflowAgent no-progress 守护", () => {
     await vi.advanceTimersByTimeAsync(5000);
     expect(run.ctx.signal?.aborted).toBe(true);
 
-    // fire 后引擎合成失败 outcome → 失败结果追注恢复指引（noteIfNoProgressFired）
+    // fire 后引擎合成失败 outcome → 失败结果追注恢复指引（fire 追注语义，
+    // 原 SAR noteIfNoProgressFired 符号随编排归一消亡——见设计 D4）
     run.settle({ error: "engine: aborted" });
     const result = await pending;
     expect(result.error).toContain("engine: aborted");

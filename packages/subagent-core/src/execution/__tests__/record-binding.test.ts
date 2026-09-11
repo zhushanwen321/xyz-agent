@@ -20,6 +20,9 @@
 //      矩阵构造性保证）；终态后绑定保留（resurrect 回边删 .state 后绑定仍在，
 //      再崩溃仍可恢复）——保留选项由此套件锁定；
 //   ⑤ 绑定写失败（只读目录）不阻塞派发主路径。
+//   ⑥ [H2 Gate B round-2] binding 携带 origin/parentRunId（身份面，S3 收口）+
+//      终态快照 totalTokens/turns/endedAt（A3 收口，updateRecordBinding merge）——
+//      本套件 record-binding/sessions-index 相关 describe 锁定。
 //
 // fixture 一律 mkdtempSync 自建自删（tmpdir），不触碰真实数据目录。
 
