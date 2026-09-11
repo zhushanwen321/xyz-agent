@@ -1,0 +1,223 @@
+// src/execution/__tests__/inflight-production-wiring.test.ts
+//
+// [u7a 生产补挂] D5 在途推送的生产链路 wiring 测试（crash-forensics impl-plan §7 v6）。
+//
+// 背景：notifyInFlightChanged 此前唯一挂点 = host-bridge arm/disarm 委托，而
+// createHostBridge 全仓无生产调用点——生产迁移点（subagent-service 裸 arm/disarm/
+// 镜像置死、EngineClient 反向通道镜像）全部不推送，extension 监听者恒收不到帧，
+// runtime 侧 inflight 镜像恒 0（Gate B A4 BLOCKED 根因 a）。
+//
+// 三视角：
+//   ①使用者（extension reporter 视角）——注册 setInFlightListener 后，生产迁移点
+//     （idle 相位 arm / 续聊 disarm / 守护击杀 / dispose 批量回收 / 引擎反向通道
+//     childSpawned/childStateChanged）每一处都推来含该 record 贡献的绝对计数快照。
+//   ②构建者——推送携带的是双谓词过滤后的真实计数：活句柄 + 无 armed idle timer
+//     才计在途；镜像置死后计数即刻回落（EngineClient 镜像桥接投影）。
+//   ③观察者——EngineClient 镜像 → core 镜像的单向投影可从镜像面观察（core 镜像
+//     条目随反向通道事件出现/置死），壳层监听者异常不反噬主链（既有出口测试覆盖，
+//     此处不重复）。
+
+import * as fs from "node:fs";
+import * as os from "node:os";
+import * as path from "node:path";
+import { EventEmitter } from "node:events";
+import type { ChildProcess } from "node:child_process";
+
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+const { loggerMock } = vi.hoisted(() => ({
+  loggerMock: { debug: vi.fn(), warn: vi.fn(), error: vi.fn() },
+}));
+vi.mock("../../core/logger.ts", () => ({ getLogger: () => loggerMock }));
+
+import { clearEngines } from "../engine/registry.ts";
+import { registerFakePiEngine, type FakePiEnginePort } from "./helpers/fake-engine-port.ts";
+import { createRecord } from "../execution-record.ts";
+import { ModelConfigService } from "../model-config-service.ts";
+import type { ModelInfo, ModelRegistryLike } from "../model-resolver.ts";
+import type { RecordStore } from "../record-store.ts";
+import { SubagentService, type PiLike } from "../subagent-service.ts";
+import { _resetLifecycleState, hasIdleTimer } from "../lifecycle-manager.ts";
+import {
+  registerSpawnedChildForRecord,
+  _resetCoreSpawnedChildrenMirrorForTest,
+} from "../engine/host/spawned-children.ts";
+import {
+  getInFlightSnapshot,
+  setInFlightListener,
+  type InFlightSnapshot,
+} from "../engine/inflight-snapshot.ts";
+import { EngineClient } from "../engine/client/engine-client.ts";
+
+const CTX_MODEL: ModelInfo = { id: "m", name: "M", provider: "p", reasoning: false };
+
+function makeEmptyRegistry(): ModelRegistryLike {
+  return { getAvailable: () => [], find: () => undefined, hasConfiguredAuth: () => true };
+}
+
+function makePi(): PiLike {
+  return {
+    appendEntry: vi.fn(),
+    events: { emit: vi.fn() },
+    sendMessage: vi.fn(),
+  } as unknown as PiLike;
+}
+
+/** 最小 fake 子进程（EventEmitter + killed/pid——hasLiveProcessHandle 消费面）。 */
+function makeFakeChild(pid = 4242): ChildProcess & EventEmitter {
+  const child = new EventEmitter() as ChildProcess & EventEmitter;
+  (child as { pid?: number }).pid = pid;
+  (child as { killed: boolean }).killed = false;
+  return child;
+}
+
+interface ServiceInternals {
+  store: RecordStore;
+}
+
+function setup(): {
+  agentDir: string;
+  service: SubagentService;
+  store: RecordStore;
+  fake: FakePiEnginePort;
+} {
+  const agentDir = fs.mkdtempSync(path.join(os.tmpdir(), "inflight-wiring-"));
+  clearEngines();
+  const fake = registerFakePiEngine();
+  const modelService = new ModelConfigService({ agentDir, cwd: agentDir });
+  modelService.initModel({ modelRegistry: makeEmptyRegistry(), sessionId: "root-session", ctxModel: CTX_MODEL });
+  const service = new SubagentService({ cwd: agentDir, modelService });
+  service.initSession({ pi: makePi(), sessionId: "root-session" });
+  const store = (service as unknown as ServiceInternals).store;
+  return { agentDir, service, store, fake };
+}
+
+/** chatMode 续聊态 record（首轮已完成等待续聊——v4 B-1 折入 running）。 */
+function makeResumableRecord(id: string): ReturnType<typeof createRecord> {
+  const record = createRecord(id, {
+    agent: "general-purpose",
+    model: "test/model",
+    mode: "background",
+    task: "initial task",
+    slug: "chat",
+    startedAt: 1000,
+    rootSessionId: "root-session",
+    chatMode: true,
+  });
+  record.status = "running";
+  record.round = 1;
+  record.controller = new AbortController();
+  return record;
+}
+
+describe("u7a 生产迁移点 → 在途推送（wiring）", () => {
+  let agentDir: string;
+  let service: SubagentService;
+  let store: RecordStore;
+  let fake: FakePiEnginePort;
+  let seen: InFlightSnapshot[];
+
+  beforeEach(() => {
+    ({ agentDir, service, store, fake } = setup());
+    seen = [];
+    setInFlightListener((s) => seen.push({ ...s }));
+  });
+
+  afterEach(() => {
+    setInFlightListener(null);
+    service.dispose();
+    clearEngines();
+    _resetLifecycleState();
+    _resetCoreSpawnedChildrenMirrorForTest();
+    fs.rmSync(agentDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
+  });
+
+  it("idle 相位 arm（生产路径 = handleChatRoundPhase → armChatIdleTimer）：活句柄翻入保活，推送 inFlight=0", async () => {
+    const handle = await service.execute({ task: "first round", slug: "t", ctxModel: CTX_MODEL, conversation: true });
+    const run = fake.runs[0]!;
+    // 引擎侧活句柄（生产经 EngineClient 反向通道桥接投影——此处直接落 core 镜像，
+    // 桥接本体在下方 EngineClient 套件独立验证）
+    registerSpawnedChildForRecord(handle.subagentId, makeFakeChild());
+    expect(getInFlightSnapshot().inFlight).toBe(1); // 前置：在途句柄在场
+
+    seen.length = 0;
+    run.emitLifecycle({ phase: "idle" });
+    expect(hasIdleTimer(handle.subagentId)).toBe(true); // idle 相位 = timer armed
+    expect(seen.at(-1)).toEqual({ inFlight: 0 }); // 保活不算在途（D5 谓词）
+  });
+
+  it("续聊投递 disarm（生产路径 = deliverChatMessage）：翻回正在执行，推送 inFlight=1", async () => {
+    const record = makeResumableRecord("sa-wiring-disarm");
+    store.register(record);
+    registerSpawnedChildForRecord(record.id, makeFakeChild());
+
+    seen.length = 0;
+    await service.chatActions.deliverChatMessage(record, "next round msg", false);
+
+    expect(fake.interacts[0]!.action).toEqual({ kind: "message", payload: "next round msg", interrupt: false });
+    expect(hasIdleTimer(record.id)).toBe(false);
+    expect(seen.at(-1)).toEqual({ inFlight: 1 }); // disarm 后该 record 计在途
+  });
+
+  it("dispose 批量回收：逐 record kill+disarm 后收敛推送终态 inFlight=0", async () => {
+    const record = makeResumableRecord("sa-wiring-dispose");
+    store.register(record);
+    registerSpawnedChildForRecord(record.id, makeFakeChild());
+    expect(getInFlightSnapshot().inFlight).toBe(1);
+
+    seen.length = 0;
+    service.dispose();
+    expect(seen.at(-1)).toEqual({ inFlight: 0 });
+    expect(getInFlightSnapshot().inFlight).toBe(0);
+  });
+});
+
+describe("u7a 数据面桥接：EngineClient 反向通道镜像 → core 镜像 + 推送", () => {
+  let dataDir: string;
+  let client: EngineClient;
+  let seen: InFlightSnapshot[];
+
+  beforeEach(() => {
+    dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "inflight-bridge-"));
+    // 不 connect（构造即被测面：镜像变更经 onChange 同步广播）——零子进程零 fs 写
+    client = new EngineClient({
+      engineId: "fake",
+      command: process.execPath,
+      args: ["-e", "process.exit(0)"],
+      hostKind: "test",
+      hostVersion: "test-host-1.0",
+      dataDir,
+      envPrefixes: [],
+    });
+    seen = [];
+    setInFlightListener((s) => seen.push({ ...s }));
+  });
+
+  afterEach(() => {
+    setInFlightListener(null);
+    client.dispose();
+    _resetCoreSpawnedChildrenMirrorForTest();
+    _resetLifecycleState();
+    fs.rmSync(dataDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
+  });
+
+  it("childSpawned → core 镜像落项 + 推送 inFlight=1；childStateChanged(exited) → 置死 + 推送 inFlight=0", () => {
+    client.mirror.recordSpawned(4242, "sa-bridge");
+    expect(seen.at(-1)).toEqual({ inFlight: 1 });
+    expect(getInFlightSnapshot().inFlight).toBe(1); // core 镜像已投影（计数数据源）
+
+    client.mirror.recordStateChanged({ pid: 4242, recordId: "sa-bridge", state: "exited", killed: true });
+    expect(seen.at(-1)).toEqual({ inFlight: 0 });
+    expect(getInFlightSnapshot().inFlight).toBe(0);
+  });
+
+  it("同 recordId 重 spawn 覆盖 + killedAll 整体置死（引擎回收语义投影）", () => {
+    client.mirror.recordSpawned(111, "sa-bridge-a");
+    client.mirror.recordSpawned(222, "sa-bridge-b");
+    expect(seen.at(-1)).toEqual({ inFlight: 2 });
+
+    client.mirror.killAll(); // 引擎 exit / killAll：逐项 killedAll 事件
+    expect(seen.at(-1)).toEqual({ inFlight: 0 });
+    expect(getInFlightSnapshot().inFlight).toBe(0);
+  });
+});

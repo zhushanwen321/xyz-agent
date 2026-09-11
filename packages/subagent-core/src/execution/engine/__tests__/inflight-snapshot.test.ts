@@ -171,7 +171,9 @@ describe("EnginePort.inFlightSnapshot? 可选成员缺省语义（D5：pi 不实
     // 同款——缺席成员不破坏实现关系（裸桩承载缺席形态）。W3 后 inproc pi 引擎已删，
     // id 不再由引擎身份推导断言（桩无 id 字面量），能力面 id 经 capabilities() 取。
     const pi: EnginePort = { capabilities: () => ({ id: "pi-stub" }) } as unknown as EnginePort;
-    expect(pi.capabilities().id).toBe("pi-stub");
+    // EngineCapabilities 契约面无 id 成员（contract-types.ts）——运行期桩携带的 id 经
+    // 窄化读取断言（HEAD 既有类型红此处修复：pi.capabilities().id 直取 TS2339）。
+    expect((pi.capabilities() as unknown as { id: string }).id).toBe("pi-stub");
     expect(typeof pi.capabilities).toBe("function");
     expect(pi.inFlightSnapshot).toBeUndefined();
   });

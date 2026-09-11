@@ -587,4 +587,16 @@ export default [
       'max-lines': ['warn', { max: 650, skipBlankLines: true, skipComments: true }],
     },
   },
+  // [HISTORICAL] [u7a 生产补挂 2026-09-12] EngineClient 是引擎协议客户端唯一聚合点
+  // （spawn/帧编解码/反向路由/崩溃重建/pidfile），crash-forensics u7a 数据面桥接
+  // （反向通道镜像 → core 镜像投影 + 在途推送，D5）入列时净代码行 535 > 520。职责
+  // 内聚（桥接消费本类镜像广播），抽独立模块仍余微超且引入新模块边界——微超即提额
+  // 先例（session-service 650 / event-interpreter 700 同型）。提额而非 off：保留 650
+  // 软上限告警，超限即再暴露。
+  {
+    files: ['packages/subagent-core/src/execution/engine/client/engine-client.ts'],
+    rules: {
+      'max-lines': ['warn', { max: 650, skipBlankLines: true, skipComments: true }],
+    },
+  },
 ];

@@ -78,6 +78,13 @@ import {
   killRecordChildWithEscalation,
   registerSpawnedChildForRecord,
 } from "./engine/host/spawned-children.ts";
+// [u7a 生产补挂] D5 在途推送的迁移点出口：本模块的裸 arm/disarm 与镜像置死是
+// 「保活 ↔ 正在执行」的全部生产翻转点，翻转后同步推最新绝对计数给壳层监听者
+// （extension reporter → runtime 镜像）。挂点在调用方而非 lifecycle-manager——环规避
+// 同 host-bridge.ts 头注（inflight-snapshot 反向读 lifecycle-manager 记账，lifecycle
+// 层不得依赖 engine 域出口）；createHostBridge 无生产装配点，本文件的直调点才是
+// 生产迁移点（dev-0.9.17 合并后 u7a 推送链悬空的根因，见 crash-forensics impl-plan §7 v6）。
+import { notifyInFlightChanged } from "./engine/inflight-snapshot.ts";
 // [u-t2a T2②/T2③ + W4 协议事件面] settled watchdog：chatMode 轮 settled 等待两段守护。
 // W3 起事件接线 = 协议事件流（arm 点 = 轮开始；refresh 源 = streamDelta/轮次生命周期
 // 帧；W4 三入口与旧原语逐一同构，见 settled-watchdog.ts 尾段）。
@@ -797,6 +804,9 @@ export class SubagentService {
       this.notifyHost.emitPendingUnregister(record.id, "closed");
       count++;
     }
+    // [u7a 生产补挂] 批量 dispose 收敛点推一次终态快照（绝对计数语义下循环内逐条推
+    // 与收敛后单推等价，单推省 N-1 次同步派发）。此刻镜像已由上方 kill/disarm 全量清零。
+    notifyInFlightChanged();
     return count;
   }
 
@@ -1355,6 +1365,8 @@ export class SubagentService {
     // 新 turn 开跑先 disarm idle timer（防 turn 期间误杀活进程——V2 决策 4，
     // 原 PiEngine.deliverPrompt 入口语义，编排侧承接）。
     disarmIdleTimer(record.id);
+    // [u7a 生产补挂] disarm = 该 record 翻入「正在执行」，迁移后推最新在途计数（D5）。
+    notifyInFlightChanged();
     const engine = this.resolveChatEnginePort();
     // recordId 键路由兜底注册（首轮已注册时幂等跳过——kickOffChatRound 注册面）：
     // 续聊轮 delta/生命周期帧的分发目标。stream 缺省（首轮流已 dispose——widget 清除后
@@ -1557,6 +1569,9 @@ export class SubagentService {
         `terminating (LC-1 wedge recovery)`,
     );
     killRecordChildWithEscalation(record.id, "settled watchdog (hot path)");
+    // [u7a 生产补挂] 镜像置死 = 在途 −1 的迁移点（本路径无相邻 disarm——轮中守护
+    // 击杀，timer 早已 disarm），置死后推最新在途计数（D5）。
+    notifyInFlightChanged();
     // [W3] 子进程在引擎进程内——终止经协议 interact cancel（SIGTERM → 引擎侧
     // settle 等待 → 杀链升级）；镜像置死位由上方 killRecordChildWithEscalation 记账。
     this.terminateChatSession(record, "cancel", "settled watchdog (hot path)");
@@ -1717,6 +1732,8 @@ export class SubagentService {
     // [W3] 实际终止在引擎进程内（协议 interact close force → 引擎侧杀链）；
     // killRecordChildWithEscalation 只做镜像置死记账。
     disarmIdleTimer(record.id);
+    // [u7a 生产补挂] 终态化 disarm = 该 record 翻出「正在执行」，迁移后推最新在途计数。
+    notifyInFlightChanged();
     disarmSettledWatchdog(record.id);
     disarmRoundFromProtocol(record.id);
     killRecordChildWithEscalation(record.id, "closeChatIdle");
@@ -1779,6 +1796,8 @@ export class SubagentService {
     // settled 等待窗口同步终结（disarm 幂等）。[W3] 实际终止经协议 interact close
     // force（引擎进程内的子进程），镜像置死位由 killRecordChildWithEscalation 记账。
     disarmIdleTimer(record.id);
+    // [u7a 生产补挂] 终态化 disarm = 该 record 翻出「正在执行」，迁移后推最新在途计数。
+    notifyInFlightChanged();
     disarmSettledWatchdog(record.id);
     disarmRoundFromProtocol(record.id);
     killRecordChildWithEscalation(record.id, "closeAfterRoundSettled");
@@ -2800,6 +2819,10 @@ export class SubagentService {
         bestEffort(fallbackErr, "armIdleTimer fallback (chat idle phase)", "error");
       }
     }
+    // [u7a 生产补挂] arm = 该 record 翻入「保活」（Path A，不计在途），迁移后推最新
+    // 在途计数（D5）。置于降级链之后：配置值/DEFAULT 两分支任一成功或双失败（状态
+    // 未变）都统一推终态快照——绝对计数语义下重复推幂等无害。
+    notifyInFlightChanged();
   }
 
   /** [W3] idle 帧锚点回填（冷续锚点 = 引擎侧会话滚动/compaction 后的最新定位）。 */
@@ -2994,6 +3017,8 @@ export class SubagentService {
     // cancel 分级另行承载，两路幂等）。
     killRecordChildWithEscalation(record.id, "cancelBackground");
     disarmIdleTimer(record.id);
+    // [u7a 生产补挂] cancel 的 kill+disarm = 在途/保活双态翻出，迁移后推最新在途计数。
+    notifyInFlightChanged();
     disarmSettledWatchdog(record.id);
     disarmRoundFromProtocol(record.id);
     this.unregisterChatRoundRoute(record.id);
