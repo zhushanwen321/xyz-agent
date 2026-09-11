@@ -301,7 +301,8 @@ interface WireRunParams {
 
 // pi 壳宿主进程内贯穿的两条 env（与 subagent-service / workflow-state-root 同源推导）：
 //   - PI_CODING_AGENT_DIR：pi SDK getAgentDir 的 env 覆盖通道——xyz-agent 生产链路由
-//     runtime spawn pi 时显式注入（rpc-client buildSafeEnv）；缺省 ~/.pi/agent 与 pi
+//     runtime spawn pi 时显式注入（rpc-client buildPiOutboundEnv，经
+//     buildOutboundChildEnv 共享构建器出站）；缺省 ~/.pi/agent 与 pi
 //     实装版 dist config.js getAgentDir 逐字同构（锚定先例 workflow-state-root.ts）。
 //   - PI_SUBAGENT_ROOT_CWD：真 ROOT 的 cwd（MF-3 贯穿）——嵌套 subagent 场景宿主
 //     spawn 子进程时注入，与 subagent-service 构造处的 rootCwd 同 env 同值。

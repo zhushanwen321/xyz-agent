@@ -79,7 +79,7 @@ export type ClosedReason = 'parent-shutdown' | 'parent-fork' | 'parent-new' | 'u
  * sessionFile（resurrectClosed 回边），不再要求 fork-from 换新 id。
  *
  * 取值以 `.finalized` sidecar 实际写入的 ClosedReason 字面量为准：
- *   disconnected    — 断联（sidecar 空/损坏兜底 + pi-invocation 中断写入）
+ *   disconnected    — 断联（sidecar 空/损坏兜底；in-proc 时代写点已随 engine-CLI 化消失）
  *   parent-shutdown — 父进程 session_shutdown 回收
  * 其余 reason 刻意排除：user-close/cancelled 是用户主动告别（close 语义不可旁路）；
  * gc 是自然完成（追问走 fork-from 或新 start）；parent-fork/parent-new 同理是编排性

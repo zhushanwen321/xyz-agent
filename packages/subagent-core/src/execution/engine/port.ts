@@ -101,8 +101,9 @@ export interface RunContext {
    * rootCwd) 宿主推导值）——经 wire ctx.sessionDir 送达 pi 引擎组装 `--session-dir`。
    * 生产注入方 = RemoteEngine（cli 形态引擎的唯一宿主侧适配点，env 同源推导，见
    * remote-engine buildRunParams）；编排层显式注入（ctx.sessionDir 有值）时优先于
-   * RemoteEngine 自推导。zcode 等不消费 session 目录的引擎忽略本字段。additive：
-   * undefined 不上 wire（引擎走 [LEGACY] fallback）。
+   * RemoteEngine 自推导。zcode 等不消费 session 目录的引擎忽略本字段。编排层可
+   * 不注入；RemoteEngine 缺省以同源 env 推导值补齐后恒上 wire；[LEGACY] fallback
+   * 仅旧宿主/独立运行引擎形态可达。
    */
   sessionDir?: string;
   /**
