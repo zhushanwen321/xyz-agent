@@ -4,7 +4,7 @@
 > 「约束（摘要）」列仅导航，非权威表述；约束内容的唯一权威源 = 「权威源」列指向的文档。
 > scope 为 `global` 的条目每次 CR 必载；其余按改动路径前缀命中（`node scripts/select-constraints.mjs --base main`）。
 
-共 97 条（生成于 2026-09-10）。
+共 99 条（生成于 2026-09-11）。
 
 ## pi 关系（外部依赖边界）
 
@@ -66,6 +66,7 @@
 | C-comm-11 | emit 只传单个 payload 对象（禁多参数）；event-bus listener 用模块级 refCount 防重复注册；错误必须重置 isGenerating + streamingMessage | packages/runtime/src/**、packages/renderer/src/** | [AGENTS.md](../AGENTS.md) | review: review-arch-boundary |
 | C-comm-12 | extension UI 交互走 extension.ui_request/ui_response 独立通道（禁复用 tool approval）；plugin tool 经 Pi Bridge Extension 代理注册 | packages/runtime/src/**、extensions/taiji/** | [0010-extension-ui-independent-channel](adr/0010-extension-ui-independent-channel.md) · [0012-pi-bridge-extension-for-plugin-proxy](adr/0012-pi-bridge-extension-for-plugin-proxy.md) | review: review-extension-api |
 | C-comm-13 | chat 流式 UI 判死必须 idle 语义：streaming timer 只由活动刷新计时（message 帧挂 refresh，stream_warn 除外），禁固定墙钟；活跃性定义含编排期子代理产出——subagent.stream_delta 帧经 route-inbound 桥接刷新父 session timer，禁止旁路帧不经 chat store 的静默检测；timeout 收口必须打标（Message.prematureTimeout）并允许迟到 message.complete 自愈恢复真实终态；阈值经 settings 配置链读写持久化（默认 1800s、clamp 60–3600s 单一权威 DEFAULT_STREAMING_IDLE_TIMEOUT_MS），禁新增 env 死配置口 | packages/core/src/domain/chat/**、packages/core/src/coordination/**、packages/renderer/src/composables/effects/**、packages/shared/src/subagent-frame.ts | [timeout-streaming-ui-idle](design/timeout-streaming-ui-idle.md) · [AGENTS.md](../AGENTS.md) | review: review-business-logic |
+| C-comm-14 | runtime→renderer 出站帧双档大小守卫：push 帧经 outbound-frame-guard 在 seq 语义内截断（8MB 告警哨兵 / 32MB 截断档；序列化恰一次，注册表 miss 丢弃时 rollbackSeq 回退计数，截断占位帧正常占用 seq 入 ring/快照——客户端、断连回放、重订阅拿到同一份截断版；禁止「占 seq 后整条丢弃」形态，会造成 gap 检测误判 → 重订阅全量拉取死循环）；reply 帧（带 pending id）超限整帧替换 payload_too_large error envelope 收口（禁前端 Promise 悬挂）；新增 publish 点的大字段形态必须同步登记 outbound-frame-registry（miss 整条丢弃是最后防线，8MB 告警档先于截断暴露 miss）；pi 工具上游自截（read/bash 50KB/2000 行、图片 ≤16MB）是常态防线而非本守卫的替代 | packages/runtime/src/services/message-bus/outbound-frame-registry.ts、packages/runtime/src/services/message-bus/message-bus.ts、packages/runtime/src/transport/message-broker.ts、packages/runtime/src/services/message-bus/__tests__/outbound-frame-guard.test.ts | [crash-resilience](design/crash-resilience.md#33-关键决策与权衡) | review: review-arch-boundary |
 
 ## renderer 状态与包拓扑
 
@@ -136,6 +137,7 @@
 | C-proc-10 | 文档-代码符号零漂移：设计文档（docs/design/）反引号内引用的代码符号（蛇形常量 / getXxx() 函数调用形态）必须存在于映射源码模块的符号表中（导出名或模块级声明；env 名 XYZ_*/PI_* 与 errno 字符串族豁免）；符号删除/改名必须同批同步文档。映射登记 SSOT = scripts/check-doc-symbol-drift.mjs 的 DOC_MODULE_MAP，新增设计文档时在该表登记映射 | docs/design/**、apps/electron/main/update/**、scripts/check-doc-symbol-drift.mjs | [check-doc-symbol-drift.mjs](../scripts/check-doc-symbol-drift.mjs) | hook: `check-doc-symbol-drift.mjs` |
 | C-proc-08 | pi 语义依赖机器登记 + 探针 + 版本门禁：docs/pi-semantics.json（PS-xx 条目，probe/observe 分型）是唯一机器登记源，scripts/check-pi-semantics.mjs（pre-commit + CI）守 schema/探针存在性/四包版本一致（pi-coding-agent ≡ pi-ai ≡ pi-agent-core ≡ runtime pin）；pi 升级 PR 必查两项——pi-ai exports 是否移除 ./compat、changelog 是否提及 ModelManager 迁移（PS-15 时间炸弹）；探针族红 = 语义漂移，先复核锚点再更新 verifiedWith | docs/pi-semantics.json、packages/runtime/src/infra/pi/**、package.json、packages/runtime/package.json | [pi-boundary-reliability](design/pi-boundary-reliability.md#d6漂移守卫体系pi-语义依赖的机器登记--探针--版本门禁选定) | hook: `check-pi-semantics.mjs` |
 | C-proc-11 | npm 发布面一致性：dist 发布包 files 白名单 ↔ 构建产出双向对齐——files 条目须磁盘存在且非空（幽灵条目拦截，npm pack 对幽灵条目静默跳过）、包内顶层 dist* 产物目录须被 files 覆盖（漏声明方向反向覆盖），由 check-publish-surface.mjs 在发布门（release workflow publish 前）与 CI PR invariants 双点强制（刻意不挂 pre-commit：dist 产物被 gitignore，干净 checkout 必红）；新增产物档须同批挂 workflow 构建步骤 + files 白名单条目 + 守卫覆盖（三者缺一不可）；自包含档命名约定 dist.bundle 且须内联全部运行时依赖（静态 require 探针，裸名外部说明符红）；非发布用途构建目录禁用 dist 前缀（否则反向覆盖检查误红，改名即可）；非 workspace 包机制上不经 changeset 发布线（changesets 按 workspace 发现包），防手滑 npm publish 一律 private:true | packages/**、.github/workflows/release-npm.yml、.github/workflows/release-npm-dev.yml、.github/workflows/ci.yml、scripts/check-publish-surface.mjs、resources/plugins/statusline/package.json | [npm-publish-surface-guard](design/npm-publish-surface-guard.md#33-关键决策与权衡) · [check-publish-surface.mjs](../scripts/check-publish-surface.mjs) | hook: `check-publish-surface.mjs` |
+| C-proc-12 | renderer 进程崩溃自动恢复必须经 recovery-policy 熔断：render-process-gone 按窗口自动 reload 以 windowId 为键、60s 滑动窗口 ≤3 次，超限停静态错误页 + 手动重试（重试重置预算），禁止无限 reload 循环（OOM 类崩溃 reload 后大概率再崩）；多窗口熔断计数互不影响；崩溃详情落盘 + renderer JS 错误现场经 renderer-log IPC 落 main 侧日志（每窗口每分钟限流 100 条，超限合并为汇总行，防错误风暴分钟级刷 GB）；恢复必须用户可见（一次性 CrashRecoveredBar 提示条，禁静默恢复）；renderer 侧错误捕获三件套抑制 Vue 默认整树卸载 | apps/electron/main/window/recovery-policy.ts、apps/electron/main/window/window-factory.ts、apps/electron/main/logs/**、apps/electron/main/test/recovery-policy.test.ts、packages/renderer/src/composables/useCrashRecoveryNotice.ts | [crash-resilience](design/crash-resilience.md#33-关键决策与权衡) | review: review-arch-boundary |
 
 ## subagent-workflow（单写者不变量）
 
