@@ -16,7 +16,7 @@
  * agent|sessions 形态拒绝）/ V9①②③④ tmp 布局端到端 / V9⑨ 报告字段完整性。
  */
 import { describe, it, expect } from 'vitest'
-import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, existsSync, renameSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, existsSync, renameSync, writeFileSync, copyFileSync } from 'node:fs'
 import * as fsReal from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -86,8 +86,8 @@ describe('encodeCwd（复刻 pi-paths.ts 规则，步骤 3 分发依据）', () 
     expect(encodeCwd('/private/tmp')).toBe('--private-tmp--') // dev 实测 --private-tmp--/ 目录形态
   })
   it('win32 盘符路径与混合分隔符', () => {
-    // 权威 = pi-paths.ts:122-124 实现规则（: 与 \ 各替换为一个 -）；其头注释示例
-    // '--C-Users-x-proj--' 漏算冒号变体，以实现为准（迁移分发须与 runtime 写侧同码）
+    // 权威 = pi-paths.ts:122-124 实现规则（: 与 \ 各替换为一个 -）；头注释示例已与
+    // 实现对齐（design-code-sync F4）——迁移分发须与 runtime 写侧同码
     expect(encodeCwd('C:\\Users\\x\\proj')).toBe('--C--Users-x-proj--')
     expect(encodeCwd('C:/Users/x')).toBe('--C--Users-x--')
   })
@@ -769,6 +769,60 @@ describe('幂等三态（V9⑥）', () => {
         ? readdirSync(join(backupPath, 'sessions'), { withFileTypes: true })
         : []
       expect(leftover.filter((e) => !e.isDirectory())).toEqual([])
+    } finally {
+      cleanup(d)
+    }
+  })
+  it('中断注入：主文件已在位 + sidecar 未搬 → 重跑补搬 sidecar（skip 不吞随行，F3）', () => {
+    const d = makeDataDir()
+    try {
+      const dd = join(d, '.xyz-agent')
+      // 局部 seed：源里 .handoff.json + .model.json 两个 sidecar（.model.json 另在目标位
+      // 预置成双侧并存形态），同用例覆盖 sidecar「目标缺失 → 补搬」与「目标已在 → skip」两分支
+      makeLegacyPi(dd, {
+        ...SEED,
+        flatSessions: [{ name: 'm1.jsonl', cwd: '/w', sidecars: ['.handoff.json', '.model.json'] }],
+      })
+      // 模拟上次迁移中断态：步骤 1 已 rename（备份在位），主文件已落目标位而 sidecar 未搬。
+      // 源侧两者均留存（同 id 在源与目标并存 = skip 分支的真实触发形态：先升后迁窗口写入 /
+      // 双源同名兼并 / 续传残部同 id 重复）。
+      const backupPath = join(dd, `pi.backup-v2-${TS - 1000}`)
+      renameSync(join(dd, 'pi'), backupPath)
+      mkdirSync(join(dd, 'agent', 'sessions', '--w--'), { recursive: true })
+      copyFileSync(
+        join(backupPath, 'sessions', 'm1.jsonl'),
+        join(dd, 'agent', 'sessions', '--w--', 'm1.jsonl'),
+      )
+      // 目标位预置 .model.json（与源并存）
+      w(dd, 'agent/sessions/--w--/m1.jsonl.model.json', 'target-already-here')
+
+      const r = run(dd)
+      expect(r.mode).toBe('resume')
+      expect(r.aborted).toBeNull()
+      // 主文件目标已在位 → skip 计数、目标内容不被覆盖
+      expect(r.counts.sessionSkipped).toBe(1)
+      expect(r.counts.sessionDistributed).toBe(0)
+      expect(readFileSync(join(dd, 'agent', 'sessions', '--w--', 'm1.jsonl'), 'utf8')).toContain('"cwd":"/w"')
+      // 修复核心：skip 后 sidecar 随行循环仍执行 → 未搬的 .handoff.json 补搬、
+      // 双侧并存的 .model.json 走「目标已在」skip
+      expect(r.counts.sidecarsMoved).toBe(1)
+      expect(r.counts.sidecarSkipped).toBe(1)
+      expect(readFileSync(join(dd, 'agent', 'sessions', '--w--', 'm1.jsonl.handoff.json'), 'utf8')).toBe('sidecar')
+      expect(readFileSync(join(dd, 'agent', 'sessions', '--w--', 'm1.jsonl.model.json'), 'utf8')).toBe(
+        'target-already-here',
+      )
+
+      // 零重复动作：再跑一遍 → sidecar 零搬移，双侧并存的 .model.json 仍走 skip 计数
+      const r2 = run(dd)
+      expect(r2.mode).toBe('resume')
+      expect(r2.counts.sidecarsMoved).toBe(0)
+      expect(r2.counts.sidecarSkipped).toBe(1)
+      expect(r2.counts.sessionSkipped).toBe(1)
+      expect(readdirSync(join(dd, 'agent', 'sessions', '--w--')).sort()).toEqual([
+        'm1.jsonl',
+        'm1.jsonl.handoff.json',
+        'm1.jsonl.model.json',
+      ])
     } finally {
       cleanup(d)
     }
