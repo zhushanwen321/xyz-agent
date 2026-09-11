@@ -112,7 +112,7 @@ export function reconcilePendingEntries(
 		if (entry === undefined) {
 			// registry 无条目：终态无从判定（LRU 淘汰的终态条目其 unregister entry 应已
 			// 落盘，差集里还出现 = spawn 后 registry 写失败等罕见路径）——保守不动作，
-			// 差集残留交给 pending 自身 TTL 之外的 next-session 对账重查
+			// pending-notifications 已无任何 TTL 清理，差集残留由 next-session 对账重查收口
 			result.skipped.push(id);
 			continue;
 		}
