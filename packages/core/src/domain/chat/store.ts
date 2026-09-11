@@ -1047,7 +1047,8 @@ export function createChatStore() {
 
   /** 设置/清除 compacting reason 文案源（session.compacting{reason} 写 / session.compacted 清）。
    *  [u5b] setCompacting 退役后 reason 的独立入口——浮层文案（getCompactingReason 消费方
-   *  useMessageStreamNotices）不受 membership 通路切换影响。 */
+   *  ActivityStrip.vue；行高常量族见 message-stream-layout.ts，原 useMessageStreamNotices.ts
+   *  于 2026-09-11 改名）不受 membership 通路切换影响。 */
   function setCompactingReason(sessionId: string, reason: string | undefined): void {
     const nextMap = new Map(compactingReasons.value)
     if (reason === undefined) nextMap.delete(sessionId)

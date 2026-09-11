@@ -18,7 +18,7 @@
  * - SM-E2E-10（回归：应用命令 confirm 不注入 chip）：搜新建 → confirm → composer 不出现 slash-chip
  *
  * 三视角覆盖：
- * - 构建者（白盒）：useSearch 编排/matchEngine/useRecents 已在 vitest 86 用例覆盖
+ * - 构建者（白盒）：useSearch 编排/matchEngine/useRecents 由 core vitest（`packages/core/src/domain/new-task-search/__tests__/`）覆盖；浮层交互由 `packages/ui/src/overlays/__tests__/search-modal.test.ts` 覆盖（原「vitest 86 用例」为迁移前 renderer 口径，已失效）
  * - 使用者（黑盒）：本 spec 验「用户能否完成搜索→选中→跳转」目标
  * - 观察者（形态）：SM-E2E-1 首屏渲染 gate
  *
