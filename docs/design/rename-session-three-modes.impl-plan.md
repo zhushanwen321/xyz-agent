@@ -104,9 +104,12 @@ graph TD
 
 阶段 2 收口（2026-09-12）：6/6 单元 committed（u1 dcc189dc4 / u2 37b7c9887 / u3 f70dfd602 / u4 cbf6b5894 / u5 0df724a2c / u6 681fcd4e2）；速率限制致 u1 一任中断（接替成功）与 u5 两任中断（三任核验型接替闭环）。
 
+阶段 5 双级验收（2026-09-12）：**Gate A 改动区全绿**（7 命令 6 exit 0，唯一失败 = session-reader 存量环境用例，已登记残留风险；零绕过）；**Gate B 10/10 场景全 pass**——组 1 pi CLI（V1 D5 fallback usage model=主模型 / V2 触发时点提前 2720ms + 一次性窗口 / V3 toolCall+覆盖+对照零 toolCall / V7 warn 留痕零落库 / V8 env 零幽灵）；组 2 GUI dev（V4 零操作刷新 / V5 双窗一致 / V6 skip: name exists / V9 空名回落 basename / V10 四判据闭环——live 双向、工具面按起动 mode、守卫文案逐字命中、count≥2 一次性窗口拦截）。验收证据：截图 14 张 /tmp/rename-gateb/ + dev 日志 /tmp/rename-gateb-dev.log（贴 PR 用，不进仓库）。V9 实施发现：pi 0.84.4 RPC set_session_name 空串在 RPC 层被拒（rpc-mode.js:526-529 trim 校验），清名事件现网无自然生产者——D4 空名回落为纯防御路径（runtime 单测 + 事件注入双验证）；如需产品化清名入口另行设计。
+
 ## 7 残留风险与变更历史
 
 **残留风险**：
+- **[Gate A 已知失败·存量非本区间] session-reader `TC-m3b-real-data-guard`**（execution-tree.test.ts:700）：硬编码本机 `~/.pi/agent` 真实数据 + 固定 sessionId，断言旧机制 flat-fallback，本机数据演化后确定红（隔离重跑确定性失败）；区间 0 文件改动（最后改动 f482e73b0 为 base 祖先），与本次流水线零关联。处置：范围外不修，建议后续单独修复（改固定 fixture 或放宽断言）；在含本包的全量 Gate 中将持续红，消费方注意甄别。改动区全绿（runtime 459/5202、core 120/1951、renderer 384/4183、subagent-core 190/2834、rename-session 6/203、shared 28/335、pi-subagent-cli 22/304），零绕过（区间 diff grep skip/disable 模式零匹配）。
 - 探针 P1-P3 已全部闭环（P1/P2 = u1 实测通过零降级，dcc189dc4；P3 = u4 单测级通过同步调用安全，帧序归 Gate B V4/V5）
 - ~~e2e/README.md（不在任何单元领地）仍写 A1-A5 计数~~ **已清账（7693f1a05 修复 A-U2 时更新为 A1-A7 + 函数清单）**；同类注释级残留 3 处（scenarios.test.mjs:2 / vitest.e2e.config.ts:3 / harness.mjs:42 仍写 A1-A5）+ 包 README:77 工具守卫排序描述滞后（B-U1 后 subagent 守卫为第一步）——登记 Gate B 后清账批（定向复审 2026-09-12 low 级新发现，不阻塞）
 - run-a3.mjs 内部 countLlmRequests/countSessionInfos 与 harness 新导出（countLlmRequestLogs/countSessionInfoEntries）同构并存——后续触及 a3 的单元顺手收敛，不阻塞
