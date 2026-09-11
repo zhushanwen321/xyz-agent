@@ -163,13 +163,14 @@ graph TD
 | 9 | u2 调度序排在 u1c 之后（计划 DAG 未画此边） | u2 巡检出口需写 trigger-review 进 main.jsonl，依赖 u1c writer 先就位；编排期调度偏差，设计契约不变 | 初始登记 |
 | 10 | u9 领地事实修正：relay-tee.ts 未改（计划假设其含 tee 落盘） | 实测 relay-tee.ts 是 WS 帧翻译层（无 fs import）；relay 形态 tee 文件落点 = logger.ts createPiRelayLog（relay-registry.ts:389 消费），与 createPiSessionLog 共享 createPiStreamWriter——轮转做在共享工厂自动覆盖两形态，符合设计 D7「复刻点」原意 | 实施期登记 |
 | 11 | u9 旋段形态选单代 `.1`（保留末 2 段）而非台账的多段级联 | 设计 D7 原文即 `.jsonl` → `.jsonl.1` 保留末 2 段（A5 通过标准「`.1` 段存在」同证）；与本仓主日志既有单代形态对齐。台账（D1）仍是 10MB×3 段级联，两者不混同 | 实施期登记 |
+| 12 | u1b 私有复刻 endAndAwait（~35 行，logger.ts 同名函数模块私有且属他人领地）+ 新增 close()/closeCrashJournal() 收口 API（暂未接线） | 领地锁定约束下的取舍；close API 是设计 D5 shutdown 链的将来挂点（u7c 接线）。**阶段 3 一致性审查项**：评估 endAndAwait 双实现是否值得抽公共 util（真差异 = 字节计数起点取盘上真实 size，属有意修正非复制走样） | 实施期登记 |
 
 ## 6 状态表
 
 | Unit | 状态 | 轮次 | 证据指针 |
 |------|------|------|----------|
 | u1a | committed | 1 | schema 21 值枚举 + 覆盖锁；shared vitest 17 passed + typecheck 绿（编排者重跑核验） |
-| u1b | pending | — | — |
+| u1b | committed | 1 | 10MB×3 段级联轮转 + pendingLines 回放零丢行 + best-effort 降级；vitest 7 passed + typecheck 绿（编排者重跑核验） |
 | u1c | pending | — | — |
 | u1d1 | pending | — | — |
 | u1d2 | pending | — | — |
