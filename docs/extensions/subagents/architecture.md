@@ -105,7 +105,7 @@ subagent 能力现由 5 类包协作，跨进程边界只有一处（宿主 ↔ 
 |---|---|---|
 | 状态单一真源 | `execution-record.ts` + `record-store.ts` | 内存 record 与 `session.jsonl` 磁盘重建两条通路共用同一 reducer；对外状态两态（`active` / `ended`） |
 | 终态标记 | `state-marker.ts` | 单一 `<session>.state` sidecar（`{status, reason?, endedAt?}`）标记 finalized / cancelled；旧名 `.finalized` / `.cancelled` 只读兼容；record 绑定 sidecar `<session>.record-binding`（UF-1：id→file + rootSessionId，跨重启续聊数据源）同挂本载体族 |
-| 进程探活 | `alive-store.ts` | `.alive`（pid + 启动时刻）探活面——唯一写者 cold-resurrect 已随 H1 删除，现为存量零写者（读面退役与清理处置归 [subagent-record-persistence-consolidation.md](../design/subagent-record-persistence-consolidation.md) D3） |
+| 进程探活 | `alive-store.ts` | `.alive`（pid + 启动时刻）探活面——写者未随 H1 消亡：随 U6 从 cold-resurrect.ts 改名迁入 cold-lookup.ts，resurrect 回边（跨重启续聊活链）仍调 `writeAliveMarker`（`cold-lookup.ts:157`，把 `.alive` 刷新为当前进程以翻回磁盘活态）——非零写者；[subagent-record-persistence-consolidation.md](../design/subagent-record-persistence-consolidation.md) D3 的「零写者后删除」清理执行前须先处置该写点 |
 | 空闲回收 | `lifecycle-manager.ts` | per-record idle timer——chat 域长驻消亡后 arm 面（armChatIdleTimer）随 H1 退役，仅存 disarm 防误杀与超时回落常量（`XYZ_SUBAGENT_IDLE_TIMEOUT_MS`） |
 | 楔死回收 | `settled-watchdog.ts` | settled 永不到达的两段式守护：中段无进展检测（刷新源 = run 事件通道既有事件）+ 收尾段固定上界（交棒 = run 应答驱动）；run 域（含 chatMode 续聊轮）与 workflow 域共用同一原语 |
 | 引擎装载 | `engine/engine-discovery*.ts` → `registry.ts` → `routing.ts` | 三级发现装载 cli descriptor；core 壳侧零内建引擎（`pi` 亦经发现装载） |

@@ -4,7 +4,7 @@
 > **前置依赖**：H1（chat 域统一）→ H2（workflow record 归位）→ H3（service 拆分）依次落地后最后收口——前三者重塑 record 的形状与消费面，本设计在其稳定后统一持久化。
 > **基线**：含 L4 已实施形态（`execution/state-marker.ts`：`.finalized`/`.cancelled` 合并 `.state`，读侧兼容旧名，`.alive` 不并入——L4 设计时在途，以落地版为准）。
 >
-> **一句话结论**：RecordStore 成为 record 状态的**唯一写入口**（意图级操作 API），终态以 `.state` **同步写**为权威；session.jsonl entry 降为过程记录（best-effort）、索引降为可丢缓存；写面从 9 处收口为 1 处；`.alive` 写面随 H1 消亡退役（v4 证伪「子进程自写」前提——全仓唯一写者是 cold-resurrect 宿主自写，见 D3）；崩溃窗口语义从「散在各调用方」收为「store 内单点论证一次」。
+> **一句话结论**：RecordStore 成为 record 状态的**唯一写入口**（意图级操作 API），终态以 `.state` **同步写**为权威；session.jsonl entry 降为过程记录（best-effort）、索引降为可丢缓存；写面从 9 处收口为 1 处；`.alive` 写面的 H1 收敛口径已修订（2026-09-11 一致性审查）：v4 证伪「子进程自写」前提仍成立（写者是宿主），但写者未消亡——随 U6 从 cold-resurrect.ts 改名迁入 cold-lookup.ts，resurrect 回边仍自写（见 D3 修订）；崩溃窗口语义从「散在各调用方」收为「store 内单点论证一次」。
 
 ---
 
@@ -23,7 +23,7 @@ RecordStore（`execution/record-store.ts`，1466 行）已是 record 的统一�
 
 ### 1.3 设计目标
 
-- **G1 唯一写入口**：store 外零直写（白名单 = store 内部实现；`.alive` 写面随 H1 消亡退役——D3）。
+- **G1 唯一写入口**：store 外零直写（白名单 = store 内部实现；`.alive` 写面 H1 后仅存 resurrect 回边一处自写——D3 修订口径，清理前须先处置）。
 - **G2 真相分层明确**：终态 = `.state` 同步写（崩溃即持久）；过程 = session.jsonl entry（best-effort，可丢可重建）；缓存 = manifest/sessions-index（可丢可重建）。
 - **G3 崩溃窗口单点论证**：每个崩溃形态（flush 丢终写 / abort 截断 / 探活 / 批一致 / 通知存在性）只在 store 内论证一次，调用方无感知。
 - **G4 调用方零文件布局知识**：调用方只调意图操作；测试从「拼文件名断言」转为「断言 store 接口语义」。
@@ -43,7 +43,7 @@ RecordStore（`execution/record-store.ts`，1466 行）已是 record 的统一�
 |---|------|--------|----------------------|---------|
 | 1 | session.jsonl `subagent-record` entry | record 主记录（创建/终态/变迁） | 主记录本体；随 pi debounce flush，暴毙丢尾 | 降为**过程记录**（best-effort） |
 | 2 | `.state` sidecar（L4 后） | 终态二态 + reason | 补 #1 丢终写的洞（同步写） | **升为终态权威** |
-| 3 | `.alive` | pid marker（**全仓唯一写者 = cold-resurrect 宿主自写，`cold-resurrect.ts:152`——「子进程自写」前提经 v4 源码核实证伪**） | 宿主重启后探活 | **随 H1 消亡退役**（D3：U6 删唯一写者后零写者；探活读面退役清单归 P4；存量残留 boot 清理；删除动作归口 store 内部非豁免对象） |
+| 3 | `.alive` | pid marker（**全仓唯一写者 = 宿主自写——「子进程自写」前提经 v4 源码核实证伪；写者现位于 `cold-lookup.ts:157` resurrect 回边（原 cold-resurrect.ts:152 随 U6 改名迁移，2026-09-11 一致性审查修订：写者未删）**） | 宿主重启后探活 + resurrect 回边把 `.alive` 刷新为当前进程（磁盘终态翻回活态的组成部分） | **不随 H1 自动退役**（原「D3：U6 删唯一写者后零写者」前提失效——写者迁入 cold-lookup.ts 保留且属活链语义；D3 执行清理前须先处置 resurrect 回边该写点，探活读面退役清单仍归 P4） |
 | 4 | manifest `records/<sa-id>.json` | 反查索引 + 第三套状态词汇 | GUI 列表快速路径 | 降为**缓存**（可重建） |
 | 5 | sessions-index.json | identity 探测缓存 | 性能 | 降为**缓存** |
 | 6 | 主 session 文件 batchFinalized 覆写 | sync 批成员终态 | 批通知一致性 | 并入 `markBatchFinalized` 意图操作 |

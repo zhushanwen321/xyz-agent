@@ -170,11 +170,15 @@ class ConversationContinuation {            // 每 chatMode record 一个实例
          防 resume 静默回落主 repo）
        sessionRootId 注入（协议 ctx 字段——L1 已落地 c1ebd6db5）
        signal（abort 通道）/ priority / pool acquire
-    ③ armMidRoundNoProgress(record.id, …)（防回归：替代原两处 chat 专属 arm）
+    ③ 轮活性守护挂载：armMidRoundNoProgress(record.id, …)（防回归：替代原两处
+       chat 专属 arm）——挂载点经泛化派发主干在 pool acquire 之后（实现契约 =
+       ContinuationHost.dispatchChatRound，service 侧 kickOffChatRound/resume
+       分支实施；排队窗不计入 no-progress 静默）
     ④ 经泛化派发主干发起 run（resume = record.sessionFile）
   onRunSettled(outcome):                        // run 应答回调（resolve = agent_settled，D7）
     【终态守卫 = 整体 early-return，先于一切分支】record 已终态化（close 抢先）
-      → 直接返回：不 roundIdle、不通知、不 drain（doFinalizeRoundToIdle 的机制
+      → 直接返回：不 roundIdle、不通知、不 drain，并清空待发 queue（防 close/cancel
+      终态化后残留消息在后续 revive 时重放；doFinalizeRoundToIdle 的机制
       语义就是「覆盖 closed 回滚为 running」（finalize-record.ts:352-359）——若
       守卫只挡 drain 不挡成功分支，close 终态化会被轮末收口回滚 + 追加通知 +
       二次 unregister。配套断言：doFinalizeRoundToIdle 入口 assert status==="running"）
@@ -182,9 +186,12 @@ class ConversationContinuation {            // 每 chatMode record 一个实例
       D7 v5 轻形态——先于轮终簿记，watchdog 停表早于状态写）
     成功 → doFinalizeRoundToIdle(outcome=success, content)（round+1、注销点②、
       result = content，空 content 兜底 "(no output this round)"——承接 settleChatRoundFromResponse）
+      → 轮终簿记后 disarmRoundWatchdog（两段守护一并清，防已收敛轮残留 armed 守护
+        对 drain 新轮资源误发 kill/cancel——settled-watchdog disarmRoundFromProtocol）
       → notifyGateAllowsDelivery(closedReason) 门 → collectCoordinator.route(record)
       （v6 显式迁移：门判 closedReason 编排面、与 early-return 的 status 终态面正交双闸）
-    失败/中断 → doFinalizeRoundToIdle(outcome=failed)（轮终簿记同上；result = 前值 ??
+    失败/中断 → doFinalizeRoundToIdle(outcome=failed)（轮终簿记同上 + 同样先 disarm
+      两段守护；result = 前值 ??
       失败摘要、lastError 写失败原因——见 D7 写入规则）+ 失败通知（独立构造载荷——
       不经 route(record)，正文 = 失败摘要 + 恢复指引；发前过 notifyGate 门，
       同成功分支双闸；可达性迁移自 [T2-③/LC-1]）
@@ -215,7 +222,7 @@ GUI message → subagent tool(message) → Continuation
 | S3 | 关重开一致性 | S1 后关重开 session | 对话流/record 状态一致（live≡reload 套件绿） | G1/G3 |
 | S4 | 崩溃 resume + 并发写检查 + 中断现场 | 轮在途 SIGKILL 引擎 CLI → 立即 message | 失败通知到达（Continuation 单发）；续聊以原文件 resume 且**文件无交错行**（验证红线①收割链：非主动死亡路径组杀/Windows 镜像通道，此刻 pid 可得）+ 孤儿退出时序（非镜像兜底守卫——引擎已死镜像已置死）；**中断现场断言（v5 补，与 S2 检查点⑤同构；判定口径 v6）**：收割后下一轮追问「上一轮说到哪」**能复述崩溃前最后一个已完成工具调用/事实**（内容级判定，不要求逐字节——flush 粒度边界即此口径）——收割链对孤儿的杀法是信号级 SIGTERM（引擎已死无协议取消链），pi 对裸 SIGTERM 做 trap graceful shutdown 有现行一手证据（`subagent-service.ts` 注释：pi 子进程 trap SIGTERM 做 graceful shutdown，窗口几十~几百 ms），本断言即该行为在收割路径的实测验收；若实测不达标 → 升级为已接受代价登记（模板见核验点⑦） | G1/G3 |
 | S5 | 删除面回归 | 删路完成 | 四包 + **`pnpm extensions:test`**（extensions 真链路测试：chatmode-first-round-closure / one-shot-upgrade 等已随改写）+ conformance 套件全绿；`grep -rn "roundLifecycle\|engine\.interact\|registerChatRoundRoute" packages/ extensions/ scripts/ --include="*.ts" --include="*.mjs" | grep -v "/dist/"` **零命中**（v5 实测口径：命中全集已逐文件归档处置表与 U5/U6 删除清单——实施期以 grep 实际输出对照复核，命中数随基线小幅漂移属正常）；GUI 默认引擎 one-shot 行为零变化 | G2/G3 |
-| S6 | 存量记录续聊 | 取落地前 chatMode record（running-idle / disconnected 终态各一）message 之；另取**非 chatMode 可重连终态** record（session shutdown 期在途 one-shot 被 disposeAllRecords 关成 parent-shutdown 后重启）message 之 | **绑定工件前提（UF-1 落地，2026-09-11 补）**：跨重启续聊动作链的数据源前提 = `.record-binding` 绑定 sidecar——宿主在 handshake sessionFile 回填点写 id→file + rootSessionId（`state-marker.ts` 载体族，close 终态翻转只写 `.state` 不破坏绑定），`cold-lookup.ts` 的 findLightById/collectRecords 经 sidecar 恢复 id→file 映射；UF-1 落地前创建的存量 record 无 sidecar，其跨重启可续性以 Gate B 三变体真机复验签收为准（UF-1 单测已覆盖绑定写入后的全链）。前者直接续聊；后者 revive 后续聊；user-close 终态的收到 guard 拒绝指引；**第三例**：升级 chatMode 置位（D4 revive 格；可重连终态集 = `{parent-shutdown, disconnected}` 两成员，`types.ts:88`——两态各一例）+ D5 gate 覆盖（pi 放行升级且续聊多轮存活 round 持续 +1 不终态化；zcode 侧 gate 拒绝为单测覆盖） | G1 |
+| S6 | 存量记录续聊 | 取落地前 chatMode record（running-idle / disconnected 终态各一）message 之；另取**非 chatMode 可重连终态** record（session shutdown 期在途 one-shot 被 disposeAllRecords 关成 parent-shutdown 后重启）message 之 | **绑定工件前提（UF-1 落地，2026-09-11 补）**：跨重启续聊动作链的数据源前提 = `.record-binding` 绑定 sidecar——宿主在 run 终态应答 `outcome.sessionFile` 回填点写 id→file + rootSessionId（`state-marker.ts` 载体族，close 终态翻转只写 `.state` 不破坏绑定），`cold-lookup.ts` 的 findLightById/collectRecords 经 sidecar 恢复 id→file 映射；UF-1 落地前创建的存量 record 无 sidecar，其跨重启可续性以 Gate B 三变体真机复验签收为准（UF-1 单测已覆盖绑定写入后的全链）。前者直接续聊；后者 revive 后续聊；user-close 终态的收到 guard 拒绝指引；**第三例**：升级 chatMode 置位（D4 revive 格；可重连终态集 = `{parent-shutdown, disconnected}` 两成员，`types.ts:88`——两态各一例）+ D5 gate 覆盖（pi 放行升级且续聊多轮存活 round 持续 +1 不终态化；zcode 侧 gate 拒绝为单测覆盖） | G1 |
 | S7 | close×message 竞态 | 轮在途 → message（入队）→ 立即 close | 在途 abort + 队列清空 + record 终态化 closed/user-close + notifyClosed；**无僵尸轮、无 close 后追加通知** | G1 |
 | S8 | one-shot 升级续聊（SP-5） | 派 one-shot 完成 → 首条 message（默认引擎 pi） | 升级 chatMode 照常（`actions-core:566-582` 链经 Continuation + D5 gate），续聊与 S1 同；unsupported 引擎（zcode）的升级被 gate 拒绝并指引（单测覆盖） | G1 |
 
@@ -242,7 +249,7 @@ GUI message → subagent tool(message) → Continuation
 | `subagent-engine-sdk/src/__tests__/chat-domain-v1x.test.ts` | roundLifecycle 载荷 ×4 | 删 | v1.x chat 域协议测试整体随协议退役 |
 | `subagent-engine-sdk/src/__tests__/protocol.test.ts` | 反向通道全集断言 ×3 | 改写 | 共享协议测试：全集断言删 `host/roundLifecycle` 项，其余通道断言保留 |
 | `pi-subagent-cli/src/__tests__/chat-protocol.test.ts` | roundLifecycle 帧序列 ×4 | 删 | chat 协议帧序列测试；续聊协议覆盖由下方 e2e 改写承接 |
-| `pi-subagent-cli/src/__tests__/pi-engine.test.ts` | `engine.interact` 行为断言 ×14 | 改写 | 引擎核心行为测试（message 投递/close/cancel/冷启动）迁移 run 通道续聊形态，非删 |
+| `pi-subagent-cli/src/__tests__/pi-engine.test.ts` | `engine.interact` 行为断言 ×14 | 改写 | 引擎核心行为测试 message 投递迁移 run 通道续聊形态；close/cancel/EPIPE 兜底随 interact 面退役删除，覆盖去向 = stdin-writer.test / server.test / run-spawn-once.integration（pi-engine.test.ts 尾注释声明） |
 | `pi-subagent-cli/src/__tests__/protocol-chat-e2e.test.ts` | roundLifecycle settled/idle 帧 ×8 | 改写 | 续聊 e2e 价值保留（两轮续聊/冷续聊），断言载体从 roundLifecycle 帧改 run 终态事件 |
 | `pi-subagent-cli/src/__tests__/server.test.ts` | interact dispatch / 三分通道注入 ×4 | 改写 | :310 dispatch 断言删；:598-611 三分通道测试删 roundLifecycle 项，其余保留 |
 | `zcode-subagent-cli/src/__tests__/server.test.ts` | interact dispatch 断言 ×1（:294） | 改写 | dispatch 断言删，其余保留 |
@@ -255,7 +262,7 @@ GUI message → subagent tool(message) → Continuation
 | `subagent-core/.../__tests__/chat-round-first-round-watchdog.test.ts` | chat 首轮看门狗 | 删（U6） | chat 域首轮机制随域退役 |
 | `subagent-core/.../client/__tests__/remote-engine.test.ts` | 承载件断言 | 改写（U6） | 随 engine 层承载件删除断言改写 |
 
-**文件改动地图**：SDK `protocol/{methods,contract-types,schema,reverse-channels,port-contract,engine-protocol}.ts`；core `execution/{subagent-service,subagent-actions-core}.ts` + 新增 `execution/conversation-continuation.ts` + 删 `execution/cold-resurrect.ts` + `execution/{finalize-record,notifier}.ts`（轮末分流/round 写点）+ `execution/execution-record.ts`（base 两函数与 `roundBaseTurnIndex` 字段清理，U6）+ `execution/types.ts`（字段声明清理）+ `execution/engine/{port.ts,client/{remote-engine,reverse-router,engine-client}.ts,host/host-bridge.ts,common/capability-gate.ts}`（capability-gate 仅注释更新——conversation 位保留）+ `execution/settled-watchdog.ts`（刷新源）；pi `pi-engine.ts`/`server.ts`/`spawn-runner.ts` + 删 `chat-session.ts`；zcode `server.ts`/`zcode-engine.ts`；extensions `subagent-workflow/src/__tests__/{chatmode-first-round-closure-service,one-shot-upgrade}.test.ts`（改写）+ interface 面。
+**文件改动地图**：SDK `protocol/{methods,contract-types,schema,reverse-channels,port-contract,engine-protocol}.ts`；core `execution/{subagent-service,subagent-actions-core}.ts` + 新增 `execution/conversation-continuation.ts` + 删 `execution/cold-resurrect.ts` + `execution/{finalize-record,notifier}.ts`（轮末分流/round 写点）+ `execution/execution-record.ts`（base 两函数与 `roundBaseTurnIndex` 字段清理，U6）+ `execution/types.ts`（字段声明清理）+ `execution/engine/{port.ts,client/{remote-engine,reverse-router,engine-client}.ts,host/host-bridge.ts,common/capability-gate.ts}`（capability-gate 注释更新 + SP-5 升级 gate 错误构造单源 engineConversationUpgradeUnsupportedError——conversation 位保留）+ `execution/settled-watchdog.ts`（刷新源）；pi `pi-engine.ts`/`server.ts`/`spawn-runner.ts` + 删 `chat-session.ts`；zcode `server.ts`/`zcode-engine.ts`；extensions `subagent-workflow/src/__tests__/{chatmode-first-round-closure-service,one-shot-upgrade}.test.ts`（改写）+ interface 面。
 
 **待验证检查点**：① U3 resume 穿透精确点位与首轮 spawn-run 化细节；② U4 冷启耗时分布（D2 量化）；③ gui-mappers 多轮 run 投影兼容（S1/S3 覆盖）；④ capability-gate/conversation 位消费方在 U5-U6 的逐位回归（fork 派发真机一次）；⑤ S2 trap-flush 召回实证；⑥ settle 段交棒接线次序（形态已定 D7：onRunSettled 内调 noteRoundSettledFromProtocol，先于轮终簿记——核验实施期接线与单测断言一致）；⑦（S4 条件触发）收割路径中断现场召回实测不通过时，pi 对裸 SIGTERM 的 flush 行为重查 + 已接受代价登记（**模板三要素前置，v6**：丢失面量级——最坏丢尾部未完成 entry 或整轮 streaming 输出，以实测 flush 粒度定案；恢复路径——无自动恢复、用户重问；重审触发——交错行证据或召回显著低于 S2 同构基线）。
 
