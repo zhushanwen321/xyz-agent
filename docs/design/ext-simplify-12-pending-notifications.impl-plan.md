@@ -125,7 +125,7 @@ Commit 映射（执行期 subagent 禁 git，commit 由主会话核验验收条�
 | u0 V5 基线采集 | committed | 1 | 零仓库改动。基线留存 /tmp/ext-simplify-12-u0-v5-iQxi/（13 session JSONL + 3 产物 + 驱动日志，勿清理）；主基线 = sessions-v5b/。三件产物：① goal-state 状态机 active→complete/blocked + goal:log 序列 + entry 类型清单；② defer 通知 0 次（14 轮实测，触发契约锚点 agent-end.ts:202-225 登记）；③ pending 工具输出全形态（list/count/归零/空）。命令形态：pi --mode rpc + -e 显式入口 + --no-extensions 隔离。deviations 5 条见报告（CLI 0.85.1 与 u4 同版本可比；defer 0=0 比对口径成立） |
 | u1 M1 包内原子改（E1-E5+changeset） | committed | 1 | 编排方核验（领地 4 文件吻合 + 包测试 32 绿重跑 + pathspec 提交）。验收①-⑦全过（删除面 rg 零命中 / 导出恰 5 / 根三连绿 / ⑦ conformance 预期红定位 u2 领地）。deviations 3 条见下 |
 | u2 跨包测试+SSOT（E6+E7） | committed | 1 | 编排方核验（领地 4 文件吻合 + render 幂等复核 + drift 绿）。验收①-⑤全过（subagent-core 2833 tests 全绿收口红窗口；constraints 新措辞落位 + md5 幂等；extension-dependencies reason 三处失实修正）。deviations 3 条合理（头注行号漂移清理 / reason 修正扩围在授权内 / C-proc-13 追加删除登记属 C-proc-10 精神） |
-| u3 注释/文档回写+守卫（E8-E10） | in-progress | 待回填 | 已派发（后台） |
+| u3 注释/文档回写+守卫（E8-E10） | committed | 1 | 编排方核验（领地 7 文件吻合 + drift/「自身 TTL」断言重跑绿）。验收①-⑤全绿（8 符号 docs/ 扫描逐处判别归零 + bte 242 tests + lint）。deviations 4 条合理（E10 映射扩 4 模块实测自证 / ENGINE_ 白名单本体修正 / :84 顺手修正属 C-proc-10 / 去字面量+标注弥合口径差） |
 | u4 真实场景验收 V1-V5 | pending | 无（产物贴 PR） | 探针 P1/P2/P3 复核结果：待回填 |
 
 ## 7 残留风险与变更历史
