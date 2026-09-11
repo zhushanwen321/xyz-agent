@@ -690,6 +690,135 @@ function hasSubstantiveProviderFields(merged: Record<string, unknown>): boolean 
     || merged.authHeader !== undefined
 }
 
+// ── 防线载体 · 字段族子函数（从 applyProviderWritePolicy 提取，逐字段族一个入口）──
+
+/**
+ * 防线② provider 级 apiKey 转译：空串 = 清除语义 → 删键（「清除」的正确落盘形态是删键，
+ * 不是写空串；与 index.ts clearApiKey 闭包同构）。catalog 的非空 apiKey 归 auth.json
+ * （applyProviderCredentials 通道），载体不写 models.json 侧。
+ */
+function applyApiKeyWritePolicy(
+  merged: Record<string, unknown>,
+  data: ProviderWritePolicyInput,
+  kind: ProviderWriteKind,
+): void {
+  if (data.apiKey === undefined) return
+  if (isBlankString(data.apiKey)) {
+    delete merged.apiKey
+    return
+  }
+  if (kind !== 'catalog') merged.apiKey = data.apiKey
+}
+
+/** 防线② provider 级 name 转译：空串（trim 后同视）= 未指定 → 不写键 + warn（base spread 保留既有值）。 */
+function applyNameWritePolicy(
+  merged: Record<string, unknown>,
+  data: ProviderWritePolicyInput,
+  providerId: string,
+): void {
+  if (data.name === undefined) return
+  if (isBlankString(data.name)) {
+    console.warn(`[config-service] dropped empty-string name for ${providerId}`)
+    return
+  }
+  merged.name = data.name
+}
+
+/**
+ * 防线③ catalog 体系 baseUrl 分体系语义：import = 剥除（导入数据不是用户在 UI 显式设置的
+ * 网关，不产生隐形网关）；settings 非空 = 用户网关（pi 覆盖式网关机制）→ 写入 + 产出
+ * gatewayToSet 标记信号；settings 显式空串**带键** = 清除网关（回退内置端点）→ 删键 +
+ * 产出 gatewayToClear；未带键（undefined）= 不变（既有 merge 协议）。
+ */
+function applyCatalogBaseUrlWritePolicy(
+  merged: Record<string, unknown>,
+  data: ProviderWritePolicyInput,
+  source: ProviderWriteSource,
+  result: ProviderWritePolicyResult,
+): void {
+  if (data.baseUrl === undefined) return
+  if (source === 'import') {
+    delete merged.baseUrl
+    return
+  }
+  if (!isBlankString(data.baseUrl)) {
+    merged.baseUrl = data.baseUrl
+    result.gatewayToSet = data.baseUrl
+    return
+  }
+  if (merged.baseUrl !== undefined) delete merged.baseUrl
+  result.gatewayToClear = true
+}
+
+/**
+ * 防线② custom 体系 baseUrl：空串（trim 后同视）= 未指定 → 不写键 + warn（base spread 保留
+ * 既有值）。custom 清空 baseUrl 保存 = 不变更既有值（custom 无「默认」可回退，删除用删除功能）。
+ */
+function applyCustomBaseUrlWritePolicy(
+  merged: Record<string, unknown>,
+  data: ProviderWritePolicyInput,
+  providerId: string,
+): void {
+  if (data.baseUrl === undefined) return
+  if (isBlankString(data.baseUrl)) {
+    console.warn(`[config-service] dropped empty-string baseUrl for ${providerId}`)
+    return
+  }
+  merged.baseUrl = data.baseUrl
+}
+
+/**
+ * 防线②③ provider 级 api 分体系语义：catalog —— import 剥除（同 baseUrl：导入不产生非用户
+ * 意图的协议缺省）/ settings 忽略 + warn（provider 级 api 对 catalog 无用户语义，协议是模型级
+ * 属性）；custom —— 空串（trim 后同视）= 未指定 → 不写键 + warn。
+ */
+function applyApiWritePolicy(
+  merged: Record<string, unknown>,
+  data: ProviderWritePolicyInput,
+  kind: ProviderWriteKind,
+  source: ProviderWriteSource,
+  providerId: string,
+): void {
+  if (data.api === undefined) return
+  if (kind !== 'catalog') {
+    applyCustomApiWritePolicy(merged, data.api, providerId)
+    return
+  }
+  if (source === 'import') {
+    delete merged.api
+    return
+  }
+  console.warn(`[config-service] ignored provider-level type for catalog ${providerId}`)
+}
+
+/** 防线② custom 体系 provider 级 api：空串（trim 后同视）= 未指定 → 不写键 + warn。 */
+function applyCustomApiWritePolicy(
+  merged: Record<string, unknown>,
+  api: string,
+  providerId: string,
+): void {
+  if (isBlankString(api)) {
+    console.warn(`[config-service] dropped empty-string api for ${providerId}`)
+    return
+  }
+  merged.api = api
+}
+
+/** 防线② 模型级转译（translateModelSchemaFields）：传了才触碰 merged.models，整体替换。 */
+function applyModelsWritePolicy(
+  merged: Record<string, unknown>,
+  data: ProviderWritePolicyInput,
+  providerId: string,
+): void {
+  if (data.models === undefined) return
+  const kept: Array<Record<string, unknown>> = []
+  for (const raw of data.models) {
+    const model = { ...raw }
+    if (translateModelSchemaFields(model, providerId)) kept.push(model)
+  }
+  merged.models = kept
+}
+
 /**
  * 防线载体共享纯函数（设计 D1「防线载体（结构约束）」段）——防线②③ 的核心转译逻辑单点：
  * 空串转译（provider 级 name/baseUrl/apiKey/api + 模型级 id/name/api/baseUrl）+ catalog
@@ -717,76 +846,17 @@ export function applyProviderWritePolicy(
 ): ProviderWritePolicyResult {
   const result: ProviderWritePolicyResult = { merged }
 
-  // ── apiKey（防线②）：空串 = 清除语义 → 删键（「清除」的正确落盘形态是删键，不是写空串；
-  //    与 index.ts clearApiKey 闭包同构）。catalog 的非空 apiKey 归 auth.json（
-  //    applyProviderCredentials 通道），载体不写 models.json 侧。 ──
-  if (data.apiKey !== undefined) {
-    if (isBlankString(data.apiKey)) {
-      delete merged.apiKey
-    } else if (kind !== 'catalog') {
-      merged.apiKey = data.apiKey
-    }
-  }
-
-  // ── name（防线② 通用转译）：空串 = 未指定 → 不写键 + warn（base spread 保留既有值）──
-  if (data.name !== undefined) {
-    if (isBlankString(data.name)) {
-      console.warn(`[config-service] dropped empty-string name for ${providerId}`)
-    } else {
-      merged.name = data.name
-    }
-  }
-
-  // ── baseUrl（防线② custom / 防线③ catalog 分体系）──
+  // 字段族调度（顺序契约：apiKey → name → baseUrl → api → models → 不物化空壳判定——与拆分前
+  // 逐字段处理顺序一致；空壳判定必须看到全部字段族与 models 的装配结果）
+  applyApiKeyWritePolicy(merged, data, kind)
+  applyNameWritePolicy(merged, data, providerId)
   if (kind === 'catalog') {
-    if (source === 'import') {
-      // 导入数据不是用户在 UI 显式设置的网关 → 剥除（不产生隐形网关）
-      if (data.baseUrl !== undefined) delete merged.baseUrl
-    } else if (data.baseUrl !== undefined) {
-      if (isBlankString(data.baseUrl)) {
-        // 显式空串带键 = 清除网关（回退内置端点）；未带键（undefined）= 不变（既有 merge 协议）
-        if (merged.baseUrl !== undefined) delete merged.baseUrl
-        result.gatewayToClear = true
-      } else {
-        // 非空 = 用户网关（pi 覆盖式网关机制），同时产出标记信号
-        merged.baseUrl = data.baseUrl
-        result.gatewayToSet = data.baseUrl
-      }
-    }
-  } else if (data.baseUrl !== undefined) {
-    if (isBlankString(data.baseUrl)) {
-      // custom 清空 baseUrl 保存 = 不变更既有值（custom 无「默认」可回退，删除用删除功能）
-      console.warn(`[config-service] dropped empty-string baseUrl for ${providerId}`)
-    } else {
-      merged.baseUrl = data.baseUrl
-    }
+    applyCatalogBaseUrlWritePolicy(merged, data, source, result)
+  } else {
+    applyCustomBaseUrlWritePolicy(merged, data, providerId)
   }
-
-  // ── api（防线② 通用转译 / 防线③ catalog 忽略 type）──
-  if (data.api !== undefined) {
-    if (kind === 'catalog') {
-      if (source === 'import') {
-        delete merged.api // 同 baseUrl：导入不产生非用户意图的协议缺省
-      } else {
-        // provider 级 api 对 catalog 无用户语义（协议是模型级属性）
-        console.warn(`[config-service] ignored provider-level type for catalog ${providerId}`)
-      }
-    } else if (isBlankString(data.api)) {
-      console.warn(`[config-service] dropped empty-string api for ${providerId}`)
-    } else {
-      merged.api = data.api
-    }
-  }
-
-  // ── models（防线② 模型级转译）：传了才触碰 merged.models ──
-  if (data.models !== undefined) {
-    const kept: Array<Record<string, unknown>> = []
-    for (const raw of data.models) {
-      const model = { ...raw }
-      if (translateModelSchemaFields(model, providerId)) kept.push(model)
-    }
-    merged.models = kept
-  }
+  applyApiWritePolicy(merged, data, kind, source, providerId)
+  applyModelsWritePolicy(merged, data, providerId)
 
   // ── 不物化空壳（防线③）：剥除/清除后八字段全缺 → 产出跳过 upsert 信号（对既有条目是
   //    no-op 而非删除——调用方跳过 upsert 即可，盘上旧条目保持原状，对齐 M5-01「宁丢不写错位」）──
@@ -998,6 +1068,114 @@ function mergeProviderModel(
 }
 
 /**
+ * authMethod 落 providers.json（A1-5 写侧切换，从 setProvider 提取）：不再寄生 models.json。
+ *
+ * 返回 modify promise 供调用方条件 await（未传 authMethod / extrasStore 未注入返回 undefined，
+ * 不产生微任务边界，保持同步前缀时序契约——同 applyProviderCredentials）。await 对齐 catalog
+ * apiKey 的 MF-1 语义：modify 失败直接 reject 上抛，handler try-catch 转 sendError，不静默吞、
+ * 不 stale 广播。extrasStore 未注入时丢弃 + warn（宁丢不写错位——生产恒注入，与 catalog
+ * apiKey 无 authStorage 时的处理对称）。
+ */
+function persistAuthMethod(
+  extrasStore: ProviderExtrasAccessors | undefined,
+  providerId: string,
+  authMethod: SetProviderInput['authMethod'],
+): Promise<unknown> | undefined {
+  if (authMethod === undefined) return undefined
+  if (!extrasStore) {
+    console.warn(`[config-service] authMethod dropped for ${providerId}: providerExtrasStore not injected (A1-5)`)
+    return undefined
+  }
+  return extrasStore.modify(providerId, current => ({ ...current, authMethod }))
+}
+
+/**
+ * model 级 enabled 状态落 providers.json（G3 写侧切换，从 setProvider 提取）：extrasStore 注入
+ * 时委托 persistModelStates（保留集合计算与写入守卫见该函数），未注入 + 有显式启停更新时丢弃 +
+ * warn（宁丢不写错位——生产恒注入）。
+ *
+ * 返回 modify promise 供调用方条件 await（守卫不通过 / 未注入返回 undefined，不产生微任务
+ * 边界）。await 对齐 authMethod 的 MF-1 语义：modify 失败 reject 上抛（handler try-catch 转
+ * sendError），不静默吞。
+ */
+function persistModelStatesIfInjected(
+  extrasStore: ProviderExtrasAccessors | undefined,
+  providerId: string,
+  mergedModels: ConfigModelDefinition[],
+  statesUpdates: Record<string, { enabled: boolean }>,
+): Promise<unknown> | undefined {
+  if (extrasStore) {
+    return persistModelStates(extrasStore, providerId, mergedModels, statesUpdates)
+  }
+  if (Object.keys(statesUpdates).length > 0) {
+    console.warn(`[config-service] model enabled states dropped for ${providerId}: providerExtrasStore not injected (G3 写侧切换)`)
+  }
+  return undefined
+}
+
+/**
+ * api 入口归一（从 setProvider 提取）：`type` 是 SetProviderData 的历史字段名，pi 终值字段名是
+ * `api`——未传 type（undefined）= 不变（不触发翻译，保持既有值）。
+ */
+function resolveProviderApi(configStore: IConfigStore, type: string | undefined): string | undefined {
+  if (type === undefined) return undefined
+  return configStore.applyTypeTranslation(type)
+}
+
+/**
+ * 网关标记落 extras（设计 D1③ 写序契约第一步，从 setProvider 提取）：设置网关 = 先写 extras
+ * 标记、后写 models.json——崩溃中间态为「标记在、键未落盘」（多余标记，D2 启动清洗自愈）；
+ * 反向序会让用户网关在崩溃窗口被当成无标记 artifact 剥除（静默丢网关）。
+ *
+ * 返回 modify promise 供调用方条件 await（无网关写入 / extrasStore 未注入返回 undefined，不
+ * 产生微任务边界）。extrasStore 未注入时丢弃 + warn（宁丢不写错位，生产恒注入）。
+ */
+function persistGatewayMarker(
+  extrasStore: ProviderExtrasAccessors | undefined,
+  providerId: string,
+  gatewayBaseUrl: string | undefined,
+): Promise<unknown> | undefined {
+  if (gatewayBaseUrl === undefined) return undefined
+  if (!extrasStore) {
+    console.warn(`[config-service] gateway marker dropped for ${providerId}: providerExtrasStore not injected (D1③)`)
+    return undefined
+  }
+  return extrasStore.modify(providerId, current => ({ ...current, gatewayBaseUrl }))
+}
+
+/**
+ * 防线③① 不物化**新**空壳判定（从 setProvider 提取）：新建（existingConfig === undefined）且八
+ * 字段全缺 → 跳过 upsert，不产生 models.json 条目（对齐 M5-01「宁丢不写错位」）。既有条目一律
+ * upsert（剥除/清除必须落盘，详见 setProvider 调用点注释）。
+ */
+function shouldSkipUpsert(skipUpsert: boolean | undefined, existingConfig: unknown): boolean {
+  return skipUpsert === true && existingConfig === undefined
+}
+
+/**
+ * 清网关标记 - 写序契约第二步（从 setProvider 提取）：先删 models.json 键（已由载体删除）、后清
+ * extras 标记。仅 gatewayToClear 信号为真时才读 extras；先读一次，标记不存在则短路不调 modify
+ * （extrasStore.modify 无内容 diff 守卫，避免无谓写盘）。本函数在 upsert 之后调用。
+ *
+ * 返回 modify promise 供调用方条件 await（信号为假 / 标记不存在返回 undefined，不产生微任务
+ * 边界）。
+ */
+function clearGatewayMarker(
+  extrasStore: ProviderExtrasAccessors | undefined,
+  providerId: string,
+  gatewayToClear: boolean | undefined,
+): Promise<unknown> | undefined {
+  if (gatewayToClear !== true) return undefined
+  const currentExtras = extrasStore?.getExtrasSync(providerId)
+  if (!extrasStore || currentExtras?.gatewayBaseUrl === undefined) return undefined
+  return extrasStore.modify(providerId, current => {
+    const next = { ...current }
+    delete next.gatewayBaseUrl
+    return next
+  })
+}
+
+/**
  * 新建 / 更新 provider（wave3 边界1 白名单守卫 + I9 auth.json 清理 + catalog 分体系）。
  * 纯函数：configStore / authStorage / extrasStore / credentialWriter 经参数注入
  * （原 ConfigService.setProvider 逐字搬迁）。
@@ -1026,18 +1204,10 @@ export async function setProvider(
   // 条件 await：无落盘路径（undefined）不产生微任务边界，保持同步前缀时序契约。
   const credentialsFlush = applyProviderCredentials(merged, authStorage, credentialWriter, providerId, data)
   if (credentialsFlush) await credentialsFlush
-  // I6 + A1-5 写侧切换：authMethod 写 config/providers.json（不再寄生 models.json）。
-  // await（对齐上方 catalog apiKey 的 MF-1 语义）：modify 失败直接 reject 上抛，handler
-  // try-catch 转 sendError，不静默吞、不 stale 广播。extrasStore 未注入时丢弃 + warn
-  // （宁丢不写错位——生产恒注入，与 catalog apiKey 无 authStorage 时的处理对称）。
-  if (data.authMethod !== undefined) {
-    if (extrasStore) {
-      const authMethod = data.authMethod
-      await extrasStore.modify(providerId, current => ({ ...current, authMethod }))
-    } else {
-      console.warn(`[config-service] authMethod dropped for ${providerId}: providerExtrasStore not injected (A1-5)`)
-    }
-  }
+  // I6 + A1-5 写侧切换：authMethod 写 config/providers.json（不再寄生 models.json）——
+  // 「条件 await」时序契约与丢弃语义见 persistAuthMethod。
+  const authMethodFlush = persistAuthMethod(extrasStore, providerId, data.authMethod)
+  if (authMethodFlush) await authMethodFlush
   // headers/authHeader 白名单写入。baseUrl/name/apiKey/api 的空串转译与 catalog 分体系
   // 语义委托防线载体（下方 models 装配后统一调用一次，见 applyProviderWritePolicy）。
   applyProviderHeaderFields(merged, providerId, data)
@@ -1066,18 +1236,20 @@ export async function setProvider(
     // 编辑体删除某自定义模型后其 modelStates 条目残留，同 id 重新添加时旧 disabled 复活。
     // 改按保留集合（retainIds）重建（保留集合计算与写入守卫见 persistModelStates）。
     // 保留集合内：本次显式 enabled 优先，未显式传的保留既有状态（不丢未标注模型的状态）。
-    if (extrasStore) {
-      const modelStatesFlush = persistModelStates(extrasStore, providerId, merged.models as ConfigModelDefinition[], modelStatesUpdates)
-      if (modelStatesFlush) await modelStatesFlush
-    } else if (Object.keys(modelStatesUpdates).length > 0) {
-      console.warn(`[config-service] model enabled states dropped for ${providerId}: providerExtrasStore not injected (G3 写侧切换)`)
-    }
+    // （「条件 await」与丢弃分支归 persistModelStatesIfInjected。）
+    const modelStatesFlush = persistModelStatesIfInjected(
+      extrasStore,
+      providerId,
+      merged.models as ConfigModelDefinition[],
+      modelStatesUpdates,
+    )
+    if (modelStatesFlush) await modelStatesFlush
   }
   // ── 防线②③ 载体接线（设计 D1）──
   // 必须在 models 装配**之后**调用：载体产出 skipUpsert 时读的是装配完成的 merged.models，
   // 传原始 payload 会覆盖 mergeProviderModel 的 base spread 合并（见 ProviderWritePolicyInput.models
   // 注释）。入口归一：type 是 SetProviderData 的历史字段名，pi 终值字段名是 api。
-  const api = data.type !== undefined ? configStore.applyTypeTranslation(data.type as string) : undefined
+  const api = resolveProviderApi(configStore, data.type)
   const { gatewayToSet, gatewayToClear, skipUpsert } = applyProviderWritePolicy(
     merged,
     { name: data.name, baseUrl: data.baseUrl, apiKey: data.apiKey, api },
@@ -1085,18 +1257,10 @@ export async function setProvider(
     'settings',
     providerId,
   )
-  // 写序契约（设计 D1③）：设置网关 = 先写 extras 标记、后写 models.json——崩溃中间态为
-  // 「标记在、键未落盘」（多余标记，D2 启动清洗自愈）；反向序会让用户网关在崩溃窗口被
-  // 当成无标记 artifact 剥除（静默丢网关）。清除网关对称：先落 models.json（键已由载体
-  // 删除）、后清标记（下方）。extrasStore 未注入时丢弃 + warn（宁丢不写错位，生产恒注入）。
-  if (gatewayToSet !== undefined) {
-    const gatewayBaseUrl = gatewayToSet
-    if (extrasStore) {
-      await extrasStore.modify(providerId, current => ({ ...current, gatewayBaseUrl }))
-    } else {
-      console.warn(`[config-service] gateway marker dropped for ${providerId}: providerExtrasStore not injected (D1③)`)
-    }
-  }
+  // 写序契约（设计 D1③）第一步：设置网关 = 先写 extras 标记、后写 models.json（见
+  // persistGatewayMarker；extrasStore 未注入时丢弃 + warn——宁丢不写错位，生产恒注入）。
+  const gatewayFlush = persistGatewayMarker(extrasStore, providerId, gatewayToSet)
+  if (gatewayFlush) await gatewayFlush
   let result: UpsertProviderResult = {}
   // 防线③ 语义（设计 D1③）——两层必须分清：
   //  ① 不物化**新**空壳：新建（existingConfig === undefined）且八字段全缺 → 跳过 upsert，
@@ -1107,7 +1271,7 @@ export async function setProvider(
   //     no-op（盘上旧 baseUrl 仍在 → 展示回内置端点但 pi 仍打旧网关，违反 G1「展示 = 生效」
   //     与验收场景 A'/5）。设计 D1③ 的「对既有条目是 no-op 而非删除」指**不删除既有条目**
   //     （用户全清空后旧条目仍在盘上、由 D2 启动清洗接管），不是「既有条目跳过写盘」。
-  if (!(skipUpsert && existingConfig === undefined)) {
+  if (!shouldSkipUpsert(skipUpsert, existingConfig)) {
     result = configStore.upsertProvider(providerId, merged)
   }
   // 边界1（wave3 TC5 / C2）：新建 provider 时若 enabledModels 非空，加 <id>/* 白名单守卫——
@@ -1119,18 +1283,10 @@ export async function setProvider(
   if (existingConfig === undefined) {
     configStore.ensureProviderInWhitelist(providerId)
   }
-  if (gatewayToClear) {
-    // 清除网关：先读一次，标记不存在则短路不调 modify（extrasStore.modify 无内容 diff 守卫，
-    // 避免无谓写盘）。此处在 upsert 之后——写序契约的「先删 models.json 键、后清标记」。
-    const currentExtras = extrasStore?.getExtrasSync(providerId)
-    if (extrasStore && currentExtras?.gatewayBaseUrl !== undefined) {
-      await extrasStore.modify(providerId, current => {
-        const next = { ...current }
-        delete next.gatewayBaseUrl
-        return next
-      })
-    }
-  }
+  // 清除网关 = 写序契约第二步：先落 models.json 键删除（已由载体删除）、后清 extras 标记
+  // （见 clearGatewayMarker，本调用点在 upsert 之后）。
+  const gatewayClearFlush = clearGatewayMarker(extrasStore, providerId, gatewayToClear)
+  if (gatewayClearFlush) await gatewayClearFlush
   return result
 }
 

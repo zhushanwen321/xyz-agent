@@ -22,9 +22,12 @@ import { VIEW_HOST_SOURCE_KEY, type ViewHostSource } from '@xyz-agent/ui/extensi
 
 // ── mock 面（Panel script 依赖的最小闭合集）──────────────────────────
 
-/** chat store mock：Panel 只消费 getMessages/isActive/isCompacting/failedHistory */
+/** chat store mock：Panel 消费 getMessages/isActive/isCompacting/failedHistory；
+ *  真实子组件 TurnProgressBar 经 core useTurnProgress 另消费 getOccupancy（TurnProgressChatSource
+ *  契约双读口）——缺省形态对齐 store.ts getOccupancy 无记录回落值（全 idle） */
 const chatMock = vi.hoisted(() => ({
   getMessages: vi.fn(() => [] as unknown[]),
+  getOccupancy: vi.fn(() => ({ turn: 'idle' as const, compacting: false, bash: false })),
   isActive: vi.fn(() => false),
   isCompacting: vi.fn(() => false),
   failedHistory: new Map<string, boolean>(),

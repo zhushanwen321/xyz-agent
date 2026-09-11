@@ -556,18 +556,14 @@ function createPiStreamWriter(file: string): PiSessionLog {
     write: (line) => {
       if (state.ended) return // end 后 no-op
       if (!currentLevel || !logsDir) return // closeLogger 后 no-op（与 writeLogEntry 一致，审查 W30 Fix-8）
-      const data = typeof line === 'string' ? (line.endsWith('\n') ? line : line + '\n') : line
+      const data = toPiLineData(line)
       const bytes = Buffer.byteLength(data)
       try {
         // 轮转窗口（旧流 close 等待 + gzip 压缩耗时）：行先入队，续体在新流就绪后按序回放
         // ——窗口内零阻塞、零丢失。pi delta 行可达每秒数百条，而压缩窗口比主日志的纯 end
         // 等待长（50MB 级约 1s），回放队列是保真的必要条件（不是优化；与主日志 pendingLines 同款）。
         if (state.rotationInFlight) {
-          if (state.pending.length >= MAX_PENDING_LINES) {
-            state.dropped++
-            return
-          }
-          state.pending.push({ data, bytes })
+          pushPendingPiLine(state, data, bytes)
           return
         }
         // 写入前守卫（审查 W30 Fix-9）：writableEnded = end() 已调、flush 未完（正常被
@@ -575,29 +571,13 @@ function createPiStreamWriter(file: string): PiSessionLog {
         if (state.stream?.writableEnded) return
         // size 轮转（写入字节计数，与主日志同款）：达阈值 → 异步轮转，本行入队。
         // 排在自愈重建之前：轮转续体自带「end 旧流 → gzip → 重开新流」，无需先重建被销毁的流。
-        if (state.stream && state.bytesWritten + bytes > MAX_FILE_BYTES) {
-          if (state.pending.length >= MAX_PENDING_LINES) {
-            state.dropped++ // 队列满（fs 挂起导致窗口超长）：本行丢弃并计数，不静默
-            return
-          }
-          void rotatePiStream(state) // 同步置 rotationInFlight + 摘空 stream，随后的 push 必入队
-          state.pending.push({ data, bytes })
+        if (shouldRotatePiStream(state, bytes)) {
+          rotateAndPushPendingPiLine(state, data, bytes)
           return
-        }
-        // 自愈（审查 W30 Fix-2）：流 error 后 autoDestroy，write 静默丢弃；pi session log
-        // 是 pi 卡死诊断的决定性证据，静默丢失后续行 = 失去冒烟证据（主日志有轮转自愈、
-        // pi 流没有）——destroyed 时重建（flags:'a' 续写同文件 + 重新挂 error 监听器）。
-        if (!state.stream || state.stream.destroyed) {
-          // 重建前摘掉旧流的 error 监听（审查 W30 Fix-9）：destroyed 流不会再 emit，
-          // 但显式移除避免悬挂监听器持有旧流引用（防监听器泄漏/重复注册）。
-          // 可选链：首次惰性打开时 stream 为 undefined（此分支为 true 的主路径）。
-          state.stream?.removeAllListeners('error')
-          state.stream = createWriteStream(file, { flags: 'a' })
-          attachStreamErrorHandler(state.stream, `pi:${file}`)
         }
         // write 返回 false = 背压（缓冲堆积）。日志行量级 KB、磁盘正常不触发；慢盘时
         // 内存增长与轮转窗口 pendingLines 同源，已由容量上限兜底（审查 W30 Fix-6）。
-        state.stream.write(data)
+        ensurePiStream(state).write(data)
         state.bytesWritten += bytes
       // eslint-disable-next-line taste/no-silent-catch -- pi stdout 落盘失败（磁盘满/权限）不影响 runtime 主流程；best-effort 容错
       } catch {
@@ -612,6 +592,62 @@ function createPiStreamWriter(file: string): PiSessionLog {
       state.stream?.end() // 缓冲数据异步 flush 后关闭 fd；closeLogger 会等待其完成
     },
   }
+}
+
+/**
+ * write 的行形态归一：string 补齐尾换行（readline 消费方契约），Uint8Array 原样透传
+ *（relay up 方向 chunk 逐字节保真，不补 \n——按 chunk 解码会截断多字节字符）。
+ */
+function toPiLineData(line: string | Uint8Array): string | Uint8Array {
+  return typeof line === 'string' ? (line.endsWith('\n') ? line : line + '\n') : line
+}
+
+/** size 轮转前置判定（与主日志 writeLogEntry 同款字节计数口径）。 */
+function shouldRotatePiStream(state: PiStreamState, bytes: number): boolean {
+  return !!state.stream && state.bytesWritten + bytes > MAX_FILE_BYTES
+}
+
+/**
+ * 惰性打开 / destroyed 自愈重建（自 write 抽出，行为逐字等价）。
+ *
+ * 自愈（审查 W30 Fix-2）：流 error 后 autoDestroy，write 静默丢弃；pi session log 是 pi
+ * 卡死诊断的决定性证据，静默丢失后续行 = 失去冒烟证据（主日志有轮转自愈、pi 流没有）——
+ * destroyed 时重建（flags:'a' 续写同文件 + 重新挂 error 监听器）。
+ *
+ * 重建前摘掉旧流的 error 监听（审查 W30 Fix-9）：destroyed 流不会再 emit，但显式移除避免
+ * 悬挂监听器持有旧流引用（防监听器泄漏/重复注册）。可选链：首次惰性打开时 stream 为
+ * undefined（此分支为 true 的主路径）。
+ */
+function ensurePiStream(state: PiStreamState): WriteStream {
+  if (state.stream && !state.stream.destroyed) return state.stream
+  state.stream?.removeAllListeners('error')
+  state.stream = createWriteStream(state.file, { flags: 'a' })
+  attachStreamErrorHandler(state.stream, `pi:${state.file}`)
+  return state.stream
+}
+
+/** 轮转窗口内的行入队：队列满 → 丢弃并计数（不静默），否则按序入队。 */
+function pushPendingPiLine(state: PiStreamState, data: string | Uint8Array, bytes: number): void {
+  if (state.pending.length >= MAX_PENDING_LINES) {
+    state.dropped++
+    return
+  }
+  state.pending.push({ data, bytes })
+}
+
+/**
+ * size 轮转触发 + 本行入队（顺序硬约束，与拆分前逐字等价）：
+ * ① 队列满（fs 挂起导致窗口超长）→ 本行丢弃并计数、**不触发轮转**；
+ * ② 否则先 `rotatePiStream`（同步置 rotationInFlight + 摘空 stream）再 push——push 必落轮转
+ * 窗口队列，不会被续体的 pending.splice 漏掉。
+ */
+function rotateAndPushPendingPiLine(state: PiStreamState, data: string | Uint8Array, bytes: number): void {
+  if (state.pending.length >= MAX_PENDING_LINES) {
+    state.dropped++ // 队列满（fs 挂起导致窗口超长）：本行丢弃并计数，不静默
+    return
+  }
+  void rotatePiStream(state) // 同步置 rotationInFlight + 摘空 stream，随后的 push 必入队
+  state.pending.push({ data, bytes })
 }
 
 /**

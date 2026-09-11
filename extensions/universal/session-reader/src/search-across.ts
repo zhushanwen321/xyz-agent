@@ -8,7 +8,12 @@
  * searchAcrossSessions 导出面不变：tool-handler re-export（单测白盒 import 路径不变）。
  */
 import { dirname } from 'node:path'
-import { buildSessionFileIndex, type SessionMetadataEntry, type SessionMetadataProvider } from './discovery/find.js'
+import {
+  buildSessionFileIndex,
+  type SessionFileRef,
+  type SessionMetadataEntry,
+  type SessionMetadataProvider,
+} from './discovery/find.js'
 import { parseSessionFile } from './core/parser.js'
 import { segmentTurns, type Turn } from './core/turns.js'
 import { buildTreeView } from './core/tree.js'
@@ -241,14 +246,89 @@ function formatCrossSearchRejected(candidateCount: number): ToolResult {
  * turn 索引/角色/片段 + 可直接执行的调用串）+ 已扫无命中 + 未扫（超预算，附单检指引）
  * + not-found。结构行英文（渲染类现状风格），👉 指引中文（disambiguate/F1 同风格）。
  */
-function formatCrossSearchText(d: CrossSearchDetails): string {
+/** 头部：命中 session 数/已扫数 + pattern + 降级/scope 标注 + 已扫字节。 */
+function formatCrossSearchHead(d: CrossSearchDetails, hitCount: number): string {
   const scannedBytesLabel = `${formatScanBytes(d.scannedBytes)} of ${formatScanBytes(d.byteBudget)} budget`
-  const hitSessions = d.scanned.filter((s) => s.hits.length > 0)
-  const head =
-    `${hitSessions.length}/${d.scanned.length} session(s) hit for /${d.pattern}/` +
+  return (
+    `${hitCount}/${d.scanned.length} session(s) hit for /${d.pattern}/` +
     (d.degraded ? '（已降级为字面子串匹配）' : '') +
     (d.scope !== 'all' ? ` scope=${d.scope}` : '') +
     ` · scanned ${scannedBytesLabel}`
+  )
+}
+
+/** 单个命中 session 块：`序号. id · source · 标题` + 命中数标注 + 逐命中 + 可直接执行的调用串。 */
+function formatHitSessionBlock(s: CrossSearchScan, index: number, pattern: string): string[] {
+  const lines: string[] = []
+  const parts = [`${index}. ${s.sessionId}`, s.source]
+  if (s.name !== undefined) parts.push(s.name)
+  const overflow = s.hitsTotal !== undefined && s.hitsTotal > s.hits.length
+  // 命中数是块级标注（对整个 session），不并入 ' · ' 信息段——紧跟末段拼接
+  const countLabel = overflow
+    ? `（>${s.hitsTotal} hits, showing first ${s.hits.length}）`
+    : `（${s.hits.length} hit${s.hits.length === 1 ? '' : 's'}）`
+  lines.push(`  ${parts.join(' · ')}${countLabel}`)
+  for (const h of s.hits) {
+    lines.push(`     T${pad(h.turnIndex)} #${h.entryIndex} ${h.role}: ${h.matchSnippet}`)
+  }
+  lines.push(
+    `     ↳ session_read { action:"search", session:"${s.sessionId}", pattern:"${escapeCallArg(pattern)}" }`,
+  )
+  return lines
+}
+
+/** 「已扫无命中」段（空则零行）。 */
+function formatNoHitSection(noHit: CrossSearchScan[]): string[] {
+  if (noHit.length === 0) return []
+  const lines = ['scanned, no hit:']
+  for (const s of noHit) lines.push(`  ${s.sessionId} · ${s.source}`)
+  return lines
+}
+
+/** 「超字节预算未扫」段（附每条的单检指引；空则零行）。 */
+function formatOverBudgetSection(
+  overBudget: CrossSearchSkipped[],
+  d: CrossSearchDetails,
+): string[] {
+  if (overBudget.length === 0) return []
+  const lines = [
+    `not scanned (byte budget ${formatScanBytes(d.byteBudget)} reached after ${formatScanBytes(d.scannedBytes)}):`,
+  ]
+  for (const s of overBudget) {
+    lines.push(`  - ${s.sessionId}（${formatScanBytes(s.sizeBytes ?? 0)}）`)
+    lines.push(
+      `    👉 检索单个：session_read { action:"search", session:"${s.sessionId}", pattern:"${escapeCallArg(d.pattern)}" }`,
+    )
+  }
+  return lines
+}
+
+/** 「库中无此 id」段（空则零行）。 */
+function formatNotFoundSection(notFound: CrossSearchSkipped[]): string[] {
+  if (notFound.length === 0) return []
+  const lines = ['not found in library (confirm full id via find):']
+  for (const s of notFound) lines.push(`  - ${s.sessionId}`)
+  return lines
+}
+
+/** 「读取/解析失败跳过」段（空则零行）。 */
+function formatReadErrorSection(readErrors: CrossSearchSkipped[]): string[] {
+  if (readErrors.length === 0) return []
+  const lines = ['skipped (read/parse failed):']
+  for (const s of readErrors) lines.push(`  - ${s.sessionId}`)
+  return lines
+}
+
+/**
+ * 跨会话检索结果渲染：命中 session 块（完整 id + source + 标题若有 + 命中数 + 逐命中
+ * turn 索引/角色/片段 + 可直接执行的调用串）+ 已扫无命中 + 未扫（超预算，附单检指引）
+ * + not-found。结构行英文（渲染类现状风格），👉 指引中文（disambiguate/F1 同风格）。
+ *
+ * 本函数只管段序组装；每段的行构造由上方 per-段 helper 承担（拆解自原单函数多分支，
+ * 行内容与顺序零变更）。
+ */
+function formatCrossSearchText(d: CrossSearchDetails): string {
+  const hitSessions = d.scanned.filter((s) => s.hits.length > 0)
 
   const lines: string[] = []
   if (hitSessions.length > 0) lines.push('hits:')
@@ -256,50 +336,130 @@ function formatCrossSearchText(d: CrossSearchDetails): string {
   for (const s of d.scanned) {
     if (s.hits.length === 0) continue
     index += 1
-    const parts = [`${index}. ${s.sessionId}`, s.source]
-    if (s.name !== undefined) parts.push(s.name)
-    const overflow = s.hitsTotal !== undefined && s.hitsTotal > s.hits.length
-    // 命中数是块级标注（对整个 session），不并入 ' · ' 信息段——紧跟末段拼接
-    const countLabel = overflow
-      ? `（>${s.hitsTotal} hits, showing first ${s.hits.length}）`
-      : `（${s.hits.length} hit${s.hits.length === 1 ? '' : 's'}）`
-    lines.push(`  ${parts.join(' · ')}${countLabel}`)
-    for (const h of s.hits) {
-      lines.push(`     T${pad(h.turnIndex)} #${h.entryIndex} ${h.role}: ${h.matchSnippet}`)
-    }
-    lines.push(
-      `     ↳ session_read { action:"search", session:"${s.sessionId}", pattern:"${escapeCallArg(d.pattern)}" }`,
-    )
+    lines.push(...formatHitSessionBlock(s, index, d.pattern))
   }
-  const noHit = d.scanned.filter((s) => s.hits.length === 0)
-  if (noHit.length > 0) {
-    lines.push('scanned, no hit:')
-    for (const s of noHit) lines.push(`  ${s.sessionId} · ${s.source}`)
-  }
-  const overBudget = d.skipped.filter((s) => s.reason === 'byte-budget')
-  if (overBudget.length > 0) {
-    lines.push(`not scanned (byte budget ${formatScanBytes(d.byteBudget)} reached after ${formatScanBytes(d.scannedBytes)}):`)
-    for (const s of overBudget) {
-      lines.push(`  - ${s.sessionId}（${formatScanBytes(s.sizeBytes ?? 0)}）`)
-      lines.push(
-        `    👉 检索单个：session_read { action:"search", session:"${s.sessionId}", pattern:"${escapeCallArg(d.pattern)}" }`,
-      )
-    }
-  }
-  const notFound = d.skipped.filter((s) => s.reason === 'not-found')
-  if (notFound.length > 0) {
-    lines.push('not found in library (confirm full id via find):')
-    for (const s of notFound) lines.push(`  - ${s.sessionId}`)
-  }
-  const readErrors = d.skipped.filter((s) => s.reason === 'read-error')
-  if (readErrors.length > 0) {
-    lines.push('skipped (read/parse failed):')
-    for (const s of readErrors) lines.push(`  - ${s.sessionId}`)
-  }
+  lines.push(...formatNoHitSection(d.scanned.filter((s) => s.hits.length === 0)))
+  lines.push(...formatOverBudgetSection(d.skipped.filter((s) => s.reason === 'byte-budget'), d))
+  lines.push(...formatNotFoundSection(d.skipped.filter((s) => s.reason === 'not-found')))
+  lines.push(...formatReadErrorSection(d.skipped.filter((s) => s.reason === 'read-error')))
   if (hitSessions.length === 0 && d.scanned.length > 0) {
     lines.push('👉 无命中：换更精确 pattern，或用 find 重新窄化候选集后重试。')
   }
-  return `${head}\n${lines.join('\n')}`
+  return `${formatCrossSearchHead(d, hitSessions.length)}\n${lines.join('\n')}`
+}
+
+/** searchAcrossSessions 的可选参数（byteBudget 供测试注入小预算）。 */
+interface CrossSearchOptions {
+  scope?: NonNullable<SessionReadParams['scope']>
+  limit?: number
+  signal?: AbortSignal
+  metadataProvider?: SessionMetadataProvider
+  byteBudget?: number
+}
+
+/** 缺省值收口后的检索参数（各缺省值与旧内联 `opts?.** ?? 常量` 逐一对应）。 */
+interface CrossSearchResolvedOptions {
+  scope: NonNullable<SessionReadParams['scope']>
+  limit: number
+  byteBudget: number
+  signal: AbortSignal | undefined
+  metadataProvider: SessionMetadataProvider | undefined
+}
+
+function resolveCrossSearchOptions(opts: CrossSearchOptions | undefined): CrossSearchResolvedOptions {
+  return {
+    scope: opts?.scope ?? 'all',
+    limit: opts?.limit ?? SEARCH_DEFAULT_LIMIT,
+    byteBudget: opts?.byteBudget ?? SEARCH_SCAN_BYTE_BUDGET,
+    signal: opts?.signal,
+    metadataProvider: opts?.metadataProvider,
+  }
+}
+
+/** 单 session 扫描结果：命中块 + 截断标记；read-error 不入 scanned（只归 skipped）。 */
+type CrossSearchSessionScan =
+  | { kind: 'scanned'; scan: CrossSearchScan; truncated: boolean }
+  | { kind: 'read-error' }
+
+/**
+ * 单 session 扫描：复用单会话扫描管线（core 层只读复用，零新解析）；坏文件返回
+ * read-error 不拖死整体（F6 只属单会话契约）。
+ */
+async function scanOneSession(
+  sessionId: string,
+  ref: SessionFileRef,
+  regex: RegExp,
+  scope: NonNullable<SessionReadParams['scope']>,
+  limit: number,
+  signal: AbortSignal | undefined,
+): Promise<CrossSearchSessionScan> {
+  let turns: Turn[]
+  try {
+    const { entries } = await parseSessionFile(ref.path)
+    turns = segmentTurns(entries, new Set(buildTreeView(entries).leafPath))
+  } catch {
+    return { kind: 'read-error' }
+  }
+  const hits = collectSearchHits(turns, regex, scope, signal)
+  if (hits.length > limit) {
+    return {
+      kind: 'scanned',
+      truncated: true,
+      scan: {
+        sessionId,
+        source: ref.source,
+        path: ref.path,
+        hits: hits.slice(0, limit),
+        hitsTotal: hits.length,
+      },
+    }
+  }
+  return {
+    kind: 'scanned',
+    truncated: false,
+    scan: { sessionId, source: ref.source, path: ref.path, hits },
+  }
+}
+
+/**
+ * 字节预算耗尽：从下标起整段标未扫（含更小的后续文件也不扫）——已扫范围恒为
+ * 列表前缀，报告无歧义；超大单文件走括注的单检通路（单会话 search 不受此预算）。
+ */
+function markRestOverBudget(
+  ids: string[],
+  startIndex: number,
+  index: Map<string, SessionFileRef>,
+  skipped: CrossSearchSkipped[],
+): void {
+  for (const rest of ids.slice(startIndex)) {
+    skipped.push({ sessionId: rest, reason: 'byte-budget', sizeBytes: index.get(rest)?.sizeBytes })
+  }
+}
+
+/**
+ * 标题尽力补全（u11 provider 复用；仅对已扫 session 的所在目录，按目录去重 +
+ * 单目录 try/catch 记空——provider 缺省/抛错标题留空，检索本体不受影响）。
+ */
+async function attachScannedTitles(
+  scanned: CrossSearchScan[],
+  provider: SessionMetadataProvider,
+): Promise<void> {
+  const titles = new Map<string, string>()
+  for (const dir of new Set(scanned.map((s) => dirname(s.path)))) {
+    let entries: SessionMetadataEntry[]
+    try {
+      entries = await provider(dir)
+    } catch {
+      continue // 降级：该目录标题不可用（§6.6 同款 guard），留空继续
+    }
+    for (const e of entries) {
+      if (e.name !== undefined) titles.set(e.id, e.name)
+    }
+  }
+  for (const s of scanned) {
+    const name = titles.get(s.sessionId)
+    if (name !== undefined) s.name = name
+  }
 }
 
 /**
@@ -320,22 +480,14 @@ export async function searchAcrossSessions(
   ids: string[],
   pattern: string,
   signals: SessionReadSignals,
-  opts?: {
-    scope?: NonNullable<SessionReadParams['scope']>
-    limit?: number
-    signal?: AbortSignal
-    metadataProvider?: SessionMetadataProvider
-    byteBudget?: number
-  },
+  opts?: CrossSearchOptions,
 ): Promise<ToolResult> {
   // ① 窄化前置（V8）：候选集超阈值明确拒绝（不进入扫描）
   if (ids.length > MULTI_SEARCH_MAX_SESSIONS) {
     return formatCrossSearchRejected(ids.length)
   }
 
-  const scope = opts?.scope ?? 'all'
-  const limit = opts?.limit ?? SEARCH_DEFAULT_LIMIT
-  const byteBudget = opts?.byteBudget ?? SEARCH_SCAN_BYTE_BUDGET
+  const { scope, limit, byteBudget, signal, metadataProvider } = resolveCrossSearchOptions(opts)
   const degraded = isCatastrophicPattern(pattern)
   const regex = compilePattern(pattern)
 
@@ -355,57 +507,22 @@ export async function searchAcrossSessions(
       continue
     }
     if (scannedBytes + ref.sizeBytes > byteBudget) {
-      // 预算按序消耗：从这里起整段停止（含更小的后续文件也不扫）——已扫范围恒为
-      // 列表前缀，报告无歧义；超大单文件走括注的单检通路（单会话 search 不受此预算）
-      for (const rest of ids.slice(i)) {
-        skipped.push({ sessionId: rest, reason: 'byte-budget', sizeBytes: index.get(rest)?.sizeBytes })
-      }
+      markRestOverBudget(ids, i, index, skipped)
       break
     }
-    // 复用单会话扫描管线（core 层只读复用，零新解析）；坏文件跳过不拖死整体（F6 只属单会话契约）
-    let turns: Turn[]
-    try {
-      const { entries } = await parseSessionFile(ref.path)
-      turns = segmentTurns(entries, new Set(buildTreeView(entries).leafPath))
-    } catch {
+    const outcome = await scanOneSession(id, ref, regex, scope, limit, signal)
+    if (outcome.kind === 'read-error') {
       skipped.push({ sessionId: id, reason: 'read-error' })
       continue
     }
-    const hits = collectSearchHits(turns, regex, scope, opts?.signal)
-    if (hits.length > limit) {
-      truncated = true
-      scanned.push({
-        sessionId: id,
-        source: ref.source,
-        path: ref.path,
-        hits: hits.slice(0, limit),
-        hitsTotal: hits.length,
-      })
-    } else {
-      scanned.push({ sessionId: id, source: ref.source, path: ref.path, hits })
-    }
+    if (outcome.truncated) truncated = true
+    scanned.push(outcome.scan)
     scannedBytes += ref.sizeBytes
   }
 
-  // ④ 标题尽力补全（u11 provider 复用；仅对已扫 session 的所在目录，按目录去重 +
-  //    单目录 try/catch 记空——provider 缺省/抛错标题留空，检索本体不受影响）
-  if (opts?.metadataProvider !== undefined && scanned.length > 0) {
-    const titles = new Map<string, string>()
-    for (const dir of new Set(scanned.map((s) => dirname(s.path)))) {
-      let entries: SessionMetadataEntry[]
-      try {
-        entries = await opts.metadataProvider(dir)
-      } catch {
-        continue // 降级：该目录标题不可用（§6.6 同款 guard），留空继续
-      }
-      for (const e of entries) {
-        if (e.name !== undefined) titles.set(e.id, e.name)
-      }
-    }
-    for (const s of scanned) {
-      const name = titles.get(s.sessionId)
-      if (name !== undefined) s.name = name
-    }
+  // ④ 标题尽力补全
+  if (metadataProvider !== undefined && scanned.length > 0) {
+    await attachScannedTitles(scanned, metadataProvider)
   }
 
   const details: CrossSearchDetails = {

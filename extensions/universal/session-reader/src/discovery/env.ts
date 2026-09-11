@@ -138,6 +138,57 @@ function deriveDataDir(env: Record<string, string | undefined>, evidence: string
   return undefined
 }
 
+/** 信号 1 evidence 行（命中/未命中原文 + 未设置形态 + 要求值）。 */
+function pushExtLogEvidence(
+  evidence: string[],
+  extLog: string | undefined,
+  extLogHit: boolean,
+): void {
+  evidence.push(
+    extLogHit
+      ? `${XYZ_AGENT_EXT_LOG_ENV}='${extLog}' → 命中`
+      : `${XYZ_AGENT_EXT_LOG_ENV}=${extLog === undefined ? '<未设置>' : `'${extLog}'`} → 未命中（要求值为 '1'）`,
+  )
+}
+
+/** 信号 2 的形态标注（§6.2 双形态兼容：B 前旧布局 / B 后新布局 / 非 xyz-agent 形态）。 */
+function describeAgentDirShape(normalized: string): string {
+  if (AGENT_DIR_SHAPE_OLD.test(normalized)) return 'B 前旧布局 pi/agent'
+  if (AGENT_DIR_SHAPE_NEW.test(normalized)) return 'B 后新布局 agent'
+  return '非 xyz-agent 形态'
+}
+
+/** 信号 2 evidence 行（未设置 → 未命中；有值 → 形态匹配与否 + 形态标注）。 */
+function pushAgentDirEvidence(
+  evidence: string[],
+  agentDirEnv: string | undefined,
+  agentDirHit: boolean,
+): void {
+  if (agentDirEnv === undefined) {
+    evidence.push(`${PI_CODING_AGENT_DIR_ENV}=<未设置> → 未命中`)
+    return
+  }
+  const shape = describeAgentDirShape(normalizeXyzPath(agentDirEnv))
+  evidence.push(
+    `${PI_CODING_AGENT_DIR_ENV}='${agentDirEnv}' → ${agentDirHit ? `形态匹配（${shape}）` : `形态不匹配（${shape}，要求 <*>/.xyz-agent*/agent）`}`,
+  )
+}
+
+/** 判定行：托管（双信号合取成立）/ standalone-pi（孤置信号点名，提示透传/自设污染）。 */
+function judgedEvidenceLine(extLogHit: boolean, agentDirHit: boolean): string {
+  if (extLogHit && agentDirHit) {
+    return `判定：xyz-agent 托管（${XYZ_AGENT_EXT_LOG_ENV}='1' 且 ${PI_CODING_AGENT_DIR_ENV} 形态匹配，双信号合取成立）`
+  }
+  const orphaned: string[] = []
+  if (extLogHit) orphaned.push(XYZ_AGENT_EXT_LOG_ENV)
+  if (agentDirHit) orphaned.push(PI_CODING_AGENT_DIR_ENV)
+  const orphanNote =
+    orphaned.length > 0
+      ? `——${orphaned.join(' 与 ')} 单独成立不合取，可能为 shell 透传/自设污染，不判托管`
+      : ''
+  return `判定：standalone-pi（双信号合取不成立）${orphanNote}`
+}
+
 /**
  * 判定当前宿主环境（design §6.2）。
  *
@@ -146,6 +197,9 @@ function deriveDataDir(env: Record<string, string | undefined>, evidence: string
  * `/pi/agent` 同样接受）。任一信号单独成立 → standalone-pi，evidence 点名孤置
  * 信号（透传污染提示）。
  * evidence 恒非空：每条命中/未命中信号的原文都在列，让 agent 能核对并推翻判定。
+ *
+ * 本函数只负责「读信号 → 按序委派 evidence 构造 → 组装返回值」；每条 evidence 的
+ * 文案与压入顺序由上方 per-信号 helper 承担（拆解自原单函数 if/三元链，零行为变更）。
  */
 export function detectEnvironment(signals: EnvironmentSignals): DetectedEnvironment {
   const evidence: string[] = []
@@ -154,45 +208,17 @@ export function detectEnvironment(signals: EnvironmentSignals): DetectedEnvironm
   // 信号 1：XYZ_AGENT_EXT_LOG === '1'
   const extLog = env[XYZ_AGENT_EXT_LOG_ENV]
   const extLogHit = extLog === EXT_LOG_MANAGED_VALUE
-  evidence.push(
-    extLogHit
-      ? `${XYZ_AGENT_EXT_LOG_ENV}='${extLog}' → 命中`
-      : `${XYZ_AGENT_EXT_LOG_ENV}=${extLog === undefined ? '<未设置>' : `'${extLog}'`} → 未命中（要求值为 '1'）`,
-  )
+  pushExtLogEvidence(evidence, extLog, extLogHit)
 
   // 信号 2：PI_CODING_AGENT_DIR 值形态
   const agentDirEnv = env[PI_CODING_AGENT_DIR_ENV]
   const agentDirHit = agentDirEnv !== undefined && matchesXyzAgentAgentDir(agentDirEnv)
-  if (agentDirEnv === undefined) {
-    evidence.push(`${PI_CODING_AGENT_DIR_ENV}=<未设置> → 未命中`)
-  } else {
-    const shape = AGENT_DIR_SHAPE_OLD.test(normalizeXyzPath(agentDirEnv))
-      ? 'B 前旧布局 pi/agent'
-      : AGENT_DIR_SHAPE_NEW.test(normalizeXyzPath(agentDirEnv))
-        ? 'B 后新布局 agent'
-        : '非 xyz-agent 形态'
-    evidence.push(
-      `${PI_CODING_AGENT_DIR_ENV}='${agentDirEnv}' → ${agentDirHit ? `形态匹配（${shape}）` : `形态不匹配（${shape}，要求 <*>/.xyz-agent*/agent）`}`,
-    )
-  }
+  pushAgentDirEvidence(evidence, agentDirEnv, agentDirHit)
   evidence.push(`agentDir='${signals.agentDir}' → pi getAgentDir() 透传记录`)
 
   const managed = extLogHit && agentDirHit
   const kind: EnvironmentKind = managed ? 'xyz-agent' : 'standalone-pi'
-  if (managed) {
-    evidence.push(
-      `判定：xyz-agent 托管（${XYZ_AGENT_EXT_LOG_ENV}='1' 且 ${PI_CODING_AGENT_DIR_ENV} 形态匹配，双信号合取成立）`,
-    )
-  } else {
-    const orphaned: string[] = []
-    if (extLogHit) orphaned.push(XYZ_AGENT_EXT_LOG_ENV)
-    if (agentDirHit) orphaned.push(PI_CODING_AGENT_DIR_ENV)
-    const orphanNote =
-      orphaned.length > 0
-        ? `——${orphaned.join(' 与 ')} 单独成立不合取，可能为 shell 透传/自设污染，不判托管`
-        : ''
-    evidence.push(`判定：standalone-pi（双信号合取不成立）${orphanNote}`)
-  }
+  evidence.push(judgedEvidenceLine(extLogHit, agentDirHit))
 
   const distribution = detectDistribution(signals.bundleUrl, evidence)
 

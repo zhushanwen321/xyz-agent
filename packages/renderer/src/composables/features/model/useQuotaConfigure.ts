@@ -60,6 +60,77 @@ function findPreset(fetcherId: string | undefined, fallback: QuotaPreset | undef
   return fallback
 }
 
+// ── readiness 齐备性判定（§7.2）：按凭证来源分档的纯函数，主流程只做「采集信号 → 汇总缺失」──
+
+/**
+ * 密文字段（cookie / 专属 Key）的齐备判据：「草稿 ∨ 已保存」并集。
+ * 密文不回显（D7），只看草稿会让每次打开编辑体都是灰的；类型已变时旧归属失效，只认草稿
+ * （与 saveAndTest 的「类型一变旧 Cookie 无条件清除」同源）。
+ */
+function hasDraftOrSaved(draft: string, saved: boolean | undefined, typeChanged: boolean): boolean {
+  return draft.trim() !== '' || (!typeChanged && !!saved)
+}
+
+/** 单条齐备性判定项：satisfied=false 时 field 记入 missing 清单。 */
+interface ReadinessCheck {
+  field: ReadinessMissing
+  satisfied: boolean
+}
+
+/** readiness 判定信号（ref 读取集中在主流程，判定本身是与响应式无关的纯函数）。 */
+interface ReadinessSignals {
+  /** 当前 fetcher 为 cookie 类（auth 含 cookie）：凭证形态是 cookie 而非 apiKey */
+  cookieAuth: boolean
+  credentialSource: QuotaCredentialSource
+  /** 当前 fetcher 是否声明 api-key 形态（专属 Key 适用性收窄，§7 残留 11） */
+  exclusiveSupported: boolean
+  /** provider 侧是否有可用凭据（ProviderInfo.apiKeySet） */
+  providerCredentialAvailable: boolean
+  needsWorkspace: boolean
+  /** 归属判据：savedFetcher !== undefined && draft.fetcher !== savedFetcher */
+  typeChanged: boolean
+  cookieDraft: string
+  apiKeyDraft: string
+  cookieSaved: boolean | undefined
+  apiKeySaved: boolean | undefined
+  workspaceDraft: string
+}
+
+/**
+ * 凭证档判定（§7.2 分档）：cookie 类 → cookie；专属 Key → 专属 Key；其余 → provider 侧凭据。
+ * 专属 Key 只对声明了 api-key 形态的 fetcher 适用：判据与 runtime resolveCredential 的收窄、
+ * UI 分段控件的渲染同源。不适用（如纯 oauth / 纯 cookie）时落到 provider 凭据判定 —— 与 runtime
+ * 「忽略 exclusive、按 auth 数组序解析」完全一致。
+ */
+function credentialCheck(s: ReadinessSignals): ReadinessCheck {
+  if (s.cookieAuth) {
+    return { field: 'cookie', satisfied: hasDraftOrSaved(s.cookieDraft, s.cookieSaved, s.typeChanged) }
+  }
+  if (s.credentialSource === 'exclusive' && s.exclusiveSupported) {
+    return { field: 'apiKey', satisfied: hasDraftOrSaved(s.apiKeyDraft, s.apiKeySaved, s.typeChanged) }
+  }
+  return { field: 'apiKey', satisfied: s.providerCredentialAvailable }
+}
+
+/** 判定项清单：凭证档在前、workspace 在后（missing 顺序 = 本清单顺序）。 */
+function readinessChecks(s: ReadinessSignals): ReadinessCheck[] {
+  const checks: ReadinessCheck[] = [credentialCheck(s)]
+  // workspace 是明文且始终回显 → 判定只看草稿（D13：屏幕即真相）
+  if (s.needsWorkspace) {
+    checks.push({ field: 'workspace', satisfied: s.workspaceDraft.trim() !== '' })
+  }
+  return checks
+}
+
+/** 汇总缺失项（保持判定项构造序）。 */
+function toMissingFields(checks: ReadinessCheck[]): ReadinessMissing[] {
+  const missing: ReadinessMissing[] = []
+  for (const check of checks) {
+    if (!check.satisfied) missing.push(check.field)
+  }
+  return missing
+}
+
 /**
  * composable 返回类型 = core 契约（[BL round1 monorepo S] 原 ui injection-keys 逐字段
  * 手工镜像本接口，提升 core 后双侧 import 同一类型消除镜像）。
@@ -183,37 +254,27 @@ export function useQuotaConfigure(
    */
   const readiness = computed<{ ready: boolean; missing: ReadinessMissing[] }>(() => {
     const fid = fetcherId.value
-    if (!fid) return { ready: false, missing: ['type'] }
-
     // 草稿类型不在 QUOTA_PRESETS（仅历史数据 / 手工编辑 providers.json 可达，下拉只列预设）：
     // 未知 fetcher 无法判定该类型的凭证形态（是否 cookie 类、是否需要 workspace），isCookieAuth /
     // needsWorkspace 会双双落 false 后静默走 api-key 分支 —— providerCredentialAvailable 为 true 时
     // 就放行一条带未知 fetcher 的 configure。按「类型缺失」处理（与 D8「类型未选」同形态），
     // 让用户重选一个有效类型，而不是让未知值借 api-key 分支混过门控。
-    if (!activePreset.value) return { ready: false, missing: ['type'] }
+    if (!fid || !activePreset.value) return { ready: false, missing: ['type'] }
 
-    const missing: ReadinessMissing[] = []
     const quota = providerRef.value?.quota
-    const typeChanged = quota?.fetcher !== undefined && fid !== quota.fetcher
-
-    if (isCookieAuth.value) {
-      // cookie 是密文不回显 → 判定取「草稿 ∨ 已保存」并集（否则每次打开编辑体都是灰的）
-      const hasCookie = cookieInput.value.trim() !== '' || (!typeChanged && !!quota?.cookieSet)
-      if (!hasCookie) missing.push('cookie')
-    } else if (credentialSource.value === 'provider') {
-      if (!providerCredentialAvailable.value) missing.push('apiKey')
-    } else if (credentialSource.value === 'exclusive' && supportsExclusiveCredential(authKinds.value)) {
-      // 专属 Key 只对声明了 api-key 形态的 fetcher 适用：判据与 runtime resolveCredential 的
-      // 收窄、UI 分段控件的渲染同源（§7 残留 11）。不适用（如纯 oauth / 纯 cookie）时落到下一条
-      // provider 凭据判定 —— 与 runtime「忽略 exclusive、按 auth 数组序解析」完全一致。
-      const hasExclusiveKey = apiKeyInput.value.trim() !== '' || (!typeChanged && !!quota?.apiKeySet)
-      if (!hasExclusiveKey) missing.push('apiKey')
-    } else if (!providerCredentialAvailable.value) {
-      missing.push('apiKey')
-    }
-
-    // workspace 是明文且始终回显 → 判定只看草稿（D13：屏幕即真相）
-    if (needsWorkspace.value && !workspaceInput.value.trim()) missing.push('workspace')
+    const missing = toMissingFields(readinessChecks({
+      cookieAuth: isCookieAuth.value,
+      credentialSource: credentialSource.value,
+      exclusiveSupported: supportsExclusiveCredential(authKinds.value),
+      providerCredentialAvailable: providerCredentialAvailable.value,
+      needsWorkspace: needsWorkspace.value,
+      typeChanged: quota?.fetcher !== undefined && fid !== quota.fetcher,
+      cookieDraft: cookieInput.value,
+      apiKeyDraft: apiKeyInput.value,
+      cookieSaved: quota?.cookieSet,
+      apiKeySaved: quota?.apiKeySet,
+      workspaceDraft: workspaceInput.value,
+    }))
 
     return { ready: missing.length === 0, missing }
   })

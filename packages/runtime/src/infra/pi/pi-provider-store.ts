@@ -640,6 +640,107 @@ function stripCatalogProviderLevelKeys(cfg: PiProviderConfig, hasGatewayMarker: 
   return stripped
 }
 
+// ── 启动清洗 · 条目级处理段（从 sanitizeInvalidProviders 提取；执行顺序契约见主函数）──
+
+/**
+ * 单条目清洗结果累积器（sanitizeInvalidProviders 拆分后的状态载体）：前三个数组即返回值字段，
+ * strippedAny = 本条目有键剥除（触发写盘）。
+ */
+interface SanitizeAccumulator {
+  removed: string[]
+  repaired: string[]
+  staleGatewayMarkers: string[]
+  strippedAny: boolean
+}
+
+/**
+ * cfg 是可写对象判定（非 null / 非数组）——原内联句 `cfg && typeof cfg === 'object' &&
+ * !Array.isArray(cfg)` 的命名谓词，判定不变（JSON.parse 结果的实际形状不可信，故保留运行时守卫）。
+ */
+function isPlainProviderRecord(cfg: unknown): cfg is PiProviderConfig {
+  return !!cfg && typeof cfg === 'object' && !Array.isArray(cfg)
+}
+
+/**
+ * D2① 空串键剥除（顺序契约第一步）：pi minLength:1 字段集空串键删键 + 模型级空 id 整条丢弃
+ * （见 stripEmptyStringSchemaKeys），命中才记日志并置写盘标记。
+ */
+function stripEmptyStringKeysForEntry(id: string, cfg: PiProviderConfig, acc: SanitizeAccumulator): void {
+  const strippedKeys = stripEmptyStringSchemaKeys(cfg)
+  if (strippedKeys.length === 0) return
+  acc.strippedAny = true
+  console.log(`[provider-repair] stripped empty-string schema keys on "${id}": ${strippedKeys.join(', ')}`)
+}
+
+/**
+ * D2② catalog 条目的 provider 级键处置（顺序契约第二步，均先于既有空壳判定）：判定锚 = extras
+ * 的 gatewayBaseUrl 标记（仅存在性判定，禁按值比对）；api 一律剥除 / baseUrl 按标记保留。
+ *
+ * 写读错位（写序契约崩溃中间态：标记在、models.json 无 baseUrl 键）→ 待清清单；清标记的 async
+ * 锁内写归调用方（本段同步，不在此写 extras）。
+ */
+function stripCatalogEntryKeys(
+  id: string,
+  cfg: PiProviderConfig,
+  deps: SanitizeProviderMarkerReader | undefined,
+  acc: SanitizeAccumulator,
+): void {
+  if (!isCatalogProvider(id)) return
+  const hasGatewayMarker = deps?.getExtrasSync(id)?.gatewayBaseUrl !== undefined
+  const strippedProviderKeys = stripCatalogProviderLevelKeys(cfg, hasGatewayMarker)
+  if (strippedProviderKeys.length > 0) {
+    acc.strippedAny = true
+    console.log(`[provider-repair] stripped unmarked provider-level keys on "${id}": ${strippedProviderKeys.join(', ')}`)
+  }
+  if (hasGatewayMarker && (cfg as Record<string, unknown>).baseUrl === undefined) {
+    acc.staleGatewayMarkers.push(id)
+  }
+}
+
+/**
+ * 既有空壳判定 + 修复/删除（顺序契约第三步，MF-5 语义不变）：catalog 已知内置 provider 的空壳
+ * → 合并 catalog models 修复（保留 name/authMethod 等既有字段；[W1b 语义变更] 含 apiKey 的
+ * 条目直接合法，不进此分支）。
+ *
+ * MF-6（R4 review）：catalog models 含空 baseUrl 的 provider 不可修复——pi modelFromJson
+ * 对每个自定义模型强制非空 baseUrl（空串非 nullish，`??` 不跳过 → 直接 throw），任一空
+ * baseUrl 模型即毒化整个 provider 组合（composeModelProvider 抛错 → pi 回退 builtin base，
+ * 用户 apiKey 静默失效且条目 isInvalidProvider===false 无自愈路径）。这类 provider
+ * （azure-openai-responses 38/38 模型空 baseUrl）维持删除语义；过滤空 baseUrl 模型会退回
+ * models:[] 八字段全缺态再次被删（transient 非法态），合成 baseUrl 不可接受（catalog 无数据）。
+ */
+function repairOrRemoveInvalidEntry(
+  id: string,
+  cfg: PiProviderConfig,
+  draft: PiModelsConfig,
+  acc: SanitizeAccumulator,
+): void {
+  if (!isInvalidProvider(cfg)) return
+  const catalogModels = snapshotCatalogModelsById.get(id)
+  if (catalogModels && catalogModels.length > 0 && catalogModels.every(m => !!m.baseUrl)) {
+    draft.providers[id] = { ...cfg, models: catalogModels }
+    acc.repaired.push(id)
+    return
+  }
+  delete draft.providers[id]
+  acc.removed.push(id)
+}
+
+/** 写盘守卫：有删除/修复/剥除才触发出盘；无变化 = 不写（幂等）。 */
+function hasSanitizeChanges(acc: SanitizeAccumulator): boolean {
+  return acc.removed.length > 0 || acc.repaired.length > 0 || acc.strippedAny
+}
+
+/** 清洗结果日志：removed/repaired 各自非空才打（文案与顺序不变，均在 writeModels 之后）。 */
+function logSanitizeOutcome(acc: SanitizeAccumulator): void {
+  if (acc.removed.length > 0) {
+    console.log('[provider-store] sanitized invalid providers:', acc.removed)
+  }
+  if (acc.repaired.length > 0) {
+    console.log('[provider-store] repaired catalog-known invalid providers (merged builtin models):', acc.repaired)
+  }
+}
+
 /**
  * 启动时清理 models.json 里的无效 provider（八字段全缺的空壳，判定 = isInvalidProvider，
  * 对齐 pi 0.84.1 applyModelsJson 抛错条件，锚点与 known-issue 见 pi-provider-repair.ts）。
@@ -681,62 +782,20 @@ export function sanitizeInvalidProviders(
   try {
     modelsStore.invalidate()
     const draft: PiModelsConfig = JSON.parse(JSON.stringify(readModels()))
-    const removed: string[] = []
-    const repaired: string[] = []
-    const staleGatewayMarkers: string[] = []
-    let strippedAny = false
+    const acc: SanitizeAccumulator = { removed: [], repaired: [], staleGatewayMarkers: [], strippedAny: false }
     for (const [id, cfg] of Object.entries(draft.providers)) {
       // ① 空串键剥除 + ② catalog provider 级键处置（顺序契约：均先于下方既有空壳判定）
-      if (cfg && typeof cfg === 'object' && !Array.isArray(cfg)) {
-        const strippedKeys = stripEmptyStringSchemaKeys(cfg)
-        if (strippedKeys.length > 0) {
-          strippedAny = true
-          console.log(`[provider-repair] stripped empty-string schema keys on "${id}": ${strippedKeys.join(', ')}`)
-        }
-        if (isCatalogProvider(id)) {
-          // ② 判定锚 = extras 的 gatewayBaseUrl 标记（仅存在性判定，禁按值比对）
-          const hasGatewayMarker = deps?.getExtrasSync(id)?.gatewayBaseUrl !== undefined
-          const strippedProviderKeys = stripCatalogProviderLevelKeys(cfg, hasGatewayMarker)
-          if (strippedProviderKeys.length > 0) {
-            strippedAny = true
-            console.log(`[provider-repair] stripped unmarked provider-level keys on "${id}": ${strippedProviderKeys.join(', ')}`)
-          }
-          // 写读错位（写序契约崩溃中间态：标记在、models.json 无 baseUrl 键）→ 待清清单；
-          // 清标记的 async 锁内写归调用方（本段同步，不在此写 extras）
-          if (hasGatewayMarker && (cfg as Record<string, unknown>).baseUrl === undefined) {
-            staleGatewayMarkers.push(id)
-          }
-        }
+      if (isPlainProviderRecord(cfg)) {
+        stripEmptyStringKeysForEntry(id, cfg, acc)
+        stripCatalogEntryKeys(id, cfg, deps, acc)
       }
-      if (isInvalidProvider(cfg)) {
-        // catalog 已知内置 provider 的空壳 → 合并 catalog models 修复（保留 name/authMethod
-        // 等既有字段；[W1b 语义变更] 含 apiKey 的条目直接合法，不进此分支）。
-        // MF-6（R4 review）：catalog models 含空 baseUrl 的 provider 不可修复——pi modelFromJson
-        // 对每个自定义模型强制非空 baseUrl（空串非 nullish，`??` 不跳过 → 直接 throw），任一空
-        // baseUrl 模型即毒化整个 provider 组合（composeModelProvider 抛错 → pi 回退 builtin base，
-        // 用户 apiKey 静默失效且条目 isInvalidProvider===false 无自愈路径）。这类 provider
-        // （azure-openai-responses 38/38 模型空 baseUrl）维持删除语义；过滤空 baseUrl 模型会退回
-        // models:[] 八字段全缺态再次被删（transient 非法态），合成 baseUrl 不可接受（catalog 无数据）。
-        const catalogModels = snapshotCatalogModelsById.get(id)
-        if (catalogModels && catalogModels.length > 0 && catalogModels.every(m => !!m.baseUrl)) {
-          draft.providers[id] = { ...cfg, models: catalogModels }
-          repaired.push(id)
-        } else {
-          delete draft.providers[id]
-          removed.push(id)
-        }
-      }
+      repairOrRemoveInvalidEntry(id, cfg, draft, acc)
     }
-    if (removed.length > 0 || repaired.length > 0 || strippedAny) {
+    if (hasSanitizeChanges(acc)) {
       writeModels(draft)
-      if (removed.length > 0) {
-        console.log('[provider-store] sanitized invalid providers:', removed)
-      }
-      if (repaired.length > 0) {
-        console.log('[provider-store] repaired catalog-known invalid providers (merged builtin models):', repaired)
-      }
+      logSanitizeOutcome(acc)
     }
-    return { removed, repaired, staleGatewayMarkers }
+    return { removed: acc.removed, repaired: acc.repaired, staleGatewayMarkers: acc.staleGatewayMarkers }
   } catch (e) {
     // best-effort 降级：models.json 异常不阻塞启动（pi 自身加载时也会容错或报错）
     console.warn('[provider-store] sanitizeInvalidProviders failed:', e)

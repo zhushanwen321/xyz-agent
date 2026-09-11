@@ -699,52 +699,96 @@ function listFragments(backupPath, fsMod) {
 
 // ---------- 报告渲染（步骤 6） ----------
 
-export function formatReport(report) {
-  const lines = []
+/** 中止段（步骤 0 前置校验失败）：中止原因 + 命中的 pi 进程 PID（可选）。 */
+function formatAbortedLines(aborted) {
+  const lines = [`✗ 迁移中止（步骤 ${aborted.step}）：${aborted.reason}`]
+  if (aborted.pids?.length) lines.push(`命中 PID：${aborted.pids.join(', ')}`)
+  return lines
+}
+
+/** 备份体积段：backupStats 缺失（中止 / 无需迁移路径）时不出行。 */
+function formatBackupStatsLines(report) {
+  if (!report.backupStats) return []
+  return [
+    `备份体积：${report.backupStats.files} 个文件 / ${report.backupStats.bytes} 字节（清理指引见 docs/troubleshooting.md 迁移节；备份不自动删）`,
+  ]
+}
+
+/** 计数段：各计数维度单行汇总（维度顺序按可读性排列，勿调）。 */
+function formatCountsLine(report) {
   const c = report.counts
-  if (report.aborted) {
-    lines.push(`✗ 迁移中止（步骤 ${report.aborted.step}）：${report.aborted.reason}`)
-    if (report.aborted.pids?.length) lines.push(`命中 PID：${report.aborted.pids.join(', ')}`)
-    return lines.join('\n')
-  }
-  if (report.mode === 'nothing') {
-    lines.push('✓ 无需迁移：<dataDir>/pi 与 pi.backup-v2-* 均不存在（全新安装形态）')
-    return lines.join('\n')
-  }
-  lines.push(`== pi 布局迁移报告 ==`)
-  lines.push(`模式：${report.mode === 'migrate' ? '首迁' : '续传（重入 ts 最大备份）'}`)
-  lines.push(`数据目录：${report.dataDir}`)
-  lines.push(`备份路径：${report.backupPath}`)
-  if (report.backupStats) {
-    lines.push(`备份体积：${report.backupStats.files} 个文件 / ${report.backupStats.bytes} 字节（清理指引见 docs/troubleshooting.md 迁移节；备份不自动删）`)
-  }
-  lines.push(
-    `计数：主 session 分发 ${c.sessionDistributed}（其中无 cwd 入 _migrated-no-cwd/ ${c.sessionNoCwd}）、主 session 跳过 ${c.sessionSkipped}、sidecar 随行 ${c.sidecarsMoved}（跳过 ${c.sidecarSkipped}）、记录型并入 ${c.recordMoved}（跳过 ${c.recordSkipped}）、单文件搬移 ${c.filesMoved}、资源目录搬移 ${c.resourcesMoved}（跳过 ${c.resourcesSkipped}）、三件套 union 写回 ${c.unionWrites}（无变化跳过 ${c.unionSkipped}）、避让文件 ${c.asidesCreated}`,
-  )
-  lines.push(`回滚命令：${report.rollbackCommand}`)
-  lines.push(`进程检测模式清单（pgrep -f）：${report.processPatterns.join(' ; ')}`)
-  if (report.selfCheck) {
-    lines.push(
-      report.selfCheck.checked
-        ? `自证：本机 pi 二进制 ${report.selfCheck.piBinary} 已命中 pi 模式`
-        : `自证：本机未找到 pi 二进制（which pi 失败）——pi 进程漏检面不存在`,
-    )
-  }
-  lines.push(`冲突清单（${report.conflicts.length} 条；迁移后鉴权异常或 provider 列表缺项，先查三件套的 aside 文件与本清单）：`)
+  return `计数：主 session 分发 ${c.sessionDistributed}（其中无 cwd 入 _migrated-no-cwd/ ${c.sessionNoCwd}）、主 session 跳过 ${c.sessionSkipped}、sidecar 随行 ${c.sidecarsMoved}（跳过 ${c.sidecarSkipped}）、记录型并入 ${c.recordMoved}（跳过 ${c.recordSkipped}）、单文件搬移 ${c.filesMoved}、资源目录搬移 ${c.resourcesMoved}（跳过 ${c.resourcesSkipped}）、三件套 union 写回 ${c.unionWrites}（无变化跳过 ${c.unionSkipped}）、避让文件 ${c.asidesCreated}`
+}
+
+/** 回滚命令段：单行可复制命令（先删 agent 上移结果，再把备份搬回 pi/）。 */
+function formatRollbackLine(report) {
+  return `回滚命令：${report.rollbackCommand}`
+}
+
+/** 自证段：pi 二进制自证结果（未走自证校验时不出行）。 */
+function formatSelfCheckLines(report) {
+  if (!report.selfCheck) return []
+  return [
+    report.selfCheck.checked
+      ? `自证：本机 pi 二进制 ${report.selfCheck.piBinary} 已命中 pi 模式`
+      : `自证：本机未找到 pi 二进制（which pi 失败）——pi 进程漏检面不存在`,
+  ]
+}
+
+/** 冲突清单段：冲突逐条 + 需人工处理项（可选）。 */
+function formatConflictLines(report) {
+  const lines = [
+    `冲突清单（${report.conflicts.length} 条；迁移后鉴权异常或 provider 列表缺项，先查三件套的 aside 文件与本清单）：`,
+  ]
   for (const cf of report.conflicts) lines.push(`  - [${cf.file}] ${cf.detail}`)
   if (report.manualIntervention.length > 0) {
     lines.push(`需人工处理（${report.manualIntervention.length} 条）：`)
     for (const m of report.manualIntervention) lines.push(`  ! ${m}`)
   }
-  lines.push(`顶层残片清单（pi/ 顶层不在 agent|sessions 内的条目，不迁移、留在备份，供人工确认可忽略）：${report.fragments.length ? report.fragments.join(', ') : '（无）'}`)
-  if (report.oldBackups.length > 0) {
-    lines.push(`本次之前的旧备份（复合态残部不被任何分支消费，请核对残部）：`)
-    for (const b of report.oldBackups) lines.push(`  - ${b.name}：${b.files} 个文件 / ${b.bytes} 字节`)
-  } else {
-    lines.push('旧备份清单：（无更早备份）')
-  }
-  for (const n of report.notices) lines.push(`ℹ ${n}`)
-  return lines.join('\n')
+  return lines
+}
+
+/** 顶层残片段：残片清单（空则「（无）」）。 */
+function formatFragmentsLine(report) {
+  return `顶层残片清单（pi/ 顶层不在 agent|sessions 内的条目，不迁移、留在备份，供人工确认可忽略）：${report.fragments.length ? report.fragments.join(', ') : '（无）'}`
+}
+
+/** 旧备份清单段：本次之前的备份逐条（无则单行「（无更早备份）」）。 */
+function formatOldBackupLines(report) {
+  if (report.oldBackups.length === 0) return ['旧备份清单：（无更早备份）']
+  const lines = [`本次之前的旧备份（复合态残部不被任何分支消费，请核对残部）：`]
+  for (const b of report.oldBackups) lines.push(`  - ${b.name}：${b.files} 个文件 / ${b.bytes} 字节`)
+  return lines
+}
+
+/** 提示段：notices 逐条（无则空数组）。 */
+function formatNoticeLines(report) {
+  return report.notices.map((n) => `ℹ ${n}`)
+}
+
+/**
+ * 报告装配：只负责各段顺序 + join（分段构造——原单函数 cyclomatic 16 已拆到各段
+ * helper，每段无交叉状态）。文案 / 行序 / 空行是下游契约，改任何一段前先跑
+ * scripts/__tests__/migrate-pi-layout-v2.test.mjs。
+ */
+export function formatReport(report) {
+  if (report.aborted) return formatAbortedLines(report.aborted).join('\n')
+  if (report.mode === 'nothing') return '✓ 无需迁移：<dataDir>/pi 与 pi.backup-v2-* 均不存在（全新安装形态）'
+  return [
+    `== pi 布局迁移报告 ==`,
+    `模式：${report.mode === 'migrate' ? '首迁' : '续传（重入 ts 最大备份）'}`,
+    `数据目录：${report.dataDir}`,
+    `备份路径：${report.backupPath}`,
+    ...formatBackupStatsLines(report),
+    formatCountsLine(report),
+    formatRollbackLine(report),
+    `进程检测模式清单（pgrep -f）：${report.processPatterns.join(' ; ')}`,
+    ...formatSelfCheckLines(report),
+    ...formatConflictLines(report),
+    formatFragmentsLine(report),
+    ...formatOldBackupLines(report),
+    ...formatNoticeLines(report),
+  ].join('\n')
 }
 
 // ---------- CLI 入口（薄包装；vitest import 导出面时不触发） ----------

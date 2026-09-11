@@ -52,6 +52,85 @@ const NO_MATCH_SUGGESTIONS = 3
  */
 const F1_ROOT_LABEL_PAD = 15
 
+/** ① 自检行：逐根去重标注/文件数 + 合计非空与否 + 归一化已做（只陈述事实）。 */
+function buildSelfCheckLines(roots: SessionRoot[]): string[] {
+  const lines: string[] = ['自检（发现层，只陈述事实）：']
+  let totalFiles = 0
+  for (const r of roots) {
+    if (r.dedupedInto !== undefined) {
+      lines.push(`  [${r.kind}]`.padEnd(F1_ROOT_LABEL_PAD) + `与 [${r.dedupedInto}] 同路径，已去重`)
+      continue
+    }
+    const count = r.fileCount ?? r.files.length
+    totalFiles += count
+    lines.push(`  [${r.kind}]`.padEnd(F1_ROOT_LABEL_PAD) + `${r.path}：${count} 文件`)
+  }
+  lines.push(
+    totalFiles > 0
+      ? `  → 候选集非空（共 ${totalFiles} 文件），根解析正常`
+      : '  → 候选集为空（所有候选根均 0 文件）',
+  )
+  lines.push('  → 查询已做 uuid 归一化匹配（小写 + 去连字符）后仍无命中')
+  return lines
+}
+
+/** F1 编辑距离候选（sessionId + source + mtime + 距离）。 */
+interface NoMatchSuggestion {
+  sessionId: string
+  source: string
+  mtime: number
+  distance: number
+}
+
+/** ② 候选集（roots 实扫文件名提取 id，同 id 取 mtime 新者）→ 编辑距离升序 top-3。 */
+function collectSuggestions(query: string, roots: SessionRoot[]): NoMatchSuggestion[] {
+  const candidates = new Map<string, { sessionId: string; source: string; mtime: number }>()
+  for (const r of roots) {
+    if (r.dedupedInto !== undefined) continue
+    for (const f of r.files) {
+      const sid = extractSessionIdFromFilename(basename(f.path))
+      if (sid === '') continue
+      const existing = candidates.get(sid)
+      if (existing === undefined || f.mtime > existing.mtime) {
+        candidates.set(sid, { sessionId: sid, source: r.source, mtime: f.mtime })
+      }
+    }
+  }
+  return [...candidates.values()]
+    .map((c) => ({ ...c, distance: levenshtein(query, c.sessionId) }))
+    .sort((a, b) => a.distance - b.distance || b.mtime - a.mtime)
+    .slice(0, NO_MATCH_SUGGESTIONS)
+}
+
+/** ② 渲染：候选行（source 标注 + 首个差异位）；空候选给明确说明。 */
+function formatSuggestionLines(suggestions: NoMatchSuggestion[], query: string): string[] {
+  const lines = ['最接近的候选（编辑距离）：']
+  if (suggestions.length === 0) {
+    lines.push('  （候选集中无可比对的 session id）')
+  }
+  for (const s of suggestions) {
+    const pos = firstDiffPosition(query, s.sessionId)
+    const diff =
+      pos !== undefined ? `差异在第 ${pos} 位：${query[pos - 1] ?? ''} → ${s.sessionId[pos - 1] ?? ''}` : ''
+    lines.push(`  ${s.sessionId}  ${s.source}  ${diff}`.trimEnd())
+  }
+  return lines
+}
+
+/** ③ 正确做法四条 + ④ 封死 shell 绕行（纯静态文案）。 */
+function guidanceLines(): string[] {
+  return [
+    '',
+    '正确做法：',
+    `  - 改用标题/keyword：session_read { action:"find", query:"<标题关键词>" }`,
+    `  - 已知文件路径时直接传绝对路径：session_read { action:"outline", session:"<绝对路径>.jsonl" }`,
+    `  - 截断/过期 id 用更短前缀：session_read { action:"find", query:"<更短前缀>" }`,
+    `  - 想先看环境与根目录状态：session_read { action:"doctor" }`,
+    '',
+    '不要用 shell find/ls/rg 搜 session 目录，不要 cat/read 原始 .jsonl —— session_read 是唯一入口。',
+  ]
+}
+
 /**
  * F1 无匹配（u9 重写，design §5.2 形态——逐段规格）：
  *
@@ -70,68 +149,12 @@ const F1_ROOT_LABEL_PAD = 15
  * 无「👉 用 recent 看全量」误导指引（recent 候选对写错的 uuid 无自纠价值，§6.7 被否项）。
  */
 export function formatNoMatch(query: string, roots: SessionRoot[]): string {
-  const lines: string[] = []
-  lines.push(`无匹配 session："${query}"`)
-
-  // ① 自检行（只陈述事实）
-  lines.push('')
-  lines.push('自检（发现层，只陈述事实）：')
-  let totalFiles = 0
-  for (const r of roots) {
-    if (r.dedupedInto !== undefined) {
-      lines.push(`  [${r.kind}]`.padEnd(F1_ROOT_LABEL_PAD) + `与 [${r.dedupedInto}] 同路径，已去重`)
-      continue
-    }
-    const count = r.fileCount ?? r.files.length
-    totalFiles += count
-    lines.push(`  [${r.kind}]`.padEnd(F1_ROOT_LABEL_PAD) + `${r.path}：${count} 文件`)
-  }
-  lines.push(
-    totalFiles > 0
-      ? `  → 候选集非空（共 ${totalFiles} 文件），根解析正常`
-      : '  → 候选集为空（所有候选根均 0 文件）',
-  )
-  lines.push('  → 查询已做 uuid 归一化匹配（小写 + 去连字符）后仍无命中')
-
-  // ② 编辑距离最近候选 top-3（source 标注 + 首个差异位）
-  const candidates = new Map<string, { sessionId: string; source: string; mtime: number }>()
-  for (const r of roots) {
-    if (r.dedupedInto !== undefined) continue
-    for (const f of r.files) {
-      const sid = extractSessionIdFromFilename(basename(f.path))
-      if (sid === '') continue
-      const existing = candidates.get(sid)
-      if (existing === undefined || f.mtime > existing.mtime) {
-        candidates.set(sid, { sessionId: sid, source: r.source, mtime: f.mtime })
-      }
-    }
-  }
-  const suggestions = [...candidates.values()]
-    .map((c) => ({ ...c, distance: levenshtein(query, c.sessionId) }))
-    .sort((a, b) => a.distance - b.distance || b.mtime - a.mtime)
-    .slice(0, NO_MATCH_SUGGESTIONS)
-  lines.push('')
-  lines.push('最接近的候选（编辑距离）：')
-  if (suggestions.length === 0) {
-    lines.push('  （候选集中无可比对的 session id）')
-  }
-  for (const s of suggestions) {
-    const pos = firstDiffPosition(query, s.sessionId)
-    const diff =
-      pos !== undefined ? `差异在第 ${pos} 位：${query[pos - 1] ?? ''} → ${s.sessionId[pos - 1] ?? ''}` : ''
-    lines.push(`  ${s.sessionId}  ${s.source}  ${diff}`.trimEnd())
-  }
-
-  // ③ 正确做法四条（每条都确定能成功，§2 目标 2）
-  lines.push('')
-  lines.push('正确做法：')
-  lines.push(`  - 改用标题/keyword：session_read { action:"find", query:"<标题关键词>" }`)
-  lines.push(`  - 已知文件路径时直接传绝对路径：session_read { action:"outline", session:"<绝对路径>.jsonl" }`)
-  lines.push(`  - 截断/过期 id 用更短前缀：session_read { action:"find", query:"<更短前缀>" }`)
-  lines.push(`  - 想先看环境与根目录状态：session_read { action:"doctor" }`)
-
-  // ④ 就地封死 shell 绕行（§5.2 最后一行）
-  lines.push('')
-  lines.push('不要用 shell find/ls/rg 搜 session 目录，不要 cat/read 原始 .jsonl —— session_read 是唯一入口。')
-  return lines.join('\n')
+  return [
+    `无匹配 session："${query}"`,
+    '',
+    ...buildSelfCheckLines(roots),
+    '',
+    ...formatSuggestionLines(collectSuggestions(query, roots), query),
+    ...guidanceLines(),
+  ].join('\n')
 }

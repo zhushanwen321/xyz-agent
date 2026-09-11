@@ -573,6 +573,51 @@ function sortByMtimeAndTruncate(
   return { items: truncated ? matched.slice(0, limit) : matched, truncated }
 }
 
+/** recent 路径的目录级标题元数据（按目录去重 + 单目录抛错记空 + 同 id 取新 modified）。 */
+async function loadRecentTitles(
+  sliced: Matched[],
+  provider: SessionMetadataProvider,
+): Promise<Map<string, SessionMetadataEntry>> {
+  const titles = new Map<string, SessionMetadataEntry>()
+  // 候选所在目录天然平铺（文件直在其下）；按目录去重合并调用，多目录同 id 取新 modified
+  const dirs = [...new Set(sliced.map((m) => dirname(m.meta.path)))]
+  for (const dir of dirs) {
+    let entries: SessionMetadataEntry[]
+    try {
+      entries = await provider(dir)
+    } catch {
+      continue // guard：抛错记空 → 该目录候选回退 readFirstUserMessageText
+    }
+    for (const e of entries) {
+      const prev = titles.get(e.id)
+      if (prev === undefined || modifiedOf(e) > modifiedOf(prev)) titles.set(e.id, e)
+    }
+  }
+  return titles
+}
+
+/** 标题优先级：本层已命中 name > 元数据 name（u11）；两者皆无→ undefined（不挂字段）。 */
+function resolveName(m: Matched, meta: SessionMetadataEntry | undefined): string | undefined {
+  if (m.name !== undefined) return m.name
+  return meta?.name
+}
+
+/**
+ * 预览优先级：本层已读 preview > 元数据 firstMessage（免深读）> 实读文件首条 user message。
+ * 最后一条兼作 readFirstUserMessageText 的唯一调用点（最多 limit 次 IO）。
+ */
+async function resolvePreview(
+  m: Matched,
+  meta: SessionMetadataEntry | undefined,
+): Promise<string | undefined> {
+  if (m.preview !== undefined) return m.preview
+  if (meta?.firstMessage !== undefined && meta.firstMessage !== '') {
+    return meta.firstMessage.slice(0, PREVIEW_MAX)
+  }
+  const text = await readFirstUserMessageText(m.meta.path)
+  return text ? text.slice(0, PREVIEW_MAX) : undefined
+}
+
 /**
  * 步骤 5：填 firstMessagePreview / name（recent/uuid 路径未读，对最终 limit 个补读——最多 limit 个 IO）。
  *
@@ -584,37 +629,18 @@ async function fillFirstMessagePreviews(
   sliced: Matched[],
   recentMetadataProvider?: SessionMetadataProvider,
 ): Promise<MatchedSession[]> {
-  const titles = new Map<string, SessionMetadataEntry>()
-  if (recentMetadataProvider !== undefined && sliced.length > 0) {
-    // 候选所在目录天然平铺（文件直在其下）；按目录去重合并调用，多目录同 id 取新 modified
-    const dirs = [...new Set(sliced.map((m) => dirname(m.meta.path)))]
-    for (const dir of dirs) {
-      let entries: SessionMetadataEntry[]
-      try {
-        entries = await recentMetadataProvider(dir)
-      } catch {
-        continue // guard：抛错记空 → 该目录候选回退 readFirstUserMessageText
-      }
-      for (const e of entries) {
-        const prev = titles.get(e.id)
-        if (prev === undefined || modifiedOf(e) > modifiedOf(prev)) titles.set(e.id, e)
-      }
-    }
-  }
+  const titles =
+    recentMetadataProvider !== undefined && sliced.length > 0
+      ? await loadRecentTitles(sliced, recentMetadataProvider)
+      : new Map<string, SessionMetadataEntry>()
   const result: MatchedSession[] = []
   for (const m of sliced) {
-    const out: MatchedSession = { ...m.ref, source: m.source }
     const meta = titles.get(m.ref.sessionId)
-    if (m.name !== undefined) out.name = m.name
-    else if (meta?.name !== undefined) out.name = meta.name
-    if (m.preview !== undefined) {
-      out.firstMessagePreview = m.preview
-    } else if (meta?.firstMessage !== undefined && meta.firstMessage !== '') {
-      out.firstMessagePreview = meta.firstMessage.slice(0, PREVIEW_MAX)
-    } else {
-      const text = await readFirstUserMessageText(m.meta.path)
-      if (text) out.firstMessagePreview = text.slice(0, PREVIEW_MAX)
-    }
+    const out: MatchedSession = { ...m.ref, source: m.source }
+    const name = resolveName(m, meta)
+    if (name !== undefined) out.name = name
+    const preview = await resolvePreview(m, meta)
+    if (preview !== undefined) out.firstMessagePreview = preview
     result.push(out)
   }
   return result
