@@ -5,7 +5,7 @@
 ## 开篇（SCQA）
 
 - **S（情境）**：`@zhushanwen/pi-system-prompt-trace`（v0.1.5）是 xyz-agent 的 taiji 组 builtin extension——每当 effective system prompt 建立或变化时向 session JSONL 追加一条 `xyz:system-prompt` 留痕 entry，供 GUI Trace 视图与排查使用。为跨重启去重（同一 prompt 重开后不重复写），它维护一个「hash 基线」，解析路径共三路：switch stash 直读 / fork previousSessionFile 直读 / **agentDir 自持久化小文件**（`system-prompt-trace-baseline.json`，含原子写、tmp 唯一化、RMW 竞态论证、64-session 剪枝，约 120/201 行 baseline.ts）。
-- **C（冲突）**：2026-09-11 过度设计审计（候选 2/11，taiji 单元）证实该自持久化层的存在前提是假的——它赌「app 重启直 spawn resume / reload 等无 switch 事件的链路拿不到 session 文件路径」，而 pi 0.84.4 的 `ExtensionContext.sessionManager`（`ReadonlySessionManager`）本就含 `getSessionFile()`，且留痕 entry 自身完整落盘 fullText，直读 session JSONL 最后一条留痕即得比小文件更强的基线（hash+version+**fullText**）。同时本包自定的 3 个 `Like*Event` 接口 + `SessionStartReason`/`SESSION_START_REASONS`/`normalizeSessionStartReason` 全链冗余于 SDK 已导出类型。
+- **C（冲突）**：2026-09-11 过度设计审计（候选 2/11，taiji 单元）证实该自持久化层的存在前提是假的——它赌「app 重启直 spawn resume / reload 等无 switch 事件的链路拿不到 session 文件路径」，而 pi 0.84.4 的 `ExtensionContext.sessionManager`（`ReadonlySessionManager`）本就含 `getSessionFile()`，且留痕 entry 自身完整落盘 fullText，直读 session JSONL 最后一条留痕即得比小文件更强的基线（hash+version+**fullText**）。同时本包自定的 3 个 `Like*Event` 接口 + `SessionStartReason`/SESSION_START_REASONS/`normalizeSessionStartReason` 全链冗余于 SDK 已导出类型。
 - **Q（问题）**：如何在不损失留痕主链路（switch 去重、version 续接、reload 去重）的前提下，删掉这个自产自销的持久化子系统与冗余类型层，并把「fork 基线语义」这个挂着「暂定，待 P2 实测定」的悬置点一并关闭？
 - **A（答案）**：基线解析收敛为三档——stash（resume 主链路，保留）→ fork 档读事件 `previousSessionFile`（源文件最后留痕，维持 §1 表格记录的现状路径 2）→ `getSessionFile()` 直读 JSONL 最后留痕（覆盖 reload / 直启 resume / 兜底）；类型层全部 `import type` SDK 具名类型。一次本地 pi CLI 探针（四 reason × getSessionFile 矩阵）拆「pi 行为断言 / 终态行为断言」两段分期执行——pi 行为段在 M0 开工前，终态段在 M2 后合入前（见 §6.5）。M0 已执行（2026-09-12）：P2 证伪「fork 并入直读」（常态 /fork 时点 fork 新文件未落盘，直读 null），fork 档回退读 previousSessionFile（D2 v5 定案，见修订记录）。
 
@@ -198,7 +198,7 @@ reload 场景（GUI skill 变更链路）在终态下与上同构：`/reload` �
 
 ### 6.4 D4：类型层归一方式（选定：import type SDK 具名类型 + 删归一化链）
 
-- **采用**：`index.ts` 删除 `SessionStartLikeEvent`/`SessionBeforeSwitchLikeEvent`/`TurnStartLikeEvent` 三接口，事件 handler 参数直接标注 SDK 导出的 `SessionStartEvent`/`SessionBeforeSwitchEvent`/`TurnStartEvent`；`types.ts` 删除 `SessionStartReason`（本地五值联合）、`SESSION_START_REASONS`、`normalizeSessionStartReason`，`mapReasonForFirstWrite` 保留（真实语义映射）但入参类型改用 `SessionStartEvent["reason"]` 索引访问；trace.ts 内部状态 `sessionStartReason` 同步改型。
+- **采用**：`index.ts` 删除 `SessionStartLikeEvent`/`SessionBeforeSwitchLikeEvent`/`TurnStartLikeEvent` 三接口，事件 handler 参数直接标注 SDK 导出的 `SessionStartEvent`/`SessionBeforeSwitchEvent`/`TurnStartEvent`；`types.ts` 删除 `SessionStartReason`（本地五值联合）、SESSION_START_REASONS、`normalizeSessionStartReason`，`mapReasonForFirstWrite` 保留（真实语义映射）但入参类型改用 `SessionStartEvent["reason"]` 索引访问；trace.ts 内部状态 `sessionStartReason` 同步改型。
 - **被否**：
   - 保留 Like 簇仅删 normalize——半吊子：`reason: string` 的降级子集仍在，F3 的负防腐仍在。
   - 先在 SDK 侧提 feature request——项目纪律明确不修改 pi 源码不提 PR；且 SDK 已导出所需类型，无事可提。

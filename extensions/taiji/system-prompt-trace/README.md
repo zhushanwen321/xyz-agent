@@ -31,19 +31,24 @@ appendEntry("xyz:system-prompt", {
 |---|---|---|
 | startup / new | initial | 定案 |
 | resume | resume | 定案 |
-| fork / reload | resume | 暂定，待 P2 探针实测定（A13） |
+| fork / reload | resume | 定案（M0 探针 P2 实测：fork 档读源文件最后留痕，落盘 reason 维持 resume；执行记录见设计 §6.5） |
 
 存在任一 hash 基线（见下）时，首个 turn 写 `resume`（无论 session_start reason）。
 
-## 跨重启 hash 基线四路径（优先级从高到低，权威实现见 `src/trace.ts` onSessionStart）
+## 跨重启 hash 基线三档（优先级从高到低，权威实现见 `src/trace.ts` onSessionStart）
 
 1. **进程内 resume（stash）**：`session_before_switch.targetSessionFile` 直读目标 session 文件，取最后一条留痕
    entry 的 hash/version/fullText。switch 会 teardown 并重建 extension runtime，该基线经模块级 stash 跨 runtime 传递。
-2. **fork**：`session_start.previousSessionFile` 直读源 session 文件（暂定语义，待 P2 探针实测定）。
-3. **自持久化小文件**：`<agentDir>/system-prompt-trace-baseline.json`（sessionId → hash/version），原子写入，
-   保留最近 64 个 session。app 重启直 spawn resume / reload 等没有 switch 事件的链路由此恢复基线。
-4. **兜底必写**：三路都 miss（无任何基线）时，首个 turn 无论 session_start reason 必写一条——
-   startup/new → `initial`，resume/fork/reload → `resume`（宁可多写不可漏记）。
+2. **fork**：`session_start.previousSessionFile` 直读源 session 文件，取源文件最后一条留痕（D2 v5 定案——
+   常态 /fork 时点 fork 新文件未落盘，不可直读新文件；源文件缺失/未落盘/读取失败 → 视为无基线）。
+3. **直读当前 session 文件**：`ctx.sessionManager.getSessionFile()` 直读 JSONL 最后一条留痕，覆盖 reload /
+   重启直 spawn resume / new 兜底等没有 switch 事件的链路（文件不存在或无留痕 → 视为无基线）。
+
+原第三档「自持久化小文件 system-prompt-trace-baseline.json」已随 ext-simplify-02 删除——终态唯一持久化源 =
+session JSONL 自身；存量文件成为无读写方孤儿，可安全手动删除（含 `*.tmp_*` 残留）。
+
+三档都 miss（无任何基线）时兜底必写：首个 turn 无论 session_start reason 必写一条——
+startup/new → `initial`，resume/fork/reload → `resume`（宁可多写不可漏记）。
 
 ## 注册状态
 

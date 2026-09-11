@@ -70,6 +70,8 @@ const DOC_MODULE_MAP = {
   'docs/design/catalog-provider-field-authority.impl-plan.md': ['packages/runtime/src/services/provider-config-helper.ts', 'packages/runtime/src/services/provider-catalog.ts', 'packages/runtime/src/services/auth/provider-credential-resolver.ts', 'packages/runtime/src/infra/pi/pi-provider-store.ts', 'packages/core/src/domain/settings/use-provider-edit.ts', 'scripts/check-doc-symbol-drift.mjs'],
   'docs/design/chat-domain-v1x-liveness-governance.md': ['extensions/universal/pending-notifications/src', 'packages/subagent-core/src/execution', 'packages/subagent-engine-sdk/src/protocol', 'packages/runtime/src/infra/pi'],
   'docs/design/chat-domain-v1x-liveness-governance.impl-plan.md': ['extensions/universal/pending-notifications/src', 'packages/subagent-core/src/execution', 'packages/subagent-engine-sdk/src/protocol', 'packages/runtime/src/infra/pi'],
+  'docs/design/ext-simplify-02-system-prompt-trace.md': ['extensions/taiji/system-prompt-trace/src'],
+  'docs/design/ext-simplify-02-system-prompt-trace.impl-plan.md': ['extensions/taiji/system-prompt-trace/src'],
 }
 
 /** 环境变量名白名单（非导出符号，文档合法引用）：项目（XYZ_/PI_/ENGINE_）与运行平台（NODE_/ELECTRON_/ZCODE_）env 前缀。ENGINE_ = 引擎 conformance live 门 env（如 ENGINE_CONFORMANCE_LIVE，定义在测试文件，不在守卫收集面） */
