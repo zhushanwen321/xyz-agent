@@ -8,7 +8,7 @@
 //   中段（prompt → agent_end）：工作段，输出即进展——无进展检测
 //     （armMidRoundNoProgress，锚点：prompt 发出时 arm；有效协议事件行刷新；
 //     连续静默 SETTLED_MID_ROUND_NO_PROGRESS_MS=30min → kill + 该轮失败终态化）。
-//     对齐 keep-alive 无进展检测先例（KEEP_ALIVE_NO_PROGRESS_TIMEOUT_MS 同构：
+//     对齐既有 keep-alive 无进展检测先例的 30min 量级（同构思路：
 //     「仍在推进」由 stdout 有效事件定义而非总时长，修复旧 10min 全程固定窗对
 //     >10min 合法 chatMode 单轮的误杀）。
 //
@@ -32,7 +32,7 @@
 // 中段阈值 v1 不开 env（减法：与 keep-alive 先例同为纯常量）。
 //
 // [M3 耦合登记] 本原语自 M3 起被 workflow 域复用（[H2 W2/W4] 起挂载点 = subagent-service.ts
-// armWorkflowNoProgressWatchdog（runWorkflowEngineTask 内 arm；原 SAR.run per-run 守护
+// armWorkflowNoProgressWatchdog（runWorkflowEngineTask 内 arm；原 SAR.run per-call 守护
 // 随 W4 掏空归位），armMidRoundNoProgress 同一入口）——故 env ≤0 的「关闭两段」不再是
 // chat 域局部行为：workflow 域 G1 熔断（静默楔死 run 的 30min 无进展回收）一并失效。
 // warn 文案已明示该连带后果（env 开关语义本身不动：设计明文「中段阈值 v1 不开 env」，
@@ -65,7 +65,7 @@ const logger = getLogger("subagents");
 const MS_PER_SECOND = 1000;
 const SECONDS_PER_MINUTE = 60;
 
-/** 中段无进展阈值（分钟）：对齐 KEEP_ALIVE_NO_PROGRESS_TIMEOUT_MS 的 30min 量级。 */
+/** 中段无进展阈值（分钟）：对齐既有 keep-alive 无进展检测先例的 30min 量级。 */
 const MID_ROUND_MINUTES = 30;
 
 /**
@@ -81,7 +81,7 @@ export const SETTLED_WATCHDOG_TIMEOUT_MS = 600_000;
 /**
  * 中段（prompt → agent_end）无进展检测的连续静默阈值（30min）。
  *
- * 对齐 KEEP_ALIVE_NO_PROGRESS_TIMEOUT_MS 先例（30min 无进展检测，量级同源）。
+ * 对齐既有 keep-alive 无进展检测先例（30min 无进展检测，量级同源）。
  * 刷新面严格限定 stdout pump 解析出的**有效协议事件行**（message_* 与 tool_* 与 turn_end
  * 等 SdkEvent）——LC-9 的 invalid 行（非法 JSON / 缺 type 字段的调试噪音）不刷新，
  * 防调试输出续命。v1 不开 env（设计 §6-D9 定案：与 keep-alive 同为纯常量）。
@@ -118,7 +118,7 @@ export function _setMidRoundNoProgressWindowMsForTest(ms: number | undefined): v
  *
  * >0 覆盖收尾段（SETTLED_WATCHDOG_TIMEOUT_MS 默认）；≤0 关闭两段（回到三无窗口，
  * warn 明示后果——[M3 耦合登记] 自 M3 起该 no-op 同时关掉 workflow 域 G1 熔断：
- * subagent-service.ts armWorkflowNoProgressWatchdog（原 SAR.run per-run 守护，[H2 W4]
+ * subagent-service.ts armWorkflowNoProgressWatchdog（原 SAR.run per-call 守护，[H2 W4]
  * 掏空归位）的 no-progress 守护经 armMidRoundNoProgress 同一入口挂载，watchdog 不 arm
  * 则 workflow 域静默楔死同样无独立回收计时）；未设 = 默认 600s；非数字 = 非法回落
  * 默认 + warn 留痕（对齐 XYZ_SUBAGENT_IDLE_TIMEOUT_MS 的 LC-7 教训：非法回落必须

@@ -9,7 +9,7 @@
  *    pending:unregister → onRunDone」终态序列的唯一定义点（D5-② 单点化，收敛原
  *    8 处逐字复制；OR-8 收口步骤与 OR-4/B-4 双围栏内化于本函数）
  *
- * 4 个导出函数（domain-models.md §失败处理矩阵）：
+ * 4 个 handle* 路由函数（domain-models.md §失败处理矩阵）+ 终态化/重建/防御 helper 若干：
  * - handleWorkerMessage(run, raw, deps, handlers) — 路由 agent_call/return/error/log
  * - handleWorkerError(run, err, deps, handlers) — worker uncaught error
  * - handleWorkerExit(run, code, handle, deps, handlers) — worker exit

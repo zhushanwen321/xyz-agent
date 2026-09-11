@@ -12,10 +12,15 @@
  */
 import { describe, it, expect, beforeEach } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'
+import { SUBAGENT_RECORD_CUSTOM_TYPE } from '@xyz-agent/shared'
 import type { SubagentRecord, WorkflowRunRecord } from '@xyz-agent/shared'
 import { useBackgroundWork } from '../features/chat/useBackgroundWork'
 import { useSubagentStore } from '@/stores/subagent'
 import { useWorkflowStore } from '@/stores/workflow'
+// R3-1④：跨包消费 runtime extractor 真实投影产物构造 fixture——手工拼 origin 的
+// SubagentRecord 会掩盖 runtime 投影白名单断链（origin 恒 undefined 时下游过滤用例
+// 照样绿，假绿）。投影白名单删 origin 时本文件的投影断言与下游判定断言共同转红。
+import { scanSubagentEntries } from '../../../../runtime/src/services/session/subagent-extractor.js'
 
 /** 构造最小合法 SubagentRecord（仅必填字段）。 */
 function makeSubagent(overrides: Partial<SubagentRecord>): SubagentRecord {
@@ -150,6 +155,41 @@ describe('useBackgroundWork', () => {
     sub.applyRecords('s1', [makeSubagent({ subagentId: 'sub-legacy', status: 'running' })])
     const { hasBackgroundWork } = useBackgroundWork()
     expect(hasBackgroundWork('s1')).toBe(true)
+  })
+})
+
+// R3-1④（H2 阶段 3 一致性审查修复）：fixture 源 = runtime extractor 真实投影。
+// 上方 W1 用例手工拼 origin 只验证谓词本身；runtime 投影白名单断链时它们照样绿。
+// 本组用例经 scanSubagentEntries 从自描述 entry 派生——白名单删 origin → 投影断言
+// undefined → hasBackgroundWork 判定断言同步转红（红锚联动）。
+describe('useBackgroundWork × runtime extractor 真实投影产物（R3-1④）', () => {
+  /** 自描述 subagent-record entry 构造（pi JSONL 持久化形态 = runtime extractor 输入）。 */
+  function recordEntry(data: Record<string, unknown>): Record<string, unknown> {
+    return { type: 'custom', customType: SUBAGENT_RECORD_CUSTOM_TYPE, data }
+  }
+
+  it('投影透传 + 判定：extractor 产出的 workflow record 不绑架 hasBackgroundWork（投影白名单删 origin 即红）', () => {
+    const records = scanSubagentEntries([
+      recordEntry({ v: 1, id: 'sub-proj-wf', status: 'running', origin: 'workflow' }),
+      recordEntry({ v: 1, id: 'sub-proj-wf-idle', status: 'running', result: '轮终产出', origin: 'workflow' }),
+    ])
+    // fixture 源证明：origin 由 runtime 投影产出，非手工拼装
+    expect(records.find((r) => r.subagentId === 'sub-proj-wf')?.origin).toBe('workflow')
+
+    const sub = useSubagentStore()
+    sub.applyRecords('s-proj', records)
+    const { hasBackgroundWork } = useBackgroundWork()
+    expect(hasBackgroundWork('s-proj')).toBe(false)
+  })
+
+  it('零迁移：extractor 缺省投影（存量 record，origin undefined）仍判定为后台工作', () => {
+    const records = scanSubagentEntries([recordEntry({ v: 1, id: 'sub-proj-legacy', status: 'running' })])
+    expect(records[0]?.origin).toBeUndefined()
+
+    const sub = useSubagentStore()
+    sub.applyRecords('s-proj-legacy', records)
+    const { hasBackgroundWork } = useBackgroundWork()
+    expect(hasBackgroundWork('s-proj-legacy')).toBe(true)
   })
 })
 

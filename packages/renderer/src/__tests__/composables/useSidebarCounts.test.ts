@@ -15,7 +15,13 @@ import { ref } from 'vue'
 import { useSidebarCounts } from '@/composables/features/sidebar/useSidebarCounts'
 import { useSubagentStore } from '@/stores/subagent'
 import { countSubagents } from '@/lib/subagent-bucket'
+import { SUBAGENT_RECORD_CUSTOM_TYPE } from '@xyz-agent/shared'
 import type { SubagentRecord } from '@xyz-agent/shared'
+// R3-1④：跨包消费 runtime extractor 真实投影产物构造 fixture——手工拼 SubagentRecord
+// 会掩盖 runtime 投影白名单断链（origin 恒 undefined 时下游过滤用例照样绿，假绿）。
+// 投影白名单删 origin 时本文件的投影断言与下游过滤断言共同转红（红锚联动）。
+// eslint 探针已验证：vitest 从被引文件位置向上解析，runtime 内部依赖链可达。
+import { scanSubagentEntries } from '../../../../runtime/src/services/session/subagent-extractor.js'
 
 function makeRecord(overrides: Partial<SubagentRecord> = {}): SubagentRecord {
   return {
@@ -27,6 +33,16 @@ function makeRecord(overrides: Partial<SubagentRecord> = {}): SubagentRecord {
     status: 'done',
     ...overrides,
   }
+}
+
+/** 自描述 subagent-record entry 构造（pi JSONL 持久化形态 = runtime extractor 输入）。 */
+function recordEntry(data: Record<string, unknown>): Record<string, unknown> {
+  return { type: 'custom', customType: SUBAGENT_RECORD_CUSTOM_TYPE, data }
+}
+
+/** extractor 真实投影产物：entry data 列表 → scanSubagentEntries 派生（fixture 源 = runtime 投影）。 */
+function projectedRecords(entriesData: Array<Record<string, unknown>>): SubagentRecord[] {
+  return scanSubagentEntries(entriesData.map(recordEntry))
 }
 
 beforeEach(() => {
@@ -113,5 +129,57 @@ describe('useSidebarCounts D8 badge 口径（subagentRunningCount）', () => {
     expect(counts.subagentRunningCount.value).toBe(2)
     // 与分桶 SSOT 的 active 桶计数恒等（同源判据，badge ↔ 桶不再分叉）
     expect(counts.subagentRunningCount.value).toBe(countSubagents(records).active)
+  })
+})
+
+// R3-1④ + R3-7（H2 阶段 3 一致性审查修复）：fixture 源 = runtime extractor 真实投影。
+// 既有用例手工拼 origin（makeRecord override）只能验证 composable 判据本身；runtime
+// 投影白名单断链（origin 恒 undefined）时它们照样绿。本组用例经 scanSubagentEntries
+// 派生——白名单删 origin → 投影断言 undefined → 下游过滤断言同步转红（红锚联动）。
+describe('useSidebarCounts × runtime extractor 真实投影产物（R3-1④/R3-7）', () => {
+  it('投影透传 + badge：extractor 产出的 workflow record 不计入 badge（投影白名单删 origin 即红）', () => {
+    const records = projectedRecords([
+      { v: 1, id: 'bg-proj-tool', status: 'running' },
+      { v: 1, id: 'bg-proj-wf', status: 'running', origin: 'workflow' },
+    ])
+    // fixture 源证明：origin 由 runtime 投影产出，非手工拼装
+    expect(records.find((r) => r.subagentId === 'bg-proj-wf')?.origin).toBe('workflow')
+
+    const sid = ref<string | null>('sess-proj')
+    const store = useSubagentStore()
+    store.applyRecords('sess-proj', records)
+
+    const counts = useSidebarCounts(sid)
+    // 2 条投影记录里仅手动派发的 bg-proj-tool 点亮 badge
+    expect(counts.subagentRunningCount.value).toBe(1)
+  })
+
+  it('R3-7 列表链：workflow origin record 不进 subagentList（running 与终态都不进，GUI 列表域 = 手动派发）', () => {
+    const records = projectedRecords([
+      { v: 1, id: 'bg-list-tool', status: 'running' },
+      { v: 1, id: 'bg-list-wf-running', status: 'running', origin: 'workflow' },
+      { v: 1, id: 'bg-list-wf-closed', status: 'closed', origin: 'workflow', closedReason: 'gc', endedAt: 2000 },
+    ])
+    const sid = ref<string | null>('sess-list-proj')
+    const store = useSubagentStore()
+    store.applyRecords('sess-list-proj', records)
+
+    const counts = useSidebarCounts(sid)
+    const ids = counts.subagentList.value.map((r) => r.subagentId)
+    expect(ids).toContain('bg-list-tool')
+    expect(ids).not.toContain('bg-list-wf-running')
+    expect(ids).not.toContain('bg-list-wf-closed')
+  })
+
+  it('R3-7 零迁移：extractor 缺省投影（存量 record，origin undefined）保留在列表', () => {
+    const records = projectedRecords([{ v: 1, id: 'bg-list-legacy', status: 'running' }])
+    expect(records[0]?.origin).toBeUndefined()
+
+    const sid = ref<string | null>('sess-list-legacy')
+    const store = useSubagentStore()
+    store.applyRecords('sess-list-legacy', records)
+
+    const counts = useSidebarCounts(sid)
+    expect(counts.subagentList.value.map((r) => r.subagentId)).toEqual(['bg-list-legacy'])
   })
 })

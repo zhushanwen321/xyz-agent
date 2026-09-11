@@ -1,4 +1,4 @@
-// src/runtime/session-file-gc.ts
+// src/execution/session-file-gc.ts
 //
 // 概率性清理过期 subagent session 文件（TTL 30 天）。
 // session_start 时调用，best-effort（失败不影响启动）。

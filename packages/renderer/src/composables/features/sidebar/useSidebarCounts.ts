@@ -27,7 +27,18 @@ export function useSidebarCounts(focusedSessionId: Ref<string | null>) {
     if (!sid) return 0
     return fileTreeStore.getTree(sid)?.length ?? 0
   })
-  const subagentList = computed(() => subagentStore.recordsOf(focusedSessionId.value ?? '').value)
+  // R3-7（H2 阶段 3 一致性审查）：列表链组装点过滤 workflow origin record——Agents tab
+  // 域 = 手动派发 subagent，workflow 派发 record（origin==='workflow'）由 workflow tab/
+  // run 视图承载（与上方 badge 过滤 D1② 同语义，TUI 面全量隐藏对称）。
+  // 为什么落在组装点而非 filterSubagents/countSubagents（subagent-bucket SSOT）：此处一处
+  // 过滤后，下游三桶（active/ended/all）、FilterBar 计数、「查看全部 (N)」自动一致；
+  // 若在 SSOT 桶逻辑里过滤，active/ended 滤而 all 不滤会破 active+ended=all 自洽，
+  // 全滤则需双函数联动，侵入面更大。origin 缺省（undefined = tool 语义）恒保留。
+  const subagentList = computed(() =>
+    subagentStore
+      .recordsOf(focusedSessionId.value ?? '')
+      .value.filter((r) => r.origin !== 'workflow'),
+  )
   const subagentCount = computed(() => subagentList.value.length)
   // D8 口径收窄：badge 判据 =「进行中」桶 SSOT（subagentBucket === 'active'，D6 #5）——
   // 与 SubagentList/FilterBar 的 active 计数恒同源（含 done 投影排除 + waiting 计入语义），

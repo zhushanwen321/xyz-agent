@@ -1,11 +1,11 @@
-// src/runtime/execution/record-store.ts
+// src/execution/record-store.ts
 //
 // Record 的统一容器。内存只留 running record；终态从 session.jsonl 重建。
 //
 // 职责：
 //   - 持有 running record（终态 record 在 archive 时立即从内存移除）
 //   - onChange 订阅（TUI widget/list 据此重渲）
-//   - collectRecords：内存(running) + 磁盘(sessions/*.jsonl 重建) 合并
+//   - collectRecords：内存(running) ∪ 磁盘(sessions/*.jsonl 重建) ∪ manifest(sessions-index.json 补充) 三源合并
 //   - 提供 snapshot() 只读视图给 TUI（永不返回可变引用）
 //
 // [perf] 两级读写设计（修复 /subagents 打开慢）：

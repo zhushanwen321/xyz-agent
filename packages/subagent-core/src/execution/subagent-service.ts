@@ -52,8 +52,9 @@ import { JOURNAL_INITIAL_POOL_KEY, wireEventJournal } from "./engine/common/jour
 import { mergeRunSignals, type MergedRunSignalHandle } from "./engine/common/run-signals.ts";
 import { executeOptionsToEngineTaskSpec } from "./engine/host-task-spec.ts";
 import type { AgentCallOpts } from "../orchestration/models/types.ts";
-// [H2 W2] workflow 域 record slug 推导（与 pump dispatchAgentCall 的 trace 命名同源：
-// description ?? agent ?? "unknown" + SLUG_MAX_LENGTH 截断）
+// [H2 W2] workflow 域 record slug 推导（description ?? agent ?? "unknown" +
+// SLUG_MAX_LENGTH 截断；原 pump dispatchAgentCall trace 命名同源规则随 [H2 W3]
+// 旁路 record 族删除，唯一推导点在本文件）
 import { SLUG_MAX_LENGTH } from "../orchestration/models/types.ts";
 import { setHostUiRequestEndpoint } from "./engine/host/host-ui-endpoint.ts";
 // [W3 chat 域收口] chat 轮次与 run 域同路：经 pi-host-binding 解析 registry 'pi' 的
@@ -1808,7 +1809,8 @@ export class SubagentService {
    * 单元入口就位，测试直接调用），与手动 subagent 同一 service 编排——共享池
    * （DefaultConcurrencyPool）、record 注册进 store（origin:"workflow" +
    * parentRunId）、journal / no-progress 守护 / spawned-children 治理、终态收口
-   * （D7 成功即终态化）。编排接管自 SAR.run 八步迁移（W4 将 SAR.run 掏空为纯转调，
+   * （D7 成功即终态化）。编排接管自 SAR.run 八步迁移（W4 已掏空 SAR.run 为纯转调
+   * ffbe595c5，
    * ctxModel 孪生守卫按清单放弃——resolveIdentity 已有 model 解析，禁止双轨）。
    *
    * 顺序红线（D3）：路由/预检/model 校验**先于**池 acquire——失败零池占用；路由
@@ -3366,9 +3368,9 @@ export class SubagentService {
 /**
  * [H2 W2 迁移步⑤] workflow 派发路径 no-progress 守护句柄：signal 供 mergeRunSignals
  * 合流（步⑥），fired 供 run 收敛后判定是否追注恢复指引（fire 是异步 timer 事件）。
- * 与 SAR 的 armRunNoProgressWatchdog 同一原语（settled-watchdog）同一量级（30min
+ * 与 chat 域 armMidRoundNoProgress 同一原语（settled-watchdog）同一量级（30min
  * 连续静默 = 回收层有界兜底，非任务级墙钟）；差异仅 arm 键 = record.id（D4 守护
- * 单点——真实 record 在 store，SAR 的占位 taskId 随编排接管消亡）。
+ * 单点——真实 record 在 store，原 SAR 模块内守护函数随 [H2 W4] 掏空退役）。
  */
 interface WorkflowNoProgressGuard {
   signal: AbortSignal;
@@ -3396,7 +3398,7 @@ function armWorkflowNoProgressWatchdog(recordId: string): WorkflowNoProgressGuar
         `aborting run (cancel frame → settle grace window → killAll if the engine does not settle). ` +
         `Note: a killAll group-kills the engine CLI process, so other concurrent runs on the same ` +
         `engine may end as engine_crashed (they still get a failure result and retry). ` +
-        `Recovery: check state with subagents action:'list' includeWorkflow:true, then re-dispatch the workflow.`,
+        `Recovery: check state with subagents action:'list' includeFinished:true (add includeWorkflow:true to also see workflow-dispatched subagents), then re-dispatch the workflow.`,
     );
     controller.abort();
   };
@@ -3438,8 +3440,8 @@ function noteIfWorkflowNoProgressFired(
       error:
         `${result.error} | workflow no-progress watchdog fired: the run was aborted after a long ` +
         `silence window with no protocol event or stream delta. ` +
-        `Recovery: check state with subagents action:'list' includeWorkflow:true, then re-dispatch the workflow.`,
-    }
+        `Recovery: check state with subagents action:'list' includeFinished:true (add includeWorkflow:true to also see workflow-dispatched subagents), then re-dispatch the workflow.`,
+      }
     : result;
 }
 
@@ -3467,9 +3469,10 @@ function outcomeToWorkflowResult(outcome: AgentOutcome): WorkflowAgentResult {
 
 /**
  * AgentCallOpts → ExecuteOptions 的最小正向映射（record 创建 + identity 解析消费面；
- * host-task-spec.executeOptionsToEngineTaskSpec 的逆映射）。slug 推导与 pump
- * dispatchAgentCall 的 trace 命名同源（description ?? agent ?? "unknown"，超长按
- * SLUG_MAX_LENGTH 截断）。returnMeta/scene 等 worker 层/引擎层独有字段不入 record
+ * host-task-spec.executeOptionsToEngineTaskSpec 的逆映射）。slug 推导 = 唯一规则
+ * （description ?? agent ?? "unknown"，超长按 SLUG_MAX_LENGTH 截断；原 pump
+ * dispatchAgentCall trace 命名同源规则随 [H2 W3] 删除）。returnMeta/scene 等
+ * worker 层/引擎层独有字段不入 record
  * 消费面（taskSpec 装配走 opts 原样直传，不经本映射）。
  */
 function workflowCallToExecuteOptions(opts: AgentCallOpts): ExecuteOptions {

@@ -1,8 +1,9 @@
 // src/execution/engine/common/journal-wiring.ts
 //
-// [D3-③ journal 接线合一] host 侧 event journal 接线的共享 helper（唯一实现，两调用
-// 点——SubagentService.runEngineTask（chat 域）与 SubprocessAgentRunner.run（workflow
-// 域））。设计权威源：docs/design/subagent-dual-track-convergence.md §3.3 D3-③（writer +
+// [D3-③ journal 接线合一] host 侧 event journal 接线的共享 helper（唯一实现，调用
+// 点全部在 SubagentService：workflow 域 runWorkflowEngineTask（wireEventJournal
+// taskId=record.id）+ chat 域 runEngineTask 与 tool 域 runAndFinalize 两处（同
+// record.id））。设计权威源：docs/design/subagent-dual-track-convergence.md §3.3 D3-③（writer +
 // retarget + handle 回填两份提为 common 层共享 helper）+ 双轨清单 #6。
 //
 // 收敛前形态（两份同构接线）：
@@ -37,7 +38,7 @@ export const JOURNAL_INITIAL_POOL_KEY = SHARED_POOL_KEY;
 export interface JournalWiringOptions {
   /** 实际执行引擎 id（journal 路径分段 + line 元数据）。 */
   engineId: string;
-  /** 宿主侧任务标识（journal 文件名与池引用计数 key：chat 域 = record.id；workflow 域 = 'sa-' 前缀占位）。 */
+  /** 宿主侧任务标识（journal 文件名与池引用计数 key；三处调用点统一 = record.id）。 */
   taskId: string;
   /**
    * journal 落盘后的事件转发（workflow 域的 liveRecord 通道）。缺省不转发（chat 域

@@ -312,7 +312,10 @@ describe("executeWorkflowAgent no-progress 守护", () => {
     const result = await pending;
     expect(result.error).toContain("engine: aborted");
     expect(result.error).toContain("workflow no-progress watchdog fired");
-    expect(result.error).toContain("includeWorkflow:true");
+    // 恢复指引配对口径（与 message-guard 文案族同款）：fire 后 record 必然终态，
+    // 只查 running 得空列表——必须 includeFinished:true + includeWorkflow:true 成对
+    expect(result.error).toContain("includeFinished:true");
+    expect(result.error).toContain("(add includeWorkflow:true to also see workflow-dispatched subagents)");
   });
 
   it("stream.onDelta 同为刷新源（双源缺一不可——纯流式产出也保活）", async () => {

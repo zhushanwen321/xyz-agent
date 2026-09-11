@@ -266,7 +266,6 @@ export default function subagentsWorkflowExtension(pi: ExtensionAPI): void {
         scheduleTimeBudget(runId, deps, budgetTimeMs),
       onWorkflowCall: (name: string, args: Record<string, unknown>, parentRun: WorkflowRun) =>
         executeNestedWorkflow(name, args, parentRun, deps),
-      streamSink: getSubagentService()?.getStreamSink() ?? undefined,
       // [H2 W3] workflow agent() 统一派发入口（设计 §3.5）：pump 侧 dispatchAgentCall
       // 经此转调 SubagentService.executeWorkflowAgent——真实 record（origin:"workflow"
       // + parentRunId）进 store、共享池/守护/journal 归 service 编排；parentRunId 由

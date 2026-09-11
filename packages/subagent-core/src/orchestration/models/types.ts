@@ -76,7 +76,8 @@ export function canRunTransition(from: RunStatus, to: RunStatus): boolean {
  * 历史值 20 偏紧——描述性 slug 如 "audit-structured-output"（23）/ "fix-subagent-wf-tools"（21）
  * 会撞上限，放宽到 35 兼顾「短到能塞进 TUI 标题行」与「容纳合理描述性 kebab-case 名」。
  * 放本文件的原因：约束对象是 AgentCallOpts.description（slug 的源字段，见下方 slug 派生说明），
- * 与字段同文件；worker-message-pump（live record slug 截断）与壳侧 tool schema maxLength 共享引用。
+ * 与字段同文件；subagent-actions-core（slug 校验）、subagent-service（record slug 截断）
+ * 与壳侧 tool schema maxLength 共享引用。
  */
 export const SLUG_MAX_LENGTH = 35;
 

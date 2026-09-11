@@ -48,9 +48,10 @@ export interface SubprocessAgentRunnerDeps {
  *   - opts 形状不变（AgentCallOpts，含 resolveAgentOpts 填的 skillPath/schemaEnv）
  *   - result 形状不变（AgentResult——executeWorkflowAgent 返回类型即 orchestration
  *     AgentResult，零映射）
- *   - 路由失败/预检命中/嵌套超限经 service 同步抛错（W2 错误规格「同步抛错回
- *     脚本且不产生孤儿 record」）——传播形态与 workflowAgentDispatch 注入路径
- *     一致（dispatch 闭包同样不吞错），pump 侧 dispatchCall catch 兜底回发。
+ *   - 路由失败/预检命中/嵌套超限经 service 同步抛错（§3.4 同步抛错回脚本 + D3
+ *     路由先于 record 创建的构造性推论：不产生孤儿 record）——传播形态与
+ *     workflowAgentDispatch 注入路径一致（dispatch 闭包同样不吞错），pump 侧
+ *     dispatchCall catch 兜底回发。
  */
 export class SubprocessAgentRunner implements AgentRunner {
   private readonly subagentService: SubagentService;

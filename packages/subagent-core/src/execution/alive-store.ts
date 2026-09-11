@@ -1,4 +1,4 @@
-// src/runtime/execution/alive-store.ts
+// src/execution/alive-store.ts
 //
 // .alive sidecar 生产者 + pid 探活。
 //
