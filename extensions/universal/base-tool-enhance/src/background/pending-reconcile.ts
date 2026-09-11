@@ -8,12 +8,14 @@
  *  ③ fork 后任务完成通知写进新 session，旧 session 文件的 register 成僵尸。
  *
  * 收尾写法（权威路径）：直接 pi.appendEntry("pending:unregister", {id, reason,
- * status})——**不走 bus emit 作为权威**：pending-notifications 的 unregister listener
- * 落盘条件是其内存 registry 该 id active（其 registry 只在自身 session_start rebuild
- * 后非空），两个 extension 的加载/派发顺序（CLI --extension 顺序用户可控）无保障，
- * 顺序反转时 emit 被静默吞、对账失效。差集消费方 goal 从持久化 entries 算差集
- * （agent-end.ts getEntries()，不读 pending 内存 registry），appendEntry 对守卫直接
- * 生效。appendEntry 之外尽力补一次 emit（listener 就绪时同步其内存视图，失败无害）。
+ * status})——**不走 bus emit 作为权威**：appendEntry 不依赖 listener 存活，两个
+ * extension 的加载/派发顺序（CLI --extension 顺序用户可控）无保障，顺序反转时
+ * emit 无人接收、对账失效。差集消费方 goal 从持久化 entries 算差集
+ * （agent-end.ts getEntries()），appendEntry 同步入账（pi dist 实证）对守卫直接
+ * 生效，无不一致窗口。appendEntry 之外尽力补一次 emit（幂等兜底，纯日志性质：
+ * pending-notifications 的 unregister listener 落盘前置判断 isPendingActive 对
+ * getEntries() 现算——其内存 registry/rebuild 已随 ext-simplify-12 删除，emit
+ * 到达时该 id 已注销即跳过，失败无害）。
  *
  * 终态判据：registry state ∈ {exited, orphaned}，或（state=running/killing 且
  * kill(pid,0) 判死：收殓/写盘失败遗留的 running 条目按事实终态处理）。
@@ -130,8 +132,9 @@ export function reconcilePendingEntries(
 			});
 			continue;
 		}
-		// 尽力补 emit（listener 就绪时同步 pending 内存视图，缩短 pending_notifications
-		// 工具列表的不一致窗口；失败无害——appendEntry 已是权威路径）
+		// 尽力补 emit（幂等兜底，纯日志性质：listener 落盘前置 isPendingActive 对
+		// entries 现算，该 id 已注销即跳过——appendEntry 同步入账已无不一致窗口；
+		// 失败无害）
 		try {
 			pi.events.emit("pending:unregister", { id, reason: pendingReason });
 		} catch (err) {

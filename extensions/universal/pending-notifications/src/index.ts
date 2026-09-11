@@ -12,9 +12,13 @@
  *                hasPendingId / isPendingActive）
  * - index.ts（本文件）: 工厂入口（EventBus 写侧监听 + session 基准 + 查询 tool）
  *
- * 事件契约（emit 端在 packages/subagent-core：notify-host.ts、
- * orchestration/lifecycle.ts、worker-message-pump.ts 与
- * round-supervisor/reconcile-sweep.ts（崩溃恢复 sweep 补注销））：
+ * 事件契约（emit 端三组，与 extension-dependencies.json 本包条目 reason 同口径：
+ * ① subagent-core——notify-host.ts / orchestration/lifecycle.ts /
+ *   worker-message-pump.ts / round-supervisor/reconcile-sweep.ts（崩溃恢复 sweep
+ *   补注销）；② base-tool-enhance——bash 投影（notify.ts register/unregister 主链 +
+ *   process-exit-guard.ts / pending-reconcile.ts 收殓对账尽力补）；
+ * ③ subagent-workflow——仅崩溃恢复时 emit pending:unregister（session-lifecycle.ts
+ *   recoverCrashedRuns 回调））：
  * - emit("pending:register", { id, type, name })
  * - emit("pending:unregister", { id, reason })
  *
