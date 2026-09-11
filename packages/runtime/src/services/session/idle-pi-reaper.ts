@@ -18,6 +18,21 @@
  * 进程处置语义（detach → destroy → 尾扫 → 最小摘除）全部收口在 session-lifecycle 的
  * reclaimManagedSession 七步编排——两个动作（判定/处置）分离，占座与代际校验才有唯一落点。
  */
+import type { CrashJournalEvent } from '@xyz-agent/shared'
+import { getCrashJournal } from '../../infra/crash-journal.js'
+
+/**
+ * reclaimed 台账行的结构化扩展字段（idle 设计预登记「阶段二台账落地后追加」的兑现，
+ * crash-forensics §3.3 D1 reclaimed 行）。idleMs/lastViewedAt 是 reattach 过滤公式
+ * （设计 D3 真补集）同源判据，结构化留档供崩溃后恢复归因——schema 无对应字段，
+ * writer 以 spread 序列化原样落盘 JSONL。
+ */
+interface ReclaimedJournalEvent extends CrashJournalEvent {
+  /** 回收判定时的空闲时长（now - lastActivityAt）。 */
+  idleMs?: number | null
+  /** 最近被查看时刻（epoch ms）；null = 从未被查看（「不知道 ≠ 没打点」）。 */
+  lastViewedAt?: number | null
+}
 
 /** 回收判定周期默认值（D4：5 分钟一拍；权威值由 u3 经 shared/constants + env 覆盖传入）。 */
 // eslint-disable-next-line no-magic-numbers -- 5min tick（D4 权威值）：5*60*1000 算式比 300000 更自文档化
@@ -322,6 +337,19 @@ async function reapTick(options: IdlePiReaperOptions): Promise<void> {
         const mem = process.memoryUsage()
         // eslint-disable-next-line no-magic-numbers -- 1024*1024 = bytes→MB 换算，惯例自明
         console.log(`[pi-reaper] reclaimed sid=${sid} idleMs=${idleMs} runtimeRssMB=${Math.round(mem.rss / (1024 * 1024))}`)
+        // 台账双写（crash-forensics §3.3 D1 reclaimed 行：reclaimManagedSession 编排
+        // 成功返回处，与上方 reclaimed 日志行同点）。挂在 ok 分支：reclaim false（最终
+        // 豁免拦截/代际校验取消）与编排异常未发生摘除，不产生事件（防误记）。
+        // lastViewedAt 原样携带豁免 #6 的 epoch ms 源值；从未被查看落显式 null。
+        // 经中间变量传入（扩展字段过 schema 闭接口的 excess property check）。
+        const journalEvent: ReclaimedJournalEvent = {
+          layer: 'pi',
+          event: 'reclaimed',
+          sessionId: sid,
+          idleMs,
+          lastViewedAt: viewedAt ?? null,
+        }
+        getCrashJournal().append(journalEvent)
       } else {
         dist.reclaimFailed++
       }

@@ -175,8 +175,8 @@ graph TD
 |------|------|------|----------|
 | u1a | committed | 1 | schema 21 值枚举 + 覆盖锁；shared vitest 17 passed + typecheck 绿（编排者重跑核验） |
 | u1b | committed | 1 | 10MB×3 段级联轮转 + pendingLines 回放零丢行 + best-effort 降级；vitest 7 passed + typecheck 绿（编排者重跑核验） |
-| u1c | pending | — | — |
-| u1d1 | pending | — | — |
+| u1c | committed | 2（前任限流中断 + 接替核验补 1 用例） | main.jsonl writer 同步 append 无在途写窗口；vitest 8 passed + apps/electron tsc 0（编排者重跑核验） |
+| u1d1 | committed | 1 | 抑制语义下 deleted/shutdown 仍产生 + planned 不误记 crash；新增 6 用例 + 全量 5380 零回归 + typecheck 绿（编排者重跑核验） |
 | u1d2 | pending | — | — |
 | u1e | pending | — | — |
 | u1f | pending | — | — |
