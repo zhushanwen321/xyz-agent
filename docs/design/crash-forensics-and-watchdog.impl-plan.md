@@ -185,7 +185,7 @@ graph TD
 | u1e | in-progress（额度中断，产物在盘待收口） | 1 | 产物：logger.ts 水位聚合 + message-bus.ts + message-broker.ts（信号事件双写）+ 2 测试文件 538 行（**本地实测 13 用例全绿**）。待办：全量 runtime 回归 + 收口汇报 |
 | u1f | committed | 2（轮次 2 补 renderer unresponsive 接线） | 判别式 8 组合真值表 + liveness 双写 + renderer oom/crashed/熔断/unresponsive（卡死期单行+responsive 复位）；18 tests + tsc 0（编排者重跑核验） |
 | u7b | in-progress（额度中断，无产物） | 1 | 703s 时死于额度耗尽，未落任何文件——恢复后全新开工即可（任务书同前，偏差 #20 已登记 spawn 预置接线分发 u4/u5） |
-| u2 | in-progress（额度中断，产物在盘待收口） | 1 | 产物：diagnostics/trigger-evaluator.ts 723 行 + trigger-patrol.ts 119 行 + test/trigger-evaluator.test.ts 556 行（**本地实测全绿**）+ main.ts 巡检启动行（未提交）。待办：全量 main 池回归 + 收口汇报 |
+| u2 | committed | 2（前任额度中断 + 接替核验收口） | 20 条全状态表 + #8 absent-report 关联窗排除 + #16 计划内排除（源码实锚）+ coverage 50% 边界；30 tests + main 池 1052/1052 + tsc 0（编排者重跑核验）；max-lines 走 eslint.config.mjs override 登记 |
 | u3a | pending | — | — |
 | u3b | pending | — | — |
 | u4 | pending | — | — |

@@ -78,6 +78,7 @@ import { fixPathEnv } from './supervisor/shell-env.js'
 import { flushStderrSink } from './supervisor/process-control.js'
 import { initMainLogger, closeMainLogger } from './logs/main-logger.js'
 import { initCrashJournal, crashJournal } from './logs/crash-journal.js'
+import { startTriggerPatrol } from './diagnostics/trigger-patrol.js'
 import { expandLocalFilePath } from './utils/path.js'
 import { computeLocalFilePrefixes } from './utils/local-file-prefixes.js'
 
@@ -316,6 +317,10 @@ app.whenReady().then(async () => {
   launchResultCache = await cleanupCompletedUpdate()
 
   await bootstrapMainWindow()
+
+  // u2（crash-forensics D2 出口①）：触发条件每日巡检（启动评估一次 + 24h 间隔，
+  // log-retention 同款形态）——任一条件越线 → main 日志 WARN + 台账 trigger-review 事件
+  startTriggerPatrol()
 })
 
 app.on('window-all-closed', () => {

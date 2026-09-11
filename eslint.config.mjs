@@ -159,6 +159,26 @@ export default [
       'max-lines': 'off',
     },
   },
+  // [HISTORICAL] trigger-evaluator.ts 是重审触发条件的唯一目录 SSOT（crash-forensics-and-watchdog
+  // 设计 D2 + 附录 A 20 条）：条件清单、窗口谓词、各条评估逻辑共享同一状态表类型与
+  // inWindow/coverage 降权辅助——拆成多文件会把「20 条一一对应」的可核验性（测试按 id 全量断言）
+  // 变成跨文件分散，属独立重构任务。2026-09-11 交付时 539 行超 500。
+  {
+    files: ['apps/electron/main/diagnostics/trigger-evaluator.ts'],
+    rules: {
+      'max-lines': 'off',
+    },
+  },
+  // [HISTORICAL] logger.ts 是 runtime 日志设施的唯一聚合点：主日志/pi tee/relay tee 三形态
+  // writer（createPiStreamWriter 共享轮转，2026-09-11 u9 tee size 轮转）+ 内存水位打点与
+  // 自然日聚合（2026-09-11 u1e watermark-daily）共用 pendingLines/流引用/轮转序同一套状态机。
+  // 拆分需重新设计写者注册与 flush 生命周期，属独立重构任务；与 protocol.ts override 同型。
+  {
+    files: ['packages/runtime/src/infra/logger.ts'],
+    rules: {
+      'max-lines': 'off',
+    },
+  },
   // [HISTORICAL] session-channel.ts 是 zcode 单任务会话通道的唯一聚合点：A.2 协议帧序
   // SSOT（create/subscribe/send/终态双保险判定/read/close）+ P0-1 turn 等待两 timer
   // 状态机（idle 主判定 + 总上界兜底，timeout-zcode-turn-and-settled-watchdog.md §6 D1，
