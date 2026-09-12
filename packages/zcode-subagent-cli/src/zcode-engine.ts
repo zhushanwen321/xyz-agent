@@ -1225,11 +1225,6 @@ function authoritativeTerminalStatus(r: SessionTurnResult): string | undefined {
 }
 
 /**
- * 失败终态判据已收编 constants.ts（isFailedTerminalStatus）：session-channel 的
- * 迟到终态分级日志与引擎失败分流共用同一口径，模块私有会迫使对面复制判据双轨。
- */
-
-/**
  * [P0-1 U3/D5②] appserver 轮成功收口的 parsed 三态（read 兜底后的 response + schema
  * 校验）。失败终态（isFailedTerminalStatus，"interrupted" 不在其中——不误判失败）
  * 先分流（§3.2 缺陷 B 不再假成功；schema 校验对失败形态无意义——失败终态的

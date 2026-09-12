@@ -45,8 +45,9 @@ import type { PiLike } from "../subagent-service.ts";
 import { armSettledWatchdog, hasSettledWatchdog, SETTLED_MID_ROUND_NO_PROGRESS_MS, _resetSettledWatchdogsForTest } from "../settled-watchdog.ts";
 import { armIdleTimer, hasIdleTimer, _resetLifecycleState } from "../lifecycle-manager.ts";
 import { _resetCoreSpawnedChildrenMirrorForTest } from "../engine/host/spawned-children.ts";
-import type { AgentResult } from "../engine/types.ts";
-import type { ExecutionRecord } from "../types.ts";
+// AgentResult = execution 层那份（execution/types.ts:259，主字段 text/turns/sessionId），
+// 与 acquirePoolOrFinalize 签名一致；engine/types.ts 只有消歧注释无此导出。
+import type { AgentResult, ExecutionRecord } from "../types.ts";
 
 function makeTmpAgentDir(): string {
   return fs.mkdtempSync(path.join(os.tmpdir(), "svc-recovery-bounds-"));

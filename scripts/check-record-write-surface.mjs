@@ -170,8 +170,9 @@ export function scanRecordWriteSurface(roots) {
 }
 
 function main() {
-  const files = collectScanRoots().flatMap((root) => collectTsFiles(root));
-  const violations = scanRecordWriteSurface(collectScanRoots());
+  const roots = collectScanRoots(); // 单次遍历复用（文件计数与违规扫描同一 roots，I-1）
+  const files = roots.flatMap((root) => collectTsFiles(root));
+  const violations = scanRecordWriteSurface(roots);
   if (violations.length > 0) {
     console.error(`[record-write-surface] FAIL：${violations.length} 处 store 外 record 写面命中`);
     for (const v of violations) console.error(`  ✗ ${v}`);

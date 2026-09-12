@@ -341,8 +341,9 @@ function checkSupportImports(supportFiles, sources, edges, violations) {
 }
 
 /** 环检测（三色 DFS；白名单边与支撑↔聚合边均入图——反向出现即成环被捕获）。
- *  返回环路径文本数组（"a -> b -> a" 形态）。 */
-function detectCycles(edges) {
+ *  返回环路径文本数组（"a -> b -> a" 形态）。导出供单测直测（gray back-edge
+ *  命中分支是「聚合/支撑间单向无环」结论的唯一来源，环漏检即守卫静默放行）。 */
+export function detectCycles(edges) {
   const color = new Map([...edges.keys()].map((k) => [k, 0]));
   const cycles = [];
   const dfs = (n, path) => {

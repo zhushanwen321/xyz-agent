@@ -17,7 +17,11 @@ export const INSTANCES_DIR = path.join(DEV_DATA_PARENT, 'instances')
 export const TEMPLATE_DIR = path.join(os.homedir(), '.xyz-agent-dev.template')
 
 /** workspace AGENTS.md「Dev 与子进程环境变量隔离 MANDATORY」泄漏清单。
- *  XYZ_AGENT_DATA_DIR 不在列——装配器对它覆盖注入（实例隔离权威来源）。 */
+ *  XYZ_AGENT_DATA_DIR 不在列——装配器对它覆盖注入（实例隔离权威来源）。
+ *  互引（场景域分化，勿互混）：引擎 spawn 面的另一份剥除清单 =
+ *  subagent-engine-sdk env.ts `ENGINE_ENV_DENY_LIST`（镜像 shared SSOT，已退役
+ *  RELAY_STD* 三键——引擎侧写入方已清零）；本清单面向 dev 装配链路，RELAY_STD*
+ *  仍剥（dev 宿主进程环境防泄漏口径独立于引擎 spawn 面）。 */
 export const LEAK_ENV_KEYS = [
   'ELECTRON_RUN_AS_NODE',
   'XYZ_SUBAGENT_RELAY_STDIN',

@@ -23,7 +23,10 @@ export const ENGINE_ENV_PREFIXES: readonly string[] = [
   'XYZ_', 'XYZ_AGENT_', 'XYZ_SUBAGENT_',
 ];
 
-/** L1 deny + 显式剥除键集（镜像 shared SSOT，勿单独改动）。 */
+/** L1 deny + 显式剥除键集（镜像 shared SSOT，勿单独改动）。
+ *  互引（场景域分化，勿互混）：dev 装配器（apps/electron/scripts/dev-instance-lib.mjs
+ *  `LEAK_ENV_KEYS`）仍剥 RELAY_STD* 三键——dev 宿主进程环境防泄漏口径独立于引擎
+ *  spawn 面；本清单（引擎侧）已退役同名三键，写入方已清零。 */
 export const ENGINE_ENV_DENY_LIST: readonly string[] = [
   'XYZ_AGENT_PACKAGED',
   'XYZ_RUNTIME_TOKEN',

@@ -10,6 +10,7 @@
  *     大括号平衡截断）
  *   - checkSupportShellImports / checkSupportFileImports：台账放行 / 未登记命中两分支
  *   - checkAggregateGetterCalls：命中（非 public 成员）与放行（public 成员）两分支
+ *   - detectCycles：gray back-edge 环命中（a→b→a 路径文本）与 diamond 零误报
  *
  * fixture 全落 tmpdir（目录注入直测函数，同 check-publish-surface.test.mjs 惯例），
  * afterEach 统一清理。CLI 行为回归 = node scripts/check-subagent-service-boundary.mjs。
@@ -28,6 +29,7 @@ import {
   checkSupportShellImports,
   checkSupportFileImports,
   checkAggregateGetterCalls,
+  detectCycles,
 } from '../check-subagent-service-boundary.mjs'
 
 // ── parseImport：形态矩阵 ──────────────────────────────────────────────
@@ -258,5 +260,27 @@ describe('checkAggregateGetterCalls 命中与放行', () => {
     )
     expect(getters.get('getQueries')).toBe('RecordAccess')
     expect(getters.has('getOther')).toBe(false)
+  })
+})
+
+// ── detectCycles：三色 DFS 环检测（守卫「单向无环」结论唯一来源） ────────
+
+describe('detectCycles 环检测', () => {
+  it('gray back-edge（a→b→a）命中，返回环路径文本', () => {
+    const edges = new Map([
+      ['a', ['b']],
+      ['b', ['a']],
+    ])
+    expect(detectCycles(edges)).toEqual(['a -> b -> a'])
+  })
+
+  it('diamond 边（a→b, a→c, b→d, c→d）无环零误报', () => {
+    const edges = new Map([
+      ['a', ['b', 'c']],
+      ['b', ['d']],
+      ['c', ['d']],
+      ['d', []],
+    ])
+    expect(detectCycles(edges)).toEqual([])
   })
 })
