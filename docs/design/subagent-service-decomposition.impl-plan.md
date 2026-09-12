@@ -78,6 +78,14 @@ graph TD
 | R3 | D-R3-3 六个 async 方法壳转发转非 async | Promise 单行返回（D-R2-4 同款可观察等价） |
 | R3 | D-R3-4 源文本守卫测试形态 | readFileSync+正则守卫（robustness-medium-batch2 M6）为清单③ grep 口径外第五类深绑，本单元实改 1 文件（守卫随本体迁聚合文件+正则适配 deps 通道字面）；R5 归位复扫口径纳入 |
 | R3 | D-R3-5 聚合化后可见性放宽 | 原壳 private 方法转聚合 public（strangler 壳转发必然，非行为变化；G2 私有互调禁则不涉壳经 public 面转发） |
+| R4 | **D-R4-1 G1 容量结构性不可达（主 agent 已裁决：追认超限）** | R4 域段实测 1662 物理行（设计估算 ≈680 基于 H2 workflow 族并入前的旧域表口径，已被实测证伪）> 两文件容量 2×700；拆第三文件（chat-rounds 承接 Continuation 协作面 ~450）后核心编排仍 ~850，G1 在该域不可达。裁决理由：① G1 实质目标已超额达成（壳 964 物理/444 折算 ≤500 类体目标；六个聚合单一职责域族；warning 消解）；② 为凑 700 硬拆需重走 C-5 回调链协作面，违背「聚焦」本意；③ lint 面以单列 override max:800 零余量锁定当前形态（增长即暴露，演化史注释在 eslint.config.mjs），非旧债续命式抬阈。后续若要降容 = Continuation/chat-rounds 独立成聚合的新设计决策（R5/R6 不触碰该文件主体）。设计文档 §1.3 G1 算术注记待阶段 6 回写 |
+| R4 | D-R4-2 resolveWorktreeHandle 改删除 | 任务点名迁移，实测全仓零消费死方法（含测试）→ 按 B-7 `_seq` 先例删除（零行为变化），未迁入聚合 |
+| R4 | D-R4-3 roundSupervisor 留壳 | B-6 预判兑现：boot 分区（initSession）与 dispose 时序消费在壳、C-6 装配闭包经壳转发 late-bound 零改动；聚合经 deps.getRoundSupervisor() 现读 |
+| R4 | D-R4-4 微常量跨文件重复声明 | PRIORITY_BACKGROUND / MS_PER_SECOND / SECONDS_PER_MINUTE 两聚合各自声明（零互调零 import 约束下的值语义纯量，注释互指）；R6 模块常量外移归一 |
+| R4 | D-R4-5 assertIdleTimeoutMsSafe 随域迁聚合 | 任务未点名（物理在壳生命周期分区）；唯一消费方 = R4 三入口，留壳即死代码，随域迁入 |
+| R4 | D-R4-6 等价形态复刻特例 | 聚合内 `private get sessionRootId()` 转发 deps（TS 对 getter 可 null 收窄、对函数调用不收窄——runCtx 条件 spread 类型推导需属性访问形态）；新旧均为 this.sessionRootId，逐字节一致 |
+| R4 | D-R4-7 r0 清单③漏列深绑文件 | workflow-agent-dispatch.test.ts 被清单定性「非深绑」，但 Reflect.get(service,"类方法") 形态是真深绑（D-R1-3 口径只扫字段未扫方法）；R5 归位复扫口径纳入方法形态 |
+| R4 | D-R4-8 新聚合对 record-access 的 type-only 单向引用（主 agent 复核补录，dev 漏登记） | run-orchestration:92 / workflow-dispatch:53 各 import `ResolvedIdentity` type from "./record-access.ts"——单向、非环、type-only，与 D-R3-2 常量单向引用同款；G2「聚合间禁止互调私有方法」不涉（type 面）；R5 三方向守卫须把「type-only 单向 import」列为合法形态并纳入方向图 |
 
 ## 6 状态表
 
@@ -87,7 +95,7 @@ graph TD
 | R1 | committed | 1 | 7 文件 +535/-286：session-baselines.ts 397 行聚合（≤700 达标）+ 壳转发化（折算 1842→1785）+ 跨聚合边收敛 2/7（C-2 deps 回调、C-3 disposeSessionUi）+ 深绑改写 13 处全等价（对照表在报告）+ 聚合面零变化（diff 零命中）+ 模式打样固化于聚合文件头（晚绑定 deps/窄结构类型/单写者 getter/常量 SSOT 迁移）。偏差 5 条：D-R1-1 SessionInit 接口本体迁聚合（R6 交叠预告）/ D-R1-2 4 个 ENV 常量 SSOT 提前迁（R6 部分提前）/ D-R1-3 R0 清单③ grep 口径缺 `Reflect.get(service,` 形态，补录 4 文件 6 处（R5 复扫口径纳入）/ D-R1-4 _seq 死字段删除 / D-R1-5 SessionInit.mode JSDoc 陈旧注释随迁留清 |
 | R2 | committed | 1 | 2 文件 +570/-377：sync-collect-domain.ts 518 行聚合 + 壳转发化（折算 1785→1640，max-lines warning 提前消解）；检查点① 落地（flushBatch 依赖两分：聚合私有 this + 8 晚绑定 getter，service 整实例零注入）；C-1 收口（lazyDispose）+ R1 回调改接（聚合间零直写，互不 import）；D1 v3 不改道逐行自查过；E9 时序 + flush 屏障断言绿（R3 检查点③前置已锁定）；涉本域 6 个深绑文件零改写（晚绑定现读保 FR 语义）。偏差 4 条：D-R2-1 清单③三文件改写预判未发生（晚绑定形态根因，R5 按实际核销）/ D-R2-2 warning 提前消解（override 收窄仍留 R4）/ D-R2-3 modelService 窄化为节读取 getter / D-R2-4 recoverSyncCollectBatch 转发 async→非 async Promise（可观察等价） |
 | R3 | committed | 1 | 62ce78dcf，4 文件 +1264/-752：**D-R3-1 拆两文件**——record-lifecycle.ts 530 行（终态写面 #4/#11/#17/#18，被否谱系#3 回收面完整在内，D5「store 与终态迁移入口唯一宿主」= H4 落点）+ record-access.ts 540 行（读建面 #3/#8/#10/#13），组间零互调零 import 已验证（唯一跨文件 import = record-access 单向引 session-baselines 常量，D-R3-2）；壳 3129→2564 物理（-565），转发全单行。检查点③ 落地：dispose 方法体 HEAD vs 工作区剔注释后逐字节一致（DISPOSE-BODY-IDENTICAL，E9→批量 archive→flush→store.dispose 时序保持）。只搬不改：机械审计 27 方法依赖通道替换后逐字节一致 + onChange 初始化器特例提取（/tmp/r3-move-audit.py 复跑 AUDIT-FINAL-PASS）。跨聚合边：C-5 收敛为 deps 回调（onRecordFinalizedCleanup + abortContinuationQueue）、C-4/C-6 留置（R4 领地/闭包天然兼容，清单①预判兑现）。深绑：7 文件零改写 + robustness-medium-batch2 M6 源文本守卫随本体迁（readFileSync 源文本正则 = 清单③口径外第五类，D-R3-4）。主 agent 独立核验：全量 2903/4 与基线逐项一致 + tsc 0 + eslint 0（max-lines 未触发）+ 三抽查（dispose diff / 零互调 grep / 审计复跑）全过。settleOneShotOutcome 等 12 处 A 通道直写按红线留壳未触碰（R4 领地） |
-| R4 | in_flight | - | dev 已派发（workflow 族整段迁移 + settleOneShotOutcome D7 分支逐字节保留 + C-4/C-5 本体迁入聚合 + 删过渡转发按 R0 判据 + max-lines override 收窄/移除已预授权；G1 超限可按内聚边界拆两文件、零互调零 import、登记偏差待追认） |
+| R4 | committed | 1 | fa0a2162c，8 文件 +237/-1818：run-orchestration.ts 1514 物理（核心编排 30 方法 + C-4/C-5 兑现——clearContinuations/onRecordFinalizedCleanup/abortContinuationQueue 显式接口）+ workflow-dispatch.ts 536 物理（H2 workflow 族整段 + 5 helper + WorkflowNoProgressGuard）；壳 2564→964 物理（折算 444，G1 壳目标达成）；删 7 个零消费 R3 转发 + resolveWorktreeHandle 死方法（全仓 grep 代码级消费零）；eslint 壳 1700 override 移除（warning 消解）+ run-orchestration 单列 max:800 零余量（D-R4-1 裁决附条件）。审计 37/37 IDENTICAL（D7 CAS 分支 + adopt 双豁免点逐字节在聚合）；深绑改写 4 文件（continuations/settleOneShotOutcome/kickOffChatRound/Reflect.get 方法形态）。主 agent 独立核验：junit 2907 testcase 0 failure、tsc 0、三文件 lint 0/0、审计复跑 PASS、零互引 grep、D7 :969 在聚合、删转发 grep 剩余命中全为装配闭包/注释/dist。**D-R4-1 已裁决：追认超限**（详见 §5） |
 | R5 | pending | - | |
 | R6 | pending | - | |
 | 阶段3（一致性对抗审查） | pending | - | |
