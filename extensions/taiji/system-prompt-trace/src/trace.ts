@@ -103,8 +103,8 @@ export function createSystemPromptTrace(env: TraceEnv, stash: SwitchStash): Syst
 			stash.pending = null;
 			if (stashed !== null && sessionStartReason === "resume") {
 				baseline = stashed;
-			} else if (sessionStartReason === "fork" && previousSessionFile !== undefined) {
-				baseline = env.readLastPromptFromFile(previousSessionFile);
+			} else if (sessionStartReason === "fork") {
+				baseline = previousSessionFile !== undefined ? env.readLastPromptFromFile(previousSessionFile) : null;
 			} else {
 				const sessionFile = ctx.getSessionFile();
 				baseline = sessionFile === undefined ? null : env.readLastPromptFromFile(sessionFile);

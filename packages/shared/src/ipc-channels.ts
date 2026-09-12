@@ -30,7 +30,8 @@ export const RENDERER_LOG = 'renderer-log' as const
  * toolResult 图片落盘通道 [crash-resilience §3.3 D6-⑨]。
  *
  * invoke 通道：renderer 无 fs，toolResult 的 base64 图片经此委托 main 异步写盘
- * `~/.xyz-agent/cache/images/<sessionId>/<content-hash>.png`，main 回填路径引用
+ * `~/.xyz-agent/cache/images/<sessionId>/<sha256(data)>.<ext>`（ext 按 mimeType
+ * 映射 .png/.jpg/.webp/.gif，缺省 .png），main 回填路径引用
  * （纯缓存语义：可随时丢弃、可幂等重建）。'image-cache:*' 通道族首成员，后续
  * 同族新增通道沿用该前缀；清理/删除不设 renderer 入口（session 删除级联、孤儿
  * 扫描、软上限均为 main 侧内部生命周期）。选冒号式：对齐 'browser:*' 领域族惯例。

@@ -4,8 +4,8 @@
  *
  * 锁定（验收条款逐条对照）：
  * - ① 判据命中处置成功 → 台账 reaped 事件：layer=pi、结构化 pid/ppid、detailDigest
- *   内嵌 argv 判据摘要（--session-dir 精确匹配 + ppid=1 + argv 头部）。
- * - ④ 防误记：判据未命中（ppid≠1 / session-dir 不匹配）零事件；处置失败（SIGTERM
+ *   内嵌 argv 判据摘要（v2 marker 判据：argv 匹配 spawn 清单 + ppid=1 + argv 头部）。
+ * - ④ 防误记：判据未命中（ppid≠1 / marker 清单外值）零事件；处置失败（SIGTERM
  *   非 ESRCH 错误）不记 reaped。
  *
  * 台账走真实 writer（initCrashJournal → mkdtemp tmp 目录 → closeCrashJournal 确定性
@@ -107,11 +107,11 @@ describe('reap-orphan-pi → 崩溃台账 reaped 事件（D1 矩阵 reaped 行�
     // 结构化进程身份（schema 外扩展字段经 writer spread 序列化落盘）
     expect(rec.pid).toBe(501)
     expect(rec.ppid).toBe(1)
-    // 判据摘要内嵌 detailDigest：ppid 判据说明（实现写死文案含 v1 遗留 --session-dir 措辞，
-    // 判据本体已 v2 marker 化）+ argv 头部可辨识
+    // 判据摘要内嵌 detailDigest：v2 marker 判据说明（argv 匹配 spawn 清单 + ppid=1）
+    // + argv 头部可辨识
     const digest = String(rec.detailDigest)
     expect(digest).toContain('ppid=1')
-    expect(digest).toContain('--session-dir')
+    expect(digest).toContain('spawn marker list')
     expect(digest).toContain('--mode rpc')
   })
 

@@ -19,8 +19,9 @@
 //     语义核心；接线透传由上述 W4 测试守护。
 //
 // 探针结论（偏差 #4，实测证据 = 「goal 守卫口径」describe）：**有虚增**——fork 后
-// 父 session 仍活跃的后台任务残留使 goal 守卫现状口径（无基准）幻 defer；确需的
-// 两行传参改动点列于该 describe 注释，留给主会话裁决（本单元不改 goal——红线）。
+// 父 session 仍活跃的后台任务残留使无基准口径幻 defer。该结论已由 d0b9a6faf
+// （2026-09-09，fix(goal): pass currentSessionId）关闭——goal 两处守卫现传
+// currentSessionId 基准，下方「无基准」形态仅作历史口径对照面保留。
 
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -116,11 +117,12 @@ describe("[W6/R4 一刀] bash 跨 session 可见性显式断言（钉成显式�
     expect(scoped.count).toBe(1); // 只数本 session 的任务
   });
 
-  it("旧行为显式登记：无基准口径（goal 守卫现状）父 bash 残留仍入计数（= defer 驱动）", () => {
+  it("旧行为显式登记：无基准对照面（历史形态）父 bash 残留仍入计数（= defer 驱动）", () => {
     const childEntries = [registerEntry("parent-bt", "bash", "sess-parent")];
     // 显式钉住「一刀的对照面」：不传基准 = 不过滤 = 子 session goal 仍为父 bash
     // 任务 defer。这是读侧过滤一刀**改变的旧行为**——保留此断言防止有人误以为
-    // 过滤是缺省语义（偏差 #4：goal 消费点现状即此口径，见探针结论）。
+    // 过滤是缺省语义（偏差 #4：goal 消费点历史形态即此口径，已由 d0b9a6faf 修复
+    // 传基准，见探针结论）。
     expect(countActiveFromEntries(childEntries).count).toBe(1);
   });
 });
@@ -144,15 +146,16 @@ describe("[W6/D4 读侧过滤③] pending_notifications 工具投影（entries �
   });
 });
 
-describe("[W6/偏差 #4 探针] goal 守卫口径（无基准）× fork 残留——实测结论", () => {
+describe("[W6/偏差 #4 探针] goal 守卫口径（无基准）× fork 残留——实测结论（历史口径）", () => {
   // 偏差 #4（impl-plan §5，W4 交接）：W4 读侧过滤①的 currentSessionId 为可选参数，
   // goal 守卫消费点未传基准。本探针在 fork 场景实测该口径是否被父 session 注册
   // 残留虚增，结论二选一回写报告：
   //   (a) 无影响（其他机制覆盖）→ 偏差 #4 关闭，goal 零改动；
   //   (b) 有虚增 → 列出确需的两行传参改动点（不改 goal——红线），留主会话裁决。
   //
-  // **实测结论：(b) 有虚增。**
-  //   证据链：goal 守卫两处消费点现状均无基准调用——
+  // **实测结论：(b) 有虚增。已由 d0b9a6faf（2026-09-09）关闭——goal 现传
+  //   currentSessionId 基准，下方证据链与用例为无基准历史形态的对照面。**
+  //   证据链（历史口径，d0b9a6faf 前的 goal 守卫两处消费点均无基准调用）：
   //     `extensions/universal/goal/src/adapters/event-handlers/agent-end.ts:198`
   //       `const pendingOps = countActiveFromEntries(entries);`（defer 分支判据
   //        = `pendingOps.count > 0`）
@@ -163,21 +166,23 @@ describe("[W6/偏差 #4 探针] goal 守卫口径（无基准）× fork 残留�
   //   用例 2 证明仅当父任务 record 已终态（core sweep 补注销落盘）才归零——
   //   「父任务仍活跃」窗口内无任何机制覆盖（W4 翻档后 U4 不再中性化）。
   //
-  //   确需的两行改动点（主会话裁决后由 goal 侧单元执行）：
+  //   已执行的修复（d0b9a6faf，即当时登记的两行传参改动点）：
   //     agent-end.ts:198 → `countActiveFromEntries(entries, { currentSessionId: ctx.sessionManager.getSessionId() })`
   //     agent-end.ts:294 → `countActiveFromEntries(ctx.sessionManager.getEntries(), { currentSessionId: ctx.sessionManager.getSessionId() })`
   //   （getSessionId 是 extension 侧既有取 sessionId 形态——pending-notifications
-  //   index.ts:216、subagent-workflow session-lifecycle.ts 同款先例。）
+  //   index.ts:216、subagent-workflow session-lifecycle.ts 同款先例；现行
+  //   agent-end.ts 守卫注释反向引用本探针作为传基准依据。）
 
-  it("用例 1：父 session 活跃 subagent 残留 → goal 现状口径（无基准）count>0 → defer 分支命中（虚增）", () => {
+  it("用例 1：父 session 活跃 subagent 残留 → 无基准对照面（历史形态）count>0 → defer 分支命中（虚增）", () => {
     // fork 时刻快照：父 session 派了后台子代理（record 仍 running-resumable），
     // 子 session 继承其 register 残留；goal 守卫读到的 entries = 本 session 文件
-    // 全量（含继承残留）。现状口径 = 无基准调用（agent-end.ts:198 逐字形态）。
+    // 全量（含继承残留）。历史形态 = 无基准调用（d0b9a6faf 前 agent-end.ts:198
+    // 逐字形态；现行已传基准，此对照面锁定「不传则虚增」的机制事实）。
     const childEntries = [
       registerEntry("parent-bg", "subagent", "sess-parent"),
       registerEntry("child-bg", "subagent", "sess-child"),
     ];
-    const pendingOps = countActiveFromEntries(childEntries); // ← goal 现状口径
+    const pendingOps = countActiveFromEntries(childEntries); // ← 无基准对照面（历史形态）
     // defer 分支判据（agent-end.ts:199 `if (pendingOps.count > 0)`）命中：
     // 父 session 的任务让子 session 的 goal 停发 continuation 并 notify
     // 「Goal waiting for 2 background task(s)」——计数含非本 session 任务 = 虚增。
@@ -206,9 +211,9 @@ describe("[W6/偏差 #4 探针] goal 守卫口径（无基准）× fork 残留�
     });
     expect(result.reconciled).toEqual(["parent-bg"]);
 
-    // 落盘后 goal 守卫（无基准口径）重读 entries：计数归零——sweep 是现状口径的
-    // 唯一收敛通道，且只覆盖「record 可判定终态」的窗口；「父任务仍活跃」窗口
-    // （用例 1）无机制覆盖 → 虚增结论 (b) 成立。
+    // 落盘后 goal 守卫（无基准口径，历史形态）重读 entries：计数归零——sweep 是
+    // 无基准口径的唯一收敛通道，且只覆盖「record 可判定终态」的窗口；「父任务仍
+    // 活跃」窗口（用例 1）无机制覆盖 → 虚增结论 (b) 成立。
     const entriesAfter = readFileSync(sessionFile, "utf8")
       .trim()
       .split("\n")

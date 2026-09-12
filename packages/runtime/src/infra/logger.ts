@@ -476,15 +476,6 @@ export interface PiSessionLog {
 }
 
 /**
- * pi tee 写入器构造选项（crash-forensics §3.3 D7）。生产代码不传（走默认 50MB）；
- * 测试注入小阈值验证旋段行为。
- */
-export interface PiTeeRotationOptions {
-  /** 单文件 size 轮转阈值（字节）。默认 PI_TEE_MAX_FILE_BYTES（50MB）。 */
-  maxBytes?: number
-}
-
-/**
  * 为一个 pi session 创建独立日志写入器。
  *
  * pi stdout 的 JSONL 事件流是诊断 pi 卡死的**决定性证据**（pi 发了什么 / 什么都没发）。
@@ -502,7 +493,7 @@ export interface PiTeeRotationOptions {
  * flush 时统一等待全部写流（含已 end 未 flush 完的、含轮转后新流的）落盘——pi 静默
  * 卡死场景丢尾部几行 = 丢「pi 挂在最后哪一步」的冒烟证据（D10-1 分档承诺）。
  */
-export function createPiSessionLog(sessionId: string, _opts?: PiTeeRotationOptions): PiSessionLog {
+export function createPiSessionLog(sessionId: string): PiSessionLog {
   if (!logsDir || !currentLevel) {
     // logger 未初始化（如单元测试）：返回 no-op 写入器
     return { write: () => {}, end: () => {} }
@@ -521,11 +512,11 @@ export function createPiSessionLog(sessionId: string, _opts?: PiTeeRotationOptio
  * 文件名 `pi-relay-<date>-<recordId>.jsonl`（pi- 前缀对齐既有命名，cleanExpiredLogs
  * 的保留期清理同样覆盖；date 前缀防跨天冲突）。size 轮转与 createPiSessionLog 同款
  * （D7 复刻点③ `pi-relay-*` 同款：共享 createPiStreamWriter 的 per-writer 轮转，旋段
- * `pi-relay-*.jsonl.1` 仍以 pi- 开头，白名单不变量保持）。recordId 来自握手帧（extension
+ * `pi-relay-*.jsonl.1.gz` 仍以 pi- 开头，白名单不变量保持）。recordId 来自握手帧（extension
  * 注入），按文件名安全字符集清洗。logger 未初始化时返回 no-op 写入器（与
  * createPiSessionLog 同契约，单元测试无副作用）。
  */
-export function createPiRelayLog(recordId: string, _opts?: PiTeeRotationOptions): PiSessionLog {
+export function createPiRelayLog(recordId: string): PiSessionLog {
   if (!logsDir || !currentLevel) {
     return { write: () => {}, end: () => {} }
   }

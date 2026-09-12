@@ -365,7 +365,7 @@ export async function reapOrphanPiProcesses(options: ReapOrphanOptions): Promise
     trigger: options.trigger ?? 'unspecified',
     scanned: result.scanned,
     targets: orphans.map(r => ({ pid: r.pid, ppid: r.ppid })),
-    reason: 'argv --session-dir matches own sessions dir AND ppid=1 (parent runtime dead, orphan reparented to init)',
+    reason: 'argv matches spawn marker list (--mode rpc + --no-extensions + staged extension/skill value) AND ppid=1 (parent runtime dead, orphan reparented to init)',
     graceMs: killGraceMs,
   })
   for (const row of orphans) {
@@ -381,7 +381,7 @@ export async function reapOrphanPiProcesses(options: ReapOrphanOptions): Promise
         event: 'reaped',
         pid: row.pid,
         ppid: row.ppid,
-        detailDigest: `argv --session-dir matches own sessions dir AND ppid=1; argv: ${argvSummary(row.command)}`,
+        detailDigest: `argv matches spawn marker list (--mode rpc + --no-extensions + staged extension/skill value) AND ppid=1; argv: ${argvSummary(row.command)}`,
       }
       getCrashJournal().append(journalEvent)
     } else {

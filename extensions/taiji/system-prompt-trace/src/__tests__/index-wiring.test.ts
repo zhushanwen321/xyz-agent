@@ -214,11 +214,25 @@ describe("index.ts wiring SDK 契约", () => {
 		const ext = await loadExtension();
 		const h = createWiringHarness();
 		ext(h.pi);
+		// 态 1 判据强化（R5-F2）：getSessionFile() 可读且带留痕（version 5，hash = P1）——
+		// 若 fork 缺失 previousSessionFile 时 fall-through 直读档，基线命中 P1 → 首 turn
+		// 不写 entry（下方三 entry 断言即失败）；D2 语义（fork 只认 previousSessionFile，
+		// 缺失即 null，不落直读档）下必写 resume v1。
+		const readableFile = join(rootDir, "readable-session.jsonl");
+		writeSessionEntry(readableFile, {
+			version: 5,
+			hash: computePromptHash(P1),
+			reason: "change",
+			fullText: P1,
+			charCount: P1.length,
+		});
+		const ctxFallbackReadable = createCtx(() => P1, "sess-w-fork-def", () => readableFile);
 		const ctx = createCtx(() => P1, "sess-w-fork-def");
 
-		// 态 1：字段缺失（in-memory fork 且源 sessionFile 为 undefined）
-		await emit(h, "session_start", { type: "session_start", reason: "fork" }, ctx);
-		await emit(h, "turn_start", { type: "turn_start", turnIndex: 0, timestamp: 0 }, ctx);
+		// 态 1：字段缺失（in-memory fork 且源 sessionFile 为 undefined）——即便
+		// getSessionFile() 可读带留痕，fork 档也不落直读档
+		await emit(h, "session_start", { type: "session_start", reason: "fork" }, ctxFallbackReadable);
+		await emit(h, "turn_start", { type: "turn_start", turnIndex: 0, timestamp: 0 }, ctxFallbackReadable);
 		// 态 2：源文件未落盘（源会话尚无 assistant 即 fork，首条 assistant 前 pi _persist 不落盘）
 		await emit(
 			h,

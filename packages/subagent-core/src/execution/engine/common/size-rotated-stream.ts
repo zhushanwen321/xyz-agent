@@ -2,8 +2,9 @@
 //
 // 同进程 size 轮转 append 流（crash-resilience §3.3 D6-⑦：size 轮转只由 writer 进程
 // 自做——跨进程 rename 会打断写方 append fd，日志进孤儿 inode、主文件不再增长、size 帽
-// 失效）。当前消费方 = zcode app-server 连接的 stderr tee（connection.ts appendStderrLog），
-// writer 是 runtime 进程自身，rename 安全。
+// 失效）。已无生产消费方——zcode 引擎自主化（W5）后 zcode-subagent-cli 自建 stderr 轮转
+// （logs/stderr-rotation.ts），禁 import 本模块（见 zcode-subagent-cli/src/connection.ts
+// 边界注释）；保留供 subagent-core 内未来同进程轮转复用，行为由既有单测锁定。
 //
 // 轮转语义对齐 runtime infra/logger.ts rotateMain（顺序硬约束，探针实测教训）：
 //   end 旧流 → 等待 'close'（fd 释放、在途 fs.write 全部落盘）→ rename .1 → 开新流 →
