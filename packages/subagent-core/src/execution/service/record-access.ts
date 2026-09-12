@@ -47,11 +47,10 @@ import type { ManifestStore } from "../manifest-store.ts";
 import type { ModelConfigService } from "../model-config-service.ts";
 import type { AgentConfig, ResolvedModel } from "../model-resolver.ts";
 import type { RecordStore, StatusFilter } from "../record-store.ts";
-// [R3] 跨进程身份 env 名 SSOT 在 SessionBaselines（R1 迁入；initSession 与本聚合的
-// recoverOrphansIfRootProcess 同为消费主体）。聚合间单向常量 import：非环、非方法
-// 互调（D4 禁的是私有方法互调与聚合→壳反向边），session-baselines 不回引本文件；
-// SSOT 归位共享底层待 R6 常量外移单元。禁碰冻结文件（session-baselines.ts）故不移。
-import { ENV_SELF_RECORD_ID } from "./session-baselines.ts";
+// [R6/D-R3-2] 跨进程身份 env 名 ENV_SELF_RECORD_ID 归位常量叶子文件
+// service-constants.ts（原 SSOT 在 session-baselines.ts，R3 时的聚合间单向 import
+// 合法边随之消除）——聚合→支撑文件方向（import 常量），守卫允许。
+import { ENV_SELF_RECORD_ID } from "./service-constants.ts";
 import {
   DEFAULT_AGENT_NAME,
   isReconnectableFinalReason,

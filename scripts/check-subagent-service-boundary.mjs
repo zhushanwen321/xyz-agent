@@ -8,7 +8,7 @@
 // 检查项：
 //   1. 聚合→聚合 import 台账门：聚合间 import（值或 type）默认红，仅放行 ALLOWED_EDGES
 //      登记的合法单向边（按「源文件:符号 → 目标文件」符号级精确登记）。有向环 = 红。
-//   2. 聚合→壳 import 门：execution/service/ 下任何文件 import ../subagent-service.ts
+//   2. 聚合→壳 import 门：execution/service/ 下聚合文件 import ../subagent-service.ts
 //      即红——deps 晚绑定闭包形态下聚合读壳（assertReady 等）是注入函数非 import
 //      （D4），该方向应天然零命中。
 //   3. 壳→聚合：允许（装配点），不检查。
@@ -18,11 +18,16 @@
 //      （非 private 成员）即红。防「聚合经 deps 拿兄弟实例调其内部」的未来回退；
 //      现状协作全部是窄函数接口注入（resolveIdentity / finalizeRecord 等），
 //      该通道应天然零命中。
+//   5. [H3/R6] 支撑文件方向门（service-bootstrap.ts / service-constants.ts）：
+//      - 支撑→聚合：允许（提供 type/常量/工厂；入环检测图）
+//      - 聚合→支撑：service-constants.ts 允许（import 常量）；service-bootstrap.ts
+//        仅 type-only 允许（聚合不消费装配工厂）
+//      - 支撑→壳：默认红（防反向依赖，D4 同理），仅 SUPPORT_SHELL_EDGES 登记的
+//        SubagentService 值边放行（createSubagentService 构造依赖，设计 v4）
+//      - 壳→支撑：允许（装配），不检查
 //
-// [HISTORICAL] 2026-09-12 建立时现状三条合法边（D-R3-2 / D-R4-8 登记，R6 常量外移时
-// ①号边应归位独立常量文件并从本台账删除）：
-//   ① record-access.ts   → session-baselines.ts : ENV_SELF_RECORD_ID（值 import，
-//      ENV 常量 SSOT 单向，非环非方法互调）
+// [HISTORICAL] 2026-09-12 建立时现状三条合法边（D-R3-2 / D-R4-8 登记）；R6 已兑现
+// 预告——①号边（ENV_SELF_RECORD_ID）随常量归位 service-constants.ts 从台账删除：
 //   ② run-orchestration.ts → record-access.ts  : ResolvedIdentity（type-only 单向）
 //   ③ workflow-dispatch.ts → record-access.ts  : ResolvedIdentity（type-only 单向）
 //
@@ -39,12 +44,21 @@ const SERVICE_DIR = join(EXECUTION_DIR, "service");
 /** 聚合间合法单向边台账（符号级）。key = `${srcFile}|${symbol}`，value = 目标文件名。
  *  新增边须在此登记并注明依据（设计决策/偏差编号），未登记即红。 */
 const ALLOWED_EDGES = new Map([
-  // ① D-R3-2：ENV_SELF_RECORD_ID 常量 SSOT 单向（R6 常量外移时归位独立文件）
-  ["record-access.ts|ENV_SELF_RECORD_ID", "session-baselines.ts"],
   // ② D-R4-8：ResolvedIdentity type-only 单向
   ["run-orchestration.ts|ResolvedIdentity", "record-access.ts"],
   // ③ D-R4-8：ResolvedIdentity type-only 单向
   ["workflow-dispatch.ts|ResolvedIdentity", "record-access.ts"],
+]);
+
+/** [H3/R6] SERVICE_DIR 下的支撑文件（非聚合）：类型声明 / 常量叶子 / 装配工厂的
+ *  宿主。与聚合适用不同方向规则（检查 5）；聚合间台账门不覆盖支撑文件。 */
+const SUPPORT_FILES = new Set(["service-bootstrap.ts", "service-constants.ts"]);
+
+/** 支撑文件→壳的合法值边台账（符号级）：唯一登记 = service-bootstrap 的
+ *  createSubagentService 构造依赖（设计 v4 明文「bootstrap 必须 new SubagentService」；
+ *  壳对 bootstrap 零 re-export，防壳↔bootstrap 值环）。 */
+const SUPPORT_SHELL_EDGES = new Map([
+  ["service-bootstrap.ts|SubagentService", "subagent-service.ts"],
 ]);
 
 /** 允许出现聚合实例 getter 的 deps 返回类型对照所需：聚合 class 名集合由
@@ -76,6 +90,31 @@ function parseImport(line) {
   return { symbols, target: m[3] };
 }
 
+/** [R6] 把源码按物理行产出，但将跨行 named import 块合并为单逻辑行——
+ *  parseImport 是逐行正则，多行形态 `import {\n  A,\n  B,\n} from "..."` 若不合并
+ *  会整块漏检（方向门盲区；R6 常量归一的多行 import 首次暴露，R5 存量壳装配
+ *  import 同为多行）。仅合并「以 import 开头且本行无 from」到「含 from 的行」。 */
+function* logicalImportLines(src) {
+  const lines = src.split("\n");
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    if (/^\s*import\b/.test(line) && !/from\s*['"]/.test(line)) {
+      let merged = line;
+      let j = i;
+      while (j + 1 < lines.length && !/from\s*['"]/.test(merged) && j - i < 50) {
+        j++;
+        merged += " " + lines[j].trim();
+      }
+      if (/from\s*['"]/.test(merged)) {
+        yield merged;
+        i = j;
+        continue;
+      }
+    }
+    yield line;
+  }
+}
+
 /** import 目标解析为 execution/service/ 内的兄弟文件名；否则返回 null。 */
 function resolveServiceTarget(fromFile, spec) {
   if (!spec.startsWith(".")) return null;
@@ -95,7 +134,7 @@ function isShellTarget(fromFile, spec) {
 function extractAggregateClassNames() {
   const shellPath = join(EXECUTION_DIR, "subagent-service.ts");
   const names = new Set();
-  for (const line of readFileSync(shellPath, "utf-8").split("\n")) {
+  for (const line of logicalImportLines(readFileSync(shellPath, "utf-8"))) {
     const parsed = parseImport(line);
     if (!parsed || !parsed.target.startsWith("./service/")) continue;
     const fileName = parsed.target.replace("./service/", "");
@@ -153,19 +192,23 @@ function extractAggregateGetters(source, aggregateClassNames) {
 // ── 主检查 ─────────────────────────────────────────────────────────────────
 
 function main() {
-  const aggregateFiles = readdirSync(SERVICE_DIR)
+  const allServiceFiles = readdirSync(SERVICE_DIR)
     .filter((f) => f.endsWith(".ts"))
     .sort();
+  // [H3/R6] 支撑文件与聚合分治：支撑文件走检查 5 方向规则，不进聚合间台账门。
+  const aggregateFiles = allServiceFiles.filter((f) => !SUPPORT_FILES.has(f));
+  const supportFiles = allServiceFiles.filter((f) => SUPPORT_FILES.has(f));
   const aggregateClassNames = extractAggregateClassNames();
-  const sources = new Map(aggregateFiles.map((f) => [f, readFileSync(join(SERVICE_DIR, f), "utf-8")]));
+  const allSources = new Map(allServiceFiles.map((f) => [f, readFileSync(join(SERVICE_DIR, f), "utf-8")]));
+  const sources = new Map(aggregateFiles.map((f) => [f, allSources.get(f)]));
 
   const violations = [];
-  const edges = new Map(); // 聚合间有向边（含白名单），供环检测
+  const edges = new Map(); // 聚合/支撑文件间有向边（含白名单），供环检测
 
   // ── 检查 1 + 2：聚合 import 方向门 ──
   for (const file of aggregateFiles) {
     const src = sources.get(file);
-    for (const line of src.split("\n")) {
+    for (const line of logicalImportLines(src)) {
       if (line.trim().startsWith("//")) continue;
       const parsed = parseImport(line);
       if (!parsed) continue;
@@ -179,11 +222,24 @@ function main() {
         continue;
       }
 
-      // 检查 1：聚合 → 聚合（台账门）
+      // 检查 1：聚合 → 聚合（台账门）/ 聚合 → 支撑（检查 5 前半）
       const sibling = resolveServiceTarget(join(SERVICE_DIR, file), parsed.target);
       if (!sibling) continue;
       if (!edges.has(file)) edges.set(file, new Set());
       edges.get(file).add(sibling);
+      if (SUPPORT_FILES.has(sibling)) {
+        // 聚合→支撑：常量叶子允许值 import；bootstrap（类型+装配工厂）仅 type-only
+        if (sibling === "service-bootstrap.ts") {
+          for (const sym of parsed.symbols) {
+            if (sym.typeOnly) continue;
+            violations.push(
+              `[聚合→支撑·值] ${file} 值 import service-bootstrap.ts 的 ${sym.name === "*" ? "(default/namespace)" : sym.name}——` +
+                `聚合只许消费其 type 声明（SubagentQueries 等），装配工厂（单例访问器族）归壳/barrel 消费面`,
+            );
+          }
+        }
+        continue; // service-constants.ts（常量叶子）：允许，不入聚合间台账门
+      }
       for (const sym of parsed.symbols) {
         const symName = sym.name === "*" ? "(default/namespace)" : sym.name;
         const key = `${file}|${sym.name}`;
@@ -198,7 +254,39 @@ function main() {
     }
   }
 
-  // ── 环检测（三色 DFS；白名单边入图——登记边反向出现即成环被此处捕获）──
+  // ── 检查 5：支撑文件方向门（支撑→壳台账门 + 支撑→聚合允许入图）──
+  for (const file of supportFiles) {
+    const src = allSources.get(file);
+    for (const line of logicalImportLines(src)) {
+      if (line.trim().startsWith("//")) continue;
+      const parsed = parseImport(line);
+      if (!parsed) continue;
+
+      // 支撑 → 壳：默认红（防反向依赖，D4 同理），仅 SUPPORT_SHELL_EDGES 放行
+      if (isShellTarget(join(SERVICE_DIR, file), parsed.target)) {
+        for (const sym of parsed.symbols) {
+          const symName = sym.name === "*" ? "(default/namespace)" : sym.name;
+          const key = `${file}|${sym.name}`;
+          if (SUPPORT_SHELL_EDGES.get(key) === "subagent-service.ts") continue;
+          violations.push(
+            `[支撑→壳·未登记] ${file} import subagent-service.ts 的 ${symName}——` +
+              `支撑文件→壳仅 SUPPORT_SHELL_EDGES 登记边放行（现状唯一 = service-bootstrap 的 SubagentService 构造依赖）；` +
+              `其余能力经 deps 注入（D4）`,
+          );
+        }
+        continue;
+      }
+
+      // 支撑 → 聚合/支撑：允许（提供 type/常量/工厂），入环检测图
+      const sibling = resolveServiceTarget(join(SERVICE_DIR, file), parsed.target);
+      if (sibling) {
+        if (!edges.has(file)) edges.set(file, new Set());
+        edges.get(file).add(sibling);
+      }
+    }
+  }
+
+  // ── 环检测（三色 DFS；白名单边与支撑↔聚合边均入图——反向出现即成环被捕获）──
   {
     const color = new Map([...edges.keys()].map((k) => [k, 0]));
     const cycles = [];
@@ -211,7 +299,7 @@ function main() {
       color.set(n, 2);
     };
     for (const n of edges.keys()) if (color.get(n) === 0) dfs(n, []);
-    for (const c of cycles) violations.push(`[聚合间环] ${c}`);
+    for (const c of cycles) violations.push(`[聚合/支撑间环] ${c}`);
   }
 
   // ── 检查 4：跨聚合私有访问门（deps getter → 兄弟聚合实例 → 非 public 成员调用）──
@@ -254,7 +342,8 @@ function main() {
   }
   const edgeCount = [...edges.values()].reduce((acc, s) => acc + s.size, 0);
   console.log(
-    `[OK] subagent-service 聚合边界检查通过（${aggregateFiles.length} 聚合文件，聚合间 ${edgeCount} 条登记边单向无环，聚合→壳 import 零命中，跨聚合私有访问零命中）`,
+    `[OK] subagent-service 聚合边界检查通过（${aggregateFiles.length} 聚合文件 + ${supportFiles.length} 支撑文件，` +
+      `聚合/支撑间 ${edgeCount} 条边单向无环，聚合→壳与支撑→壳（登记边外）import 零命中，跨聚合私有访问零命中）`,
   );
   return 0;
 }

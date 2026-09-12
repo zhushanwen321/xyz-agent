@@ -15,7 +15,6 @@ import type { CollectCoordinator } from "./collect-coordinator.ts";
 // DEFAULT_IDLE_TIMEOUT_MS 消费（assertIdleTimeoutMsSafe 错误文案基准）已随 run 域
 // 迁 service/run-orchestration.ts——本文件 lifecycle-manager 零 import。
 import { type ConcurrencyPool, DefaultConcurrencyPool } from "./concurrency-pool.ts";
-import type { UiRequestHandler } from "./dialog-queue.ts";
 // [R4] execution-record 消费（project/tryTransition/updateFromEvent）已随 run 域迁
 // service/run-orchestration.ts（+ workflow-dispatch.ts 的 updateFromEvent）——壳内零消费。
 // [R4] doFinalizeRoundToIdle（finalizeRoundToIdle wrapper）已随 run 域迁
@@ -82,11 +81,21 @@ import { registerGlobalObservability } from "./ui-request-observability.ts";
 // [R1] 转发 getter 返回类型标注（实例已迁聚合，仅 type 引用）。
 import type { UiRequestObservability } from "./ui-request-observability.ts";
 import { WorktreeManager } from "./worktree-manager.ts";
+// [H3/R6] 聚合面接口类型声明（queries/chatActions 消费面 + 构造参数）外移支撑文件
+// 后经 type-only import 消费（编译后擦除，与 bootstrap→壳的 SubagentService 值边
+// 不构成值环）。
+import type {
+  SubagentChatActions,
+  SubagentQueries,
+  SubagentServiceInit,
+} from "./service/service-bootstrap.ts";
+// [H3/R6] ENV_SELF_RECORD_ID 常量 SSOT 归位常量叶子文件（D-R3-2 兑现，原随域 #2
+// 聚合声明）——壳 reconcile sweep 装配闭包判据消费。
+import { ENV_SELF_RECORD_ID } from "./service/service-constants.ts";
 // [H3/R1] 域 #2 聚合（session 注入 + ALS/嵌套身份基线）——壳经转发 getter/方法透传，
-// 对外签名零变化。ENV_SELF_RECORD_ID 常量 SSOT 随消费主体迁入聚合（壳→聚合正向 import）。
+// 对外签名零变化。
 import {
   disposedUiRequestStub,
-  ENV_SELF_RECORD_ID,
   SessionBaselines,
   type SubagentServiceSessionInit,
 } from "./service/session-baselines.ts";
@@ -95,7 +104,7 @@ import {
 import { SyncCollectDomain } from "./service/sync-collect-domain.ts";
 // [H3/R3] 域 #3/#4/#8/#10/#11/#13/#17/#18 聚合（record 读建面 + 终态迁移写面）——壳经
 // 转发方法透传，对外签名零变化。[计划变更 D-R3-1] G1 ≤700 与八域体量（833 物理行）
-// 冲突，经用户授权拆两文件：record-access.ts（#3/#8/#10/#13 读建面）+ record-lifecycle.ts
+// 冲突，拆两文件（dev agent 停线报告、主 agent 核验追认）：record-access.ts（#3/#8/#10/#13 读建面）+ record-lifecycle.ts
 //（#4/#11/#17/#18 终态写面，D5/H4 落点）；两聚合组间零互调零 import，壳分别装配。
 // [R4] ResolvedIdentity 的壳内消费（R3 过渡转发签名）已删——type import 随删转发清零。
 import { RecordAccess } from "./service/record-access.ts";
@@ -109,40 +118,10 @@ import { WorkflowDispatch } from "./service/workflow-dispatch.ts";
 
 const logger = getLogger("subagents");
 
-/** [D4 查询面聚合] 读模型轴（record 快照读取 + store 订阅）——Service 上的
- *  `service.queries` 消费面。变化轴：改查询投影 / 过滤 / 订阅语义，只动 queries 组；
- *  Service 本体保留编排核（execute/executeAndAwait/cancel）与生命周期面。 */
-export interface SubagentQueries {
-  /** 按 id 查内存 running record 的只读快照（G3-002 修复）。不存在返回 undefined。 */
-  findRecord(id: string): RecordSnapshot | undefined;
-  /** [v8.5 A1/B] 全态查找：任意状态 × 任意归属的 record 快照（message 拒绝文案分流
-   *  与 fork-from 源解析共用）。id 在内存与磁盘均不存在返回 undefined。 */
-  lookupRecordAnyState(id: string): SubagentRecord | undefined;
-  /** 合并内存 + 磁盘 record（/subagents list + tool list 消费，按 rootSessionId 过滤）。
-   *  [H2 W1] includeWorkflow 缺省 false = 过滤 origin==="workflow"（D1 投影过滤①③④）；
-   *  true = 排查通道全量。 */
-  collectRecords(limit: number, statusFilter?: StatusFilter, includeWorkflow?: boolean): SubagentRecord[];
-  /** [H2 W1] 按 workflow run id 列 record（内存 ∪ 磁盘重建 ∪ manifest 口径，不过滤
-   *  origin——W2 run 视图进度 / W3 下钻消费）。 */
-  collectRecordsByParentRunId(parentRunId: string, limit: number): SubagentRecord[];
-  /** [perf] 单 record 详情懒加载（全量：eventLog/displayItems/result/turns/tokens）。 */
-  getFullRecord(id: string): SubagentRecord | undefined;
-  /** 订阅 store 变更（widget/list requestRender）。返回取消订阅。 */
-  onChange(listener: () => void): () => void;
-}
-
-/** [D4 对话 action 面聚合] chat 域 message/close action 轴（M2-B3，原 Service 同节三方法）
- *  ——Service 上的 `service.chatActions` 消费面。变化轴：改对话域归属校验 / close 分流 /
-   投递编排，只动 chatActions 组。 */
-export interface SubagentChatActions {
-  /** 按 id 查 record 并做归属校验（message/close action 的统一入口）。 */
-  getRecordForAction(id: string, opts?: { allowReconnect?: boolean }): ExecutionRecord;
-  /** close action 的统一行为分流（running 子态 × force）。 */
-  closeSubagent(record: ExecutionRecord, force: boolean): Promise<void>;
-  /** chatMode 统一投递入口（message action → ConversationContinuation.onMessage，
-   *  [H1 U6] interrupt 参数随 D2 打断统一语义退役）。 */
-  deliverChatMessage(record: ExecutionRecord, text: string): Promise<void>;
-}
+// [R6] 聚合面接口类型声明（SubagentQueries / SubagentChatActions / SubagentServiceInit）
+// 已外移支撑文件 service/service-bootstrap.ts——壳经 type-only import 消费（编译后
+// 擦除），bootstrap→壳仅存的 SubagentService 值边（createSubagentService 构造依赖）
+// 不构成值环（壳对 bootstrap 零 re-export）。
 
 // [v4 A-1] EPIPE 连续失败计数器在 stdin-writer.ts（stdin 错误域，避免 session-runner
 // 反向 import 本文件 helper 产生循环依赖）。同步路径（PiEngine 热路径投递，D2 协议知识
@@ -159,32 +138,16 @@ export type { StreamSink } from "./stream-sink.ts";
 // pi 依赖端口类型 re-export：测试侧 mock PiLike 历来从本模块取（与 StreamSink 同构的门面模式）
 export type { PiLike } from "./notify-host.ts";
 
-/**
- * Service 构造参数（进程级）。
- *
- * @experimental execution 运行时面（设计 docs/design/subagent-core-sink-design.md §3.3 D6）：
- * 一个 minor 周期内允许签名微调，稳定后转常规 semver 承诺。
- */
-export interface SubagentServiceInit {
-  cwd: string;
-  /** 配置/模型域 Service（execute 内部调其 resolveModel）。 */
-  modelService: ModelConfigService;
-  /** 缓存的主 session file 获取函数（fork source 解析用）。 */
-  getMainSessionFile?: () => string | undefined;
-  /** W2: UI 请求处理回调（ask_user 扩展）。
-   *  签名见 dialog-queue.ts UiRequestHandler：接收 UiRequest，返回 UiResponse。 */
-  uiRequestHandler?: UiRequestHandler;
-}
-
 /** session_start 注入参数（session 级）。
  *  [R1] 接口本体已迁 service/session-baselines.ts（唯一消费者 SessionBaselines.initSession）；
  *  此处类型别名 re-export 保持既有导出符号面（外部 `from "./subagent-service.ts"` 消费零改动）。 */
 export type { SubagentServiceSessionInit };
 
 
-// [R1] 跨进程身份贯穿 env 名常量（ENV_ROOT_SESSION_ID / ENV_SELF_RECORD_ID / ENV_DEPTH /
-// ENV_ROOT_CWD，含 [MF-3] 注释）SSOT 已随域 #2 聚合迁至 service/session-baselines.ts；
-// 壳经顶部 import 消费（reconcile sweep 装配闭包的 ENV_SELF_RECORD_ID 判据）。
+// [R1] 跨进程身份贯穿 env 名常量（ENV_ROOT_SESSION_ID / ENV_DEPTH / ENV_ROOT_CWD，
+// 含 [MF-3] 注释）SSOT 已随域 #2 聚合迁至 service/session-baselines.ts；[R6/D-R3-2]
+// ENV_SELF_RECORD_ID 因跨聚合消费（record-access）归位 service/service-constants.ts
+// 常量叶子文件——壳经顶部 import 消费（reconcile sweep 装配闭包的判据）。
 // [R2] SETTLED_RESCAN_LIMIT 常量 SSOT 已随域 #5 聚合迁至 service/sync-collect-domain.ts
 //（唯一消费主体 armSettledRescan）。
 // [R3] ResolvedIdentity 接口本体（resolveIdentity 产物）已随读建面迁
@@ -923,42 +886,8 @@ export class SubagentService {
   }
 }
 
-// ── 进程单例访问器 ────────────────────────────────────
-// globalThis[Symbol.for] 防 jiti 路径不同致单例分裂。详见 docs/standards.md §7.5。
-const SERVICE_SLOT_KEY = Symbol.for("@zhushanwen/pi-subagents.service");
-
-type ServiceSlot = { current: SubagentService | null };
-
-function getServiceSlot(): ServiceSlot {
-  let slot = Reflect.get(globalThis, SERVICE_SLOT_KEY) as ServiceSlot | undefined;
-  if (!slot) {
-    slot = { current: null };
-    Reflect.set(globalThis, SERVICE_SLOT_KEY, slot);
-  }
-  return slot;
-}
-
-/** 获取进程单例。session_start 前为 null。 */
-export function getSubagentService(): SubagentService | null {
-  return getServiceSlot().current;
-}
-
-/** 设置进程单例（session_start 首次创建时）。 */
-export function setSubagentService(service: SubagentService): void {
-  getServiceSlot().current = service;
-}
-
-/**
- * [U10① D6] 第三宿主最小构造入口：仅凭参数注入构造 SubagentService（无全局查找）。
- *
- * 构造依赖（modelService / getMainSessionFile / uiRequestHandler）全部经 init
- * 参数注入；本工厂是 `new SubagentService(init)` 的薄包装，不读也不写
- * getSubagentService/setSubagentService 的全局槽位——session_start 单例流程
- * 行为零改动，宿主自持实例时用本工厂。构造内部行为与直接 new 逐字等价。
- *
- * @experimental execution 运行时面（设计 docs/design/subagent-core-sink-design.md §3.3 D6）：
- * 一个 minor 周期内允许签名微调，稳定后转常规 semver 承诺。
- */
-export function createSubagentService(init: SubagentServiceInit): SubagentService {
-  return new SubagentService(init);
-}
+// [R6] 进程单例访问器族（SERVICE_SLOT_KEY / getServiceSlot / getSubagentService /
+// setSubagentService / createSubagentService）已外移 service/service-bootstrap.ts
+//（globalThis[Symbol.for] slot 防 jiti 多实例分裂，机制注释随迁）；barrel
+// packages/subagent-core/src/index.ts 直接改指向该文件，壳不做 re-export（防壳↔
+// bootstrap 值环——设计 v4 import 纪律）。

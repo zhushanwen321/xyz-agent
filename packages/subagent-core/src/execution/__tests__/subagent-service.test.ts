@@ -26,7 +26,9 @@ import type { ModelInfo } from "../model-resolver.ts";
 import type { RecordStore } from "../record-store.ts";
 import type { UiRequest, UiRequestHandler } from "../dialog-queue.ts";
 import type { PiLike } from "../subagent-service.ts";
-import { getSubagentService, setSubagentService,SubagentService } from "../subagent-service.ts";
+import { SubagentService } from "../subagent-service.ts";
+// [H3/R6] 单例访问器外移支撑文件 service/service-bootstrap.ts（壳不再导出）。
+import { getSubagentService, setSubagentService } from "../service/service-bootstrap.ts";
 import type { ExecutionRecord } from "../types.ts";
 
 // ── 工具:建临时 agentDir + 真实 ModelConfigService ──

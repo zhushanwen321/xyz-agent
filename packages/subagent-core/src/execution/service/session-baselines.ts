@@ -32,6 +32,9 @@ import { setHostUiRequestEndpoint } from "../engine/host/host-ui-endpoint.ts";
 import type { PiLike } from "../notify-host.ts";
 import type { StreamSink } from "../stream-sink.ts";
 import { UiRequestObservability } from "../ui-request-observability.ts";
+// [R6/D-R3-2] ENV_SELF_RECORD_ID 因跨聚合消费（record-access）归位常量叶子文件，
+// 本聚合 initSession 消费改经 import（聚合→支撑文件方向合法）。
+import { ENV_SELF_RECORD_ID } from "./service-constants.ts";
 
 const logger = getLogger("subagents");
 
@@ -44,9 +47,10 @@ const logger = getLogger("subagents");
  *  扫不到 → 全树可见性深度 ≥ 2 断裂。子进程经本 env 拿 ROOT cwd，sessions 与 records 两套目录
  *  统一编码在 enc(ROOT cwd) 段（与身份贯穿同构，见 session-runner 注入点）。
  *  [R1] 常量 SSOT 随消费主体（initSession/initExecContextBaseline/rootCwd 推导）自壳文件
- *  迁入本聚合并 export——壳经 import 消费（壳→聚合正向合法），禁聚合→壳反向 import（D4）。 */
+ *  迁入本聚合并 export——壳经 import 消费（壳→聚合正向合法），禁聚合→壳反向 import（D4）。
+ *  [R6/D-R3-2] ENV_SELF_RECORD_ID 因 record-access 跨聚合消费归位 service-constants.ts
+ *  （消费主体单一且在本聚合时留驻，跨聚合时迁叶子文件——消除 R5 台账合法边①）。 */
 export const ENV_ROOT_SESSION_ID = "PI_SUBAGENT_ROOT_SESSION_ID";
-export const ENV_SELF_RECORD_ID = "PI_SUBAGENT_SELF_RECORD_ID";
 export const ENV_DEPTH = "PI_SUBAGENT_DEPTH";
 export const ENV_ROOT_CWD = "PI_SUBAGENT_ROOT_CWD";
 

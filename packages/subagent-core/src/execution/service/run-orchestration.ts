@@ -41,10 +41,10 @@
 //   （审计 /tmp/r4-move-audit.py）；r0-inventory 清单② A 通道直写 14 处（#12 域
 //   executeAndAwait 1 处 + #14 域 13 处——任务口径 12 处按「#14 域 adopt 三行并 1」
 //   计）原样随迁，H4 收口。
-// 5. 模块常量 SSOT：PRIORITY_BACKGROUND / MS_PER_SECOND / SECONDS_PER_MINUTE 跨两
-//   聚合文件消费（workflow-dispatch.ts 同名同义声明）——预授权「零互调零 import」
-//   约束下值语义纯量各持一份，R6 模块常量外移单元归一；STALE_CHILD_EXIT_WAIT_MS +
-//   delay（唯一消费 killStaleChildBeforeDispatch）随消费主体迁入。
+// 5. 模块常量 SSOT：PRIORITY_BACKGROUND / MS_PER_SECOND / SECONDS_PER_MINUTE 已
+//   [R6/D-R4-4] 归一常量叶子文件 service-constants.ts（原两聚合重复声明消除，
+//   改 import 消费）；STALE_CHILD_EXIT_WAIT_MS + delay（唯一消费
+//   killStaleChildBeforeDispatch）留聚合本文件（单一消费主体）。
 
 import { getLogger } from "../../core/logger.ts";
 import { toErrorMessage } from "../../core/error-message.ts";
@@ -115,18 +115,10 @@ import type {
   ExecutionRecord,
 } from "../types.ts";
 import { DEFAULT_AGENT_NAME, ForkDepthExceededError } from "../types.ts";
+// [R6/D-R4-4] 跨两聚合消费的值语义纯量归一常量叶子文件（聚合→支撑文件方向合法）。
+import { PRIORITY_BACKGROUND, MS_PER_SECOND, SECONDS_PER_MINUTE } from "./service-constants.ts";
 
 const logger = getLogger("subagents");
-
-/** background 优先级（保留 priority 排序机制，单一值）。
- *  [R4] 跨聚合重复声明（workflow-dispatch.ts 同名同义）——预授权零 import 约束下的
- *  值语义纯量各持一份，R6 模块常量外移时归一。 */
-const PRIORITY_BACKGROUND = 1000;
-
-/** 时间换算常数（settled watchdog 分钟数展示用；与 session-runner 同名常量同语义）。
- *  [R4] 跨聚合重复声明（workflow-dispatch.ts 同名同义，归一时点同上）。 */
-const MS_PER_SECOND = 1000;
-const SECONDS_PER_MINUTE = 60;
 
 /**
  * [H1 U2 / 红线②] stale-child 兜底的退出等待窗（ms）：镜像在途子进程活项时，协议
