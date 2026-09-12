@@ -384,30 +384,36 @@ interface WatermarkDaySample {
  * {coverageStart?, coverageEnd?} ISO 对）；digest 缺失/不可解析时退回顶层单值字段，
  * coverage 未知则不降权（默认全权重——降权是例外，需 <50% 证据）。
  */
-function extractWatermarkSample(d: DatedEvent): WatermarkDaySample {
-  let digest: Record<string, unknown> | null = null
-  const digestRaw = str(d.raw.detailDigest)
-  if (digestRaw !== undefined && digestRaw.trim().startsWith('{')) {
-    try {
-      const parsed: unknown = JSON.parse(digestRaw)
-      if (isRecord(parsed)) digest = parsed
-    } catch {
-      digest = null // digest 坏行不致命：退回顶层字段
-    }
+/** detailDigest JSON 容错解析：非字符串 / 非 `{` 开头 / 坏 JSON / 非对象 → null（digest 缺失退回顶层字段）。 */
+function parseDetailDigest(raw: unknown): Record<string, unknown> | null {
+  const digestRaw = str(raw)
+  if (digestRaw === undefined || !digestRaw.trim().startsWith('{')) return null
+  try {
+    const parsed: unknown = JSON.parse(digestRaw)
+    return isRecord(parsed) ? parsed : null
+  } catch {
+    return null // digest 坏行不致命：退回顶层字段
   }
-  const peakHeap = num(digest?.heapMax) ?? num(d.raw.heapUsed) ?? num(digest?.rssMax) ?? num(d.raw.rss) ?? null
-  let coverageFraction: number | null = null
-  const pct = digest === null ? undefined : num(digest.coveragePct)
+}
+
+/** coverage 两形态 → 覆盖度分数：coveragePct（>1 按 0-100 百分比缩放）或 coverage 起止时间对占当日比例；两者皆缺 → null（未声明不降权——降权需 <50% 的证据，D1）。 */
+function coverageFractionOf(digest: Record<string, unknown>): number | null {
+  const pct = num(digest.coveragePct)
   if (pct !== undefined) {
-    coverageFraction = Math.min(1, Math.max(0, pct > 1 ? pct / PERCENT_SCALE : pct))
-  } else if (digest !== null) {
-    const startMs = toEpochMs(digest.coverageStart)
-    const endMs = toEpochMs(digest.coverageEnd)
-    if (startMs !== null && endMs !== null && endMs > startMs) {
-      coverageFraction = Math.min(1, (endMs - startMs) / MS_PER_DAY)
-    }
+    return Math.min(1, Math.max(0, pct > 1 ? pct / PERCENT_SCALE : pct))
   }
-  return { tsMs: d.tsMs, peakHeap, coverageFraction }
+  const startMs = toEpochMs(digest.coverageStart)
+  const endMs = toEpochMs(digest.coverageEnd)
+  if (startMs !== null && endMs !== null && endMs > startMs) {
+    return Math.min(1, (endMs - startMs) / MS_PER_DAY)
+  }
+  return null
+}
+
+function extractWatermarkSample(d: DatedEvent): WatermarkDaySample {
+  const digest = parseDetailDigest(d.raw.detailDigest)
+  const peakHeap = num(digest?.heapMax) ?? num(d.raw.heapUsed) ?? num(digest?.rssMax) ?? num(d.raw.rss) ?? null
+  return { tsMs: d.tsMs, peakHeap, coverageFraction: digest === null ? null : coverageFractionOf(digest) }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -439,26 +445,7 @@ export function evaluateTriggerConditions(input: EvaluateTriggerConditionsInput 
   // #2 全时段出现即触发；inbound-frame-dropped（main 台账）作 D8 哨兵佐证
   const registryMisses = selectInWindow(runtime.events, isRegistryMiss, nowMs, null)
   const inboundDropped = selectInWindow(main.events, (e) => str(e.event) === 'inbound-frame-dropped', nowMs, null)
-  const row2: TriggerConditionRow =
-    noAnchor || runtimeNoData !== undefined
-      ? {
-        id: COND_REGISTRY_MISS,
-        description: CONDITION_DESCRIPTIONS[COND_REGISTRY_MISS],
-        threshold: '> 0 次（任何一次即触发）',
-        status: 'no-data',
-        currentValue: '台账无事件',
-        note: anchorNoData() ?? runtimeNoData,
-      }
-      : {
-        id: COND_REGISTRY_MISS,
-        description: CONDITION_DESCRIPTIONS[COND_REGISTRY_MISS],
-        threshold: '> 0 次（任何一次即触发）',
-        status: registryMisses.length > 0 ? 'tripped' : 'ok',
-        currentValue:
-            `${registryMisses.length} 次（台账留存全期，出现即触发）` +
-            (inboundDropped.length > 0 ? `；inbound-frame-dropped 佐证 ${inboundDropped.length} 条` : ''),
-        note: inboundDropped.length > 0 ? '入站丢弃 = 出站守卫被绕过的哨兵信号（D8 哨兵语义）' : undefined,
-      }
+  const row2 = buildRegistryMissRow(registryMisses, inboundDropped, noAnchor, runtimeNoData)
 
   const row3 = countingRow({
     id: COND_SUPERVISOR_RESTART,
@@ -660,6 +647,37 @@ function buildRollingRestartRow(
       `分子排除 absent-report 关联 ${deferLimitForced.length - genuineDeferLimit.length} 条；absent-report 推迟单列观测 ${absentDeferred.length} 条（D5 缺席语义⑤）`,
       'rolling-restart 事件族武装后产生（Gate W 前），本条非武装门本身（D5）',
     ]),
+  }
+}
+
+// ── #2：出站注册表 miss（任何一次即触发；inbound-frame-dropped 作 D8 哨兵佐证）──
+function buildRegistryMissRow(
+  registryMisses: readonly DatedEvent[],
+  inboundDropped: readonly DatedEvent[],
+  noAnchor: boolean,
+  runtimeNoData: string | undefined,
+): TriggerConditionRow {
+  // no-data 分支 note = 原 `anchorNoData() ?? runtimeNoData`：入分支时 noAnchor 真 → 首值；
+  // 否则 runtimeNoData 必有值（分支条件保证），等价展开。
+  if (noAnchor || runtimeNoData !== undefined) {
+    return {
+      id: COND_REGISTRY_MISS,
+      description: CONDITION_DESCRIPTIONS[COND_REGISTRY_MISS],
+      threshold: '> 0 次（任何一次即触发）',
+      status: 'no-data',
+      currentValue: '台账无事件',
+      note: noAnchor ? '空台账无锚定时刻' : runtimeNoData,
+    }
+  }
+  return {
+    id: COND_REGISTRY_MISS,
+    description: CONDITION_DESCRIPTIONS[COND_REGISTRY_MISS],
+    threshold: '> 0 次（任何一次即触发）',
+    status: registryMisses.length > 0 ? 'tripped' : 'ok',
+    currentValue:
+      `${registryMisses.length} 次（台账留存全期，出现即触发）` +
+      (inboundDropped.length > 0 ? `；inbound-frame-dropped 佐证 ${inboundDropped.length} 条` : ''),
+    note: inboundDropped.length > 0 ? '入站丢弃 = 出站守卫被绕过的哨兵信号（D8 哨兵语义）' : undefined,
   }
 }
 

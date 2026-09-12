@@ -326,6 +326,37 @@ function insertContentBlockByIndex(blocks: ContentBlock[], block: ContentBlock):
   return next
 }
 
+/**
+ * tool_call_end overlay 终态派生段（纯函数提取，复杂度门禁 Gate-1.5）：normalize +
+ * 64KB 截断。三态归一在消费侧做：传 entry.message（body）——与 reducer
+ * computeToolCallFill 同语义（content block 数组 → join text），entry.content 已由
+ * adapter 归一为数组形态（W21）。content 缺失（mock/异常帧）三值全 undefined——
+ * 上层条件写入保留 running 期间的旧值（迁移前 `?? c.output` 同语义）。
+ * [D6-⑧] live overlay 与 reducer（computeToolCallFill）过同一 64KB 截断函数——
+ * 非六类工具（write/edit/MCP）大结果 live 与 reload 形态一致（D3 代价 C 根治）。
+ */
+function deriveToolCallEndOverlay(message: PiMessageEntry['message']): {
+  hasContent: boolean
+  output: string | undefined
+  outputRaw: string | undefined
+  outputTruncated: boolean
+  images: Array<{ data: string; mimeType: string }> | undefined
+} {
+  const hasContent = message.content !== undefined
+  const { output: rawOutput, outputRaw: rawOutputRaw, images } = hasContent
+    ? normalizePiToolResult(message)
+    : { output: undefined, outputRaw: undefined, images: undefined }
+  const outputT = rawOutput !== undefined ? truncateEntryToolOutput(rawOutput) : undefined
+  const outputRawT = rawOutputRaw !== undefined ? truncateEntryToolOutput(rawOutputRaw) : undefined
+  return {
+    hasContent,
+    output: outputT?.text,
+    outputRaw: outputRawT?.text,
+    outputTruncated: (outputT?.truncated ?? false) || (outputRawT?.truncated ?? false),
+    images,
+  }
+}
+
 const messageEffects: Partial<Record<ServerMessageType, MessageEffectHandler>> = {
   // ── 主流式生命周期（chunk 创建/收口 + isGenerating 派生）──
   'message.message_start': (ctx, sid, payload) => {
@@ -603,20 +634,9 @@ const messageEffects: Partial<Record<ServerMessageType, MessageEffectHandler>> =
     if (idx < 0) return
     // details：pi tool_execution_end result.details（结构化扩展数据）。
     // subagent sync 模式的 progress 快照（currentTool/turn/tokens）在这里，前端 Block.vue 据此滚动更新。
-    // 三态归一在消费侧做：传 entry.message（body）——与 reducer computeToolCallFill 同语义
-    //（content block 数组 → join text），entry.content 已由 adapter 归一为数组形态（W21）。
-    // content 缺失（mock/异常帧）保留 running 期间的旧值（迁移前 `?? c.output` 同语义）。
-    const hasContent = entry.message.content !== undefined
-    const { output: rawOutput, outputRaw: rawOutputRaw, images } = hasContent
-      ? normalizePiToolResult(entry.message)
-      : { output: undefined, outputRaw: undefined, images: undefined }
-    // [D6-⑧] live overlay 与 reducer（computeToolCallFill）过同一 64KB 截断函数——
-    // 非六类工具（write/edit/MCP）大结果 live 与 reload 形态一致（D3 代价 C 根治）。
-    const outputT = rawOutput !== undefined ? truncateEntryToolOutput(rawOutput) : undefined
-    const outputRawT = rawOutputRaw !== undefined ? truncateEntryToolOutput(rawOutputRaw) : undefined
-    const output = outputT?.text
-    const outputRaw = outputRawT?.text
-    const outputTruncated = (outputT?.truncated ?? false) || (outputRawT?.truncated ?? false)
+    // 三态归一 / content 缺省保留旧值 / 64KB 截断的派生语义见 deriveToolCallEndOverlay
+    //（纯派生段提取，条件写入语义不变——下方 spread 按字段缺省不触碰既有值）。
+    const { hasContent, output, outputRaw, outputTruncated, images } = deriveToolCallEndOverlay(entry.message)
     const details = entry.message.details
     const isError = entry.message.isError === true
     const next = [...prev]

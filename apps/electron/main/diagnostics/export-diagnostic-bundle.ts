@@ -205,6 +205,23 @@ function pickLatestFile(dir: string, prefix: string): string | null {
   return latest?.path ?? null
 }
 
+/** ② 各层日志家族尾部入清单：每家族 mtime 最新一份取末 256KB；无该家族文件 → missing 显式降级（顺序追加，与主清单其余段落串行）。 */
+function collectLogFamilyTails(logsDir: string, entries: DiagnosticEntry[], missing: DiagnosticMissingEntry[]): void {
+  for (const family of LOG_FAMILIES) {
+    const latest = pickLatestFile(logsDir, family.prefix)
+    if (latest === null) {
+      missing.push({ archivePath: `logs/${family.prefix}*`, reason: 'logs 目录无该家族文件（未产生过该类日志）' })
+      continue
+    }
+    entries.push({
+      archivePath: `logs/${latest.split('/').pop() ?? latest}`,
+      sourcePath: latest,
+      tailBytes: DIAGNOSTIC_TAIL_BYTES,
+      note: family.note,
+    })
+  }
+}
+
 /** 只保留文件末 maxBytes 字节（subarray 零复制视图——日志是给 grep 用的，UTF-8 边界不齐无妨）。 */
 export function tailBytes(content: Buffer<ArrayBufferLike>, maxBytes: number): Buffer<ArrayBufferLike> {
   return content.length <= maxBytes ? content : content.subarray(content.length - maxBytes)
@@ -269,19 +286,7 @@ export function buildDiagnosticEntries(options: CollectDiagnosticOptions = {}): 
   const runtimeLines = readJournalLines(join(crashesDir, 'runtime.jsonl'))
 
   // ② 各层日志家族尾部（每家族 mtime 最新一份取末 256KB）
-  for (const family of LOG_FAMILIES) {
-    const latest = pickLatestFile(logsDir, family.prefix)
-    if (latest === null) {
-      missing.push({ archivePath: `logs/${family.prefix}*`, reason: 'logs 目录无该家族文件（未产生过该类日志）' })
-      continue
-    }
-    entries.push({
-      archivePath: `logs/${latest.split('/').pop() ?? latest}`,
-      sourcePath: latest,
-      tailBytes: DIAGNOSTIC_TAIL_BYTES,
-      note: family.note,
-    })
-  }
+  collectLogFamilyTails(logsDir, entries, missing)
 
   // ③ 近 24h 水位行摘录（从最新 runtime 日志提取；[watermark] 5min 明细行不在台账）
   const runtimeLog = pickLatestFile(logsDir, 'runtime-')
