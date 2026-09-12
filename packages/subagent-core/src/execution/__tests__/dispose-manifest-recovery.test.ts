@@ -146,13 +146,24 @@ describe("[M1/M2 Gate B] 编排性终态化 manifest 反查索引 + 重启冷查
     const count = service.disposeAllRecords("parent-shutdown");
     expect(count).toBe(1);
 
-    await vi.waitFor(() => expect(fs.existsSync(manifestPath(agentDir, "sa-m1"))).toBe(true));
-    const manifest = JSON.parse(fs.readFileSync(manifestPath(agentDir, "sa-m1"), "utf-8")) as Record<string, unknown>;
+    // [U4c / G4-S5②] 同步写锚点：dispose 终态完成点（同步写返回后）**立即**读
+    // manifest——存在且合法 JSON、无 0 字节/半写 tmp 残留（manifestDir writeSync
+    // 接线后 fire-and-forget 停机窗构造性消灭；本用例不加 waitFor，等待形态回归
+    // = D8 判据破坏）。
+    const manifestFile = manifestPath(agentDir, "sa-m1");
+    expect(fs.existsSync(manifestFile)).toBe(true);
+    const manifest = JSON.parse(fs.readFileSync(manifestFile, "utf-8")) as Record<string, unknown>;
     expect(manifest.status).toBe("closed");
     expect(manifest.closedReason).toBe("parent-shutdown");
     expect(manifest.rootSessionId).toBe("root-session");
     expect(manifest.agentName).toBe("general-purpose");
     expect(manifest.createdAt).toBe(1000);
+    // [U4c / G2] 词汇双写过渡字段随终态写面落盘（session-reader 前向兼容锚）
+    expect(manifest.executionStatus).toBe("closed");
+    // 原子写无 tmp 残留（0 字节/半写 tmp 只在崩溃打断 writeAtomicFile 时出现）
+    const residue = fs.readdirSync(path.dirname(manifestFile)).filter((f) => f.includes(".tmp."));
+    expect(residue).toEqual([]);
+    await flushAsyncWrites(); // 拆 tmp 目录前等尽潜在异步写（防御既有 afterEach 契约）
   });
 
   it("M1: 在途 record 的 engineHandle.sessionRef.sessionFile 提升为终态锚点（entry+manifest 带真实路径）", async () => {

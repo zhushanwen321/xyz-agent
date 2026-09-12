@@ -52,6 +52,8 @@ vi.mock("@zhushanwen/subagent-core/execution/subagent-service.ts", () => ({
   SubagentService: class {
     initSession = vi.fn();
     recoverManifestTmpFiles = vi.fn(async () => ({ deleted: 0, recovered: 0 }));
+    // [U4c/G1] boot 全量重建钩子（runProcessLevelMaintenance 消费面）
+    rebuildIndexes = vi.fn(() => 0);
     startGcTimer = vi.fn();
   },
 }));
@@ -233,6 +235,7 @@ describe("setupSessionLifecycle — bootstrap seam（设计 §3.1）", () => {
     const { pi } = createFakePi();
     const fakeService = {
       recoverManifestTmpFiles: vi.fn(async () => ({ deleted: 0, recovered: 0 })),
+      rebuildIndexes: vi.fn(() => 0),
     };
     const fakeModelService = {
       reloadGlobalConfig: vi.fn(() => ({ status: "absent", config: { version: 1, maxConcurrent: 6 } })),

@@ -520,10 +520,23 @@ export class SubagentService {
     this.recordAccess.recoverOrphansIfRootProcess();
   }
 
-  /** 启动恢复：manifest tmp 残留扫描（ADR-035；index.ts session_start 每次都调）。
-   *  本体已迁 RecordAccess（3 分支判定逐行等价随迁）；壳纯转发，对外签名不变。 */
+  /** 启动恢复：manifest tmp 残留清扫（ADR-035；index.ts session_start 每次都调）。
+   *  [U4c / D6] tmp 恢复已退役为**静默删除**——manifest 现为可丢可重建缓存（权威
+   *  = `.state`，重建 = rebuildIndexes），promote 半写 tmp 的恢复语义失效；本入口
+   *  只清残留（含 0 字节/半写形态）。本体已迁 RecordAccess（行为随 ManifestStore
+   * 退役语义）；壳纯转发，对外签名不变。 */
   async recoverManifestTmpFiles(): Promise<{ deleted: number; recovered: number }> {
     return this.recordAccess.recoverManifestTmpFiles();
+  }
+
+  /**
+   * [U4c / G1] 缓存降级重建通道（boot 全量腿）：manifest 与 sessions-index 均为
+   * 可丢缓存，本入口在 boot revive 完成后（initSession 的孤儿恢复/重物化已收敛
+   * 磁盘态）全量重建——幂等补缺（幸存 manifest 不覆写），失败静默降级不抛。
+   * 语义细节见 RecordStore.rebuildIndexes（D5 三要素）。壳纯转发。
+   */
+  rebuildIndexes(): number {
+    return this.store.rebuildIndexes();
   }
 
   // ── 域 #4 回收面 聚合转发（R3 抽取；本体 execution/service/record-lifecycle.ts）──

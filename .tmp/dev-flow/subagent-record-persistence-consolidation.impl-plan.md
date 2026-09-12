@@ -178,6 +178,14 @@ graph TD
 
 **认知外改动登记（2026-09-12 二次）**：docs/architecture/runtime-module-map.md / subagent-engine-abstraction.md / docs/extensions/subagents/data-model.md 三个文件的「2026-09-12 重数行数」统计刷新——与 H4 无关的并行产物，全程不碰不裹挟（同 timeout 文档处置）。
 
+**U4c（轮 1，2026-09-12）**——dev 报备 + 协调者核验接受：
+1. 领地外触碰 manifest-store.test.ts（关联存量测试 promote 用例随 G3 退役翻转，零源码行）——授权「如涉」范围边缘，接受
+2. 惰性重建通道挂 mergedRecords 查询面而非 G1 字面「findLightById 反查 miss」——后者冷 miss→undefined 契约被 record-binding.test.ts 钉死（cold-lookup 链分工），挂查询面语义等价零契约破坏
+3. 惰性通道防写放大三守卫：内存持有跳过（「创建时不写」契约）+ 每 id 每进程一次 + revive() 复位
+4. markIdleArchived 归档点补写 manifest 用 running 如实投影（derivedManifestRecord，非终态化语义）
+5. 幸存 manifest 不覆写（rebuild 补缺不刷新——幸存者可能比重建源新鲜）
+6. recoverTmpFiles 方法名/返回形态保留（record-access.ts 禁触，跨文件重命名挂 **U5 收口项③**）；extension oncePerProcess key 已更名 sweep-manifest-tmp-files
+
 **U2a（轮 1，2026-09-12）**——dev 报备 + 协调者核验接受：
 1. record-access.ts 领地外 +3 行机械接线（ColdLookupDeps 新必填字段 markResurrected 装配点 :471，计划遗漏的编译必需连带）
 2. delivery-methods.test.ts 领地外测试适配 +9（3 用例补 register 对齐生产形态——record 恒在内存）
@@ -196,13 +204,13 @@ graph TD
 | U3 | committed | 1 | 核验 2026-09-12：D1+D3 达成（批写归口 grep 零命中 + manifestDir 接线 + 领地 46/46 绿）；D2 两项被领地封锁移交 U2b 修（见偏差登记表尾） |
 | U4b | committed | 1 | 核验 2026-09-12：3 文件领地吻合；E1 grep 仅注释残留；actions-core 41 + transparent-resume 15 单绿；transparent-resume 回归收账 |
 | U4a | committed | 1 | 核验 2026-09-12：F1-F5 达成（领地 106/106 绿 + externalInstance/ALIVE_SOFT_TIMEOUT_MS 代码级零残留 + doc-symbol-drift 绿 + tsc 零错） |
-| U4c | in-progress | 1 | 后台派发 2026-09-12（U3+U4a committed 解锁；含检查点② manifest 直读依赖面核实） |
+| U4c | committed | 1 | 核验 2026-09-12：G1-G4 达成（subagent-core 领地 47 绿 + session-reader 316 绿含 2 新跨包例 + workflow 922 绿 + extensions 三连绿）；检查点②关闭（唯一绕 store 直读方 = session-reader，双写字段集覆盖完备） |
 | U5 | pending | 0 | — |
 
 ## 7 残留风险与变更历史
 
 **残留风险（开局登记）**：
-- 待验证检查点②（manifest 被 GUI/runtime 直读依赖面）——U4c 开工前由该单元 dev 核实并登记结论（未决）
+- 待验证检查点②（manifest 被 GUI/runtime 直读依赖面）——**已关闭（U4c 轮 1）**：renderer/core 零命中，runtime 仅 package.json manifest（异构域无关）；唯一绕 store 直读 records/*.json 的消费方 = extensions/universal/session-reader（5 个读面：listRecordManifests 扫描 / manifestIdentityData 消费旧三态+identity / manifestBySessionFile 索引 / resolveByRecordId 反查 / result-action 批量预取，必填仅 id/rootSessionId/sessionFile）；G2 双写投影（旧三态 + closedReason + identity 全字段 + additive executionStatus）覆盖全部消费面
 - ~~P-B4 探针结论（U1 A7）~~——**已关闭（U1 轮 1）**：实装 pi@0.84.4 dist SessionManager 直驱 appendCompaction，custom entry（subagent-record / notify-ledger 类 / pending:register-unregister）文件面全保留不改写——E1 判定源（entry 尾）与「entry 可丢」承载假设在 compaction 面不劣化，设计 D4② 登记评估项无需立项；残余丢失面仍仅 debounce-flush × SIGKILL 交集（D4② 既述）
 - extensions transparent-resume.test.ts:315 回归——挂 U4b 修复（见偏差登记表尾）
 - record-store.ts 行数 1207（U1 后）——eslint 提额 1400 过渡（已随 U1 commit），H4 全落地后按意图原语族拆分（终态原语/轮次簿记/重建三轴），属独立重构任务

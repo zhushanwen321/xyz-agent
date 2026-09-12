@@ -60,6 +60,10 @@
 //      磁盘种子——冷启动首扫读一次（惰性装载），dirty 扫描后按 60s 节流落盘
 //      （fileCache 投影，fire-and-forget）；运行期 L0/L1 语义不变，损坏/低版本
 //      静默回退全扫，高版本忽略不重写。见 sessions-index.ts。
+//   5. [U4c / D5 缓存降级] manifest 与 sessions-index 均为可丢缓存（权威 = `.state`）：
+//      重建双通道 = boot revive 完成后全量（rebuildIndexes，宿主 boot 钩子接线）+
+//      查询面惰性（mergedRecords 对 manifest 缺员的磁盘重建 record 单点补建，每 id
+//      每进程一次）；重建失败静默降级（子 session 已 GC/损坏 → 该条跳过，整轮不抛）。
 
 import * as fs from "node:fs";
 import * as path from "node:path";
@@ -560,6 +564,10 @@ export class RecordStore {
    *  落盘（防 v1/v2 last-writer-wins 覆盖振荡），直至下次 loadIndex 重新评估。 */
   private indexHigherVersion = false;
 
+  /** [U4c / G1] manifest 惰性重建的每 id 尝试守卫（mergedRecords 高频路径防磁盘写
+   *  放大：每 id 每进程至多一次；dispose/revive 随其余缓存态一并重置）。 */
+  private manifestRebuildTried = new Set<string>();
+
   /**
    * [D8 v7] manifest 同步写目录（与 manifestStore 同一 records 目录，由构造方提供——
    * manifestStore.dir 私有，本类不经反射访问）。提供时终态原语（markFinalized /
@@ -935,9 +943,17 @@ export class RecordStore {
    * 原语整体失败、marker 必未删（持有与声明一致）；release 失败 best-effort 留痕
    * （removeAliveMarker 内部 warn——GC 为旁路维护路径不阻断 interval，泄漏窗 = 至
    * 宿主退出，已接受）。归档 record 后续被接管时统一 acquireWriteLease 重新声明。
+   *
+   * [U4c / G2] 归档点补写 manifest（投影 running——磁盘确仍 running）：record 离开
+   * 内存后，外部 session-reader 的 identity 富字段主路径只剩 manifest（子文件
+   * identity entry 随 30 天 GC 衰减），归档时不落盘则该 record 在 manifest 面长期
+   * 缺席。写失败走 writeTerminalManifest 同款响亮上报（终态写面共用通道）。
    */
   markIdleArchived(record: ExecutionRecord): void {
     this.archive(record);
+    // [U4c / G2] 归档点补写：经状态派生投影（running 如实投影——非终态化语义，
+    // terminalManifestRecord 的 closed 硬编码不适用），响亮失败通道同终态写面。
+    this.writeManifestPersisted(record.id, RecordStore.derivedManifestRecord(RecordStore.recordToSubagent(record)));
     if (record.sessionFile !== undefined) removeAliveMarker(record.sessionFile);
   }
 
@@ -954,7 +970,10 @@ export class RecordStore {
   }
 
   /** 终态 manifest 投影（markFinalized/markCancelled 共用；对齐 writeManifestBestEffort
-   *  现状投影——status 统一 closed，closedReason 随投影携带）。 */
+   *  现状投影——status 统一 closed，closedReason 随投影携带）。
+   *  [U4c / G2 词汇双写] executionStatus（ExecutionStatus 二态）随终态写面双写——
+   *  旧 status 三态是 session-reader 直读的投影字段（永久保留），新字段是内部权威
+   *  词汇的写面过渡锚（D5 词汇全景①③并存）。 */
   private static terminalManifestRecord(record: ExecutionRecord): ManifestRecord {
     return {
       id: record.id,
@@ -962,6 +981,7 @@ export class RecordStore {
       parentRecordId: record.parentRecordId,
       agentName: record.agent,
       status: "closed",
+      executionStatus: "closed",
       closedReason: record.closedReason,
       createdAt: record.startedAt,
       completedAt: record.endedAt ?? Date.now(),
@@ -974,7 +994,7 @@ export class RecordStore {
 
   /** 批成员 manifest 投影（markBatchFinalized 用；对齐 writeBatchMemberManifest 现状
    *  投影——status 如实投影[成功成员此刻 running+resumable]，后续 upgrade 终态时
-   *  原子覆盖）。 */
+   *  原子覆盖）。[U4c / G2] executionStatus/closedReason 双写同 terminal 投影。 */
   private static batchManifestRecord(rec: SubagentRecord): ManifestRecord {
     return {
       id: rec.id,
@@ -982,6 +1002,8 @@ export class RecordStore {
       parentRecordId: rec.parentRecordId,
       agentName: rec.agent,
       status: rec.status,
+      executionStatus: rec.status,
+      closedReason: rec.closedReason,
       createdAt: rec.startedAt,
       completedAt: rec.endedAt,
       sessionFile: rec.sessionFile,
@@ -992,29 +1014,126 @@ export class RecordStore {
   }
 
   /**
-   * [D8 v7] 终态 manifest 落盘：manifestDir 提供时 writeAtomicFileSync 同步写（停机
-   * 竞态构造性消灭；与 ManifestStore.writeManifest 字节形态一致——2 空格缩进 JSON，
-   * 读侧/外部 session-reader 不感知差异）；缺省 fire-and-forget 异步写（双轨期现行
-   * 语义）。写失败响亮（error 日志 + 用户可见 entry，对齐 writeManifestBestEffort）。
+   * [U4c / G1+G2] 状态派生 manifest 投影（rebuildIndexes / 反查 miss 惰性通道 /
+   * markIdleArchived 归档点共用）。数据源 = SubagentRecord 投影（identity entry/
+   * binding + `.state` sidecar 矩阵，D1「.state 权威 + entry 尽力」）——词汇双写
+   * 同终态写面。旧 status 三态从 closedReason 派生 cancelled（对齐 markCancelled
+   * 的 `.state` cancelled 分支重建语义：buildRecord 分支 1 closedReason="cancelled"）。
    */
-  private writeTerminalManifest(record: ExecutionRecord): void {
-    const manifest = RecordStore.terminalManifestRecord(record);
+  private static derivedManifestRecord(rec: SubagentRecord): ManifestRecord {
+    const legacyStatus: ManifestRecord["status"] =
+      rec.status === "closed" ? (rec.closedReason === "cancelled" ? "cancelled" : "closed") : "running";
+    return {
+      id: rec.id,
+      rootSessionId: rec.rootSessionId ?? "",
+      parentRecordId: rec.parentRecordId,
+      agentName: rec.agent,
+      status: legacyStatus,
+      executionStatus: rec.status,
+      closedReason: rec.closedReason,
+      createdAt: rec.startedAt,
+      completedAt: rec.endedAt,
+      sessionFile: rec.sessionFile,
+      task: rec.task,
+      slug: rec.slug,
+      model: rec.model,
+    };
+  }
+
+  /**
+   * [D8 v7] manifest 落盘统一通道：manifestDir 提供时 writeAtomicFileSync 同步写
+   * （停机竞态构造性消灭；与 ManifestStore.writeManifest 字节形态一致——2 空格缩进
+   * JSON，读侧/外部 session-reader 不感知差异）；缺省 fire-and-forget 异步写（双轨
+   * 期现行语义）。写失败响亮（error 日志 + 用户可见 entry，对齐 writeManifestBestEffort）。
+   */
+  private writeManifestPersisted(id: string, manifest: ManifestRecord): void {
     if (this.manifestDir !== undefined) {
       try {
         writeAtomicFileSync(
-          path.join(this.manifestDir, `${record.id}.json`),
+          path.join(this.manifestDir, `${id}.json`),
           JSON.stringify(manifest, null, MANIFEST_INDENT_SPACES),
         );
       } catch (err) {
-        RecordStore.reportManifestWriteFailure(record.id, err, this.pi);
+        RecordStore.reportManifestWriteFailure(id, err, this.pi);
       }
       return;
     }
     if (this.manifestStore !== undefined) {
       void this.manifestStore.writeManifest(manifest).catch((err: unknown) => {
-        RecordStore.reportManifestWriteFailure(record.id, err, this.pi);
+        RecordStore.reportManifestWriteFailure(id, err, this.pi);
       });
     }
+  }
+
+  /**
+   * [D8 v7] 终态 manifest 落盘（markFinalized/markCancelled 共用，投影 status 恒
+   * closed）。同步性与失败语义见 writeManifestPersisted。
+   */
+  private writeTerminalManifest(record: ExecutionRecord): void {
+    this.writeManifestPersisted(record.id, RecordStore.terminalManifestRecord(record));
+  }
+
+  // ── [U4c / D5] 缓存降级重建通道 ──────────────────────────────
+
+  /**
+   * [U4c / G1] 全量重建可丢缓存（boot 通道：boot revive 完成后由宿主调用）。
+   *
+   * manifest 与 sessions-index 均为可丢缓存（D5）：权威 = `.state`，重建源 =
+   * `.state` + entry 尽力。本方法：
+   *   1. 触发全量扫描（reconstructAll）——sessions-index 的重建隐式完成于既有机制
+   *      （loadIndex 空/损坏 → 探测 → dirty → saveIndex，「损坏静默回退全扫」同款
+   *      先例），不另设第二条索引写路径；
+   *   2. 对扫描重建出的每个 record，manifest 缺失时补写（幂等补缺，不覆写幸存
+   *      manifest——幸存者可能比重建源新鲜，覆写 = 用尽力数据降级权威快照）。
+   *
+   * 失败降级（D5 三要素）：单 record 重建源不可用（子 session 已 GC/损坏 → 不在
+   * 扫描集）或 manifest 写失败 → debug 留痕跳过该条，整轮不抛（S5「重建照常无错
+   * 误静默吞」）——缓存补缺失败不构成宿主错误。
+   *
+   * @returns 补写的 manifest 数（诊断/日志用）。
+   */
+  rebuildIndexes(): number {
+    const records = this.reconstructAll(undefined);
+    let rebuilt = 0;
+    for (const rec of records) {
+      if (this.rebuildManifestIfMissing(rec)) rebuilt++;
+    }
+    return rebuilt;
+  }
+
+  /**
+   * [U4c / G1] 单 record 的 manifest 惰性补建（rebuildIndexes 全量轮 + mergedRecords
+   * 惰性通道共用）。manifest 已存在 → 跳过；无 manifest 落点（manifestDir/manifestStore
+   * 均缺省，纯内存测试形态）→ 跳过；每 id 每进程至多尝试一次（manifestRebuildTried
+   * 守卫——boot 全量轮与惰性通道共享，防重复磁盘写）。写失败 debug 留痕不抛
+   * （缓存面，§3.4「缓存损坏」行——无需动作）。
+   *
+   * @returns true = 本次实际补写。
+   */
+  private rebuildManifestIfMissing(rec: SubagentRecord): boolean {
+    if (this.manifestDir === undefined && this.manifestStore === undefined) return false;
+    if (this.manifestRebuildTried.has(rec.id)) return false;
+    this.manifestRebuildTried.add(rec.id);
+    if (this.manifestDir !== undefined) {
+      const manifestPath = path.join(this.manifestDir, `${rec.id}.json`);
+      try {
+        if (fs.existsSync(manifestPath)) return false;
+        writeAtomicFileSync(manifestPath, JSON.stringify(RecordStore.derivedManifestRecord(rec), null, MANIFEST_INDENT_SPACES));
+        return true;
+      } catch (err) {
+        logger.debug("[subagents] rebuildIndexes: manifest rebuild skipped (write failed)", {
+          detail: { id: rec.id, error: err instanceof Error ? err.message : String(err) },
+        });
+        return false;
+      }
+    }
+    // 双轨降级形态（manifestDir 缺省、manifestStore 在）：异步写，失败同样静默降级。
+    void this.manifestStore!.writeManifest(RecordStore.derivedManifestRecord(rec)).catch((err: unknown) => {
+      logger.debug("[subagents] rebuildIndexes: manifest rebuild skipped (write failed)", {
+        detail: { id: rec.id, error: err instanceof Error ? err.message : String(err) },
+      });
+    });
+    return true;
   }
 
   /** manifest 写失败的双通道上报（error 日志给开发者 + entry 给用户，对齐
@@ -1192,6 +1311,18 @@ export class RecordStore {
     for (const r of this.records.values()) {
       if (rootSessionFilter !== undefined && r.rootSessionId !== rootSessionFilter) continue;
       byId.set(r.id, RecordStore.recordToSubagent(r));
+    }
+
+    // 3. [U4c / G1 惰性通道] manifest 反查 miss 的惰性重建（D5 双通道的惰性腿）：
+    //    磁盘源已重建的 record 若在 manifest 索引缺员（缓存被删/boot 全量轮漏扫），
+    //    此处补建——manifest 是外部 session-reader 的 identity 富字段主路径与指针
+    //    行反查索引，缺员窗口不应等到下次 boot。在途 record（内存持有，本 host 的
+    //    终态写点会落 manifest——「创建时不写」契约保持）不在补建集；每 id 每进程
+    //    只尝试一次（rebuildManifestIfMissing 内 manifestRebuildTried 守卫，防高频
+    //    collectRecords 放大磁盘写）。
+    for (const rec of byId.values()) {
+      if (this.records.has(rec.id)) continue;
+      this.rebuildManifestIfMissing(rec);
     }
 
     return byId;
@@ -1469,6 +1600,7 @@ export class RecordStore {
     this.indexDirty = false;
     this.lastIndexWriteAt = 0;
     this.indexHigherVersion = false;
+    this.manifestRebuildTried.clear();
   }
 
   /**
@@ -1484,6 +1616,9 @@ export class RecordStore {
   revive(): void {
     this._disposed = false;
     this.orphanJudged.clear();
+    // [U4c / G1] /new /resume 重开后 manifest 态可能已变（外部删除/异宿主写入），
+    // 惰性重建守卫随缓存态一并复位（对齐 orphanJudged 的「重开重判」语义）。
+    this.manifestRebuildTried.clear();
   }
 
   // ── 内部 ──────────────────────────────────────────────────
@@ -1793,7 +1928,8 @@ export class RecordStore {
    * [perf] byId 索引直查 light record（单文件 stat 校验，不触发 getFullRecord 的
    * 全量重建）。idToFile 未热（进程重启后尚未扫描过）时返回 undefined，调用方
    * 自行兜底全目录扫描——用于把「跨重启后每条 message 一次 collectRecords 全扫」
-   * 降为 O(1) 索引命中。
+   * 降为 O(1) 索引命中。（反查 miss 的索引自愈不在此层——miss 契约被 cold-lookup
+   * 链与 record-binding 测试钉死；manifest 惰性重建挂 mergedRecords，见其注释。）
    */
   findLightById(id: string): SubagentRecord | undefined {
     const file = this.idToFile.get(id);
