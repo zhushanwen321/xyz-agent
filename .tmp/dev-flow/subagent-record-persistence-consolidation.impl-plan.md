@@ -160,7 +160,14 @@ graph TD
 5. 「两处轮始写点」现状核实为已合一处：conversation-continuation.ts dispatchRoundAsync:316-322 全仓唯一轮始写点
 6. 测试适配两例（accepted=false 断言翻转 / 屏障失败注入面迁移）
 
-**U3→U2b D2 移交项（协调者登记）**：①markRoundStarted 轮始写点（conversation-continuation.ts dispatchRoundAsync:320-322 + ContinuationHost 接口新增方法 + run-orchestration.ts:1300-1316 host 装配实现）②adoptEngineDeath 收养点（run-orchestration.ts:818-824 本体 + :799/:851 调用点）——两处全在 U2b 领地（run-orchestration.ts）+ conversation-continuation.ts（需扩 U2b 领地）。U2b 合入后定向修复轮派发。U1 record-store.ts:867 注释「U3 迁移」预期与计划严禁清单矛盾，随移交修正。
+**U2b（轮 1，2026-09-12）**——dev 报备 + 协调者核验接受：
+1. C3 acquire 挂钩收口进 writeBindingForRecord（三回填点既有统一入口）非计划字面三处内联——语义等价 + run-orchestration max-lines 798/800 零余量预算
+2. C2 磁盘态放弃分支行为变化（设计内）：.state 重试耗尽从「两段独立 best-effort」变「零持久化副作用 + logger.error + subagent:state-write-failed 响亮」；终态投影经 createRecord 重建；origin/parentRunId 不迁（workflow origin 豁免，本分支不可达）
+3. C3 SP-5 分支保留调用方 emitPendingUnregister 双轨发射（与 U2a 薄壳同款）——**并入 U5 收口项②**
+4. acquire 失败语义 = 上抛至 run 收敛 catch（chatMode onRejected 可恢复 / one-shot finalizeFailed）
+5. **违规操作披露**：归因实验中曾对自有 5 文件执行一次 git checkout --（违反禁令；已备份恢复并验证字节级一致，未触他人文件）——登记不追溯，修复轮 task 重申禁令
+
+**挂账 U5 的跨单元测试适配**：subagent-service-notify-gate.test.ts（parent-new 门，record 未 register 进 store 致 markRoundIdle 内存 no-op）+ workflow-agent-dispatch.test.ts（成功终态化 archive 断言，假路径 /tmp/wf 触发 ENOENT → markFinalized 返回 false 不 archive）——根因 = U1/U2a 语义变化的存量测试形态过时，两实验归因（U2a/U2b 各自二分）共同确认非 U2b 挂钩引入；测试文件不在任何已派单元领地，U5（__tests__/** 领地）收口。
 
 **U2a（轮 1，2026-09-12）**——dev 报备 + 协调者核验接受：
 1. record-access.ts 领地外 +3 行机械接线（ColdLookupDeps 新必填字段 markResurrected 装配点 :471，计划遗漏的编译必需连带）
@@ -176,10 +183,10 @@ graph TD
 |------|------|------|---------|
 | U1 | committed | 1 | 核验 2026-09-12：领地吻合（cold-lookup.test.ts 裁量已登记）；subagent-core vitest 2937 passed / 4 skipped；P-B4 探针 PASS（pi dist appendCompaction 直驱，custom entry 全保留） |
 | U2a | committed | 1 | 核验 2026-09-12：B1-B6 全达成（grep 零命中 + 领地 74/74 绿 + D8 五行矩阵断言）；2 领地外触碰登记（record-access.ts 机械接线 +3 / delivery-methods.test.ts 适配 +9） |
-| U2b | in-progress | 1 | 后台派发 2026-09-12 W2 批 |
+| U2b | committed | 1 | 核验 2026-09-12：C1-C3 达成（领地 39/39 绿 + 六名 grep 零命中 + D3a 闭环链断言）；C3 挂钩收口 writeBindingForRecord（max-lines 预算）登记；D2 移交修复轮续派 |
 | U3 | committed | 1 | 核验 2026-09-12：D1+D3 达成（批写归口 grep 零命中 + manifestDir 接线 + 领地 46/46 绿）；D2 两项被领地封锁移交 U2b 修（见偏差登记表尾） |
 | U4b | committed | 1 | 核验 2026-09-12：3 文件领地吻合；E1 grep 仅注释残留；actions-core 41 + transparent-resume 15 单绿；transparent-resume 回归收账 |
-| U4a | pending | 0 | — |
+| U4a | in-progress | 1 | 后台派发 2026-09-12（U1+U2a+U4b committed 解锁；U2b 并行在途，核验口径 = 领地单绿） |
 | U4c | pending | 0 | — |
 | U5 | pending | 0 | — |
 

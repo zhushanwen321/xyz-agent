@@ -10,10 +10,10 @@
 // 全部依赖经 RoundSupervisorBinding 惰性闭包注入（session 级状态运行时可变——
 // 对齐 notify-host.ts createNotifyHost 的 deps 惰性求值先例）。
 
+import { getLogger } from "../../core/logger.ts";
 import { bestEffort } from "../best-effort.ts";
 import { COLD_LOOKUP_SCAN_LIMIT } from "../cold-lookup.ts";
-import { tryTransition } from "../execution-record.ts";
-import { writeFinalizedState } from "../state-marker.ts";
+import { createRecord, tryTransition } from "../execution-record.ts";
 import { hasLiveProcessHandle } from "../lifecycle-predicates.ts";
 import { FileRunStore } from "../../orchestration/file-run-store.ts";
 import { resolvePiWorkflowStateDir } from "../workflow-state-root.ts";
@@ -27,6 +27,8 @@ import {
   type SupervisorCandidateRecord,
   type SupervisorRecordView,
 } from "./index.ts";
+
+const logger = getLogger("subagents");
 
 /** 绑定面（SubagentService 供给；全部惰性——见文件头注）。 */
 export interface RoundSupervisorBinding {
@@ -114,9 +116,12 @@ function supervisorCandidates(binding: RoundSupervisorBinding): SupervisorCandid
  *    替代通知已由监督器先行发出。boot 直断不经本函数（孤儿恢复层直断 + in-flight
  *    的重启中断 error 语义由 finalizeOrphanRecord 落位，见 supervisor.bootPartition 头注）。
  *  - 磁盘态（内存无 + findLightById 命中，boot 重认领后看门狗到期的形态）：终态
- *    entry 落盘（reportSubagentRecord）+ finalized sidecar（best-effort，对齐孤儿
- *    恢复形态）——不走 finalizeRecord（无内存 record，archive/CAS 不适用），其注销
- *    由对账 sweep（发射点⑤「record 终态 → 差集补发」）收口。
+ *    写面归口 store.markFinalized（[U2b/G1 收口] `.state` writeSync + entry/archive +
+ *    manifest + `.alive` release，D8 写序——原 store 外终态 sidecar 直写 + 终态
+ *    entry 直写两段独立 best-effort 直写点消灭；`.state` 重试耗尽返回
+ *    false = 零持久化副作用，record 留 running 由 boot 孤儿恢复终态化承接，§3.4）
+ *    ——不走 finalizeRecord（无内存 record，archive/CAS 不适用），其注销由对账
+ *    sweep（发射点⑤「record 终态 → 差集补发」）收口。
  */
 async function supervisorGiveUp(
   binding: RoundSupervisorBinding,
@@ -162,21 +167,57 @@ async function supervisorGiveUp(
   // 磁盘态分支（boot 重认领后的放弃——record 不在内存）。
   const disk = store.findLightById(recordId);
   if (disk === undefined) return;
-  if (disk.sessionFile) {
-    try {
-      writeFinalizedState(disk.sessionFile, "gc");
-    } catch (err) {
-      bestEffort(err, `round supervisor give-up sidecar (${recordId})`);
-    }
-  }
+  // 终态投影 record 由磁盘 light 投影重建（createRecord 先例 = cold-lookup 的
+  // resurrectColdRecord：identity 域经 identity 入参、readonly engineHandle 经构造
+  // spread、运行态域随后补写——origin/parentRunId 不迁 [workflow origin 豁免 adopt
+  // 链，本分支不可达]）。markFinalized 的 entry 面 = recordToSubagent 投影，磁盘
+  // 投影的 result/turns/totalTokens 等终态快照字段随重建保真。
+  const record: ExecutionRecord = {
+    ...createRecord(recordId, {
+      agent: disk.agent,
+      model: disk.model,
+      thinkingLevel: disk.thinkingLevel,
+      mode: disk.mode,
+      task: disk.task,
+      slug: disk.slug,
+      startedAt: disk.startedAt,
+      rootSessionId: disk.rootSessionId,
+      parentRecordId: disk.parentRecordId,
+      depth: disk.depth,
+      chatMode: disk.chatMode === true,
+      engine: disk.engine,
+      engineFallback: disk.engineFallback,
+      collectMode: disk.collectMode,
+    }),
+    ...(disk.engineHandle !== undefined ? { engineHandle: disk.engineHandle } : {}),
+  };
+  record.sessionFile = disk.sessionFile;
+  record.round = disk.round;
+  record.resumable = disk.resumable;
+  record.hadWorktree = disk.worktree === true;
+  record.result = disk.result;
+  record.turnCount = disk.turns;
+  record.totalTokens = disk.totalTokens;
+  record.error = errorText;
+  record.endedAt = Date.now();
+  // 防御：createRecord 产物恒 running，CAS 失败不可达（不终态化直接返回）。
+  if (!tryTransition(record, "closed", "gc")) return;
   try {
-    store.reportSubagentRecord({
-      ...disk,
-      status: "closed",
-      closedReason: "gc",
-      endedAt: Date.now(),
-      error: errorText,
-    });
+    const persisted = store.markFinalized(record, "gc");
+    if (!persisted) {
+      // [§3.4] `.state` 重试耗尽：store 层已 error 级留痕，此处补调用方语境 + GUI
+      // 通知面腿（对齐 doFinalizeRecord 同款接线）——record 留 running 形态，boot
+      // 孤儿恢复终态化承接。
+      logger.error(
+        `[subagents] round supervisor give-up terminal write failed (record=${recordId}); ` +
+          `record stays running on disk — boot orphan recovery will finalize it`,
+      );
+      binding.getPi()?.appendEntry?.("subagent:state-write-failed", {
+        id: recordId,
+        status: "closed",
+        closedReason: "gc",
+      });
+    }
   } catch (err) {
     bestEffort(err, `round supervisor give-up entry (${recordId})`, "error");
   }

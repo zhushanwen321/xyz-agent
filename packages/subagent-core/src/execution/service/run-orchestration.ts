@@ -484,12 +484,17 @@ export class RunOrchestration {
    * 本方法在 record.sessionFile 被回填的代码点落 `<sessionFile>.record-binding`
    * （id→file + rootSessionId 等身份域），record-store 扫描侧据它重建身份。
    *
-   * best-effort 记账面：绑定写失败只 warn（state-marker 内部），不阻断派发主路径；
-   * sessionFile 未回填（undefined）时静默跳过（绑定无从谈起）。
+   * [D3a v8 时机① / U2b] 本方法是 sessionFile 回填族（run 应答回填 ×3 站点）的
+   * 单一收口点——锚点确立即 acquireWriteLease 声明跨进程写权（fresh spawn 全程
+   * 声明，缺口 1 闭合；「宿主开始往 session 文件写即声明写权」）。acquire 失败
+   * 原样上抛（双写风险敞口必须响亮，D3c——禁止 best-effort 吞错续跑），由各回填
+   * 站点所在的 run 收敛 catch 按 run 失败收口；绑定写维持 best-effort（记账面）。
+   * sessionFile 未回填（undefined）时静默跳过（绑定无从谈起、亦无写权可声明）。
    */
   writeBindingForRecord(record: ExecutionRecord): void {
     const sessionFile = record.sessionFile;
     if (!sessionFile) return;
+    this.deps.getStore().acquireWriteLease(sessionFile, record.id);
     writeRecordBinding(sessionFile, {
       v: 1,
       recordId: record.id,
@@ -837,6 +842,7 @@ export class RunOrchestration {
   async finalizeEngineOutcome(record: ExecutionRecord, outcome: AgentOutcome): Promise<boolean> {
     if (outcome.sessionFile !== undefined) {
       record.sessionFile = outcome.sessionFile;
+      // [D3a 时机①] 统一入口 writeBindingForRecord 内 acquire 写权声明（U2b）。
       this.writeBindingForRecord(record);
     }
     if (
@@ -971,8 +977,14 @@ export class RunOrchestration {
     } else if (!aborted && result.success) {
       // [SP-5] one-shot 成功完成 → 保持 running（旧 idle），等待 message 触发 upgrade。
       // [H1 U2 / D7] 共享调用点恒传 success（行为零变化 G3——成功空文本回退
-      // doFinalizeRoundToIdle 的 one-shot 兜底 前值 ?? "(empty)"）。
-      await this.finalizeRoundToIdle(record, { kind: "success", content: result.text });
+      // markRoundIdle 的 one-shot 兜底 前值 ?? "(empty)"）。
+      // [U2b] 轮终簿记①-⑨归口 store.markRoundIdle（SP-5 成功分支与 chat 轮末共享轮终
+      // 语义；`.alive` 跨轮保留 [D3a/B5]——release 出口 = 终态原语/idle-GC 归档）。
+      // [W4 发射点②] 双轨期注销留调用方发射：store 簿记⑧经 setPendingUnregister 注入
+      //（U3 接线，未注入时 no-op）——接线后与本处的去重收口归 U5（对齐
+      // doFinalizeRoundToIdle 薄壳同款双轨形态）。
+      this.deps.getStore().markRoundIdle(record.id, { kind: "success", content: result.text });
+      this.deps.getNotifyHost().emitPendingUnregister(record.id, "running");
     } else if (!aborted && record.closeAfterRound === true) {
       // [M5] 优雅关闭挂起的失败轮：轮已完成即兑现 close 意图终态化（含本轮 result）。
       await this.consumeCloseAfterRound(record, result, "gc");
@@ -988,6 +1000,7 @@ export class RunOrchestration {
   outcomeToAgentResult(record: ExecutionRecord, outcome: AgentOutcome): AgentResult {
     if (outcome.sessionFile !== undefined) {
       record.sessionFile = outcome.sessionFile;
+      // [D3a 时机①] 统一入口 writeBindingForRecord 内 acquire 写权声明（U2b）。
       this.writeBindingForRecord(record);
     }
     return {
@@ -1149,7 +1162,8 @@ export class RunOrchestration {
         );
         if (outcome.sessionFile !== undefined) {
           record.sessionFile = outcome.sessionFile;
-          // [UF-1] 轮应答锚点落盘：跨重启后 coldLookupForAction 据此解析 id→file。
+          // [UF-1] 轮应答锚点落盘：跨重启后 coldLookupForAction 据此解析 id→file；
+          // [D3a 时机①] 统一入口内 acquire 写权声明（fresh 首轮与 resume 续轮同经）。
           this.writeBindingForRecord(record);
         }
         if (record.chatMode && continuation !== undefined) {
@@ -1396,9 +1410,8 @@ export class RunOrchestration {
    * 对话模式轮次完成收尾：委托 doFinalizeRoundToIdle（record 进 idle，保留内存 + worktree）。
    * 与 finalizeRecord 对称的委托方法，deps 同源注入。[H1 U2 / D7] 入参改轮终 outcome
    * 判别联合（成功 = content / 失败 = reason——result 写入规则归 finalize-record 单点）。
-   * Continuation 轮末分流（success/failed 两分支）与 one-shot SP-5 共享调用点（恒
-   * success）消费；chatMode 失败回退三旧调用点（watchdog/spawnFailure/roundFailed）
-   * 已 outcome 化适配（新编排不可达，删除归 U6）。
+   * Continuation 轮末分流（success/failed 两分支）消费；one-shot SP-5 共享点已
+   * [U2b] 改直连 store.markRoundIdle（settleOneShotOutcome 成功分支，不再经本方法）。
    */
   async finalizeRoundToIdle(
     record: ExecutionRecord,
