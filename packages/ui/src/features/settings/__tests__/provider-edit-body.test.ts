@@ -1102,7 +1102,7 @@ describe('R4 补口：类型 Select / quota 事件接线 / compat providerApi', 
     triggerEl.click()
     await flushPromises()
     const target = Array.from(document.body.querySelectorAll('[role="option"]'))
-      .find((el) => (el.textContent ?? '').includes(label))
+      .find((el): el is HTMLElement => (el.textContent ?? '').includes(label))
     expect(target).toBeTruthy()
     target!.dispatchEvent(new PointerEvent('pointerup', { bubbles: true }))
     target!.click()
