@@ -12,7 +12,11 @@
 //      result / closedReason 清除）+ `.alive` 不删 + pending:unregister 发射点②
 //      双轨期留调用方发射；
 //   4. workflow 域（executeAndAwait → runAndFinalize → outcomeToAgentResult 主回填
-//      点）：sessionFile 回填后 `.alive` 存在且 pid=本进程。
+//      点）：sessionFile 回填后 `.alive` 存在且 pid=本进程；
+//   5. [U2b 修复轮/D2] adoptEngineDeath 归口（adoptResumableAfterEngineDeath 三写
+//      error/result/resumable 语义等价，真实 store 链）。轮始 markRoundStarted 接线
+//      的真实链用例在 conversation-continuation.test.ts 集成面（续聊派发即清
+//      result/resumable + round 累加链不断）。
 //
 // 测试纪律：registerFakePiEngine 协议替身（conversation-continuation.test.ts 同源
 // setup 形态，真实 timers + vi.waitFor）；sessionFile/marker 全部落 mkdtemp 自建目录；
@@ -159,10 +163,52 @@ describe("spawn 侧写权声明挂钩（D3a v8 时机①——U2b/C3）", () => 
 
       // adopt 分支：record 保持 resumable 交监督器（不终态化 → 写权声明不释放）
       expect(adopted).toBe(true);
-      expect(record.resumable).toBe(true);
       expect(record.error).toContain("engine crashed");
       expect(record.sessionFile).toBe(sessionFile);
       expect(readAliveMarker(sessionFile)).toMatchObject({ pid: process.pid, id: "bg-adopt" });
+    } finally {
+      h.service.dispose();
+      clearEngines();
+      fs.rmSync(h.agentDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
+    }
+  });
+
+  it("[U2b 修复轮/D2] adoptEngineDeath 归口：error/result/resumable 三写语义等价（真实 store 链）", async () => {
+    const h = makeService();
+    try {
+      const sessionFile = path.join(h.agentDir, "adopt-writes.jsonl");
+      fs.writeFileSync(sessionFile, "{}\n", "utf-8");
+      const record = createRecord("bg-adopt-writes", {
+        agent: "general-purpose",
+        model: "prov/model-1",
+        mode: "background",
+        task: "t",
+        slug: "adopt",
+        startedAt: 1000,
+        rootSessionId: "root-session",
+        controller: new AbortController(),
+      });
+      // 收养前形态：上一轮 result 在盘 + 无 resumable 信号（被收养对象的典型前置）
+      record.result = "previous round output";
+      record.resumable = undefined;
+      h.store.register(record);
+
+      const adopted = await h.runOrchestration.finalizeEngineOutcome(record, {
+        content: "",
+        engineId: "zcode",
+        error: "engine crashed: SIGKILL",
+        exitCode: null,
+        sessionFile,
+      });
+
+      expect(adopted).toBe(true);
+      // 三写等价（store.adoptEngineDeath）：error 如实 + result 清（禁旧正文冒充
+      // 收养后产出）+ resumable=true（GUI waiting 判据）
+      expect(record.error).toBe("engine crashed: SIGKILL");
+      expect(record.result).toBeUndefined();
+      expect(record.resumable).toBe(true);
+      // 归口不改变 adopt 分支的产品语义：保持 running（不终态化、交监督器）
+      expect(record.status).toBe("running");
     } finally {
       h.service.dispose();
       clearEngines();

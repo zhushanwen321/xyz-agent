@@ -71,7 +71,8 @@ interface HostCalls {
   killStale: string[];
   killedRound: Array<{ recordId: string; source: string }>;
   revived: string[];
-  transitions: string[];
+  /** [U2b 修复轮/D2] 轮始簿记委托达点（markRoundStarted host 成员）。 */
+  roundStarts: string[];
   closed: string[];
   gateAllows: boolean;
 }
@@ -107,7 +108,7 @@ function makeHost(record: ExecutionRecord, overrides: Partial<HostCalls> = {}): 
     killStale: [],
     killedRound: [],
     revived: [],
-    transitions: [],
+    roundStarts: [],
     closed: [],
     gateAllows: true,
     ...overrides,
@@ -145,8 +146,11 @@ function makeHost(record: ExecutionRecord, overrides: Partial<HostCalls> = {}): 
     reviveClosedRecord: (rec) => {
       calls.revived.push(rec.id);
     },
-    reportRecordTransition: (rec) => {
-      calls.transitions.push(rec.id);
+    markRoundStarted: (rec) => {
+      // [U2b 修复轮/D2] mock host 记委托达点；record 实际清除语义由真实 store 链
+      // 在集成面验证（下方「轮始 markRoundStarted 接线」用例）。
+      calls.order.push(`roundStart:${rec.id}`);
+      calls.roundStarts.push(rec.id);
     },
     closeNow: async (rec) => {
       calls.closed.push(rec.id);
@@ -467,7 +471,7 @@ describe("ConversationContinuation — 轮末分流（D7）与通知面", () => 
     expect(record.status).toBe("running"); // kill 本身不终态化——收口归 run 应答
   });
 
-  it("派发前执行态信号清除（承接 resumeColdRound：result/resumable 清 + 迁移上报）", async () => {
+  it("派发前轮始簿记（[U2b/D2] 归口 store.markRoundStarted——host 委托达点先于 dispatch）", async () => {
     const record = makeRecord({ sessionFile: "/tmp/s.jsonl", round: 1 });
     record.result = "上一轮增量";
     record.resumable = true;
@@ -477,9 +481,13 @@ describe("ConversationContinuation — 轮末分流（D7）与通知面", () => 
     cont.onMessage("next");
 
     await vi.waitFor(() => expect(calls.dispatched.length).toBe(1));
-    expect(record.result).toBeUndefined();
-    expect(record.resumable).toBeUndefined();
-    expect(calls.transitions).toEqual([record.id]);
+    // 轮始簿记经 host.markRoundStarted 委托 store 原语（status=running + result/
+    // resumable 清除 + 迁移上报一体——原三行现场写消灭）；record 实际清除语义由
+    // 真实 store 链在集成面验证。委托先于 dispatch（spinner 恢复时序锚点）。
+    expect(calls.roundStarts).toEqual([record.id]);
+    expect(calls.order.indexOf(`roundStart:${record.id}`)).toBeLessThan(
+      calls.order.indexOf(`dispatch:${record.id}`),
+    );
   });
 
   it("[A2] drain 守卫失败 → 不 throw（无 unhandled rejection）+ 队列丢弃失败通知 + queue 清空（锚点缺失触发链）+ 丢弃通知独立 dedup 身份过真实去重链", async () => {
@@ -719,6 +727,26 @@ describe("集成：chat 轮末分流（D7）——成功轮 / 失败轮 / 空正
     expect(record.result).not.toContain("stale engine_crashed");
   });
 
+  it("[U2b 修复轮/D2] 轮始 markRoundStarted 接线（真实 store 链）：派发即清上一轮 result/resumable，轮终 round 累加链不断", async () => {
+    const record = makeChatRecord("sa-round-start", agentDir);
+    record.result = "round 1 text";
+    record.resumable = true;
+    store.register(record);
+
+    await service.chatActions.deliverChatMessage(record, "round two");
+    await vi.waitFor(() => expect(fake.runs.length).toBe(1));
+    // 轮在途：轮始簿记（store.markRoundStarted）已清执行态信号——isStreaming 公式
+    //（result undefined 才显示 streaming）经归口原语达成，status 重申 running。
+    expect(record.result).toBeUndefined();
+    expect(record.resumable).toBeUndefined();
+    expect(record.status).toBe("running");
+    // 轮终链不断：markRoundIdle round+1 + 新一轮 result 写入（round 累加链回归锚）
+    fake.runs[0]!.settle({ content: "round two reply" });
+    await vi.waitFor(() => expect(record.round).toBe(2));
+    expect(record.result).toBe("round two reply");
+    expect(record.resumable).toBe(true);
+  });
+
   it("失败轮：round 同样 +1 + result = 前值 ?? 失败摘要 + lastError 写入 + 失败通知单发（正文带失败摘要与恢复指引）", async () => {
     const record = makeChatRecord("sa-round-fail", agentDir);
     record.result = "first round output"; // 前值（有最后成功正文则保留）
@@ -730,7 +758,7 @@ describe("集成：chat 轮末分流（D7）——成功轮 / 失败轮 / 空正
 
     await vi.waitFor(() => expect(record.round).toBe(2));
     // D7 失败轮写入规则：result = 前值 ?? 失败摘要。Continuation 主链轮始已清
-    // result（执行态信号清除承接 resumeColdRound——isStreaming 语义），前值分支
+    // result（[U2b/D2] markRoundStarted 归口——isStreaming 语义），前值分支
     // 不可达 → 失败摘要；lastError 写失败原因
     expect(record.result).toBe("round did not complete: engine_round_crashed: child died");
     expect(record.lastError).toBe("engine_round_crashed: child died");

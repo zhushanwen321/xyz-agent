@@ -192,11 +192,11 @@ graph TD
 |------|------|------|---------|
 | U1 | committed | 1 | 核验 2026-09-12：领地吻合（cold-lookup.test.ts 裁量已登记）；subagent-core vitest 2937 passed / 4 skipped；P-B4 探针 PASS（pi dist appendCompaction 直驱，custom entry 全保留） |
 | U2a | committed | 1 | 核验 2026-09-12：B1-B6 全达成（grep 零命中 + 领地 74/74 绿 + D8 五行矩阵断言）；2 领地外触碰登记（record-access.ts 机械接线 +3 / delivery-methods.test.ts 适配 +9） |
-| U2b | committed | 1 | 核验 2026-09-12：C1-C3 达成（领地 39/39 绿 + 六名 grep 零命中 + D3a 闭环链断言）；C3 挂钩收口 writeBindingForRecord（max-lines 预算）登记；D2 移交修复轮续派 |
+| U2b | committed | 2 | 修复轮 2026-09-12：D2 两项落地（markRoundStarted host 置换 reportRecordTransition / adoptEngineDeath 归口），领地 48/48 绿、裸写 grep 零残留 |
 | U3 | committed | 1 | 核验 2026-09-12：D1+D3 达成（批写归口 grep 零命中 + manifestDir 接线 + 领地 46/46 绿）；D2 两项被领地封锁移交 U2b 修（见偏差登记表尾） |
 | U4b | committed | 1 | 核验 2026-09-12：3 文件领地吻合；E1 grep 仅注释残留；actions-core 41 + transparent-resume 15 单绿；transparent-resume 回归收账 |
 | U4a | committed | 1 | 核验 2026-09-12：F1-F5 达成（领地 106/106 绿 + externalInstance/ALIVE_SOFT_TIMEOUT_MS 代码级零残留 + doc-symbol-drift 绿 + tsc 零错） |
-| U4c | pending | 0 | — |
+| U4c | in-progress | 1 | 后台派发 2026-09-12（U3+U4a committed 解锁；含检查点② manifest 直读依赖面核实） |
 | U5 | pending | 0 | — |
 
 ## 7 残留风险与变更历史

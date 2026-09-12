@@ -98,8 +98,9 @@ export interface ContinuationHost {
   upgradeGateAllows(record: ExecutionRecord): boolean;
   /** D4 revive 格的宿主面：revive 后的 record register + 迁移上报（entry 落盘）。 */
   reviveClosedRecord(record: ExecutionRecord): void;
-  /** 轮始执行态迁移上报（reportRecordTransition——轮始信号清除后的 entry 落盘）。 */
-  reportRecordTransition(record: ExecutionRecord): void;
+  /** 轮始簿记（store.markRoundStarted：status=running + result/resumable 清除 +
+   *  迁移上报 entry 落盘——[U2b 修复轮/D2] 归口原 dispatchRoundAsync 三行现场写）。 */
+  markRoundStarted(record: ExecutionRecord): void;
   /** D4 close 行的立即终态化收口（closeChatIdle：doFinalizeRecord 语义 + notifyClosed）。 */
   closeNow(record: ExecutionRecord): Promise<void>;
 }
@@ -313,13 +314,13 @@ export class ConversationContinuation {
     const roundNo = (record.round ?? 0) + 1;
     this.activeRunId = `${record.id}#${roundNo}`;
     this.activeController = controller;
-    // 轮始执行态信号清除（承接 resumeColdRound 同款语义）：清上一轮 result 与
-    // resumable——§5.4 isStreaming 公式要求 result undefined 才显示 streaming，
-    // 不清则续轮流仍显示 waiting、spinner 无法恢复；随后显式上报迁移（类外状态
-    // 写点——entry 落盘让 GUI 派生缓存失效、从 waiting 切回 spinner）。
-    record.result = undefined;
-    record.resumable = undefined;
-    this.host.reportRecordTransition(record);
+    // 轮始簿记归口（[U2b 修复轮/D2] store.markRoundStarted：status=running 重申 +
+    // 清上一轮 result 与 resumable——§5.4 isStreaming 公式要求 result undefined 才
+    // 显示 streaming，不清则续轮流仍显示 waiting、spinner 无法恢复；迁移上报 entry
+    // 落盘让 GUI 派生缓存失效、从 waiting 切回 spinner。U1 原语簿记为原三行现场写
+    // 的超集，多出 notifyChange 刷新）。record 不在 store 内存的形态 = false 旁路
+    // debug 留痕（生产链路 Continuation 绑定的 record 恒在册）。
+    this.host.markRoundStarted(record);
     const concludeRound = (): void => {
       recordSignal.removeEventListener("abort", onRecordAbort);
     };

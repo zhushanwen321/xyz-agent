@@ -819,12 +819,14 @@ export class RunOrchestration {
    * 判据状态源钉死 record 级：写点只动 record 字段（resumable/result/error），
    * 不清镜像不查引擎——引擎进程被动重建（ensureConnected 退避重填镜像）不翻转
    * 本处置（纳管模型：死亡事件纳管、重建不解管）。
+   *
+   * [U2b 修复轮/D2] 三写簿记（error/result/resumable + 迁移上报）归口
+   * store.adoptEngineDeath（U1 原语簿记为直接三写的超集，多出 notifyChange 刷新）；
+   * 监督器编排（adoptOnProcessDeath）留调用方。record 不在 store 内存的形态 =
+   * false 旁路 debug 留痕（两调用点的 record 均为创建即注册的在册对象）。
    */
   adoptResumableAfterEngineDeath(record: ExecutionRecord, errMsg: string): void {
-    record.error = errMsg;
-    record.result = undefined;
-    record.resumable = true;
-    this.deps.getStore().reportRecordTransition(record);
+    this.deps.getStore().adoptEngineDeath(record.id, { error: errMsg });
     this.deps.getRoundSupervisor().adoptOnProcessDeath(record, errMsg);
   }
 
@@ -1325,7 +1327,10 @@ export class RunOrchestration {
         this.deps.getStore().register(rec);
         this.deps.getStore().reportRecordTransition(rec);
       },
-      reportRecordTransition: (rec) => this.deps.getStore().reportRecordTransition(rec),
+      // [U2b 修复轮/D2] 轮始簿记（store.markRoundStarted）——Continuation 的唯一轮始写点。
+      markRoundStarted: (rec) => {
+        this.deps.getStore().markRoundStarted(rec.id);
+      },
       closeNow: (rec) => this.deps.closeChatIdle(rec),
     });
     this.continuations.set(record.id, created);
