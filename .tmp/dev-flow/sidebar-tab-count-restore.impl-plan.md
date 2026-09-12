@@ -54,7 +54,7 @@ graph LR
 | Unit | 状态 | 轮次 | 证据指针 |
 |------|------|------|----------|
 | u-counts | committed | 1 | 主 agent 核验：领地 2 文件吻合；vitest 13/13 绿（useSidebarCounts.test.ts）；合理偏差 1 条已登记（§5） |
-| u-display | pending | 0 | — |
+| u-display | committed | 1 | 主 agent 核验：领地 4 文件吻合；vitest 14/14 绿（SegmentedTab.spec + sidebar-layout.test）；grep badge 零命中；自捕获修复 modelValue 漏声明（自引入，未外溢） |
 
 ## 7 残留风险与变更历史
 
