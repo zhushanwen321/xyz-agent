@@ -40,7 +40,8 @@ graph LR
 ## 4 测试策略
 
 - **增量**（单元开发期内）：`cd packages/renderer && npx vitest run <各领地测试文件>`（vitest，禁 node:test；命令取自 packages/renderer/package.json `test: vitest run`）
-- **全量**（收尾 Gate A）：`cd packages/renderer && npx vitest run` + `pnpm run lint`（全仓 lint，pre-commit 已验证 docs-only 变更全绿，本次为源码变更需复跑）
+- **全量**（收尾 Gate A）：`cd packages/renderer && npx vitest run` 0 failed + `pnpm run lint`（全仓 lint，pre-commit 已验证 docs-only 变更全绿，本次为源码变更需复跑）
+- **真机验收**（收尾 Gate B）：设计 §4 六场景逐行签收（归档扣减 / 增删联动 / 数字与列表不穿帮 / 焦点切换 / subagent 生命周期 / 性能自证）——归属阶段 5，非单测可替代
 - 待验证检查点：`useSidebarCounts` 引入 `useSessionStore` 循环依赖——由 u-counts 的 typecheck/vitest 通过即证（session store 为 core 薄壳 createSessionStore，预期无环）
 
 ## 5 合理偏差登记表
@@ -61,3 +62,4 @@ graph LR
 - **对抗式审查跳过记录**：设计文档尾注声明按「按改动大小匹配投入」未启用三 reviewer 审查循环，用户阅后明示「OK，决策确认，继续」（2026-09-12 对话确认）——视为用户明示跳过，登记于此。若阶段 3 一致性审查发现设计层问题，回滚本登记升级处理。
 - **认知外改动隔离**：工作区存在本会话外改动（`.tmp/dev-flow/subagent-record-persistence-consolidation.impl-plan.md`、`docs/design/timeout-zcode-turn-and-settled-watchdog.md`），全程不碰、不裹挟提交。
 - 2026-09-12 计划创建，双单元并行派发。
+- 2026-09-12 一致性审查第 1 轮（单 reviewer）：reasonable 3 条已登记（①sessionCount 用例超设计最低要求——无需回写 ②plugins tab 恒 0 显式处理——设计 §3.1 已补「挂载点占位不计数」 ③注释同步——已在 §5 偏差表）；unreasonable 2 条——[high] remove-persistent-decorations.test.ts TC1 打破全量红灯 → 修复批次派发（改写 TC1 + 复跑全量 0 failed）；[medium] 设计 §4 六场景未纳入验收 Gate → 本计划 §4 已补 Gate B 行，场景归属阶段 5 真机验收；doc_errors 2 条由主 agent 亲改设计文档（§3.1 listLoadError 过强表述改为「跟随 groups 现值」两态；§3.3 决策 1 影响面 + §5 U4 补记 remove-persistent-decorations.test.ts）。

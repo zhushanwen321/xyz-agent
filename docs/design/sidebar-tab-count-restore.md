@@ -64,9 +64,9 @@ runtime（WS 广播/RPC，既有链路，本次零改动）
 
 ### 3.1 终态（使用者视角）
 
-四个 tab 图标右侧显示最小号数字；数字为 0 时不渲染（避免一排 0 的噪音，与删除前 `v-if="tab.count > 0"` 行为一致）。派一个 subagent 后 Agents tab 立即出现「1」，结束归 0 消失；归档一个会话后 session 数字 −1；切换焦点 session 时 file / Agents / Flows 数字跟随变化、session 数字不变（全局口径）。
+四个 tab 图标右侧显示最小号数字；数字为 0 时不渲染（避免一排 0 的噪音，与删除前 `v-if="tab.count > 0"` 行为一致）。派一个 subagent 后 Agents tab 立即出现「1」，结束归 0 消失；归档一个会话后 session 数字 −1；切换焦点 session 时 file / Agents / Flows 数字跟随变化、session 数字不变（全局口径）。第 5 个 plugins tab 是挂载点占位（无 plugin 贡献时 ViewHost 自隐藏），不参与计数，恒不渲染数字。
 
-失败/边界路径：session 列表加载失败（`listLoadError`）时数字显示 0 即不渲染——错误态已由列表区的错误卡 + 重试按钮承载（`Sidebar.vue:75-83`），计数不重复报错；`useSessionMarkers` cache 未 hydrate 时首次读取自动触发 `ensureCache()`（既有行为），无额外处理。
+失败/边界路径：session 列表加载失败时计数跟随 groups 现值——首载失败（groups 本来为空）数字为 0 不渲染；重载失败时 groups 保留旧快照，数字与列表一致显示旧计数（满足「不穿帮」）。错误态由列表区的错误卡 + 重试按钮承载（`Sidebar.vue:75-83`），计数不重复报错；`useSessionMarkers` cache 未 hydrate 时首次读取自动触发 `ensureCache()`（既有行为），无额外处理。
 
 ### 3.2 方案对比
 
@@ -81,7 +81,7 @@ runtime（WS 广播/RPC，既有链路，本次零改动）
 ### 3.3 关键决策与权衡
 
 **决策 1：badge 蓝点随数字恢复一并移除。**
-依据 v6-master-spec §5.6「一态一手段」：同一状态只用一种视觉手段。「进行中 > 0」这个状态，数字本身已是更精确的表达（蓝点 = 数字 > 0 的有损投影），双手段并存违反 v6 克制原则。被否：保留蓝点 + 数字并存——信息冗余且视觉噪音。影响面：`sidebar-layout.test.ts` D5「badge 位置」用例与 `SegmentedTab.spec.ts` badge 断言需同步改写（见 §5）。
+依据 v6-master-spec §5.6「一态一手段」：同一状态只用一种视觉手段。「进行中 > 0」这个状态，数字本身已是更精确的表达（蓝点 = 数字 > 0 的有损投影），双手段并存违反 v6 克制原则。被否：保留蓝点 + 数字并存——信息冗余且视觉噪音。影响面：`sidebar-layout.test.ts` D5「badge 位置」用例、`SegmentedTab.spec.ts` badge 断言、以及存量动画守卫测试 `remove-persistent-decorations.test.ts` TC1（其源码字符串断言「badge 本体保留」，已随本决策一并改写为「badge 已移除 + count 渲染存在」）（见 §5 U4）。
 
 **决策 2：文件数保持根层口径，不做递归。**
 文件树懒加载三态（`children?: undefined=未加载`）决定了 renderer 内存中根本没有全量文件清单；递归计数需要 eager 拉全树（一次大 IPC + 内存占用），为一个小数字付出真实开销，违反轻量约束。根层口径与删除前用户看到的数字一致，无感知差异。
@@ -114,7 +114,7 @@ runtime（WS 广播/RPC，既有链路，本次零改动）
 | U1 计数层 | `useSidebarCounts.ts` | 新增 `sessionCount` computed：`session.list` 长度 − 遍历 `isMarkedDone(sid)` 的归档数；依赖新增 `useSessionStore` + `useSessionMarkers` | 计数 SSOT 收口一处；可独立单测 |
 | U2 展示层 | `SegmentedTab.vue` | props 改为 `sessionCount` / `fileCount` / `subagentRunningCount` / `workflowRunningCount`（后两个沿用现名，值即「非结束」口径，不造新词）；tabs 定义恢复 `count` 字段与数字渲染（`text-[length:var(--text-3xs)] text-neutral-mid`，0 不渲染）；删除 badge span / badge 字段 | 纯展示恢复，决策 1/4 落点 |
 | U3 接线 | `Sidebar.vue` | `useSidebarCounts` 解构补 `fileCount` `sessionCount`，SegmentedTab 传 4 个 count | 唯一消费方 |
-| U4 测试 | `SegmentedTab.spec.ts`、`sidebar-layout.test.ts`（D5 段）、`useSidebarCounts.test.ts` | 恢复 count 渲染断言（git 历史可考旧断言形态）；D5 badge 位置用例改写为 count 断言；补 sessionCount 归档扣减用例（fake markers cache） | 守卫口径表 + 决策 1 |
+| U4 测试 | `SegmentedTab.spec.ts`、`sidebar-layout.test.ts`（D5 段）、`useSidebarCounts.test.ts`、`remove-persistent-decorations.test.ts`（TC1 随决策 1 改写） | 恢复 count 渲染断言（git 历史可考旧断言形态）；D5 badge 位置用例改写为 count 断言；补 sessionCount 归档扣减用例（fake markers cache） | 守卫口径表 + 决策 1 |
 
 **待验证**（设计阶段诚实标注）：`useSidebarCounts` 引入 `useSessionStore` 是否引入循环依赖——预计无（session store 是 core 薄壳，与 fileTree/subagent store 同层级），实施时 typecheck 即证。
 
