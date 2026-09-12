@@ -180,6 +180,40 @@ describe('crash-journal writer（真实 IO，tmp 隔离）', () => {
   })
 })
 
+describe('错误/降级路径（review S-12a：流写错误自愈与 close-轮转并发收口）', () => {
+  it('流异步写错误（档位是目录 → EISDIR）→ append 不抛、warn 出口 once、后续 append 惰性重开不放大', async () => {
+    // vi.resetModules + 动态 import：拿到干净的模块级 failureReported once 状态（既有
+    // 单例 describe 同款形态），并经 initCrashJournal 第二参注入可观测 sink
+    vi.resetModules()
+    const mod = await import('../crash-journal.js')
+    const warn = vi.fn()
+    // 目标档预建为目录：createWriteStream 同步返回流，异步 open EISDIR → 'error' 事件
+    mkdirSync(join(dataDir, 'logs', 'crashes', 'runtime.jsonl'), { recursive: true })
+    mod.initCrashJournal(dataDir, { warn, error: vi.fn() })
+    expect(() => mod.getCrashJournal().append(makeEvent(0))).not.toThrow()
+    await vi.waitFor(() => expect(warn).toHaveBeenCalledTimes(1))
+    expect(warn.mock.calls[0]![0]).toContain('write stream error')
+    // once 语义：继续 append（惰性重开仍失败）不再刷 warn（防失败风暴）
+    expect(() => mod.getCrashJournal().append(makeEvent(1))).not.toThrow()
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    expect(warn).toHaveBeenCalledTimes(1)
+    // close 可 await：降级后无活跃流，收口不挂起、不向调用链放大
+    await expect(mod.closeCrashJournal()).resolves.toBeUndefined()
+  })
+
+  it('轮转窗口内立即 close：close 等待轮转续体（pending 回放）完成后才 end，行不丢', async () => {
+    // 与既有「轮转边界不丢行」用例的差异：不在 append 间 tick 等轮转落地，而是触发
+    // 轮转后立即 close——覆盖 close 的 rotationInFlight await 分支（确定性收口路径）
+    const w = createCrashJournalWriter({ role: 'runtime', dataDir, maxFileBytes: 500 })
+    w.append(makeEvent(0))
+    w.append(makeEvent(1))
+    w.append(makeEvent(2)) // 2×~193B 后第三行超 500 → 触发轮转，本行入 pendingLines
+    await w.close() // 不 tick：内部先 await rotationInFlight 再 end 最终流
+    expect(parseLines(readSegment('runtime.jsonl.1')).map((r) => r.sessionId)).toEqual(['s-000', 's-001'])
+    expect(parseLines(readSegment('runtime.jsonl')).map((r) => r.sessionId)).toEqual(['s-002'])
+  })
+})
+
 describe('runtime 侧单例（initCrashJournal / getCrashJournal / closeCrashJournal）', () => {
   // 模块级单例状态经 vi.resetModules + 动态 import 隔离（logger-rotation.test.ts 同款）
   vi.resetModules()

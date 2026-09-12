@@ -369,6 +369,9 @@ export async function createWindow(
     )
   })
   win.webContents.on('render-process-gone', (_e, details) => {
+    // clean-exit = 正常退出路径（非崩溃，如 window.close 流程）：不计入 RecoveryPolicy、
+    // 不写台账、不 reload——否则污染评估器条件 #9（reload 计数）且与关窗流程存在竞态窗口
+    if (details?.reason === 'clean-exit') return
     // 详情落盘（u5a main-logger writer；E3 取证缺口修复：崩溃详情不再只有 dev console 一行）
     mainLogger.error('[window] render-process-gone', {
       windowId,

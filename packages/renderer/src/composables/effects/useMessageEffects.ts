@@ -49,7 +49,7 @@ const RESPAWN_PENDING_TIMEOUT_MS = 30_000
 /** 恢复超时 timer（sessionId → handle，模块级非响应式——对齐 streamSubscriptions 范式）。
  *  到期回调先查 respawnPending 分区（restored/熔断已清则 no-op），session 删除场景下
  *  disposeSession 清了分区 → 到期 no-op，timer 单发自清（30s 有界，无泄漏面）。 */
-// taste:allow-no-data-owner W24-EX-A（非 GUI 技术结构，timer 句柄簿记，对齐 streamSubscriptions 模块级 Map 范式）：恢复超时 timer Map（30s 单发自清，无持久化）
+// taste:allow-no-data-owner W24-EX-C（非 GUI 数据技术结构，已登记 §4 ⑧ 2026-09-12）：恢复超时 timer Map（30s 单发自清，无持久化）
 const respawnTimeoutTimers = new Map<string, ReturnType<typeof setTimeout>>()
 
 /** 清除恢复超时 timer（幂等）。 */

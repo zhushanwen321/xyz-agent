@@ -309,6 +309,31 @@ describe('推迟循环收口：在途清零 → countdown → 执行', () => {
     expect(h.onExecute).toHaveBeenCalledTimes(1)
     expect(h.handle.getStatus().state).toBe('rolling')
   })
+
+  it('countdown 相位二次 critical 且 heap 升至 FORCE_PCT → 硬升级 forced=hard-threshold（非 planned 记账）', async () => {
+    const h = startHarness({ countdownMs: 30_000 })
+    // Path A：无在途 → 首拍 critical 直接进 countdown（planned 排队，无台账事件）
+    h.handle.onMemoryPressure(criticalPayload())
+    await flushDecisions()
+    expect(h.handle.getStatus().state).toBe('countdown')
+    expect(h.journalAppend).not.toHaveBeenCalled()
+
+    // countdown 窗口内 heap 升至硬阈值 + 在途回升（与 countdown 进入时快照分异，验证 lastSummary 回退）
+    h.setHeapPercent(99)
+    h.setRelayInFlight(3)
+    h.handle.onMemoryPressure(criticalPayload())
+    await flushDecisions()
+
+    const forced = eventsOf(h.journalAppend, 'rolling-restart-forced')
+    expect(forced).toHaveLength(1)
+    expect(forced[0]?.reason).toBe('hard-threshold')
+    // 非 planned 记账（否则 D5 归因语义漂移：forced vs planned）
+    expect(eventsOf(h.journalAppend, 'rolling-restart')).toHaveLength(0)
+    expect(h.onExecute).toHaveBeenCalledTimes(1)
+    expect(h.handle.getStatus().state).toBe('rolling')
+    // lastSummary 回退：journal 的 inflight 用 countdown 进入时快照（0）而非复查时新评估（3）
+    expect(forced[0]?.inflight).toEqual(0)
+  })
 })
 
 describe('A3 errs 形态 status 相位（absent-report）', () => {

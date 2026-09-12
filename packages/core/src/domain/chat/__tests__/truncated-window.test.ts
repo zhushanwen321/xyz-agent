@@ -17,7 +17,7 @@ import type { Message } from '@xyz-agent/shared'
 import { createChatStore } from '../store'
 import { createUseChat, resetChatModuleStateForTest } from '../useChat'
 import type { UseChatDeps } from '../use-chat-types'
-import { historyWindowFromReply } from '../truncated-window'
+import { createTruncatedWindowController, historyWindowFromReply } from '../truncated-window'
 
 // ── 1. 归一函数 ──────────────────────────────────────────────────
 
@@ -182,5 +182,27 @@ describe('loadMoreHistory 游标翻页（[u6] 需求③：点击「加载更早�
     expect(f.chatStore.getMessages('s1').map((m) => m.id)).toEqual(['m1']) // 分区不变
     expect(f.useChat.hasMoreHistory('s1')).toBe(false) // 翻页到头收敛
     f.dispose()
+  })
+})
+
+describe('createTruncatedWindowController 工厂本体（review S-12c：不经 store 的纯控制器路径）', () => {
+  it('无记录 clearHistoryWindow 幂等 early-return：不抛、Map 不被无谓替换', () => {
+    const scope = effectScope(true)
+    const ctrl = scope.run(() => createTruncatedWindowController())!
+    expect(() => ctrl.clearHistoryWindow('never-hydrated')).not.toThrow()
+    expect(ctrl.getHistoryWindow('never-hydrated')).toBeUndefined()
+    expect(ctrl.historyWindows.value.size).toBe(0)
+    scope.stop()
+  })
+
+  it('set→get→clear 全链：写入可见、清除后回 undefined、二次 clear 幂等', () => {
+    const scope = effectScope(true)
+    const ctrl = scope.run(() => createTruncatedWindowController())!
+    ctrl.setHistoryWindow('s1', { truncated: true, loadedTurns: 3, totalTurnsEstimate: 9 })
+    expect(ctrl.getHistoryWindow('s1')).toEqual({ truncated: true, loadedTurns: 3, totalTurnsEstimate: 9 })
+    ctrl.clearHistoryWindow('s1')
+    expect(ctrl.getHistoryWindow('s1')).toBeUndefined()
+    expect(() => ctrl.clearHistoryWindow('s1')).not.toThrow()
+    scope.stop()
   })
 })

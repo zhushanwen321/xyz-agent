@@ -13,7 +13,7 @@
  * 会让过渡态失效，撤销是廉价正确性）。
  */
 
-// taste:allow-no-data-owner W24-EX-A（非 GUI 技术结构，对齐 useChat streamSubscriptions 模块级 Map 范式）：强制退出意图标记 Set（读后即清，无持久化无 GUI 消费）
+// taste:allow-no-data-owner W24-EX-C（非 GUI 数据技术结构，已登记 §4 ⑧ 2026-09-12）：强制退出意图标记 Set（读后即清，无持久化无 GUI 消费）
 const forcedExitSessionIds = new Set<string>()
 
 /** 标记「该 session 的退出将源于用户强制退出」（forceQuit RPC 发出前调用）。 */

@@ -165,7 +165,7 @@ async function onSaveAutoRename(enabled: boolean): Promise<void> {
   }
 }
 
-/** Select change：sentinel → 空串（跟随会话模型）；乐观更新 + 失败回滚。 */
+/** Select change：sentinel → 空串（跟随会话模型）；乐观更新 + 成功回填生效值 + 失败回滚。 */
 async function onRenameModelChange(value: unknown): Promise<void> {
   if (savingRenameModel.value) return
   const next = fromSelectValue(value)
@@ -173,7 +173,8 @@ async function onRenameModelChange(value: unknown): Promise<void> {
   const prev = renameModel.value
   renameModel.value = next
   try {
-    await setRenameModel(next)
+    const reply = await setRenameModel(next)
+    renameModel.value = reply.model
     toastInfo(t('settings.system.saved'))
   } catch (_e) {
     renameModel.value = prev
@@ -194,7 +195,10 @@ async function onRenameModeChange(value: unknown): Promise<void> {
   const prev = renameMode.value
   renameMode.value = value
   try {
-    await setRenameMode(value)
+    // 成功后回填 runtime 归一后的生效值（reply.mode，非法值由 runtime 归一为默认 first-stop），
+    // 避免本地乐观值与实际生效值漂移
+    const reply = await setRenameMode(value)
+    renameMode.value = reply.mode
     toastInfo(
       !autoRenameEnabled.value && value !== 'agent-tool'
         ? t('settings.system.renameModeSwitchedAutoDisabled')

@@ -17,9 +17,14 @@
 //
 // 语义（D5）：每帧携带**绝对计数**（getInFlightSnapshot，谓词与 core 内
 // hasRunningBackground 同源），非增量；初始上报（initial）触发时点 = extension 加载
-// 完成——factory 阶段拿不到 ctx/ui（pi loader 事实，plugin-bridge session_start 同款
-// 注释），session_start 是 pi 启动序列里最早带 ctx 的钩子 = 「session 就绪」，即设计
-// 所指加载完成时点；不挂任何懒触发（无 subagent 的 session 也必上报）。
+// 完成——factory 阶段拿不到 ctx/ui（pi 0.84.4 实装：dist/core/extensions/loader.js:463
+// await factory(load.api) 只收静态注册面 API（registerTool/events.on…，
+// createExtensionAPI :209 函数体无 ui 字段）；per-session ctx 由
+// dist/core/extensions/runner.js createContext() :503（get ui :508）在事件派发时点
+// 构造，emit :624 每次现场建 ctx）——session_start 是 pi 启动序列里最早带 ctx 的钩子
+// （dist/core/agent-session.js:1919 _extensionRunner.emit(_sessionStartEvent)，默认
+// 事件 :152）= 「session 就绪」，即设计所指加载完成时点；不挂任何懒触发（无 subagent
+// 的 session 也必上报）。
 //
 // 失败语义（D5 缺席语义②）：select 失败（超时/通道异常/非确认回包）折叠后**延迟重试
 // 直至成功一次**。送达判据 = runtime resolve 的确认回包（INFLIGHT_REPORT_ACK）——

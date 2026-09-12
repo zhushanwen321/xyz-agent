@@ -615,6 +615,11 @@ function buildRollingRestartRow(
   if (mainEvents.length === 0 && runtimeEvents.length === 0) {
     return { ...base, threshold, status: 'no-data', currentValue: '台账无事件', note: joinNotes([mainNoData, runtimeNoData]) }
   }
+  // rolling-restart 事件族全由 runtime writer 写：runtime 台账缺失时双空判据会漏判
+  // （main 非空 → 四子句全 0 判 ok），主数据源缺失必须独立呈现 no-data
+  if (runtimeEvents.length === 0 && runtimeNoData !== undefined) {
+    return { ...base, threshold, status: 'no-data', currentValue: 'runtime 台账缺失', note: joinNotes([runtimeNoData, mainNoData]) }
+  }
   const merged = [...mainEvents, ...runtimeEvents]
   const restarts = selectInWindow(merged, isRollingRestart, nowMs, WEEK_MS)
   const deferred = selectInWindow(merged, isRollingDeferred, nowMs, MONTH_MS)

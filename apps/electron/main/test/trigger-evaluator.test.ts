@@ -222,7 +222,9 @@ describe('计数类两态', () => {
 // ── #8 四子句（含 absent-report 排除子句单独断言）────────────────────────────
 
 describe('#8 滚动重启四子句', () => {
-  const rollingRestartAt = (tsMs: number): string[] => [ev(tsMs, { layer: 'main', event: 'rolling-restart' })]
+  // rolling-restart 事件族由 runtime writer 写（rolling-restart.ts 恒 layer:'runtime'）：
+  // 构造放 runtime 台账。runtime 空而 main 有事件时 #8 显式 no-data（数据源缺失非 ok）
+  const rollingRestartAt = (tsMs: number): string[] => [ev(tsMs, { layer: 'runtime', event: 'rolling-restart' })]
   const deferredAt = (tsMs: number, sessionId?: string, reason?: string): string[] => [
     ev(tsMs, { layer: 'runtime', event: 'rolling-restart-deferred', sessionId, reason }),
   ]
@@ -231,12 +233,12 @@ describe('#8 滚动重启四子句', () => {
   ]
 
   it('子句 a：滚动重启 1 次/周 ok、2 次/周 tripped、出 7 天窗不计', () => {
-    expect(rowById(evaluate(rollingRestartAt(T0 - DAY), [], T0).rows, 8).status).toBe('ok')
+    expect(rowById(evaluate([], rollingRestartAt(T0 - DAY), T0).rows, 8).status).toBe('ok')
     expect(
-      rowById(evaluate([...rollingRestartAt(T0 - DAY), ...rollingRestartAt(T0 - 2 * DAY)], [], T0).rows, 8).status,
+      rowById(evaluate([], [...rollingRestartAt(T0 - DAY), ...rollingRestartAt(T0 - 2 * DAY)], T0).rows, 8).status,
     ).toBe('tripped')
     expect(
-      rowById(evaluate([...rollingRestartAt(T0 - 8 * DAY), ...rollingRestartAt(T0 - 9 * DAY)], [], T0).rows, 8).status,
+      rowById(evaluate([], [...rollingRestartAt(T0 - 8 * DAY), ...rollingRestartAt(T0 - 9 * DAY)], T0).rows, 8).status,
     ).toBe('ok')
   })
 
@@ -323,6 +325,16 @@ describe('#8 滚动重启四子句', () => {
     const tripped = evaluate(rollingRestartAt(T0 - DAY), deferredAt(T0 - DAY, 's1'), T0)
     expect(rowById(tripped.rows, 8).currentValue).toContain('1/7天')
     expect(rowById(tripped.rows, 8).currentValue).toContain('1/30天')
+  })
+
+  it('main 非空 + runtime 空 → #8 显式 no-data「runtime 台账缺失」（数据源缺失非 ok）', () => {
+    // rolling-restart 事件族全由 runtime writer 写：main 有事件（有锚点）但 runtime 台账空时，
+    // 双空判据不命中——主数据源缺失必须独立呈现 no-data，不得降级为全 0 判 ok
+    const mainOnly = evaluate(rollingRestartAt(T0 - DAY), [], T0)
+    const row = rowById(mainOnly.rows, 8)
+    expect(row.status).toBe('no-data')
+    expect(row.currentValue).toContain('runtime 台账缺失')
+    expect(row.note).toContain('runtime 台账无事件')
   })
 })
 

@@ -12,7 +12,7 @@
 // fs 目标全部 mkdtemp(tmpdir) 自建自删（仓规测试红线）。
 
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { mkdtempSync, existsSync, readFileSync, writeFileSync, statSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, existsSync, readFileSync, writeFileSync, statSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -126,5 +126,30 @@ describe("SizeRotatedAppendStream（D6-⑦ stderr 取证面 size 自轮转）", 
     await waitForContent(file, "nested\n");
     s.end();
     expect(statSync(file).size).toBeGreaterThan(0);
+  });
+
+  it("打开失败（父路径被文件占用，mkdir ENOTDIR）→ failed 置位、后续 write 静默 no-op、不向上抛", () => {
+    const blocker = join(dir, "blocker");
+    writeFileSync(blocker, "x");
+    const s = new SizeRotatedAppendStream(join(blocker, "nested", "stderr.log"), 1024);
+    expect(() => s.write("chunk\n")).not.toThrow();
+    expect(s.failed).toBe(true);
+    expect(s.bytesWrittenCount).toBe(0);
+    s.write("after-fail\n"); // failed 短路：静默 no-op（调用方读 failed 决定停止写入）
+    s.end();
+  });
+
+  it("轮转 rename 失败降级（.1 被目录占位）：新流续写主文件，数据不丢仅丢滚动、不置 failed", async () => {
+    const file = join(dir, "zcode-appserver-stderr.log");
+    mkdirSync(`${file}.1`); // 占位 .1 → rotate 的 renameSync(file, file.1) EISDIR 失败
+    const s = new SizeRotatedAppendStream(file, 32);
+    s.write("A".repeat(24) + "\n");
+    await waitForContent(file, "A");
+    s.write("B".repeat(40) + "\n"); // 25+41 > 32 → 触发轮转；rename 失败 → catch 后新流续写主文件
+    await waitForContent(file, "B");
+    expect(s.failed).toBe(false); // rename 失败仅丢失滚动，数据不丢，不置 failed
+    expect(readFileSync(file, "utf8")).toBe("A".repeat(24) + "\n" + "B".repeat(40) + "\n");
+    expect(statSync(`${file}.1`).isDirectory()).toBe(true); // 目录占位未被覆盖
+    s.end();
   });
 });

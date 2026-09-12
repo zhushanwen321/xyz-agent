@@ -75,8 +75,9 @@ export function parseSubagentDirective(content: unknown, details: unknown): Suba
  *
  * pi 进程非主动退出后自动恢复（session.restored / session.restoreFailed 推送）时，
  * renderer 在对话流插入的 ephemeral 系统提示条（Message.customType = 本常量）。
- * 该提示条是 runtime 生成的 live-only 消息（pi session JSONL 无对应 entry，写入点置
- * liveOnly:true）——重开 session 后不出现，属一次性通知语义。
+ * 该提示条是 runtime 推送 session.restored / session.restoreFailed 帧、renderer
+ * （core chat store appendRespawnNotice）据此插入的 live-only 提示条（pi session
+ * JSONL 无对应 entry，写入点置 liveOnly:true）——重开 session 后不出现，属一次性通知语义。
  *
  * 与 SUBAGENT_DIRECTIVE_CUSTOM_TYPE 同款约定：写入方（core chat store
  * appendRespawnNotice）与渲染方（ui SystemNotice 分支）共用本常量，禁字面量漂移。

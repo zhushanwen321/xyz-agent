@@ -16,8 +16,8 @@
           "reason": "代码层静态 import guiComponent/guiResult/isGuiCapable 等 GUI 原语（interface/helpers.ts、gui-mappers.ts、tool-workflow.ts 等 top-level import），缺失时模块加载即抛 Cannot find module，是强依赖"
         },
         {
-          "package": "@xyz-agent/session-delivery",
-          "type": "package",
+          "package": "@zhushanwen/pi-structured-output",
+          "type": "runtime",
           "reason": "subagent 执行 + workflow 编排两端均需 structured-output 扩展加载以提供 schema 结构化输出 tool（代码层不 import，仅运行时 tool 名引用）"
         },
         {

@@ -48,11 +48,11 @@ interface ImageCacheGlobalState {
   writePort: ImageCacheWritePort | undefined
   /** 内容 hash → 落盘路径（@data-owner #35：主表 #35 图片缓存记账层，派生缓存非第二写方） */
   imagePaths: Map<string, string>
-  /** 内容 hash → in-flight 写入 Promise（同内容并发请求共享，防双写） */
+  /** 内容 hash → in-flight 写入 Promise（同内容并发请求共享，防双写；@data-owner #35：主表 #35 图片缓存记账层，派生缓存非第二写方） */
   inflightWrites: Map<string, Promise<string | undefined>>
   /** session 帽满标记（@data-owner #35：main 回执 quota-full 的派生投影；hydrate 重判 + disposeSession 失效，见下） */
   quotaFullSessions: Set<string>
-  /** sessionId → 该 session 落盘图的内容 hash 键集（dispose 按_sid 清理 imagePaths 的索引） */
+  /** sessionId → 该 session 落盘图的内容 hash 键集（dispose 按_sid 清理 imagePaths 的索引；@data-owner #35：主表 #35 图片缓存记账层，派生缓存非第二写方） */
   sessionImageKeys: Map<string, Set<string>>
 }
 

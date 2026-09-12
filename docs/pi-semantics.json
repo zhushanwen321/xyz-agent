@@ -772,5 +772,22 @@
    "note": "消费面：方案 B（xyz-agent 数据布局与 pi 同构）成立前提之一——托管数据目录内 settings.json 的 sessionDir 恒空，pi 才走默认派生（PS-34）；迁移脚本（scripts/migrate-pi-layout-v2.mjs）步骤 5 校验清除该字段。pi 升级时重验：getSessionDir 是否仍直读 settings.sessionDir 且无副作用、是否新增 sessionDir 写入路径"
   },
   "verifiedWith": "0.84.4"
+ },
+ {
+  "id": "PS-37",
+  "claim": "pi agent-session turn 收尾序列：message_end 事件 handler 先于本条 entry 落盘 append（agent-session.js _handleAgentEvent 内 :384 await this._emitExtensionEvent(event)（注释 Emit to extensions first）→ :398 this.sessionManager.appendMessage(event.message)）——message_end(role=user) handler 内 getEntries() 计数不含本条，探针 P1 已实测（rename-session-three-modes.md §3.4，2026-09-12 u1 实测 dcc189dc4：entries 不含本条）",
+  "piAnchor": [
+   {
+    "pkg": "pi-coding-agent",
+    "distPath": "dist/core/agent-session.js",
+    "symbol": "_handleAgentEvent turn 收尾序列（Emit to extensions first）",
+    "note": ":384 await this._emitExtensionEvent(event) → :386 this._emit(...) 监听器 → :388 if (event.type === \"message_end\") → :398 this.sessionManager.appendMessage(event.message)（user/assistant/toolResult 落盘为 SessionMessageEntry）——handler 先于本条 append"
+   }
+  ],
+  "guard": {
+   "type": "observe",
+   "note": "消费面：rename-session first-prompt 谓词（pure.ts countUserMessages，设计 rename-session-three-modes.md D2）——message_end(user) handler 内 entries 计数 === 0 ⇔ 本条即 session 首条 user；顺序反转则首 turn 标题生成停触发（首条被判非首条）。单测 TC-M1/M3（index.test.ts）以 entries 空/含 user 编码该契约（mock 不验证 pi 侧真实顺序）。pi 升级时重验：_emitExtensionEvent 与 appendMessage 的相对顺序"
+  },
+  "verifiedWith": "0.84.4"
  }
 ]

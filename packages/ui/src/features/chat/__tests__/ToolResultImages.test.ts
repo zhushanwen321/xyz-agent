@@ -110,4 +110,26 @@ describe('ToolResultImages', () => {
     await vi.waitFor(() => expect(wrapper.find('[data-testid="tool-image-placeholder"]').exists()).toBe(true))
     expect(calls).toBe(2)
   })
+
+  it('sessionId 缺省（null）→ fallback badge 且不发起写盘（无 session 分区键无法落盘）', async () => {
+    let calls = 0
+    setImageCacheWritePort(() => {
+      calls++
+      return Promise.resolve({ results: [], quotaFull: false })
+    })
+    const wrapper = mount(ToolResultImages, { props: { sessionId: null, images: [pngImg()] } })
+    await vi.waitFor(() => expect(wrapper.find('[data-testid="tool-image-fallback"]').exists()).toBe(true))
+    expect(calls).toBe(0)
+  })
+
+  it('img 加载失败（@error）→ 降级 badge（文件被清理/损坏的运行期降级）', async () => {
+    setImageCacheWritePort(
+      makePort({ results: [{ status: 'written', path: '/data/cache/images/s6/gone.png', bytes: 5 }], quotaFull: false }),
+    )
+    const wrapper = mount(ToolResultImages, { props: { sessionId: 's6', images: [pngImg()] } })
+    await vi.waitFor(() => expect(wrapper.find('[data-testid="tool-image"]').exists()).toBe(true))
+    await wrapper.find('[data-testid="tool-image"]').trigger('error')
+    await vi.waitFor(() => expect(wrapper.find('[data-testid="tool-image-fallback"]').exists()).toBe(true))
+    expect(wrapper.find('[data-testid="tool-image"]').exists()).toBe(false)
+  })
 })

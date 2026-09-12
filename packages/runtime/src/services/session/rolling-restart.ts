@@ -406,7 +406,16 @@ export function startRollingRestart(options: RollingRestartOptions = {}): Rollin
 
   /** critical 档决策入口（fire-and-forget；判定含异步 memPressure 查询）。 */
   async function decide(): Promise<void> {
-    if (executed || phase !== 'idle') return
+    if (executed) return
+    // countdown 相位复查硬升级（S-4）：30s 窗口内 heap 升至 force 阈值 → 升级立即执行，
+    // 按 forced=hard-threshold 记账（否则最终以 planned 记账，与 D5 归因语义漂移）
+    if (phase === 'countdown') {
+      if (await isHardUpgrade()) {
+        execute('hard-threshold', lastSummary ?? evaluateInflight().summary)
+      }
+      return
+    }
+    if (phase !== 'idle') return
     if (await isHardUpgrade()) {
       execute('hard-threshold', evaluateInflight().summary)
       return

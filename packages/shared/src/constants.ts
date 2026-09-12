@@ -354,11 +354,12 @@ export const DEFAULT_LOG_KEEP_DAYS = 7 as const
  * （未设 / 空串 / '0' / 非数字 NaN）回退默认；负数 truthy 透传（现状即如此，
  * 等价提升不在函数内另加校验）。
  *
- * **Node-only：本文件被 renderer 大量 re-export，renderer 严禁 import 本函数
- * （process 未定义 ReferenceError）。** 消费方仅限 main / runtime（Node 进程）。
+ * **默认参读 process.env：本文件被 renderer 大量 re-export，renderer 无参调用即
+ * ReferenceError（浏览器无 process）——renderer 消费须显式传 env（如 `{}`）**；
+ * main / runtime（Node 进程）走默认参。
  */
-export function readLogKeepDays(): number {
-  return Number(process.env.XYZ_LOG_KEEP_DAYS) || DEFAULT_LOG_KEEP_DAYS
+export function readLogKeepDays(env: Record<string, string | undefined> = process.env): number {
+  return Number(env.XYZ_LOG_KEEP_DAYS) || DEFAULT_LOG_KEEP_DAYS
 }
 
 // ── 空闲 pi 进程回收（idle-pi-reclamation D4，实施计划 u3）──

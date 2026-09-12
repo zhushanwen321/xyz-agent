@@ -221,6 +221,33 @@ describe('SystemAutoRenameSection 会话自动重命名开关', () => {
     expect(toastMock.info).toHaveBeenCalledWith(expect.stringContaining('已生效'))
   })
 
+  it('setRenameMode reply 归一值回填：runtime 生效值 ≠ 请求值时 UI 显示生效值', async () => {
+    // 初始 first-prompt（首次请求时）；请求选 agent-tool；runtime 把请求值归一为 first-stop ——
+    // UI 必须显示 reply 生效值（首轮回复完成），而非乐观更新的请求值（防本地与实际漂移）
+    settingsMock.getRenameMode.mockResolvedValue({ mode: 'first-prompt' })
+    settingsMock.setRenameMode.mockResolvedValue({ mode: 'first-stop' })
+    wrapper = mount(SystemAutoRenameSection, { props: { system: systemFixture() } })
+    await flushPromises()
+
+    const trigger = wrapper.find('[data-testid="setting-rename-mode"]').element as HTMLElement
+    trigger.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }))
+    trigger.click()
+    await flushPromises()
+
+    const options = document.body.querySelectorAll('[role="option"]')
+    const target = Array.from(options).find((el) => (el.textContent ?? '').includes('agent 自主命名'))
+    expect(target).toBeTruthy()
+    target!.dispatchEvent(new PointerEvent('pointerup', { bubbles: true }))
+    target!.click()
+    await flushPromises()
+
+    expect(settingsMock.setRenameMode).toHaveBeenCalledWith('agent-tool')
+    const triggerAfter = wrapper.find('[data-testid="setting-rename-mode"]')
+    expect(triggerAfter.text()).toContain('首轮回复完成')
+    expect(triggerAfter.text()).not.toContain('agent 自主命名')
+    expect(triggerAfter.text()).not.toContain('首次请求时')
+  })
+
   it('renameModeHint 说明开关依赖：自动生成需开关开启，agent 自主命名不受限', async () => {
     wrapper = mount(SystemAutoRenameSection, { props: { system: systemFixture() } })
     await flushPromises()

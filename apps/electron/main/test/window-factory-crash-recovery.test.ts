@@ -125,6 +125,15 @@ const mainLoggerStubs = {
 
 vi.mock('../logs/main-logger.js', () => ({ mainLogger: mainLoggerStubs }))
 
+// 台账断言面（clean-exit 早退用例）：捕获 append 调用；未 init 的真实单例 append 本就是 no-op，
+// mock 形态与 window-factory-crash-journal.test.ts 同款，不改变既有用例行为
+const crashJournalAppend = vi.hoisted(() => vi.fn())
+vi.mock('../logs/crash-journal.js', () => ({
+  crashJournal: { append: crashJournalAppend },
+  initCrashJournal: vi.fn(),
+  getCrashJournalDir: vi.fn(() => '/tmp/xyz-agent-test/crashes'),
+}))
+
 // ── 夹具 ───────────────────────────────────────────────────────────
 
 const FAKE_DATA_DIR = '/tmp/xyz-agent-crash-test-data'
@@ -212,6 +221,7 @@ describe('window-factory render-process-gone：自动 reload 与恢复标志', (
     FakeBrowserWindow.instances.length = 0
     for (const fn of Object.values(mainLoggerStubs)) fn.mockClear()
     for (const fn of Object.values(electronStubs)) fn.mockClear()
+    crashJournalAppend.mockClear()
     process.env.XYZ_AGENT_DATA_DIR = FAKE_DATA_DIR
     delete process.env.XYZ_E2E
   })
@@ -261,6 +271,21 @@ describe('window-factory render-process-gone：自动 reload 与恢复标志', (
     crash(win)
     const recovery = recoveryLoadFileCalls(win)
     expect(recovery[0].query?.sessionId).toBe('sess-1')
+  })
+
+  it("clean-exit（正常退出路径）：不计入 RecoveryPolicy、不写台账、不触发任何恢复加载", async () => {
+    const factory = (await loadFactory()) as unknown as FactoryModule
+    const win = await createProdWindow(factory, 'win-clean')
+    crash(win, 'clean-exit', 0)
+    // 早退：无详情落盘、无台账行、无恢复性加载（prod 形态全程无 loadURL）
+    expect(mainLoggerStubs.error).not.toHaveBeenCalled()
+    expect(crashJournalAppend).not.toHaveBeenCalled()
+    expect(recoveryLoadFileCalls(win)).toHaveLength(0)
+    expect(win.loadURL).not.toHaveBeenCalled()
+    // RecoveryPolicy 计数不受污染：clean-exit 后续真实连崩 3 次仍全部自动 reload（未占计数）
+    for (let i = 0; i < 3; i++) crash(win)
+    expect(recoveryLoadFileCalls(win)).toHaveLength(3)
+    expect(staticErrorPageCalls(win)).toHaveLength(0)
   })
 })
 

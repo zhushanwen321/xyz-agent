@@ -28,6 +28,10 @@
  *         <encodeCwd>/               ← pi 按 cwd 自动分子目录（默认布局）
  *
  * 注意：extensions/npm/tmp 原在旧布局 agent/ 子树下，已迁出到 dataDir 根层（与 skills/agents 对齐）。
+ *
+ * 图片缓存路径（getImageCacheRoot/getImageCacheDir）为 C-state-05 债务新增面：
+ * 纯校验+join 组合逻辑后续拆为无 node 依赖纯函数留 shared，env/homedir 腿（getDataDir 推导）
+ * 迁 runtime/main 各自实现——收编时机随 C-state-05 白名单整体治理，不在本批。
  */
 import { homedir } from 'node:os'
 import { join } from 'node:path'

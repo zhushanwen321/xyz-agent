@@ -113,7 +113,7 @@ let currentToken: string | null = null
  */
 let connectionAuthed = false
 /** pre-auth 窗口入队的出站消息（FIFO；auth.result ok 后按序 flush） */
-// taste:allow-no-data-owner W24-EX-B（模块级单例传输瞬态，已登记）：pre-auth 发送队列（容量上限 256，非 GUI 数据）
+// taste:allow-no-data-owner W24-EX-C（非 GUI 数据技术结构，已登记）：pre-auth 发送队列（容量上限 256，非 GUI 数据；登记见 docs/architecture/data-source-registry.md §4 ⑧）
 const preAuthQueue: ClientMessage[] = []
 
 /** 队列丢弃原因（onQueueDrop 回调第二参，消费方按需区分日志/错误文案） */

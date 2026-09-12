@@ -30,9 +30,10 @@ import type { BatchDeleteResult, Message, SessionGroup, SessionSummary } from '@
 import { triggerSessionCleanups } from '../../foundation/use-session-scoped-state'
 // [u4d] getHistory 响应 → 截断窗口状态归一（SSOT 在 domain/chat/truncated-window）；
 // [D6-⑨ 缺陷#2] toolResult 图片落盘编排（hydrate 通路统一收口，见 reconcileFromReply）。
-// session→chat 单向依赖（chat 域不 import session 域，无环；truncated-window 同先例）。
-import { historyWindowFromReply } from '../chat/truncated-window'
-import { collectImagesFromMessages, persistImagesNewestFirst } from '../chat/image-cache'
+// session→chat 单向依赖（chat 域不 import session 域，无环；truncated-window 同先例）；
+// AC10：跨域经 '@xyz-agent/core/domain/chat' 公开 index API 消费（self-reference）。
+import { historyWindowFromReply } from '@xyz-agent/core/domain/chat'
+import { collectImagesFromMessages, persistImagesNewestFirst } from '@xyz-agent/core/domain/chat'
 import type { SessionApiPort, PanelOrchestrationPort, SessionEntryPort } from './api-port'
 import type { createSessionStore } from './store'
 import { toErrorMessage } from '../../utils/error-message'
