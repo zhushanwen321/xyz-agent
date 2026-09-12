@@ -330,41 +330,44 @@ describe('opencodeFetcher — A2-1 错误通道', () => {
     'monthlyUsage:$R[3]={status:"active",resetInSec:300,usagePercent:60}',
   ].join('')
 
+  // [8e7d407de] 凭证拦截先于配置检查：normalizeCookieHeader 归一化为空 → 直接 unauthorized
+  // （fetch 不发出），故 credential 必须用合法形态 'k=v'，否则本 describe 用例不可达。
+  // 顺序语义（凭证 vs 配置谁先）如有异议需另裁决——当前实现以凭证检查在前为准。
   it('未配置 workspace → not_configured，不发任何 HTTP 请求（D1-3）', async () => {
     mockFetch.mockResolvedValue(new Response(openCodeHtml, { status: 200 }))
-    const noConfig = await opencodeFetcher.fetchQuota('cookie-val', 'cookie')
+    const noConfig = await opencodeFetcher.fetchQuota('session=abc', 'cookie')
     expect(noConfig).toEqual({ ok: false, reason: 'not_configured' })
     expect(mockFetch).not.toHaveBeenCalled()
   })
 
   it('HTTP 302（cookie 过期）→ reason=unauthorized（原 isCredentialValid 语义）', async () => {
     mockFetch.mockResolvedValue(new Response(null, { status: 302 }))
-    const outcome = await opencodeFetcher.fetchQuota('cookie-val', 'cookie', { workspaceUrl: OPENCODE_WS_URL })
+    const outcome = await opencodeFetcher.fetchQuota('session=abc', 'cookie', { workspaceUrl: OPENCODE_WS_URL })
     expect(outcome).toEqual({ ok: false, reason: 'unauthorized' })
   })
 
   it('HTTP 500 → reason=network', async () => {
     mockFetch.mockResolvedValue(new Response(null, { status: 500 }))
-    const outcome = await opencodeFetcher.fetchQuota('cookie-val', 'cookie', { workspaceUrl: OPENCODE_WS_URL })
+    const outcome = await opencodeFetcher.fetchQuota('session=abc', 'cookie', { workspaceUrl: OPENCODE_WS_URL })
     expect(outcome).toEqual({ ok: false, reason: 'network' })
   })
 
   it('fetch 网络异常 → reason=network', async () => {
     mockFetch.mockRejectedValue(new TypeError('fetch failed'))
-    const outcome = await opencodeFetcher.fetchQuota('cookie-val', 'cookie', { workspaceUrl: OPENCODE_WS_URL })
+    const outcome = await opencodeFetcher.fetchQuota('session=abc', 'cookie', { workspaceUrl: OPENCODE_WS_URL })
     expect(outcome).toEqual({ ok: false, reason: 'network' })
   })
 
   it('200 但 HTML 中无三窗口数据 → reason=no-subscription', async () => {
     mockFetch.mockResolvedValue(new Response('<html>empty</html>', { status: 200 }))
-    const outcome = await opencodeFetcher.fetchQuota('cookie-val', 'cookie', { workspaceUrl: OPENCODE_WS_URL })
+    const outcome = await opencodeFetcher.fetchQuota('session=abc', 'cookie', { workspaceUrl: OPENCODE_WS_URL })
     expect(outcome).toEqual({ ok: false, reason: 'no-subscription' })
   })
 
   it('成功：三窗口正则解析，请求目标 = 注入的 workspaceUrl（D1-4 URL 只来自配置）', async () => {
     mockFetch.mockResolvedValue(new Response(openCodeHtml, { status: 200 }))
 
-    const outcome = await opencodeFetcher.fetchQuota('cookie-val', 'cookie', { workspaceUrl: OPENCODE_WS_URL })
+    const outcome = await opencodeFetcher.fetchQuota('session=abc', 'cookie', { workspaceUrl: OPENCODE_WS_URL })
 
     expect(mockFetch).toHaveBeenCalledWith(OPENCODE_WS_URL, expect.anything())
     expect(outcome.ok).toBe(true)
