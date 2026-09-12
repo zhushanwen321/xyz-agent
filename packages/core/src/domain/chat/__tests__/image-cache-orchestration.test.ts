@@ -12,6 +12,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { ImageCacheWriteImage, ImageCacheWriteResult } from '@xyz-agent/shared'
 import {
   collectImagesFromMessages,
+  disposeImageCacheForSession,
   getCachedImagePath,
   isSessionImageCacheFull,
   persistImagesNewestFirst,
@@ -144,5 +145,62 @@ describe('requestImageWrite（live 单图）', () => {
     expect(r1).toBe('/cache/s3/shared.png')
     expect(r2).toBe(r1)
     expect(port).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe('会话生命周期失效（MF-10：帽满标记与路径记账挂 session 生命周期）', () => {
+  it('重 hydrate 清帽满标记：persistImagesNewestFirst 后 main 回执重新判定（用户清盘重进恢复路径）', async () => {
+    let quotaFullNext = true
+    const port = vi.fn((_sid: string, images: ImageCacheWriteImage[]): Promise<ImageCacheWriteResult> => {
+      if (quotaFullNext) {
+        return Promise.resolve({ results: images.map(() => ({ status: 'quota-full' as const })), quotaFull: true })
+      }
+      return Promise.resolve(okResult(images.map((i) => `/cache/s9/${i.data}.png`)))
+    }) as unknown as ImageCacheWritePort
+    setImageCacheWritePort(port)
+    // 首次 hydrate：全部 quota-full → 标记帽满
+    await persistImagesNewestFirst('s9', [img('a')])
+    expect(isSessionImageCacheFull('s9')).toBe(true)
+    // 用户清盘重进（main 侧已释放）：重 hydrate 先清标记，本批回执 ok → 标记不再置位
+    quotaFullNext = false
+    await persistImagesNewestFirst('s9', [img('a')])
+    expect(isSessionImageCacheFull('s9')).toBe(false)
+    // 帽满后新图不再永久快速失败（A9③ 验收语义：清盘重进后新图恢复落盘）
+    await expect(requestImageWrite('s9', img('fresh'))).resolves.toBe('/cache/s9/fresh.png')
+  })
+
+  it('disposeImageCacheForSession：清本 sid 帽满标记 + 按索引清本 sid 路径记账（其他 session 不受影响）', async () => {
+    const { port } = makeRecordingPort(['ok'])
+    setImageCacheWritePort(port)
+    await persistImagesNewestFirst('s10', [img('ten')])
+    await persistImagesNewestFirst('s11', [img('eleven')])
+    expect(getCachedImagePath(img('ten'))).toBe('/cache/s10/ten.png')
+    expect(getCachedImagePath(img('eleven'))).toBe('/cache/s11/eleven.png')
+    // 置帽满标记（模拟 quota-full 回执残留）：脚本用尽后返回 ok，故直接用单图请求 + 脚本 quota 不便；
+    // 换脚本 port 验证标记清空
+    const quotaPort = vi.fn((_sid: string, images: ImageCacheWriteImage[]): Promise<ImageCacheWriteResult> =>
+      Promise.resolve({ results: images.map(() => ({ status: 'quota-full' as const })), quotaFull: true }),
+    ) as unknown as ImageCacheWritePort
+    setImageCacheWritePort(quotaPort)
+    await expect(requestImageWrite('s10', img('hits-cap'))).resolves.toBeUndefined()
+    expect(isSessionImageCacheFull('s10')).toBe(true)
+    disposeImageCacheForSession('s10')
+    // 本 sid 记账与标记清空；其他 session 记账保留
+    expect(isSessionImageCacheFull('s10')).toBe(false)
+    expect(getCachedImagePath(img('ten'))).toBeUndefined()
+    expect(getCachedImagePath(img('eleven'))).toBe('/cache/s11/eleven.png')
+  })
+
+  it('disposeImageCacheForSession 后同内容图重发 port 重建记账（幂等，路径重建正确）', async () => {
+    const { port, calls } = makeRecordingPort()
+    setImageCacheWritePort(port)
+    const shared = img('re-write')
+    await persistImagesNewestFirst('s12', [shared])
+    disposeImageCacheForSession('s12')
+    expect(getCachedImagePath(shared)).toBeUndefined()
+    // 重 hydrate：pending 不为空 → 重新发 port（main 幂等 'cached'/重写，路径重建）
+    await persistImagesNewestFirst('s12', [shared])
+    expect(calls).toHaveLength(2)
+    expect(getCachedImagePath(shared)).toBe('/cache/s12/re-write.png')
   })
 })

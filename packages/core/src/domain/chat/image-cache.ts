@@ -16,10 +16,11 @@
  *   侧幂等判据同源同值语义。Map 有界性：同 hash 覆盖写，条目数 ≤ 历史去重图片数）。
  * - 帽满标记：quota-full 后该 session 的未落盘图（更旧图）渲染「图片缓存已满」占位。
  *
- * 平台边界：main 调用经 write port 注入——生产环境懒探测 preload 暴露的
- * `globalThis.electronAPI.imageCacheWrite`（core 平台无关内核不 import electron；
- * headless 测试 / mock 门面（VITE_MOCK）下无此全局 → port 缺省，编排 no-op，
- * 渲染组件走降级形态）。
+ * 平台边界：main 调用经 write port 注入（MF-7：生产装配点 = renderer main.ts bootstrap
+ * 显式调 setImageCacheWritePort，port 实现收敛 lib/ipc.ts ——C-build-05 electronAPI
+ * 消费单点；core 平台无关内核不 import electron、不懒探测 preload 全局）。headless
+ * 测试 / mock 门面（VITE_MOCK）/ web 环境无装配 → port 缺省，编排 no-op，渲染组件
+ * 走降级形态。
  */
 import type { Message } from '@xyz-agent/shared'
 import type { ImageCacheWriteImage, ImageCacheWriteResult } from '@xyz-agent/shared'
@@ -34,11 +35,6 @@ export type ImageCacheWritePort = (
   images: ImageCacheWriteImage[],
 ) => Promise<ImageCacheWriteResult>
 
-/** preload 暴露形态的窄化探测结构（core 不 import electron，结构守卫替代类型依赖）。 */
-interface ElectronAPILike {
-  imageCacheWrite?: (payload: { sessionId: string; images: ImageCacheWriteImage[] }) => Promise<ImageCacheWriteResult>
-}
-
 /**
  * 模块级状态挂 globalThis 单例（**防双实例**）：本模块被 core barrel 与 .vue SFC 两条
  * 编译链消费时（vitest/ui 测试环境实测存在 SFC 链独立模块实例——export 常量一致但
@@ -50,12 +46,14 @@ const STATE_KEY = '__xyz_agent_image_cache_state__'
 
 interface ImageCacheGlobalState {
   writePort: ImageCacheWritePort | undefined
-  portExplicit: boolean
-  /** 内容 hash → 落盘路径 */
+  /** 内容 hash → 落盘路径（@data-owner #35：主表 #35 图片缓存记账层，派生缓存非第二写方） */
   imagePaths: Map<string, string>
   /** 内容 hash → in-flight 写入 Promise（同内容并发请求共享，防双写） */
   inflightWrites: Map<string, Promise<string | undefined>>
+  /** session 帽满标记（@data-owner #35：main 回执 quota-full 的派生投影；hydrate 重判 + disposeSession 失效，见下） */
   quotaFullSessions: Set<string>
+  /** sessionId → 该 session 落盘图的内容 hash 键集（dispose 按_sid 清理 imagePaths 的索引） */
+  sessionImageKeys: Map<string, Set<string>>
 }
 
 function state(): ImageCacheGlobalState {
@@ -63,10 +61,10 @@ function state(): ImageCacheGlobalState {
   if (!g[STATE_KEY]) {
     g[STATE_KEY] = {
       writePort: undefined,
-      portExplicit: false,
       imagePaths: new Map<string, string>(),
       inflightWrites: new Map<string, Promise<string | undefined>>(),
       quotaFullSessions: new Set<string>(),
+      sessionImageKeys: new Map<string, Set<string>>(),
     }
   }
   return g[STATE_KEY] as ImageCacheGlobalState
@@ -96,25 +94,17 @@ function imageKey(data: string): string {
 }
 
 /**
- * 注入/清除 write port（renderer 装配可显式注入；不注入时 lazily 探测 electronAPI）。
- * 传 undefined 且此前未显式注入过时保留懒探测资格——测试用 _resetImageCacheForTest 复位。
+ * 注入/清除 write port（renderer 装配层显式注入——main.ts bootstrap 调 lib/ipc.ts 的
+ * port 工厂；headless/web 不注入 → port 缺省 no-op）。传 undefined = 清除（测试复位
+ * 用 _resetImageCacheForTest）。
  */
 export function setImageCacheWritePort(port: ImageCacheWritePort | undefined): void {
   state().writePort = port
-  state().portExplicit = true
 }
 
-/** 懒探测 preload 全局（core 平台无关：无 window.electronAPI 的宿主返回 undefined）。 */
+/** write port 解析：仅显式注入（MF-7：懒探测 electronAPI 分支已删，core 内核零平台探测）。 */
 function resolvePort(): ImageCacheWritePort | undefined {
-  const s = state()
-  if (s.portExplicit) return s.writePort
-  const api = (globalThis as { electronAPI?: ElectronAPILike }).electronAPI
-  if (api?.imageCacheWrite) {
-    const invoke = api.imageCacheWrite
-    s.writePort = (sessionId, images) => invoke({ sessionId, images })
-  }
-  s.portExplicit = true
-  return s.writePort
+  return state().writePort
 }
 
 /** 读口：图片已落盘的路径（未落盘 / 编排未跑 → undefined）。 */
@@ -155,7 +145,17 @@ function recordBatchResults(sessionId: string, images: ImageCacheWriteImage[], r
   result.results.forEach((r, i) => {
     if (r.status === 'written' || r.status === 'cached') {
       const img = images[i]
-      if (r.path !== undefined && img !== undefined) s.imagePaths.set(imageKey(img.data), r.path)
+      if (r.path !== undefined && img !== undefined) {
+        const key = imageKey(img.data)
+        s.imagePaths.set(key, r.path)
+        // session 键索引（MF-10：dispose 按 sid 清 imagePaths 的倒排索引）
+        let keys = s.sessionImageKeys.get(sessionId)
+        if (!keys) {
+          keys = new Set<string>()
+          s.sessionImageKeys.set(sessionId, keys)
+        }
+        keys.add(key)
+      }
     } else if (r.status === 'quota-full') {
       sawQuotaFull = true
     }
@@ -163,6 +163,26 @@ function recordBatchResults(sessionId: string, images: ImageCacheWriteImage[], r
     // core 不重复告警——低频防御路径，静默降级为无图形态由组件 fallback 承接）。
   })
   if (sawQuotaFull || result.quotaFull) s.quotaFullSessions.add(sessionId)
+}
+
+/**
+ * 清理指定 session 的图片缓存记账（MF-10：帽满标记与路径记账挂会话生命周期）。
+ * useChat.disposeSession 编排调用（deleteSession / LRU 驱逐 / fork 回滚同点收敛）：
+ * - quotaFullSessions 删除本 sid——标记是 main 回执的派生缓存非权威，清后下一张图
+ *   重发 IPC 由 main 重判（幂等，超帽会重新标记；respawn 等误清场景代价 = 一次额外 IPC）；
+ * - imagePaths 按倒排索引删除本 sid 的键——同 hash 键跨 session 共享时删除会迫使另一
+ *   session 下一张图重发（main 幂等 'cached'，路径重建正确），保留则会指向已删 session
+ *   目录的悬空路径（main 三条清理通道删 session 目录后文件已不存在）。
+ * in-flight 写入不中断（Promise 自消化后自然出队）。
+ */
+export function disposeImageCacheForSession(sessionId: string): void {
+  const s = state()
+  s.quotaFullSessions.delete(sessionId)
+  const keys = s.sessionImageKeys.get(sessionId)
+  if (keys) {
+    for (const key of keys) s.imagePaths.delete(key)
+    s.sessionImageKeys.delete(sessionId)
+  }
 }
 
 /**
@@ -202,6 +222,10 @@ export function requestImageWrite(sessionId: string, image: ImageCacheWriteImage
  * 历史加载失败。
  */
 export async function persistImagesNewestFirst(sessionId: string, imagesInMessageOrder: ImageCacheWriteImage[]): Promise<void> {
+  // 帽满标记重 hydrate 失效（MF-10）：标记是内存派生缓存，磁盘侧真实帽态只有 main
+  // 权威（每次现算 used）——用户清盘重进后旧标记会让 live 单图路径永久快速失败返占位，
+  // 故每次 hydrate/rehydrate 编排先清标记，由本批回执重新判定（超帽会重新置位）。
+  state().quotaFullSessions.delete(sessionId)
   if (imagesInMessageOrder.length === 0) return
   const port = resolvePort()
   if (!port) return
@@ -215,12 +239,12 @@ export async function persistImagesNewestFirst(sessionId: string, imagesInMessag
   } catch { void 0 } // 编排失败静默（fire-and-forget 契约）：组件挂载兜底会逐图重试单图写入。
 }
 
-/** 测试复位：清全部模块级状态（port / 记账表 / in-flight / 帽满标记）。 */
+/** 测试复位：清全部模块级状态（port / 记账表 / in-flight / 帽满标记 / session 索引）。 */
 export function _resetImageCacheForTest(): void {
   const s = state()
   s.writePort = undefined
-  s.portExplicit = false
   s.imagePaths.clear()
   s.inflightWrites.clear()
   s.quotaFullSessions.clear()
+  s.sessionImageKeys.clear()
 }

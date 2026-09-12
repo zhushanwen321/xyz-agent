@@ -23,8 +23,8 @@ const { reverseReads } = vi.hoisted(() => ({ reverseReads: [] as { totalBytesRea
 // 包装真实现（行为不变）+ 记录每次逆序扫的读取字节数——「不触全量」的机械断言锚点。
 // 历史注释：之所以不 spy node:fs.readSync（ESM 内置模块 spy 不可靠），改在共享工具模块
 // 边界包装：findLastEntryField 是逆序扫在 session-file-utils 的唯一入口。
-vi.mock('../../../services/session/history-reverse-read.js', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('../../../services/session/history-reverse-read.js')>()
+vi.mock('../../../utils/history-reverse-read.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../../utils/history-reverse-read.js')>()
   return {
     ...actual,
     forEachReversedLineChunk: (

@@ -59,11 +59,11 @@ export type RollingRestartBannerPhase =
 /** 「已恢复」绿色态自动清除窗口（设计 D5：30s 自动清除、手动刷新不重现）。 */
 export const RECOVERED_AUTO_CLEAR_MS = 30_000
 
-// taste:allow-no-data-owner W24-EX-B（模块级单例 UI 瞬态，12 类未覆盖存量，登记草稿）：滚动重启横幅相位（窗口级全局观测态）
+// taste:allow-no-data-owner W24-EX-B（模块级单例 UI 瞬态，已登记 §4 ⑧ 2026-09-12）：滚动重启横幅相位（窗口级全局观测态）
 const phase = shallowRef<RollingRestartBannerPhase>({ kind: 'idle' })
-// taste:allow-no-data-owner W24-EX-C（非 GUI 数据技术结构，登记草稿）：最近一次 status 拉取快照（观测面）
+// taste:allow-no-data-owner W24-EX-C（非 GUI 数据技术结构，已登记 §4 ⑧ 2026-09-12）：最近一次 status 拉取快照（观测面）
 const lastStatus = shallowRef<RollingRestartStatusPayload | null>(null)
-// taste:allow-no-data-owner W24-EX-B（模块级单例 UI 瞬态，12 类未覆盖存量，登记草稿）：滚动重启活跃态出现过标记（终态分叉判定源，窗口级布尔）
+// taste:allow-no-data-owner W24-EX-B（模块级单例 UI 瞬态，已登记 §4 ⑧ 2026-09-12）：滚动重启活跃态出现过标记（终态分叉判定源，窗口级布尔）
 /** 本窗口生命周期内是否出现过滚动重启活跃态（终态分叉判定源，见文件头）。 */
 const sawRollingActive = ref(false)
 

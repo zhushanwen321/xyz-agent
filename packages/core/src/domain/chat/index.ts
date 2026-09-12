@@ -50,6 +50,7 @@ export type { HistoryWindow, HistoryWindowReply } from './truncated-window'
 // [D6-⑨ u7-memory-governance] toolResult 图片落盘编排（core 侧记账/顺序编排；落盘执行方在 main）
 export {
   collectImagesFromMessages,
+  disposeImageCacheForSession,
   getCachedImagePath,
   isSessionImageCacheFull,
   persistImagesNewestFirst,

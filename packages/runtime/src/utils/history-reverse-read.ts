@@ -4,9 +4,13 @@
  * 从文件尾按固定字节块向前扫描，按「完整行块」交付给调用方——JSONL 行边界对齐
  * （跨块切断的行留在 pending，读到其前部后拼接成交整行才交付）+ UTF-8 字符边界对齐
  * （块首落在多字节序列中间时回退至 lead byte 重读，交付行无 U+FFFD 污染），供以下调用方复用：
- * - ①档 getHistoryFromFilePath 预检超限后的逆序窗口（session-history.ts）
- * - ②档尾读 fallback 分块扩窗（session-history.ts，替代「凑不够 20 turns 就全量读」）
+ * - ①档 getHistoryFromFilePath 预检超限后的逆序窗口（services/session-history.ts）
+ * - ②档尾读 fallback 分块扩窗（services/session-history.ts，替代「凑不够 20 turns 就全量读」）
+ * - restore-seeding 超限分流逆序读（session-file-streaming 家族消费方）
  * - ③档 findLastEntryField 逆序分块读（u4c-read-paths，另一单元，预留同款形态）
+ *
+ * 归属注（MF-8）：原在 services/session/，因「通用 fs IO 工具形态不属 services 业务层」
+ * 迁 utils/（与 jsonl.ts 同层）——infra/services 双向消费方均合法依赖 utils。
  *
  * 定位声明：本工具只负责「逆序迭代完整行块」这一 IO 形态，不耦合任何历史业务语义
  * （turn 边界判定 / 窗口选择全部在调用方）。同步 readSync 实现——与 utils/jsonl.ts

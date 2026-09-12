@@ -514,7 +514,7 @@
     },
     {
       "id": "C-data-14",
-      "summary": "hydrate 记录尾窗锚（piEntryId），load-more 按锚切分只前插；id 去重降级为兜底断言",
+      "summary": "load-more 游标翻页：游标 = 分区最旧消息文件侧身份（piEntryId ?? id）经 RPC cursor 参数返回锚前最近窗口只前插；cursor 未命中返回空页（翻页到头）；id 去重降级为兜底断言",
       "scope": [
         "packages/renderer/src/**",
         "packages/core/src/**"

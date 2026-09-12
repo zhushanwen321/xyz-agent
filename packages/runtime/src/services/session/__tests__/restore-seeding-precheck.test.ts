@@ -34,8 +34,8 @@ import { READ_PRECHECK_MAX_BYTES } from '@xyz-agent/shared'
 const { reverseReads } = vi.hoisted(() => ({ reverseReads: [] as { totalBytesRead: number }[] }))
 
 // 包装逆序分块读工具（行为不变）+ 记录读取量：判定腿「不触全量」的机械断言锚点
-vi.mock('../history-reverse-read.js', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('../history-reverse-read.js')>()
+vi.mock('../../../utils/history-reverse-read.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../../utils/history-reverse-read.js')>()
   return {
     ...actual,
     forEachReversedLineChunk: (

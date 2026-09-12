@@ -22,9 +22,9 @@ const QUERY_FLAG_KEY = 'recoveredFrom'
 const QUERY_REASON_KEY = 'crashReason'
 const QUERY_FLAG_VALUE = 'crash'
 
-// taste:allow-no-data-owner W24-EX-B（模块级单例 UI 瞬态，12 类未覆盖存量，登记草稿）：崩溃恢复提示条可见态（窗口级一次性通知 UI 状态）
+// taste:allow-no-data-owner W24-EX-B（模块级单例 UI 瞬态，已登记 §4 ⑧ 2026-09-12）：崩溃恢复提示条可见态（窗口级一次性通知 UI 状态）
 const visible = ref(false)
-// taste:allow-no-data-owner W24-EX-C（非 GUI 数据技术结构，登记草稿）：崩溃原因原始值（query 透传字符串）
+// taste:allow-no-data-owner W24-EX-C（非 GUI 数据技术结构，已登记 §4 ⑧ 2026-09-12）：崩溃原因原始值（query 透传字符串）
 const reason = ref('')
 let consumed = false
 

@@ -188,6 +188,115 @@ describe('export-diagnostic-bundle（crash-forensics D6 u3a）', () => {
     })
   })
 
+  // ── A1-b detailPath 收集安全分支（MF-15：诊断包不读 dataDir 外文件的不变量承载） ──
+
+  describe('A1-b collectDetailPaths 安全分支（review MF-15）', () => {
+    /** 最小 fixture：只建 crashes/runtime.jsonl（main 缺失降级）+ detail 目录。 */
+    function writeRuntimeJournal(lines: string[]): void {
+      mkdirSync(join(tmpDir, 'logs', 'crashes'), { recursive: true })
+      writeFileSync(join(tmpDir, 'logs', 'crashes', 'runtime.jsonl'), `${lines.join('\n')}\n`)
+    }
+
+    it('①绝对路径与 .. 穿越拒收：entries/missing 均不含越界 detailPath，仅合法相对路径入清单', () => {
+      mkdirSync(join(tmpDir, 'detail'), { recursive: true })
+      writeFileSync(join(tmpDir, 'detail', 'ok.log'), 'ok')
+      writeRuntimeJournal([
+        journalLine('crash', { detailPath: '/etc/passwd' }),
+        journalLine('crash', { detailPath: 'logs/../../outside.txt' }),
+        journalLine('crash', { detailPath: 'detail/ok.log' }),
+      ])
+
+      const result = buildDiagnosticEntries({ now: NOW })
+      const paths = result.entries.map((e) => e.archivePath)
+
+      expect(paths).toContain('detail/ok.log')
+      expect(paths).not.toContain('/etc/passwd')
+      expect(paths).not.toContain('logs/../../outside.txt')
+      // 越界拒收不是「文件不存在」降级——missing 不产生对应条目（静默不收语义）
+      const missingPaths = result.missing.map((m) => m.archivePath)
+      expect(missingPaths).not.toContain('/etc/passwd')
+      expect(missingPaths).not.toContain('logs/../../outside.txt')
+    })
+
+    it('②超 MAX_DETAIL_FILES 帽：included 恰为帽值（最新优先）+ excluded 计数进 missing 标注', () => {
+      mkdirSync(join(tmpDir, 'detail'), { recursive: true })
+      const lines: string[] = []
+      for (let i = 1; i <= 12; i++) {
+        writeFileSync(join(tmpDir, 'detail', `d${String(i).padStart(2, '0')}.log`), 'x')
+        lines.push(journalLine('crash', { detailPath: `detail/d${String(i).padStart(2, '0')}.log` }))
+      }
+      writeRuntimeJournal(lines)
+
+      const result = buildDiagnosticEntries({ now: NOW })
+      const detailEntries = result.entries
+        .map((e) => e.archivePath)
+        .filter((p) => p.startsWith('detail/'))
+        .sort()
+
+      // 帽值 10：最新 10 条（d03..d12）入清单，最旧 2 条（d01/d02）被帽排除
+      expect(result.entries.find((e) => e.archivePath === '(detailPath)')).toBeUndefined()
+      expect(detailEntries).toHaveLength(10)
+      expect(detailEntries).not.toContain('detail/d01.log')
+      expect(detailEntries).not.toContain('detail/d02.log')
+      expect(detailEntries).toContain('detail/d12.log')
+      // excluded 计数 → missing 标注条目（文案含帽值说明）
+      const capNote = result.missing.find((m) => m.archivePath === '(detailPath)')
+      expect(capNote).toBeDefined()
+      expect(capNote?.reason).toContain('10')
+    })
+
+    it('③重复 detailPath 去重：同路径多事件只收 1 条', () => {
+      mkdirSync(join(tmpDir, 'detail'), { recursive: true })
+      writeFileSync(join(tmpDir, 'detail', 'dup.log'), 'dup')
+      writeRuntimeJournal([
+        journalLine('crash', { detailPath: 'detail/dup.log' }),
+        journalLine('crash', { detailPath: 'detail/dup.log' }),
+        journalLine('crash', { detailPath: 'detail/dup.log' }),
+      ])
+
+      const result = buildDiagnosticEntries({ now: NOW })
+      const dupEntries = result.entries.filter((e) => e.archivePath === 'detail/dup.log')
+      expect(dupEntries).toHaveLength(1)
+    })
+  })
+
+  // ── A1-c summary 首屏表格（S-9：recentEventsTable 转义/降序/行数帽/坏行） ──
+
+  describe('A1-c recentEventsTable（review S-9）', () => {
+    it('ts 降序 + | 转义 + 行数帽 + 坏行不进表', () => {
+      mkdirSync(join(tmpDir, 'logs', 'crashes'), { recursive: true })
+      const lines: string[] = []
+      // 12 条合法事件（超过 SUMMARY_RECENT_EVENT_COUNT=10 帽）——ts 乱序写入，首屏应按 ts 降序取前 10
+      for (let i = 0; i < 12; i++) {
+        const ts = new Date(NOW - (i % 2 === 0 ? i : 12 - i) * MS_PER_HOUR).toISOString()
+        lines.push(JSON.stringify({ ts, layer: 'runtime', event: `ev-${i}`, detailDigest: i === 0 ? 'a|b' : `d${i}` }))
+      }
+      // 1 条坏行（非 JSON）——不进首屏表
+      lines.push('this is not json')
+      writeFileSync(join(tmpDir, 'logs', 'crashes', 'runtime.jsonl'), `${lines.join('\n')}\n`)
+
+      const result = buildDiagnosticEntries({ now: NOW })
+      const summary = result.entries.find((e) => e.archivePath === 'summary.md')?.content ?? ''
+      const tableStart = summary.indexOf('| 时间 | 层 | 事件 |')
+      expect(tableStart).toBeGreaterThanOrEqual(0)
+      const table = summary.slice(tableStart).split('\n').filter((l) => l.startsWith('| 2026-'))
+
+      // 行数帽：12 条合法事件只显 10 行
+      expect(table).toHaveLength(10)
+      // ts 降序：相邻行时间戳非递增
+      const tsList = table.map((l) => Date.parse(l.slice(2, l.indexOf(' |', 2))))
+      for (let i = 1; i < tsList.length; i++) expect(tsList[i]).toBeLessThanOrEqual(tsList[i - 1])
+      // | 转义：digest 'a|b' 进表时转义为 'a\|b'（markdown 列结构不破坏）；naive split
+      // 仍会切开转义管道（9 段 = 6 列 + 首尾空 + 转义管道多出的 1 段），断言转义形态存在即可
+      const escapedRow = table.find((l) => l.includes('a\\|b'))
+      expect(escapedRow).toBeDefined()
+      expect(escapedRow?.startsWith('| 2026-')).toBe(true)
+      expect(escapedRow?.trim().endsWith('|')).toBe(true)
+      // 坏行不进表
+      expect(summary).not.toContain('this is not json')
+    })
+  })
+
   // ── A2 zip 结构 ─────────────────────────────────────────────────────────────
 
   describe('A2 exportDiagnosticBundle zip 结构', () => {

@@ -33,7 +33,7 @@ import { isEnoent } from '../utils/errors.js'
 import { parseJsonl } from '../utils/jsonl.js'
 import { mapSessionEntries } from '../infra/pi/session-entry-mapper.js'
 import type { PiSessionEntry } from '../infra/pi/pi-protocol.js'
-import { forEachReversedLineChunk } from './session/history-reverse-read.js'
+import { forEachReversedLineChunk } from '../utils/history-reverse-read.js'
 
 /**
  * 过滤出 object entry 并收窄为 PiSessionEntry[]（供 mapSessionEntries 消费）。

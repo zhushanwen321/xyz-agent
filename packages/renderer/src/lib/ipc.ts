@@ -8,6 +8,7 @@
  * 依赖方向：无下游（读全局 window.electronAPI，类型经 declare global 自动可用）
  */
 import type { LatestReleaseInfo, UpdateStage, UpdateSettings, UpdateErrorPayload, ProxyTestResult, LaunchResult, UpdateCheckResult, UpdateInstallResult, RendererLogPayload, DiagnosticExportBundlePayload, DiagnosticExportBundleResult } from '@xyz-agent/shared'
+import type { ImageCacheWritePort } from '@xyz-agent/core'
 
 /** preload 注入的 electronAPI（web/mock 环境为 undefined） */
 const api = window.electronAPI
@@ -413,4 +414,19 @@ export function exportDiagnosticBundle(
   payload?: DiagnosticExportBundlePayload,
 ): Promise<DiagnosticExportBundleResult> {
   return api?.exportDiagnosticBundle?.(payload) ?? Promise.resolve({ status: 'canceled' })
+}
+
+// ── 图片缓存写 port（crash-resilience §3.3 D6-⑨，MF-7 装配点）────────
+
+/**
+ * toolResult 图片落盘 write port：core image-cache 编排层的 main 侧调用腿。
+ * electronAPI 消费收敛本文件（C-build-05 单点）；main.ts bootstrap 经
+ * setImageCacheWritePort(getImageCacheWritePort()) 显式注入（core 平台无关内核
+ * 不懒探测 preload 全局）。web/mock（无 preload 或旧 preload 未暴露该方法）返回
+ * undefined → core 缺省 no-op，渲染组件走降级形态。三态永不 reject 由 main 侧
+ * imageCacheWrite handler 保证（错误回执 quota-full/invalid 形态）。
+ */
+export function getImageCacheWritePort(): ImageCacheWritePort | undefined {
+  const invoke = api?.imageCacheWrite
+  return invoke ? (sessionId, images) => invoke({ sessionId, images }) : undefined
 }

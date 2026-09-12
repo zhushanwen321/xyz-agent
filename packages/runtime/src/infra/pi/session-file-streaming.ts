@@ -17,7 +17,7 @@ import { openSync, readSync, closeSync, fstatSync, writeSync, unlinkSync, rename
 import { join, dirname, basename } from 'node:path'
 // 块大小复用 u4b 逆序读工具的 D5② 标定值（1MB），不另设常量。infra → services 依赖倒挂
 // 豁免（同 session-file-utils.ts 的 D5③ import，无循环引用——工具零业务依赖）。
-import { DEFAULT_REVERSE_CHUNK_BYTES } from '../../services/session/history-reverse-read.js'
+import { DEFAULT_REVERSE_CHUNK_BYTES } from '../../utils/history-reverse-read.js'
 
 /**
  * 分块流式归一化并原子替换原文件（D5⑤ 变换腿的落盘骨架）。

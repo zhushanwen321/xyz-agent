@@ -29,7 +29,7 @@ import {
 } from '../../coordination/subscription-state'
 import type { ChatStoreInstance } from './store'
 import { historyWindowFromReply } from './truncated-window'
-import { collectImagesFromMessages, persistImagesNewestFirst } from './image-cache'
+import { collectImagesFromMessages, persistImagesNewestFirst, disposeImageCacheForSession } from './image-cache'
 import { createMessageCoalescer } from './delta-coalescer'
 import { getExecutingBash } from './bash-effects'
 import { toErrorMessage } from '../../utils/error-message'
@@ -1280,6 +1280,10 @@ export function createUseChat(deps: UseChatDeps) {
     // 仍会读残留 state（lastSeenSeq 基线 stale），且 Map 永久增长。
     clearSubscription(sessionId)
     chat.disposeSession(sessionId)
+    // [D6-⑨ u7 / MF-10] 图片缓存记账同点清理：帽满标记 + 本 session 落盘图的路径记账
+    // （标记是 main 回执派生缓存非权威，清后由 main 重判；deleteSession / LRU 驱逐 /
+    // fork 回滚 / stream-sync 移除全部经本函数收敛，单点接线）。
+    disposeImageCacheForSession(sessionId)
   }
 
   return {

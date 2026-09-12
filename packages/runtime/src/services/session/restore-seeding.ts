@@ -21,7 +21,7 @@ import type { ScannedSessionMeta } from '../../infra/pi/session-file-utils.js'
 import { READ_PRECHECK_MAX_BYTES } from '@xyz-agent/shared'
 import { cleanupMigrateResidues, normalizeSessionFileInPlace, persistModelBinding } from '../../infra/pi/session-file-utils.js'
 // 逆序分块读工具（u4b 交付物，D5 共享 IO 形态）：⑤档降级形态的「尾部扫 legacy session_end」复用。
-import { forEachReversedLineChunk } from './history-reverse-read.js'
+import { forEachReversedLineChunk } from '../../utils/history-reverse-read.js'
 
 /**
  * 流式归一化的注入依赖（C-comm-03 分层通道）：session-file-streaming 的 IO 骨架不在

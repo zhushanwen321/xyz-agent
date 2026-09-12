@@ -12,7 +12,7 @@ import { READ_PRECHECK_MAX_BYTES } from '@xyz-agent/shared'
 // 逆序分块读工具（u4b 交付物，D5 共享 IO 形态）。infra → services 依赖倒挂豁免（同
 // session-lifecycle.ts 的 R3 ports 倒挂惯例）：D5③ 消费方在本文件（infra/pi），共享
 // 工具落点在 u4b 领地（services/session）；工具零业务依赖，无循环引用。
-import { forEachReversedLineChunk } from '../../services/session/history-reverse-read.js'
+import { forEachReversedLineChunk } from '../../utils/history-reverse-read.js'
 import { join, dirname, basename } from 'node:path'
 import { getSessionsDir } from './pi-paths.js'
 // model sidecar 家族（单向依赖：本文件经 scanSessionMeta 消费 readModelBinding；该家族

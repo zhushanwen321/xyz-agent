@@ -45,9 +45,9 @@ export const LRU_RELIEF_MAX_SESSIONS = 4
  */
 export type MemoryReliefAction = (level: MemoryPressureLevel, payload: WatchdogMemoryPressurePayload) => void
 
-// taste:allow-no-data-owner W24-EX-B（模块级单例 UI 瞬态，12 类未覆盖存量，登记草稿）：内存压力级别（窗口级全局观测态）
+// taste:allow-no-data-owner W24-EX-B（模块级单例 UI 瞬态，已登记 §4 ⑧ 2026-09-12）：内存压力级别（窗口级全局观测态）
 const level = ref<MemoryPressureLevel>('normal')
-// taste:allow-no-data-owner W24-EX-C（非 GUI 数据技术结构，登记草稿）：最近一拍通知快照（观测面，payload 原样透传）
+// taste:allow-no-data-owner W24-EX-C（非 GUI 数据技术结构，已登记 §4 ⑧ 2026-09-12）：最近一拍通知快照（观测面，payload 原样透传）
 const lastPayload = shallowRef<WatchdogMemoryPressurePayload | null>(null)
 
 /** 订阅引用计数（useAppUpdate 同款：多消费者共享单条物理订阅）。 */
