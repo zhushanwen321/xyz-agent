@@ -160,7 +160,7 @@ function writeStateMarker(sessionFile: string, marker: StateMarker): boolean {
     }
     try {
       // 旧名清理放在写成功之后（S12 修复）：读侧 .state 优先，旧名残留无害（仅多一次
-      // stat 与「旧名优先级高于 .state」的兼容读序兜底），删除只是 stat 优化非正确性
+      // stat 与「旧名在 .state 缺失/损坏时充当兼容读序兜底」），删除只是 stat 优化非正确性
       // 依赖——若在写前删而写失败（重试耗尽），存量终态标记已被删而新标记未落，
       // .cancelled tombstone 静默降级为无终态形态（重建回落 running，死因/时间丢失）。
       fs.writeFileSync(`${sessionFile}${STATE_SIDECAR_EXT}`, JSON.stringify(marker), "utf-8");
