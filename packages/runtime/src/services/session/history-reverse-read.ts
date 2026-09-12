@@ -67,6 +67,106 @@ export interface ReverseReadSummary {
 }
 
 /**
+ * 逆序主循环的跨块可变状态（readChunkAndDeliver 维护，forEachReversedLineChunk 读取汇总）。
+ */
+interface ReverseScanState {
+  /** 剩余未读区域的右端（exclusive，下一块范围 [offset, end)）。 */
+  end: number
+  /** 累计读取字节数（maxTotalBytes 上限的判定输入）。 */
+  totalBytesRead: number
+  /** 已读区域最前面那行尚未确认完整的部分文本（INVAR-reverse-1，splitChunkIntoLines 维护）。 */
+  pending: string
+  /** 是否已交付覆盖文件头的块（offset === 0，splitChunkIntoLines 维护）。 */
+  sawStart: boolean
+}
+
+/**
+ * 块首 UTF-8 多字节对齐（镜像 session-file-streaming.trimToUtf8Boundary 的块尾防御，
+ * 方向相反——逆序读的污染面在块首）：返回对齐后的块起点 offset。offset 落在多字节
+ * 序列中间时块首字节是 continuation byte（10xxxxxx），toString 会把残缺序列替换为
+ * U+FFFD，污染随 segs[0] → pending 拼接进入交付行。回退至该序列的 lead byte 重读：
+ * lead 距块首 ≤ 3（序列最长 4 字节），探针读块首前 ≤4 字节、从右向左首个非
+ * continuation 字节即 lead（lead 右侧至块首全在同一序列内必为 continuation，首个命中
+ * 即精确边界，无需迭代；固定步长循环回退在纯 3 字节字符流的特定相位下会永不命中，
+ * 故必须探针定位）。探针扫空（文件头即残缺序列的损坏形态）放弃对齐，接受一次
+ * U+FFFD，与不回退等价无害。
+ */
+function alignChunkStartToUtf8Boundary(fd: number, offset: number): number {
+  /* eslint-disable no-magic-numbers -- UTF-8 位级判定：掩码 0xc0/0x80、探针窗口 4 与
+   * 回退上限 3 是 RFC 3629 协议常量（序列最长 4 字节 = lead + 3 continuation），
+   * 命名抽象反而掩盖位语义（session-file-streaming.trimToUtf8Boundary 同款豁免） */
+  // 探针含块首字节：仅块首是 continuation（切在序列内）时才回退
+  const probeBase = Math.max(0, offset - 4)
+  const probe = Buffer.alloc(offset - probeBase + 1)
+  readSync(fd, probe, 0, probe.length, probeBase)
+  if ((probe[probe.length - 1] & 0xc0) === 0x80) {
+    // 从块首左侧第 1 字节向左扫：lead 右侧至块首全在同一序列内（必为
+    // continuation），首个非 continuation 字节即精确 lead。
+    let boundary = offset - 1
+    while (boundary >= probeBase && (probe[boundary - probeBase] & 0xc0) === 0x80) boundary--
+    if (boundary >= probeBase) return boundary
+  }
+  return offset
+  /* eslint-enable no-magic-numbers */
+}
+
+/**
+ * 单块文本的行界处理（INVAR-reverse-1 的块内半段）：按 '\n' 拆行并更新跨块状态
+ * （pending 半行 / sawStart 文件头标记），返回可交付的完整行（正序 = 文件内先后顺序）。
+ *
+ * 行界伪影：text 以 '\n' 结尾时 split 的尾随空段不是行（'\n' 结束了前一行；
+ * 中间的空串才是真实空行，保留）。不判伪影会把每块行尾的空段当空行交付。
+ * isStartChunk（文件头）→ 全部段完整（pending 补齐后一起交付），pending 清空；否则
+ * 首段是被切断行的头部（其开头在 offset 之前）——留 pending，不交付。文件末字节非
+ * '\n' 时最后一行仍完整交付（EOF 终止行，无需特判）。
+ */
+function splitChunkIntoLines(text: string, isStartChunk: boolean, state: ReverseScanState): string[] {
+  const segs = text.split('\n')
+  if (text.endsWith('\n')) segs.pop()
+  if (isStartChunk) {
+    state.sawStart = true
+    state.pending = ''
+  } else {
+    // 首段是被切断行的头部（其开头在 offset 之前）——留 pending，不交付
+    state.pending = segs[0] ?? ''
+    segs.shift()
+  }
+  return segs
+}
+
+/**
+ * 读取下一个块并按完整行交付 visit（forEachReversedLineChunk 的单次循环体）：块范围
+ * [对齐后 offset, state.end)，读后前移 state.end 至本块起点（下一块终点即本块起点，
+ * 块间无重叠无遗漏）。
+ *
+ * @returns true = visit 请求停止（主循环终止，当前块内剩余更早行不交付）
+ */
+function readChunkAndDeliver(
+  fd: number,
+  state: ReverseScanState,
+  chunkBytes: number,
+  maxTotalBytes: number,
+  visit: (chunk: ReversedLineChunk) => boolean | void,
+): boolean {
+  const chunkLen = Math.min(chunkBytes, state.end, maxTotalBytes - state.totalBytesRead)
+  let offset = state.end - chunkLen
+  // 块首 UTF-8 多字节对齐（位级判定与协议常量说明见 alignChunkStartToUtf8Boundary）：
+  // 回退量 ≤ 3 字节全在同一序列内（无 '\n'），行归属判定不受影响。
+  if (offset > 0) offset = alignChunkStartToUtf8Boundary(fd, offset)
+  /* eslint-disable-next-line no-magic-numbers -- 块首对齐回退量 ≤ 3 字节（协议常量，alignChunkStartToUtf8Boundary 豁免同源） */
+  const buf = Buffer.alloc(chunkLen + 3)
+  const bytesRead = readSync(fd, buf, 0, state.end - offset, offset)
+  state.totalBytesRead += bytesRead
+  // 当前块在前、pending（来自更靠后的块）在后，文件顺序拼接
+  const text = buf.subarray(0, bytesRead).toString('utf-8') + state.pending
+  const isStartChunk = offset === 0
+  const segs = splitChunkIntoLines(text, isStartChunk, state)
+  state.end = offset
+  if (segs.length === 0) return false
+  return visit({ lines: segs, totalBytesRead: state.totalBytesRead, isStartChunk }) === false
+}
+
+/**
  * 从文件尾向前按块迭代完整行，visit 返回 false 可提前停止。
  *
  * 行边界对齐算法（INVAR-reverse-1）：维护 pending（已读区域最前面那行尚未确认完整的
@@ -74,7 +174,8 @@ export interface ReverseReadSummary {
  * - offset > 0 → 首段是被切断行的头部 → 成为新 pending，其余段完整交付；
  * - offset === 0（文件头）→ 全部段完整（pending 补齐后一起交付），pending 清空。
  * 文件末字节非 '\n' 时最后一行仍完整交付（EOF 终止行）。
- * 块起点先做 UTF-8 字符边界回退（见循环体内注释），保证每块文本 decode 无 U+FFFD 污染。
+ * 块起点先做 UTF-8 字符边界回退（见 alignChunkStartToUtf8Boundary），保证每块文本
+ * decode 无 U+FFFD 污染。
  *
  * @param filePath JSONL 文件绝对路径
  * @param options 块大小 / 总量上限（缺省 1MB / 调用方注入 READ_PRECHECK_MAX_BYTES）
@@ -100,74 +201,26 @@ export function forEachReversedLineChunk(
     const size = fstatSync(fd).size
     // 空文件：天然「无内容可读」= 已完整扫描（避免调用方把空文件误判为「未读到头」）
     if (size === 0) return { totalBytesRead: 0, sawStart: true, stopped: false, fullyScanned: true, openFailed: false }
-    let pending = ''
-    let end = size
-    let totalBytesRead = 0
-    let sawStart = false
+    const state: ReverseScanState = { end: size, totalBytesRead: 0, pending: '', sawStart: false }
     let stopped = false
 
-    while (end > 0) {
-      const remaining = maxTotalBytes - totalBytesRead
-      if (remaining <= 0) break // 总量上限：停止（sawStart=false，调用方保守判定）
-      const chunkLen = Math.min(chunkBytes, end, remaining)
-      let offset = end - chunkLen
-      // 块首 UTF-8 多字节对齐（镜像 session-file-streaming.trimToUtf8Boundary 的块尾防御，
-      // 方向相反——逆序读的污染面在块首）：offset 落在多字节序列中间时块首字节是
-      // continuation byte（10xxxxxx），toString 会把残缺序列替换为 U+FFFD，污染随 segs[0]
-      // → pending 拼接进入交付行。回退至该序列的 lead byte 重读：lead 距块首 ≤ 3（序列
-      // 最长 4 字节），探针读块首前 ≤4 字节、从右向左首个非 continuation 字节即 lead
-      //（lead 右侧至块首全在同一序列内必为 continuation，首个命中即精确边界，无需迭代；
-      // 固定步长循环回退在纯 3 字节字符流的特定相位下会永不命中，故必须探针定位）。
-      // 前移后 end = offset 天然继承对齐——下一块终点即本块起点，块间无重叠无遗漏；
-      // 回退量 ≤ 3 字节全在同一序列内（无 '\n'），行归属判定不受影响。
-      /* eslint-disable no-magic-numbers -- UTF-8 位级判定：掩码 0xc0/0x80、探针窗口 4 与
-       * 回退上限 3 是 RFC 3629 协议常量（序列最长 4 字节 = lead + 3 continuation），
-       * 命名抽象反而掩盖位语义（session-file-streaming.trimToUtf8Boundary 同款豁免） */
-      if (offset > 0) {
-        // 探针含块首字节：仅块首是 continuation（切在序列内）时才回退
-        const probeBase = Math.max(0, offset - 4)
-        const probe = Buffer.alloc(offset - probeBase + 1)
-        readSync(fd, probe, 0, probe.length, probeBase)
-        if ((probe[probe.length - 1] & 0xc0) === 0x80) {
-          // 从块首左侧第 1 字节向左扫：lead 右侧至块首全在同一序列内（必为
-          // continuation），首个非 continuation 字节即精确 lead。探针扫空（文件头
-          // 即残缺序列的损坏形态）放弃对齐，接受一次 U+FFFD，与不回退等价无害
-          let boundary = offset - 1
-          while (boundary >= probeBase && (probe[boundary - probeBase] & 0xc0) === 0x80) boundary--
-          if (boundary >= probeBase) offset = boundary
-        }
+    while (state.end > 0) {
+      // 总量上限：停止（sawStart=false，调用方保守判定）
+      if (maxTotalBytes - state.totalBytesRead <= 0) break
+      if (readChunkAndDeliver(fd, state, chunkBytes, maxTotalBytes, visit)) {
+        stopped = true
+        break
       }
-      const buf = Buffer.alloc(chunkLen + 3) // 块首对齐回退量 ≤ 3 字节（协议常量，上方豁免同源）
-      /* eslint-enable no-magic-numbers */
-      const bytesRead = readSync(fd, buf, 0, end - offset, offset)
-      totalBytesRead += bytesRead
-      // 当前块在前、pending（来自更靠后的块）在后，文件顺序拼接
-      const text = buf.subarray(0, bytesRead).toString('utf-8') + pending
-      const segs = text.split('\n')
-      // 行界伪影：text 以 '\n' 结尾时 split 的尾随空段不是行（'\n' 结束了前一行；
-      // 中间的空串才是真实空行，保留）。不判伪影会把每块行尾的空段当空行交付。
-      if (text.endsWith('\n')) segs.pop()
-      const isStartChunk = offset === 0
-      if (isStartChunk) {
-        sawStart = true
-        pending = ''
-      } else {
-        // 首段是被切断行的头部（其开头在 offset 之前）——留 pending，不交付
-        pending = segs[0] ?? ''
-        segs.shift()
-      }
-      if (segs.length > 0) {
-        const stop = visit({ lines: segs, totalBytesRead, isStartChunk })
-        if (stop === false) {
-          stopped = true
-          break
-        }
-      }
-      end = offset
     }
     // pending 残留 = 因提前停止 / 上限截停而永不完整的半行——按残行丢弃语义放弃
     // （对齐 readTailBytes INVAR-tail-3「宁可多丢一行也不冒险 parse 残行」取舍）
-    return { totalBytesRead, sawStart, stopped, fullyScanned: sawStart && !stopped, openFailed: false }
+    return {
+      totalBytesRead: state.totalBytesRead,
+      sawStart: state.sawStart,
+      stopped,
+      fullyScanned: state.sawStart && !stopped,
+      openFailed: false,
+    }
   } finally {
     closeSync(fd)
   }
