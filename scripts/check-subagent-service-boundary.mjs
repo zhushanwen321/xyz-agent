@@ -84,7 +84,7 @@ const SUPPORT_SHELL_EDGES = new Map([
  *  `import * as ns from "..."` / `export { A } from "..."`（[阶段3 P3-3] re-export
  *  通道与 import 同构——聚合互相转发值符号时按值符号入各方向门）。 */
 function parseImport(line) {
-  const m = line.match(/^\s*(?:import|export)\s+(type\s+)?(?:\{([^}]*)\}|\*\s+as\s+[\w$]+|[\w$]+)\s*from\s*['"]([^'"]+)['"]/);
+  const m = line.match(/^\s*(?:import|export)\s+(type\s+)?(?:\{([^}]*)\}|\*\s+as\s+[\w$]+|\*(?!\s+as)|[\w$]+)\s*from\s*['"]([^'"]+)['"]/);
   if (!m) return null;
   const blockTypeOnly = Boolean(m[1]);
   const named = m[2];
@@ -107,12 +107,14 @@ function parseImport(line) {
 /** [R6] 把源码按物理行产出，但将跨行 named import 块合并为单逻辑行——
  *  parseImport 是逐行正则，多行形态 `import {\n  A,\n  B,\n} from "..."` 若不合并
  *  会整块漏检（方向门盲区；R6 常量归一的多行 import 首次暴露，R5 存量壳装配
- *  import 同为多行）。仅合并「以 import 开头且本行无 from」到「含 from 的行」。 */
+ *  import 同为多行）。[阶段3 R2-1] 合并条件同时覆盖 import/export 开头（多行
+ *  `export {\n A \n} from` 块同漏检面）。仅合并「以 import/export 开头且本行无
+ *  from」到「含 from 的行」。 */
 function* logicalImportLines(src) {
   const lines = src.split("\n");
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
-    if (/^\s*import\b/.test(line) && !/from\s*['"]/.test(line)) {
+    if (/^\s*(?:import|export)\b/.test(line) && !/from\s*['"]/.test(line)) {
       let merged = line;
       let j = i;
       while (j + 1 < lines.length && !/from\s*['"]/.test(merged) && j - i < 50) {
