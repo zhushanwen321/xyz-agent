@@ -1564,7 +1564,9 @@ export class RecordStore {
   }
 
   /** entry-born 孤儿按无文件判据收敛落 entry：chatMode → resumable（分流语义一致）；
-   *  否则 closed+gc+error（子文件由子进程创建，无文件 = 子进程从未开跑，error 方向安全）。 */
+   *  否则 closed+gc+error（entry-born 是 zcode 引擎 record 的常态形态——无子 session 文件
+   *  非异常，D8 第五行 entry-born 作用域注记；one-shot 直断 closed/gc，续聊对无 transcript
+   *  形态结构性不成立，承接通道仅 start fresh）。 */
   private finalizeEntryOnlyOrphan(rec: SubagentRecord, chatMode: boolean): void {
     this.reportSubagentRecord({
       ...rec,
@@ -1574,7 +1576,7 @@ export class RecordStore {
           status: "closed" as const,
           closedReason: "gc" as const,
           endedAt: Date.now(),
-          error: "orphan recovery: no child session file (spawn interrupted or file removed externally)",
+          error: "orphan recovery: closed by gc (entry-born form has no child session file to resume from; start a fresh subagent)",
         }),
     });
   }
