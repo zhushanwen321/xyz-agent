@@ -33,7 +33,13 @@
 import { release as osRelease } from 'node:os'
 import { existsSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { getDataDir } from '@xyz-agent/shared/paths'
+import {
+  RUN_DIR_NAME,
+  RUN_MARKER_FILENAME,
+  RUN_CHECKPOINT_FILENAME,
+  RUN_CHECKPOINT_FAILED_PREFIX,
+  getDataDir,
+} from '@xyz-agent/shared/paths'
 import type { DiagnosticExportBundleResult, DiagnosticExportSummary } from '@xyz-agent/shared'
 import { DIAGNOSTIC_EXPORT_PRIVACY_NOTICE } from '@xyz-agent/shared'
 import { mainLogger } from '../logs/main-logger.js'
@@ -70,13 +76,8 @@ const LOG_FAMILIES: ReadonlyArray<{ prefix: string; note: string }> = [
   { prefix: 'pi-', note: 'pi stdout tee 尾部（最后 256KB；含 relay 镜像 / 崩溃取证同名前缀家族）' },
 ]
 
-// run 目录运行态常量：与 main.ts resolveRunStatePaths / runtime-checkpoint.ts 双胞胎对齐
-//（不能 import main.ts——入口模块顶层有单实例锁等副作用；三行常量跨文件显式对齐，
-// 同 crash-journal 双胞胎 writer 先例）。
-const RUN_DIR_NAME = 'run'
-const RUN_MARKER_FILENAME = 'main-running.marker'
-const RUN_CHECKPOINT_FILENAME = 'runtime-checkpoint.json'
-const RUN_CHECKPOINT_FAILED_PREFIX = 'runtime-checkpoint-failed-'
+// run 目录运行态文件名族走 @xyz-agent/shared/paths RUN_* SSOT（【oe-audit C8】：
+// 原四行手抄字面量与 main.ts / runtime-checkpoint.ts「跨文件显式对齐」收敛单点）。
 
 // ── 收集清单（纯函数）────────────────────────────────────────────────────────
 

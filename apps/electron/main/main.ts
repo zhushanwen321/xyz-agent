@@ -58,7 +58,7 @@ import { homedir, tmpdir } from 'node:os'
 import { app, protocol, net, BrowserWindow } from 'electron'
 import { DEV_PORT_OFFSET } from '@xyz-agent/shared'
 import type { CrashJournalWriter, LaunchResult } from '@xyz-agent/shared'
-import { getDataDir } from '@xyz-agent/shared/paths'
+import { RUN_CHECKPOINT_FAILED_PREFIX, RUN_CHECKPOINT_FAILED_RETENTION, getRunStatePaths, getDataDir } from '@xyz-agent/shared/paths'
 import { createMainContext } from './context.js'
 import type { MainContext } from './interfaces.js'
 import { RuntimeSupervisor } from './supervisor/runtime-supervisor.js'
@@ -172,19 +172,9 @@ if (!gotSingleInstanceLock) {
 
 // ── run 目录运行态：marker + checkpoint 常量（D1 marker 行 / D3）──────────────
 // 常量必须在下方启动块求值之前初始化（模块级 const 无提升）；落点 `<dataDir>/run/`，
-// runtime 侧同名 checkpoint writer 在 packages/runtime/src/services/session/runtime-checkpoint.ts
-// ——跨进程不共享模块（main 不 import runtime 包），失败现场家族名/保留份数在此显式对齐
-//（同 crash-journal 双胞胎 writer 的既有先例）。
-/** run 目录名（D1/D3 权威路径 `<dataDir>/run`）。 */
-const RUN_DIR_NAME = 'run'
-/** main 存活 marker 文件名（D1 clean-exit marker）。 */
-const RUN_MARKER_FILENAME = 'main-running.marker'
-/** runtime checkpoint 主文件名（D3；与 runtime 侧 writer 同名同目录）。 */
-const CHECKPOINT_FILENAME = 'runtime-checkpoint.json'
-/** 残留隔离家族前缀（D3：`checkpoint-failed-<ts>` 家族，保留最近 3 份）。 */
-const CHECKPOINT_FAILED_PREFIX = 'runtime-checkpoint-failed-'
-/** 隔离残留保留份数（D3 §5 清理声明：新失败覆盖最旧）。 */
-const FAILED_CHECKPOINT_RETENTION = 3
+// run 目录文件名族 SSOT = @xyz-agent/shared/paths RUN_* 常量族（【oe-audit C8】：原
+// 此处与 runtime-checkpoint.ts / export-diagnostic-bundle.ts 三处手抄字面量收敛为单点，
+// 「双胞胎显式对齐」的漂移面构造性消失）。
 /** 本进程是否已为陈旧 checkpoint 记过 reattach-skipped（D3：重复失败不重复记事件）。 */
 let staleCheckpointReported = false
 
@@ -468,14 +458,9 @@ export interface RunStatePaths {
   checkpointPath: string
 }
 
-/** 解析 run 目录路径组（缺省 getDataDir() 动态推导）。 */
+/** 解析 run 目录路径组（缺省 getDataDir() 动态推导）。【oe-audit C8】委托 shared getRunStatePaths 单点。 */
 export function resolveRunStatePaths(dataDir: string = getDataDir()): RunStatePaths {
-  const runDir = path.join(dataDir, RUN_DIR_NAME)
-  return {
-    runDir,
-    markerPath: path.join(runDir, RUN_MARKER_FILENAME),
-    checkpointPath: path.join(runDir, CHECKPOINT_FILENAME),
-  }
+  return getRunStatePaths(dataDir)
 }
 
 /**
@@ -557,7 +542,7 @@ export function isolateStaleCheckpoint(
   journal: CrashJournalWriter,
   now: number = Date.now(),
 ): CheckpointIsolationOutcome {
-  const target = path.join(paths.runDir, `${CHECKPOINT_FAILED_PREFIX}${formatRunTimestamp(now)}.json`)
+  const target = path.join(paths.runDir, `${RUN_CHECKPOINT_FAILED_PREFIX}${formatRunTimestamp(now)}.json`)
   let outcome: CheckpointIsolationOutcome
   try {
     renameSync(paths.checkpointPath, target)
@@ -601,12 +586,12 @@ export function removeRuntimeCheckpoint(paths: RunStatePaths): boolean {
 function pruneFailedCheckpoints(runDir: string): void {
   let names: string[]
   try {
-    names = readdirSync(runDir).filter((n) => n.startsWith(CHECKPOINT_FAILED_PREFIX))
+    names = readdirSync(runDir).filter((n) => n.startsWith(RUN_CHECKPOINT_FAILED_PREFIX))
   } catch {
     return // 目录不可读（权限）→ 不裁剪（隔离自身已 best-effort）
   }
   names.sort()
-  for (let i = 0; i < names.length - FAILED_CHECKPOINT_RETENTION; i++) {
+  for (let i = 0; i < names.length - RUN_CHECKPOINT_FAILED_RETENTION; i++) {
     try {
       rmSync(path.join(runDir, names[i]!), { force: true })
     // eslint-disable-next-line taste/no-silent-catch -- 裁剪是卫生动作，单份删除失败不改变隔离主结果

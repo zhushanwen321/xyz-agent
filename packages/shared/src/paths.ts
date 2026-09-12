@@ -172,3 +172,38 @@ export function getImageCacheDir(sessionId: string, dataDir?: string): string {
   }
   return join(dataDir ?? getDataDir(), 'cache', 'images', sessionId)
 }
+
+// ── run 目录运行态（crash-forensics D1/D3）────────────────────────────────────
+// 【oe-audit C8】文件名族 SSOT：此前 'runtime-checkpoint.json' 等字面量在
+// runtime-checkpoint.ts / main.ts / export-diagnostic-bundle.ts 三处独立定义
+// （bundle 注释自认「三行常量跨文件显式对齐」）——漏改即 main 侧隔离与诊断导出
+// 静默失配。收敛单点后，三消费方（runtime writer / main 残留隔离 / 诊断清单）共享。
+
+/** run 目录名（`<dataDir>/run`）。 */
+export const RUN_DIR_NAME = 'run'
+
+/** main 存活 marker 文件名（D1 clean-exit marker：正常退出删除，残留 = unclean）。 */
+export const RUN_MARKER_FILENAME = 'main-running.marker'
+
+/** runtime checkpoint 主文件名（D3 权威路径 `<dataDir>/run/runtime-checkpoint.json`）。 */
+export const RUN_CHECKPOINT_FILENAME = 'runtime-checkpoint.json'
+
+/** checkpoint 失败现场文件名前缀（同域家族：`runtime-checkpoint-failed-<ts>.json`）。 */
+export const RUN_CHECKPOINT_FAILED_PREFIX = 'runtime-checkpoint-failed-'
+
+/** checkpoint 失败现场保留份数（D3 §5 清理声明：保留最近 3 份，新失败覆盖最旧）。 */
+export const RUN_CHECKPOINT_FAILED_RETENTION = 3
+
+/** run 目录运行态路径族（main.ts resolveRunStatePaths 的 shared 形态——诊断导出等 main 模块不能 import 入口模块）。 */
+export function getRunStatePaths(dataDir: string): {
+  runDir: string
+  markerPath: string
+  checkpointPath: string
+} {
+  const runDir = join(dataDir, RUN_DIR_NAME)
+  return {
+    runDir,
+    markerPath: join(runDir, RUN_MARKER_FILENAME),
+    checkpointPath: join(runDir, RUN_CHECKPOINT_FILENAME),
+  }
+}

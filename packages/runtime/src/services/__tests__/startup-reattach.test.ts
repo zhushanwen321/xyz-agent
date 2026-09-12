@@ -27,7 +27,8 @@ import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'no
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { CrashJournalEvent, CrashJournalWriter } from '@xyz-agent/shared'
-import { CHECKPOINT_FILENAME, RuntimeCheckpointStore } from '../session/runtime-checkpoint.js'
+import { RUN_CHECKPOINT_FILENAME as CHECKPOINT_FILENAME } from '@xyz-agent/shared/paths'
+import { RuntimeCheckpointStore } from '../session/runtime-checkpoint.js'
 import type { RuntimeCheckpointEntry } from '../session/runtime-checkpoint.js'
 import type { MemPressureSample } from '../../infra/mem-pressure.js'
 import {

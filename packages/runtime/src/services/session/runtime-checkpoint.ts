@@ -55,18 +55,18 @@ import {
 } from 'node:fs'
 import { join } from 'node:path'
 import type { CrashJournalWriter } from '@xyz-agent/shared'
-import { getDataDir } from '@xyz-agent/shared/paths'
+import {
+  RUN_CHECKPOINT_FAILED_PREFIX,
+  RUN_CHECKPOINT_FAILED_RETENTION,
+  RUN_CHECKPOINT_FILENAME,
+  getDataDir,
+} from '@xyz-agent/shared/paths'
 import { getCrashJournal } from '../../infra/crash-journal.js'
 import { logger } from '../../infra/logger.js'
 
-/** checkpoint 主文件名（D3 权威路径 `<dataDir>/run/runtime-checkpoint.json`）。 */
-export const CHECKPOINT_FILENAME = 'runtime-checkpoint.json'
-
-/** 失败现场文件名前缀（同域家族：`runtime-checkpoint-failed-<ts>.json`）。 */
-export const CHECKPOINT_FAILED_PREFIX = 'runtime-checkpoint-failed-'
-
-/** 失败现场保留份数（D3/§5 清理声明：保留最近 3 份，新失败覆盖最旧）。 */
-export const DEFAULT_FAILED_SNAPSHOT_RETENTION = 3
+// 文件名/前缀/保留份数 SSOT = @xyz-agent/shared/paths RUN_* 常量族（【oe-audit C8】：
+// 原三处手抄字面量收敛——main.ts 残留隔离与诊断导出与本 writer 共享同一单点定义，
+// 漏改即静默失配的漂移面构造性消失）。
 
 /** 文件格式版本（消费方按需迁移；当前 1 = 设计 D3 字段集）。 */
 export const CHECKPOINT_VERSION = 1
@@ -182,7 +182,7 @@ export class RuntimeCheckpointStore {
     this.dir = options.dir ?? join(getDataDir(), 'run')
     this.now = options.now ?? Date.now
     this.journal = options.journal ?? getCrashJournal()
-    this.failedSnapshotRetention = Math.max(1, options.failedSnapshotRetention ?? DEFAULT_FAILED_SNAPSHOT_RETENTION)
+    this.failedSnapshotRetention = Math.max(1, options.failedSnapshotRetention ?? RUN_CHECKPOINT_FAILED_RETENTION)
   }
 
   /** run 目录（诊断/测试断言面）。 */
@@ -192,7 +192,7 @@ export class RuntimeCheckpointStore {
 
   /** checkpoint 主文件绝对路径。 */
   get checkpointPath(): string {
-    return join(this.dir, CHECKPOINT_FILENAME)
+    return join(this.dir, RUN_CHECKPOINT_FILENAME)
   }
 
   /** 内存清单快照（诊断/测试断言面；order 无保证）。 */
@@ -291,7 +291,7 @@ export class RuntimeCheckpointStore {
    * 的「为什么不恢复」，由调用方按进程内 once 记首次）。
    */
   isolateResidual(sourcePath: string = this.checkpointPath): CheckpointIsolationOutcome {
-    const target = join(this.dir, `${CHECKPOINT_FAILED_PREFIX}${formatTimestamp(this.now())}.json`)
+    const target = join(this.dir, `${RUN_CHECKPOINT_FAILED_PREFIX}${formatTimestamp(this.now())}.json`)
     try {
       renameSync(sourcePath, target)
     } catch (e: unknown) {
@@ -346,7 +346,7 @@ export class RuntimeCheckpointStore {
   private pruneFailedSnapshots(): void {
     let names: string[]
     try {
-      names = readdirSync(this.dir).filter((n) => n.startsWith(CHECKPOINT_FAILED_PREFIX))
+      names = readdirSync(this.dir).filter((n) => n.startsWith(RUN_CHECKPOINT_FAILED_PREFIX))
     } catch {
       return // 目录不可读（权限）→ 不做裁剪（隔离本身已 best-effort）
     }

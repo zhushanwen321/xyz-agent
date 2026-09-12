@@ -32,11 +32,13 @@ import {
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { CrashJournalEvent, CrashJournalWriter } from '@xyz-agent/shared'
-import { getDataDir } from '@xyz-agent/shared/paths'
 import {
-  CHECKPOINT_FAILED_PREFIX,
-  CHECKPOINT_FILENAME,
-  DEFAULT_FAILED_SNAPSHOT_RETENTION,
+  RUN_CHECKPOINT_FAILED_PREFIX as CHECKPOINT_FAILED_PREFIX,
+  RUN_CHECKPOINT_FAILED_RETENTION as DEFAULT_FAILED_SNAPSHOT_RETENTION,
+  RUN_CHECKPOINT_FILENAME as CHECKPOINT_FILENAME,
+  getDataDir,
+} from '@xyz-agent/shared/paths'
+import {
   RuntimeCheckpointStore,
   getRuntimeCheckpointStore,
   initRuntimeCheckpointStore,
