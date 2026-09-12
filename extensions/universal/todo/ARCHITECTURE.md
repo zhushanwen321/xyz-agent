@@ -1,6 +1,8 @@
 # todo 扩展架构
 
 > 现状架构文档。对外契约见 `README.md`。
+>
+> 功能分级：P2（依据见 [docs/feature-priorities.md](../../../docs/feature-priorities.md) §6——面板能力，挂了主链路完整）。
 
 ## 1. 模块依赖
 
