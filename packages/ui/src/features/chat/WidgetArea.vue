@@ -25,6 +25,7 @@ import { VIEW_HOST_SOURCE_KEY } from '../../extension-host'
 import type { ViewCacheEntry } from '../../extension-host'
 import type { GuiComponent, WidgetMeta } from '@xyz-agent/extension-protocol'
 // primitives / 渲染协议直接路径（不经顶层 barrel，chat 组件被 barrel 再导出会闭合循环依赖环）
+import { Button } from '../../primitives/button'
 import { Popover, PopoverContent, PopoverTrigger } from '../../primitives/popover'
 import GuiComponentRenderer from '../../rendering-protocol/GuiComponentRenderer.vue'
 
@@ -144,8 +145,9 @@ const activePreview = computed<{ widget: string; label: string } | null>(() => {
   <div v-if="entries.length > 0" data-testid="widget-area" class="relative flex-shrink-0 px-5 py-2">
     <Popover v-model:open="popoverOpen">
       <PopoverTrigger as-child>
-        <button
+        <Button
           type="button"
+          variant="ghost"
           data-testid="widget-pill"
           class="flex h-7 max-w-full cursor-pointer select-none items-center gap-3 overflow-hidden rounded-full bg-surface-2 px-3.5 font-mono text-[length:var(--text-2xs)] text-neutral-mid transition-colors hover:bg-surface-hover hover:text-neutral-fg"
         >
@@ -188,7 +190,7 @@ const activePreview = computed<{ widget: string; label: string } | null>(() => {
               aria-hidden="true"
             />
           </span>
-        </button>
+        </Button>
       </PopoverTrigger>
       <PopoverContent
         side="top"
