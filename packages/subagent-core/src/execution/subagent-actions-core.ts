@@ -14,6 +14,7 @@
 // 平台中立性：全部错误文案 / 提示文案面向 LLM（行动语言），无宿主专属词汇，
 // 文案内聚本模块（文案即行为，⛔4 逐字锚定）。
 
+import { findForeignLiveInstance } from "./alive-store.ts";
 import { computeElapsedSeconds, projectOutcome } from "./execution-record.ts";
 import { isResumable } from "./lifecycle-predicates.ts";
 import { SLUG_MAX_LENGTH } from "../orchestration/models/types.ts";
@@ -708,13 +709,17 @@ function assertAndLookupForkFromSource(service: SubagentService, id: string): Su
     );
   }
 
-  // 守卫 3：异进程活跃（externalInstance = 另一进程的活 pid marker）。
+  // 守卫 3：异进程活跃（.alive 侧车指向另一进程的活 pid）。
   // 双写防护：fork 虽 copy-on-write（历史 jsonl 只读），但源仍在异进程运行时接续容易
-  // 读到半截历史，等它结束再接更安全。判据只认 externalInstance（真实活 pid 探针
-  // 命中），不拦 status==='running' 的快照——后者含跨重启回退重建的 running 记录
-  //（无活 pid，历史已完整落盘），它们正是 endedMessageGuard 指引 fork-from 的目标；
-  // 拦了会让 agent 在「建议 fork-from」与「fork-from 拒绝 running」两条错误间死循环。
-  if (source.externalInstance !== undefined) {
+  // 读到半截历史，等它结束再接更安全。判据 = findForeignLiveInstance 直接探针（同
+  // cold-lookup 双守卫判据；[U4b / D3b (a′)] 原读 rec.externalInstance 重建缓存换现查
+  // 探针——语义等价（externalInstance 非空 ⟺ 探针非空）且比重建时点缓存更新鲜；
+  // externalInstance 字段链删除归 U4a），不拦 status==='running' 的快照——后者含跨重启
+  // 回退重建的 running 记录（无活 pid，历史已完整落盘），它们正是 endedMessageGuard
+  // 指引 fork-from 的目标；拦了会让 agent 在「建议 fork-from」与「fork-from 拒绝
+  // running」两条错误间死循环。sessionFile 缺失（entry-born 孤儿）时无从探活，
+  // 天然无 foreign 声明，落守卫 6 处置。
+  if (source.sessionFile !== undefined && findForeignLiveInstance(source.sessionFile) !== undefined) {
     throw new Error(
       `subagent ${id} is still running in another process (alive pid marker present). ` +
       `Recovery: wait until it finishes, or operate it in its own session; then retry fork-from.`,

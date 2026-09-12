@@ -12,7 +12,8 @@
 //   3. 空 .finalized 兼容：旧格式空文件 → disconnected → 可重生。
 //   4. guard 一致性：fork-from 与 message 在 user-close 上行为一致地拒绝，各有文案断言。
 //   外加：parent-shutdown 同样可重生、gc 完成记录维持 fork-from 指引不重生、
-//        陈旧 .alive（软超时外）不拦截重生、resurrectClosed 单元语义、close action 维持严格。
+//        本进程自有 .alive 声明（self-pid 排除，U1 后判据）不拦截重生、resurrectClosed
+//        单元语义、close action 维持严格。
 //
 // mock 手法（[W3 改写]）：registerFakePiEngine 协议替身 + logger；record-store /
 // state-marker / alive-store 走真实实现（fixture 用临时目录写真实
@@ -51,6 +52,12 @@ const IDENTITY_ENV_KEYS = [
   "PI_SUBAGENT_ROOT_CWD",
   "PI_SUBAGENT_FORK_DEPTH",
 ] as const;
+
+/** [U1/A4] 「异进程且存活」的确定性模拟 pid：1 号进程（launchd/init）必然存在且非
+ *  本测试进程——kill(1, 0) 对普通用户返回 EPERM，isProcessAlive 按「存在但无权限」
+ *  保守判活（self-pid 排除后不能再以本测试进程 pid 模拟异进程实例，同 subagent-core
+ *  cold-lookup.test.ts FOREIGN_LIVE_PID 手法）。 */
+const FOREIGN_LIVE_PID = 1;
 
 function makePi() {
   return {
@@ -308,10 +315,12 @@ describe("[v8.5 D] 透明重生：ended 记录同 id 续写原 session", () => {
       expect(fake.runs.length).toBe(0);
     });
 
-    it("异进程活实例（.alive + 存活 pid + 未超软超时）→ 拒绝（防双写 jsonl）", async () => {
+    it("异进程活实例（.alive + 存活 pid）→ 拒绝（防双写 jsonl）", async () => {
       const file = writeSessionJsonl(sessionsDir, { id: "sa-d-alive", rootSessionId: "root-session-cur" });
       writeFinalizedState(file, "disconnected");
-      writeAliveMarker(file, process.pid, Date.now()); // 本测试进程 pid 必然存活
+      // [U1/A4] 探针判据 = pid 单判据 + self-pid 排除（软超时已退役）——「异进程」模拟
+      // 不能再用本测试进程 pid（会被 self-pid 排除放行），改恒活外部 pid 1。
+      writeAliveMarker(file, FOREIGN_LIVE_PID, Date.now());
       expect(findForeignLiveInstance(file)).toBeDefined(); // 探针前置自检
 
       await expect(messageHandler(service, { subagentId: "sa-d-alive", text: "hi" })).rejects.toThrow(
@@ -321,11 +330,14 @@ describe("[v8.5 D] 透明重生：ended 记录同 id 续写原 session", () => {
       expect(fake.runs.length).toBe(0);
     });
 
-    it("陈旧 .alive（超过软超时）不再拦截 → 可重生（软超时判据 e2e）", async () => {
+    it("本进程自有 .alive 声明（marker.pid = 本进程）不拦截本进程 → 可重生（self-pid 排除判据 e2e）", async () => {
       const file = writeSessionJsonl(sessionsDir, { id: "sa-d-stale", rootSessionId: "root-session-cur" });
       writeFinalizedState(file, "disconnected");
-      // pid 本身还活着（本进程），但 startedAt 已超 1h 软超时 → marker 视为陈旧
-      writeAliveMarker(file, process.pid, Date.now() - 2 * 3_600_000);
+      // [U1/D3b] 软超时判据已退役，此前「超软超时放行」用例的真实放行原因已变——
+      // 现行判据下 marker.pid === process.pid 被视同本进程自有声明（无论 startedAt
+      // 新旧），探针前置自检确认放行由 self-pid 排除给出。
+      writeAliveMarker(file, process.pid, Date.now());
+      expect(findForeignLiveInstance(file)).toBeUndefined(); // 探针前置自检：self-pid 排除放行
 
       const result = await messageHandler(service, { subagentId: "sa-d-stale", text: "revive" });
       expect(result.response.delivered).toBe(true);

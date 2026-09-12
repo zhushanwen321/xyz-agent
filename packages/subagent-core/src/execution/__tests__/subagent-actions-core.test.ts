@@ -18,7 +18,10 @@
 // 读 Date.now()——本文件用 fake timers 固定时钟（now = 探针首跑实值 1788189209000），
 // 使快照期望值与实测值逐字可比。
 
-import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import * as fs from "node:fs";
+import * as os from "node:os";
+import * as path from "node:path";
 
 import {
   BG_MESSAGE,
@@ -38,6 +41,7 @@ import {
   wrapForkFromPrompt,
 } from "../subagent-actions-core.ts";
 import { ResurrectDeniedError } from "../types.ts";
+import { writeAliveMarker } from "../alive-store.ts";
 import type {
   ExecutionHandle,
   ExecutionRecord,
@@ -48,6 +52,11 @@ import type { SubagentService } from "../subagent-service.ts";
 
 // ── 时钟固定（duration 快照确定性，见文件头）──
 const FROZEN_NOW = 1788189209000;
+
+/** [U1/A4] 「异进程且存活」的确定性模拟 pid：1 号进程（launchd/init）必然存在且非
+ *  本测试进程——kill(1, 0) 对普通用户返回 EPERM，isProcessAlive 按「存在但无权限」
+ *  保守判活（self-pid 排除后不能再以本进程 pid 模拟异进程实例，同 cold-lookup.test.ts）。 */
+const FOREIGN_LIVE_PID = 1;
 
 beforeAll(() => {
   vi.useFakeTimers({ now: FROZEN_NOW });
@@ -826,6 +835,16 @@ describe("⛔4 closeHandler（force 语义透传，快照 = pi-sw 实测）", ()
 // forkFromHandler（守卫链 1–6）
 // ============================================================
 describe("⛔4 forkFromHandler（守卫链 + slug 派生 + prompt 包装，快照 = pi-sw 实测）", () => {
+  // [U4b/E2] 双宿主探针 fixture 目录：守卫 3 现查探针读真实 .alive 侧车（不再读
+  // rec.externalInstance 缓存字段），用临时目录落盘驱动，自建自删。
+  let forkDir: string;
+  beforeEach(() => {
+    forkDir = fs.mkdtempSync(path.join(os.tmpdir(), "actions-core-fork-"));
+  });
+  afterEach(() => {
+    fs.rmSync(forkDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
+  });
+
   function makeForkService(source: SubagentRecord | undefined, execute = vi.fn(async (_opts: { task: string; slug?: string; agent?: string }): Promise<ExecutionHandle> => ({
     mode: "background",
     subagentId: "bg-new-1",
@@ -868,11 +887,17 @@ describe("⛔4 forkFromHandler（守卫链 + slug 派生 + prompt 包装，快�
     });
   });
 
-  it("守卫 3：externalInstance 活 pid marker → another-process 文案", async () => {
+  it("守卫 3：异进程活实例（.alive 恒活外部 pid）→ another-process 文案（双宿主形态）", async () => {
+    // [U4b/E2] 双宿主形态：宿主 A 持有中的 record（.alive = A 进程的活 pid 声明）被
+    // 宿主 B 冷查重建，B fork-from 该源时守卫 3 现查探针命中 → 拒绝（源仍在异进程
+    // 运行，接续会读到半截历史）。[U1/A4] self-pid 排除后「异进程」不能用本测试进程
+    // pid 模拟，改恒活外部 pid 1（launchd/init：kill(1,0) → EPERM → isProcessAlive 判活）。
+    const sessionFile = path.join(forkDir, "sess-foreign.jsonl");
+    writeAliveMarker(sessionFile, { pid: FOREIGN_LIVE_PID, id: "bg-1", startedAt: 5 });
     expect(
       await errOf(() =>
         forkFromHandler(
-          makeForkService(makeRec({ id: "bg-1", externalInstance: { pid: 4321, id: "p-1", startedAt: 5 } })),
+          makeForkService(makeRec({ id: "bg-1", status: "running", sessionFile })),
           { sourceSubagentId: "bg-1" },
         ),
       ),

@@ -160,7 +160,7 @@ graph TD
 | U2a | in-progress | 1 | 后台派发 2026-09-12 W2 批 |
 | U2b | in-progress | 1 | 后台派发 2026-09-12 W2 批 |
 | U3 | in-progress | 1 | 后台派发 2026-09-12 W2 批 |
-| U4b | in-progress | 1 | 后台派发 2026-09-12 W2 批（含 transparent-resume 回归修复） |
+| U4b | committed | 1 | 核验 2026-09-12：3 文件领地吻合；E1 grep 仅注释残留；actions-core 41 + transparent-resume 15 单绿；transparent-resume 回归收账 |
 | U4a | pending | 0 | — |
 | U4c | pending | 0 | — |
 | U5 | pending | 0 | — |
@@ -178,3 +178,5 @@ graph TD
 
 **变更历史**：
 - 2026-09-12 计划创建（dev-flow 阶段 1）；设计 v8（72906ff7b）五轮双审 + 外部审查加固就绪
+- 2026-09-12 U1 committed（1da5fcc82）后被外部 --amend 链（fadd8b8b4→fd2614c27，用户 docs 清理工作流）卷出历史——工作区改动完好且与原 commit 逐字一致，前进式重新提交（5a4ac3f7a，不动外部 commit）；已桌面通知用户。核验策略修正：并行批内单单元核验 = 领地测试单绿（全量工作区是混合中间态，34+6 失败均属 U2a/U2b 迁移半途区域），全量绿留各单元串行点 + Gate A
+- 2026-09-12 U4b committed（transparent-resume 回归收账）
