@@ -133,7 +133,6 @@ class CrashJournalFileWriterImpl implements CrashJournalFileWriter {
       if (this.bytesWritten + bytes > this.maxFileBytes) this.cascadeSegments()
       appendFileSync(this.baseFile, line)
       this.bytesWritten += bytes
-    // eslint-disable-next-line taste/no-silent-catch -- 序列化/磁盘满/权限等同步失败面；台账 best-effort，不向调用方业务链抛错（schema CrashJournalWriter 契约）
     } catch {
       this.reportWriteFailure(`append failed: ${this.baseFile}`)
     }
