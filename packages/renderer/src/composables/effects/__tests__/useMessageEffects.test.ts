@@ -30,6 +30,11 @@ const storeMocks = vi.hoisted(() => ({
   clearSession: vi.fn(),
   applyRecords: vi.fn(),
   triggerWorkflowReload: vi.fn(),
+  // [T4] respawn 过渡态分区动作（handleSessionExited/Restored/RestoreFailed 消费）
+  markRespawnPending: vi.fn(),
+  clearRespawnPending: vi.fn(),
+  isRespawnPending: vi.fn(),
+  appendRespawnNotice: vi.fn(),
   // panel store 最小形状（panels 可整体替换模拟聚焦 session 变化）
   panels: [] as Array<{ id: string; sessionId: string | null }>,
   activePanelId: 'root-panel',
@@ -43,6 +48,10 @@ vi.mock('@/stores/chat', () => ({
     finalizeAllStreaming: storeMocks.finalizeAllStreaming,
     applySubagentEntries: storeMocks.applySubagentEntries,
     refreshStreamingTimer: storeMocks.refreshStreamingTimer,
+    markRespawnPending: storeMocks.markRespawnPending,
+    clearRespawnPending: storeMocks.clearRespawnPending,
+    isRespawnPending: storeMocks.isRespawnPending,
+    appendRespawnNotice: storeMocks.appendRespawnNotice,
   }),
 }))
 vi.mock('@/stores/session', () => ({

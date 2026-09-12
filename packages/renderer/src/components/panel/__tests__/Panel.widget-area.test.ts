@@ -36,6 +36,7 @@ const chatMock = vi.hoisted(() => ({
   getOccupancy: vi.fn(() => ({ turn: 'idle' as const, compacting: false, bash: false })),
   isActive: vi.fn(() => false),
   isCompacting: vi.fn(() => false),
+  isRespawnPending: vi.fn(() => false),
   failedHistory: new Map<string, boolean>(),
 }))
 vi.mock('@/stores/chat', () => ({ useChatStore: () => chatMock }))

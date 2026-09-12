@@ -243,7 +243,8 @@ describe('MessageDispatcher — 写入时机 record', () => {
       ensureActive: vi.fn().mockResolvedValue(mockClient),
       getSessionByClient: vi.fn().mockReturnValue(activeSession),
     }
-    const pm = {}
+    // getClient → undefined：无附着 client 形态（sendPrompt 入口 touch 的空守卫分支）
+    const pm = { getClient: vi.fn(() => undefined) }
     // wave:perf-w09（D1-2）：dispatcher 4 参（svc/pm/workspace/bus），broker 依赖已删
     const bus = { publish: vi.fn() } as unknown as ConstructorParameters<typeof MessageDispatcher>[3]
     const dispatcher = new MessageDispatcher(
@@ -268,7 +269,8 @@ describe('MessageDispatcher — 写入时机 record', () => {
       ensureActive: vi.fn(),
       getSessionByClient: vi.fn(),
     }
-    const pm = {}
+    // getClient → undefined：无附着 client 形态（sendPrompt 入口 touch 的空守卫分支）
+    const pm = { getClient: vi.fn(() => undefined) }
     // wave:perf-w09（D1-2）：dispatcher 4 参（svc/pm/workspace/bus），broker 依赖已删
     const bus = { publish: vi.fn() } as unknown as ConstructorParameters<typeof MessageDispatcher>[3]
     const dispatcher = new MessageDispatcher(
@@ -295,7 +297,8 @@ describe('MessageDispatcher — 写入时机 record', () => {
       ensureActive: vi.fn().mockRejectedValue(new Error('restore failed')),
       getSessionByClient: vi.fn(),
     }
-    const pm = {}
+    // getClient → undefined：无附着 client 形态（sendPrompt 入口 touch 的空守卫分支）
+    const pm = { getClient: vi.fn(() => undefined) }
     // wave:perf-w09（D1-2）：dispatcher 4 参（svc/pm/workspace/bus），broker 依赖已删
     const bus = { publish: vi.fn() } as unknown as ConstructorParameters<typeof MessageDispatcher>[3]
     const dispatcher = new MessageDispatcher(

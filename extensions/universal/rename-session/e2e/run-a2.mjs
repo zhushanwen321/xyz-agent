@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * A2 场景：slug 标题风格 ×3 prompt（设计 §8.3 A2）。
+ * A2 场景：slug 标题风格 ×3 prompt。
  *
  * 三个独立 session：中文任务 / 英文任务 / 跟进型模糊 prompt。每个标题做两层断言
  * （assertTitleGuards，风格层与防回归层显式分离）：

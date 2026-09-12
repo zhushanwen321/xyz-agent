@@ -1,4 +1,5 @@
 import type { ExtensionContext } from '@earendil-works/pi-coding-agent'
+import { guardStaleCtx, toErrorMessage } from '@zhushanwen/pi-ext-guards'
 import { getLogger } from '@zhushanwen/pi-extension-logger'
 
 import type { DeliveryHandle, DeliveryMessage } from '@xyz-agent/session-delivery'
@@ -25,16 +26,13 @@ const TICK_INTERVAL_MS = 30_000
 const DEFAULT_EXPIRY_DAYS = 7
 const DEFAULT_EXPIRY_MS = DEFAULT_EXPIRY_DAYS * MS_PER_DAY // 7 days
 const HISTORY_LIMIT = 20 // 与 replayFoldEntries 的裁剪上限一致（advance 折叠 / dispatch 累积共用）
-// pi ExtensionRunner 在 session 替换后访问 stale ctx 时抛出的错误文案片段。
-// 兜底通道（防御纵深）：G1 模块级代际检测（isCtxStale）为主判，覆盖同模块环境内的 session
-// 替换路径（newSession/fork/switchSession：extensionCache 命中，factory 重跑但模块环境共享，
-// 模块级代数被新闭包递增）；本子串覆盖代际盲区——显式 reload / cwd 变化触发
-// clearExtensionCache 后 jiti 重新 import 产生全新模块环境，旧闭包引用的模块级代数冻结
-// 不再递增，isCtxStale 恒 false，此时除 session_shutdown teardown 主防线外只剩错误文案
-// 能识别 stale。
-// 注意：pi 非契约 API（Error message 非稳定接口），pi 升级需回归验证 runtime.test.ts 的
-// U1 / G1-d 文案锚定用例；文案变更时此兜底失效，后果为 timer 泄漏 + 每 30s warn（不 crash）。
-const STALE_CTX_MARKER = 'stale after session replacement'
+// STALE_CTX_MARKER（文案兜底分诊词）已迁移到 ext-guards 共享守卫（guardStaleCtx 内部
+// 引用，本文件不再直接持有）。语义：G1 模块级代际检测（isCtxStale）为主判；文案子串
+// 覆盖代际盲区——显式 reload / cwd 变化触发 clearExtensionCache 后 jiti 重新 import 产生
+// 全新模块环境，旧闭包引用的模块级代数冻结不再递增，isCtxStale 恒 false，只剩错误文案
+// 能识别 stale。pi 非契约 API（Error message 非稳定接口）：文案由 docs/pi-semantics.json
+// PS-30 探针随 pi 版本门禁自动重验；pi 升级仍需回归 runtime.test.ts 的 U1 / G1-d 文案
+// 锚定用例。文案变更时此兜底失效，后果为 timer 泄漏 + 每 30s warn（不 crash）。
 
 export class SchedulerRuntime {
   private tasks: Map<string, ScheduledTask> = new Map()
@@ -201,27 +199,28 @@ export class SchedulerRuntime {
   startScheduler(): void {
     if (this.tickTimer) return
     this.tickTimer = setInterval(() => {
-      // G1（代际前置检查，S9）：本 runtime 所属 session 已被替换 → timer 属泄漏资源，
-      // 自停退场且不进入本轮 tick（不触碰捕获的 stale ctx）。主防线是 F1（session_start
-      // 停旧 timer），此处覆盖 F1 未能触达的泄漏路径——且不依赖「stale ctx 访问恰好抛错」
-      // 或 pi 错误文案，代际一翻转即可静默退场。
-      if (this.isCtxStale?.()) {
-        this.retireStaleTimer()
-        return
-      }
-      // F2（防御兜底）：fire-and-forget 的 tick 链路必须自带 catch——tick 内任何异常
-      // （典型：session 替换后泄漏 timer 的 onAfterTick → refreshWidget 访问 stale ctx.ui 抛错）
-      // 若无人接住即 unhandledRejection，直接崩掉 pi 主进程。分诊：G1 模块级代数比对为主判
-      // （契约内，不受 pi 文案变更影响），STALE_CTX_MARKER 子串为兜底（覆盖 reload 产生全新
-      // 模块环境后旧闭包代数冻结、isCtxStale 恒 false 的盲区）。stale 类错误说明本 runtime
-      // 所属 session 已被替换，timer 属泄漏资源，自停退场；其他错误仅告警，不终止调度。
-      void this.tickScheduler().catch((err: unknown) => {
-        const message = err instanceof Error ? err.message : String(err)
-        if (this.isCtxStale?.() || message.includes(STALE_CTX_MARKER)) {
-          this.retireStaleTimer()
-        } else {
-          logger.warn('tick error', { error: message })
-        }
+      // 三件套语义等价迁移到共享守卫 guardStaleCtx（crash-resilience D1 / u1-ext-guard；
+      // 守卫语义 = 本处原地实现的泛化，迁移对照逐条可证）：
+      // 1. G1 前置检查（S9）：守卫的 isCtxStale 命中 → onStale（= retireStaleTimer）且
+      //    tickScheduler 不执行——与迁移前「前置分支 return」等价：本 runtime 所属 session
+      //    已被替换 → timer 属泄漏资源自停退场，不触碰捕获的 stale ctx，不依赖 pi 错误文案。
+      //    主防线仍是 F1（session_start 停旧 timer），此处覆盖 F1 未能触达的泄漏路径。
+      // 2. F2 catch 分诊（防御兜底）：守卫对 tickScheduler 的 rejection 挂同一分诊谓词
+      //    `isCtxStale() || 文案含 STALE_CTX_MARKER`（字面不变）——stale → retireStaleTimer；
+      //    非 stale → 原样 reject，由下方 .catch 仅告警不终止调度（'tick error' 文案不变，
+      //    U2/G1-c 锚定）。fire-and-forget 的 tick 链路必须自带 catch——tick 内任何异常
+      //    （典型：泄漏 timer 的 onAfterTick → refreshWidget 访问 stale ctx.ui 抛错）无人接住
+      //    即 unhandledRejection，直接崩掉 pi 主进程（E1 同机制）。
+      // 3. retireStaleTimer 自停：未改（'tick stopped' warn 口径与幂等 stopScheduler 原样，
+      //    U1/G1-b/G1-d 锚定）。
+      // `?.catch`：前置检查命中时守卫返回 undefined（fn 未执行、无 Promise、无 rejection
+      // 可接——retire 已由 onStale 完成）；非 stale 时返回 Promise，非 stale rejection
+      // 流到 .catch 仅告警。
+      void guardStaleCtx(() => this.tickScheduler(), {
+        isCtxStale: this.isCtxStale,
+        onStale: () => this.retireStaleTimer(),
+      })?.catch((err: unknown) => {
+        logger.warn('tick error', { error: toErrorMessage(err) })
       })
     }, TICK_INTERVAL_MS)
   }

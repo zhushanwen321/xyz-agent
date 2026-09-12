@@ -148,20 +148,20 @@ describe('createChatStore factory', () => {
         expect(sut.store.getMessages(sid)[0].id).toBe('m1')
       })
 
-      it('尾读 reconcile 截回尾窗后 hydrate 锚不变（load-more 恢复定位依据）', () => {
+      it('[u6/A5b 核心回归] 翻页前插更早历史后，窗口 reconcile（truncated=true）不清历史', () => {
         const sid = 's1'
-        // 1. hydrate 尾窗（getHistory 尾读首条 = 锚）
-        sut.store.hydrate(sid, [userMsg('m1'), userMsg('m2')])
-        expect(sut.store.getHydrateAnchor(sid)).toBe('m1')
-        // 2. load-more 前插更早历史（getFullHistory 锚定切分产物 = 锚之前的段）
+        // 1. hydrate 最近窗口（getHistory 双预算窗口响应）
+        sut.store.hydrate(sid, [userMsg('m1'), userMsg('m2')], { truncated: true, loadedTurns: 2, totalTurnsEstimate: 5 })
+        // 2. 「加载更早」游标翻页前插更早历史（runtime 游标页 = 锚点之前的窗口）
         sut.store.prependHistory(sid, [userMsg('m0', '更早')])
         expect(sut.store.getMessages(sid)).toHaveLength(3)
-        // 3. 切走切回：reconcile 尾读（getHistory 又返回 20-turn 尾窗）整量替换——
-        //    前插的 m0 被抹掉（已知取舍），但锚必须原样保留：load-more 按钮重显后
-        //    （truncated 标记由调用方刷新）再次 getFullHistory 仍按此锚切分恢复全量。
-        sut.store.reconcileHistory(sid, [userMsg('m1'), userMsg('m2')])
-        expect(sut.store.getMessages(sid)).toHaveLength(2)
-        expect(sut.store.getHydrateAnchor(sid)).toBe('m1')
+        // 3. 切走切回：reconcile 窗口响应（truncated=true）→ [u6] 仅合并覆盖最近窗口，
+        //    已加载的更早历史保留（设计 A5b：翻页 → 切出 → 切回更早历史仍在——
+        //    [HISTORICAL] 旧行为「整量替换抹掉 m0」已随 u6 合并语义改造废除）
+        sut.store.reconcileHistory(sid, [userMsg('m1'), userMsg('m2')], { truncated: true, loadedTurns: 2, totalTurnsEstimate: 5 })
+        expect(sut.store.getMessages(sid)).toHaveLength(3)
+        expect(sut.store.getMessages(sid).map((m) => m.id)).toEqual(['m0', 'm1', 'm2'])
+        expect(sut.store.getMessages(sid)[0]!.content).toBe('更早')
       })
 
       // ── [steer-bubble u3 / docs/design/steer-followup-user-bubble-display.md D3]
@@ -393,8 +393,6 @@ describe('createChatStore factory', () => {
           expect(msgs.map((m) => m.id)).toEqual(['ent-m1', 'ent-a1', 'u-s1', 'a-live'])
           expect(sut.store.isHydrated(sid)).toBe(true)
           expect(sut.store.isGenerating(sid)).toBe(true)
-          // 锚定基线首条（文件侧身份），不因合并追加的保护段漂移
-          expect(sut.store.getHydrateAnchor(sid)).toBe('ent-m1')
         })
 
         it('hydrate 复用去重：快照已含投递 user 时 overlay 剔除（不双计）', () => {
@@ -516,70 +514,53 @@ describe('createChatStore factory', () => {
     })
   })
 
-  describe('hydrate 尾窗锚（W5 D5：唯一写方 = hydrate，唯一读方 = loadMoreHistory）', () => {
-    it('hydrate 记锚：user 消息带 piEntryId 时取 piEntryId', () => {
-      sut.store.hydrate('s1', [
-        { id: 'ent-u2', piEntryId: 'ent-u2', role: 'user', content: 'q2', status: 'complete', timestamp: 2 },
-      ])
-      expect(sut.store.getHydrateAnchor('s1')).toBe('ent-u2')
-    })
+  // [u6 退役] hydrate 尾窗锚 describe（W5 D5）已随游标翻页改造删除（锚无消费方，
+  // hydrateAnchors/getHydrateAnchor 全链退役）——窗口合并语义用例见下方 describe。
 
-    it('hydrate 记锚：system 消息无 piEntryId 字段时取 id（对称取值 piEntryId ?? id）', () => {
-      // compaction 等 system 族消息：reducer 产物无 piEntryId，但 id 即 entry 派生 uuidv7
-      sut.store.hydrate('s1', [
-        { id: 'ent-comp', role: 'system', content: 'ctx compressed', status: 'complete', timestamp: 1 },
-      ])
-      expect(sut.store.getHydrateAnchor('s1')).toBe('ent-comp')
-    })
-
-    it('空 history 不记锚（新 session 无 load-more，锚缺失走兜底）', () => {
-      sut.store.hydrate('s1', [])
-      expect(sut.store.getHydrateAnchor('s1')).toBeUndefined()
-    })
-
-    it('锚记尾窗首条而非末条（切分点 = 最旧可见消息的 entry 身份）', () => {
-      sut.store.hydrate('s1', [
-        { id: 'ent-first', piEntryId: 'ent-first', role: 'user', content: 'q1', status: 'complete', timestamp: 1 },
-        { id: 'ent-last', piEntryId: 'ent-last', role: 'assistant', content: 'a1', status: 'complete', timestamp: 2 },
-      ])
-      expect(sut.store.getHydrateAnchor('s1')).toBe('ent-first')
-    })
-
-    it('重 hydrate（dispose 后 hydrated 已清）覆盖旧锚；hydrate 幂等守卫内不重写', () => {
+  describe('reconcileHistory 窗口合并语义（[u6] crash-resilience §3.3 D4：truncated=true 仅合并覆盖最近窗口）', () => {
+    it('切分锚 = 窗口首条消息身份：锚之前的更早历史原样保留，窗口段被响应刷新', () => {
       const sid = 's1'
-      sut.store.hydrate(sid, [userMsg('m1')])
-      // 幂等守卫：已 hydrated 的二次 hydrate 不改锚
-      sut.store.hydrate(sid, [userMsg('m2')])
-      expect(sut.store.getHydrateAnchor(sid)).toBe('m1')
-      // disposeSession 清 hydrated + 锚后重 hydrate → 新锚覆盖（LRU 驱逐重进同语义）
-      sut.store.disposeSession(sid)
-      expect(sut.store.getHydrateAnchor(sid)).toBeUndefined()
-      sut.store.hydrate(sid, [userMsg('m3')])
-      expect(sut.store.getHydrateAnchor(sid)).toBe('m3')
+      // 已 hydrate + 翻页加载了更早历史（m-early）；分区含更早段 + 旧窗口段
+      sut.store.hydrate(sid, [userMsg('m1', '窗口一'), userMsg('m2', '窗口二')], { truncated: true, loadedTurns: 2, totalTurnsEstimate: 4 })
+      sut.store.prependHistory(sid, [userMsg('m-early', '更早')])
+      // 窗口响应：新窗口 m1'（内容刷新）/m2，首条身份 = m1
+      sut.store.reconcileHistory(sid, [userMsg('m1', '窗口一刷新'), userMsg('m2')], { truncated: true, loadedTurns: 2, totalTurnsEstimate: 4 })
+      const msgs = sut.store.getMessages(sid)
+      // 更早历史保留 + 窗口段刷新（禁止整体替换）
+      expect(msgs.map((m) => m.id)).toEqual(['m-early', 'm1', 'm2'])
+      expect(msgs[0]!.content).toBe('更早')
+      expect(msgs[1]!.content).toBe('窗口一刷新')
     })
 
-    it('disposeSession 清锚 + 分区隔离（A/B session 锚互不干扰）', () => {
-      sut.store.hydrate('sa', [userMsg('anchor-a')])
-      sut.store.hydrate('sb', [userMsg('anchor-b')])
-      expect(sut.store.getHydrateAnchor('sa')).toBe('anchor-a')
-      expect(sut.store.getHydrateAnchor('sb')).toBe('anchor-b')
+    it('切分锚未命中（窗口首条不在分区）→ 退化为整体合并（窗口覆盖全部分区）', () => {
+      const sid = 's1'
+      // 分区以 assistant 结尾（无尾部 user 保护段——mergeBaselineWithLive 现状语义）
+      sut.store.hydrate(sid, [userMsg('m1'), completeAssistant('a1')], { truncated: true, loadedTurns: 1, totalTurnsEstimate: 1 })
+      // 响应窗口全新（如 session 文件被外部改写）：无锚可切 → 整体替换语义
+      sut.store.reconcileHistory(sid, [userMsg('m9', '全新窗口'), completeAssistant('a9')], { truncated: false, loadedTurns: 1, totalTurnsEstimate: 1 })
+      expect(sut.store.getMessages(sid).map((m) => m.id)).toEqual(['m9', 'a9'])
+    })
+
+    it('truncated=false（全量响应）维持整体覆盖现状语义', () => {
+      const sid = 's1'
+      sut.store.hydrate(sid, [userMsg('m1')], { truncated: true, loadedTurns: 1, totalTurnsEstimate: 1 })
+      sut.store.prependHistory(sid, [userMsg('m-early', '更早')])
+      // 全量响应：分区被响应整体接管（更早历史已在响应内，无需保留旧分区段）
+      sut.store.reconcileHistory(sid, [userMsg('m-early', '更早'), userMsg('m1')], { truncated: false, loadedTurns: 2, totalTurnsEstimate: 2 })
+      const msgs = sut.store.getMessages(sid)
+      expect(msgs.map((m) => m.id)).toEqual(['m-early', 'm1'])
+      expect(msgs[0]!.content).toBe('更早')
+      // 窗口状态随响应同步（truncated=false → 顶部条消失）
+      expect(sut.store.getHistoryWindow(sid)?.truncated).toBe(false)
+    })
+
+    it('disposeSession 清窗口状态 + 分区隔离（A/B session 互不干扰，重建型随 hydrated 同生共死）', () => {
+      sut.store.hydrate('sa', [userMsg('a1')], { truncated: true, loadedTurns: 1, totalTurnsEstimate: 1 })
+      sut.store.hydrate('sb', [userMsg('b1')], { truncated: true, loadedTurns: 1, totalTurnsEstimate: 1 })
+      expect(sut.store.getHistoryWindow('sa')?.truncated).toBe(true)
       sut.store.disposeSession('sa')
-      expect(sut.store.getHydrateAnchor('sa')).toBeUndefined()
-      expect(sut.store.getHydrateAnchor('sb')).toBe('anchor-b') // B 不受 A 销毁影响
-    })
-
-    it('LRU 驱逐清锚（随 hydrated 同生共死，驱逐重进后重 hydrate 重建）', () => {
-      // 9 个 session 全部 hydrate（记锚）+ touchLru，s0 最旧被驱逐
-      for (let i = 0; i < 9; i++) {
-        const sid = `s${i}`
-        sut.store.hydrate(sid, [userMsg(`anchor-${i}`)])
-        sut.store.touchLru(sid)
-      }
-      expect(sut.store.getHydrateAnchor('s0')).toBe('anchor-0') // 前置：锚已记录
-      sut.store.evictIfNeeded()
-      expect(sut.store.getMessages('s0')).toHaveLength(0) // 前置：s0 被驱逐
-      expect(sut.store.getHydrateAnchor('s0')).toBeUndefined() // 锚随分区同点清理
-      expect(sut.store.getHydrateAnchor('s8')).toBe('anchor-8') // 保留 session 的锚不受影响
+      expect(sut.store.getHistoryWindow('sa')).toBeUndefined()
+      expect(sut.store.getHistoryWindow('sb')?.truncated).toBe(true) // B 不受 A 销毁影响
     })
   })
 

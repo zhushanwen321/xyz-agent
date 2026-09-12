@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * A3 场景：防覆盖手动命名 —— 3a 静态 + 3b 竞态 + 3c 一次性语义（设计 §8.3 A3）。
+ * A3 场景：防覆盖手动命名 —— 3a 静态 + 3b 竞态 + 3c 一次性语义。
  *
  * 3a 静态：先 setSessionName「我的手动名字」再发 prompt；等 rename settled 后再等 ≥10s，
  *         最后 session_info 仍为手动名 + 日志 skip: name exists。

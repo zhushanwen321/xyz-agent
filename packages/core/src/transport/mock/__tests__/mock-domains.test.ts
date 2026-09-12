@@ -178,9 +178,8 @@ describe('mock session domain', () => {
 
 // ── mock chat domain ────────────────────────────────────────────────────────
 describe('mock chat domain', () => {
-  it('getHistory/getFullHistory：未知 session 空数组；abort 推 complete(aborted)', async () => {
-    expect(await chat.getHistory('no-such')).toEqual({ messages: [], historyTruncated: false })
-    expect(await chat.getFullHistory('no-such')).toEqual([])
+  it('getHistory（[u6] 窗口契约三字段，getFullHistory 已退役）：未知 session 空数组；abort 推 complete(aborted)', async () => {
+    expect(await chat.getHistory('no-such')).toEqual({ messages: [], truncated: false, loadedTurns: 0, totalTurnsEstimate: 0 })
     const got: string[] = []
     const un = chat.streamSubscribe('s-abort', (m) => got.push(m.type))
     await chat.abort('s-abort')

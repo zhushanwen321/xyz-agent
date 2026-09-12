@@ -194,7 +194,7 @@ describe('session.exited 事件端到端反馈链路', () => {
     expect(toasts.value.some((t) => t.message.includes('orphan exit'))).toBe(true)
   })
 
-  it('session.exited 失效本地流订阅：旧 events handler 移除 + respawn 后 ensure 重发 subscribe', async () => {
+  it('session.exited 失效本地流订阅：旧 events handler 移除 + 恢复窗口/respawn 后重发 subscribe', async () => {
     await initAndConnect()
     // resetModules 后动态加载（与 useConnection/useMessageEffects 共享同一模块实例）
     const chatMod = await import('@/composables/features/chat/useChat')
@@ -228,19 +228,24 @@ describe('session.exited 事件端到端反馈链路', () => {
       payload: { sessionId: 's-exit', code: 1, reason: 'crashed' },
     })
 
-    // invalidateStreamSubscription 已执行：订阅状态条目清除 + 旧 events handler 移除。
-    // isGenerating 已由 markSessionError 复位（前述用例锁定），dispatch m2 验证 handler 缺位
+    // invalidateStreamSubscription 已执行：旧订阅状态清除 + 旧 events handler 移除。
+    // [T4 回流修复] 随后恢复窗口订阅立即重发 subscribe（第 2 次）——成为恢复后新 bus entry
+    // 的订阅者，restored live 可达；subscriptionStates 留 subscribed=false 意图条目。
+    // （subscribe RPC 发出经 subscribeImpl 的动态 import microtask，先 flush 再断言）
+    await flushAsync()
+    expect(subscribeCalls()).toBe(2)
+    expect(getSubscriptionState('s-exit')).toMatchObject({ subscribed: false })
+    // isGenerating 已由 markSessionError 复位（前述用例锁定），dispatch m2 验证旧 handler 缺位
     //——若旧 handler 仍在，message_start 会重新点亮 streaming 态
-    expect(getSubscriptionState('s-exit')).toBeUndefined()
     dispatchStart('m2')
     await nextTick()
     expect(chatStore.isGenerating('s-exit')).toBe(false)
 
-    // respawn 后再次 ensure：不被 streamSubscriptions/subscriptionStates 幂等守卫短路，
-    // 重发 subscribe RPC（否则新 pi 的 message.* 定向推送无订阅者，UI 卡「进行中…」）
+    // respawn 后再次 ensure：不被 streamSubscriptions 幂等守卫短路，重挂 handler +
+    // 重发 subscribe（第 3 次；subscriptionStates 幂等守卫对 subscribed=false 不拦截）
     chatMod.ensureStreamSubscription('s-exit', chatStore, sessionStore)
     await flushAsync()
-    expect(subscribeCalls()).toBe(2)
+    expect(subscribeCalls()).toBe(3)
 
     // 新 events handler 生效：dispatch message_start 驱动 streaming 态
     dispatchStart('m3')

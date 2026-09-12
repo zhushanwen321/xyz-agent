@@ -2,7 +2,8 @@
   <!--
     容器组件 · trace-view（session-trace §3.1 终态：占满 main 区的全量 entry 台账）。
     结构：TraceToolbar（状态行 + chips + 搜索 + context toggle）+ 行列表 + context 分界行。
-    加载/空态/失败路径（§3.1）：loading 转圈 / empty（未落盘）文案 / error 重试 / 过滤空态。
+    加载/空态/失败路径（§3.1）：loading 转圈 / empty（未落盘）文案 / oversize（超预检阈值
+    D5④）降级文案 / error 重试 / 过滤空态。
     虚拟滚动（D9）：>500 item 启用 virtua Virtualizer（MessageStream 同族设施），
     ≤500 直接 v-for（短列表免测量开销）。两路径共用 TraceRowItem。
     数据不重建（A42）：rows 从 store 分区派生（mapSessionTraceRows 纯函数重算），
@@ -28,6 +29,14 @@
       <p class="text-[length:var(--text-xs)] text-neutral-fg">{{ t('panel.trace.loadFailed') }}</p>
       <p class="max-w-[420px] text-[length:var(--text-2xs)] leading-relaxed text-neutral-dim">{{ t('panel.trace.loadFailedHint') }}</p>
       <p class="font-mono text-[length:var(--text-3xs)] text-neutral-faint">{{ partition.errorCode }}</p>
+      <!-- envelope message 透出（分区已存此前未渲染）：payload_too_large 等传输守卫错误
+           的恢复指引在此字段（「加载更早」分页入口 + session 文件路径，crash-resilience §3.4），
+           只显示 code 会把恢复路径藏掉 -->
+      <p
+        v-if="partition.errorMessage"
+        class="max-w-[420px] break-all text-[length:var(--text-2xs)] leading-relaxed text-neutral-dim"
+        data-testid="trace-error-message"
+      >{{ partition.errorMessage }}</p>
       <Button variant="ghost" size="sm" data-testid="trace-retry" @click="retry(props.sessionId)">
         <RotateCcw class="mr-1 size-3" />
         {{ t('panel.trace.retry') }}
@@ -41,6 +50,22 @@
     >
       <Hourglass class="size-6 text-neutral-dim opacity-40" />
       <p class="text-[length:var(--text-xs)] text-neutral-dim">{{ t('panel.trace.emptyNotPersisted') }}</p>
+      <Button variant="ghost" size="sm" data-testid="trace-retry" @click="retry(props.sessionId)">
+        <RotateCcw class="mr-1 size-3" />
+        {{ t('panel.trace.retry') }}
+      </Button>
+    </div>
+    <!-- 失败路径：文件超 runtime 读取预检阈值（crash-resilience §3.3 D5④）——entries 恒空，
+         独立分支渲染，不与 empty 空态混淆。降级文案（体积 + 源文件绝对路径）由 runtime
+         formatTraceOversizeMessage 产出经分区透传（设计定版文案 SSOT 在 runtime；快照无
+         独立体积字段，组件不可本地重组）。组件形态对齐 empty 分支（icon + 文案 + 重试）。 -->
+    <div
+      v-else-if="partition.source === 'oversize'"
+      class="flex flex-1 flex-col items-center justify-center gap-2 p-6 text-center"
+      data-testid="trace-oversize"
+    >
+      <FileWarning class="size-6 text-neutral-dim opacity-40" />
+      <p class="text-[length:var(--text-xs)] text-neutral-fg" data-testid="trace-oversize-message">{{ partition.oversizeMessage }}</p>
       <Button variant="ghost" size="sm" data-testid="trace-retry" @click="retry(props.sessionId)">
         <RotateCcw class="mr-1 size-3" />
         {{ t('panel.trace.retry') }}

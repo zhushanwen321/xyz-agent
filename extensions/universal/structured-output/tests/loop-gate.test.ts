@@ -21,6 +21,7 @@ import {
 	assertSafeTimerDelay,
 	armForceExitTeardown,
 } from "../src/loop-gate.js";
+import { STALE_CTX_MARKER } from "@zhushanwen/pi-ext-guards";
 
 import {
 	createMockPi,
@@ -738,5 +739,102 @@ describe("index assembly: gate wired into workflow mode", () => {
 		await pi.emit("turn_end", turnEndPayload());
 		expect(pi.sendUserMessage).toHaveBeenCalledTimes(1);
 		expect(pi.ctx.shutdown).not.toHaveBeenCalled();
+	});
+});
+
+// ── terminal teardown 的 stale ctx 守卫分支（crash-resilience D1）──────────
+//
+// 接入点形态（loop-gate.ts setupLoopGate）：优雅退出（abort+shutdown）被 guardStaleCtx
+// 包裹，本接入点未注入 isCtxStale 代际检查——stale 分诊完全依赖错误文案兜底（pi
+// assertActive 抛错文案含 STALE_CTX_MARKER，PS-30 门禁守卫）。三态锁定：
+//   ① stale（文案分诊）→ 跳过优雅退出（shutdown 不被调）+ 15s force-exit timer 仍武装
+//     （自清理语义不丢，等价可观察态 = advance 到点后 process.exit(1) 被调）
+//   ② 非 stale → 优雅退出照常（abort 先行 + shutdown）+ timer 同步武装（正常路径回归）
+//   ③ 非 stale 真实错误 → 原样上抛（守卫不吞 bug），timer 不武装
+describe("terminal teardown stale ctx 守卫（crash-resilience D1）", () => {
+	/** 三次同签名失败驱动 gate 到 newlyTerminal（每次 emit 后 handler 同步完成）。 */
+	const GATE_ERROR = paramLayerErrorText("  - magic: must be equal to constant", "{}");
+
+	async function driveToTerminal(pi: ReturnType<typeof createMockPi>): Promise<void> {
+		const ev = failedToolEndWith(GATE_ERROR);
+		await pi.emit("tool_execution_end", ev);
+		await pi.emit("tool_execution_end", ev);
+		await pi.emit("tool_execution_end", ev);
+	}
+
+	it("① stale（assertActive 文案分诊）：跳过 shutdown + stderr 降级日志 + force-exit timer 仍武装", async () => {
+		vi.useFakeTimers(); // terminal 武装 15s 兜底硬退 timer——fake 掉避免真实 timer 泄漏
+		const exitSpy = vi.spyOn(process, "exit").mockImplementation((() => undefined) as never);
+		const stderrSpy = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+		const pi = createMockPi();
+		// session 替换窗口的真实形态：ctx 已被 pi runner 标记 stale，assertActive 同步抛
+		// STALE_CTX_MARKER 文案错误（文案 = 分诊依据，PS-30 探针锁定）
+		pi.ctx.abort.mockImplementation(() => {
+			throw new Error(`ExtensionAPI is ${STALE_CTX_MARKER} (assertActive)`);
+		});
+		setupLoopGate(pi);
+
+		await driveToTerminal(pi);
+		// terminal 标记与日志在守卫之前完成（闸门状态机不受 stale 窗口影响）
+		expect(pi.appendEntry).toHaveBeenCalledTimes(1);
+		// stale 分诊：abort 已触（错误被守卫接住不外抛），shutdown 未被调（优雅退出跳过）
+		expect(pi.ctx.abort).toHaveBeenCalledTimes(1);
+		expect(pi.ctx.shutdown).not.toHaveBeenCalled();
+		// 观测点：onStale 降级日志（排查者可见「跳过原因 + 兜底保持武装」）
+		expect(stderrSpy).toHaveBeenCalledWith(
+			expect.stringContaining("terminal teardown skipped (stale ctx, session replaced)"),
+		);
+		// force-exit timer 保持武装：到点仍未退出 → 硬退（自清理语义在 stale 窗口不丢）
+		await vi.advanceTimersByTimeAsync(TEARDOWN_FORCE_EXIT_MS);
+		expect(exitSpy).toHaveBeenCalledTimes(1);
+		expect(exitSpy).toHaveBeenCalledWith(1);
+	});
+
+	it("② 非 stale 正常路径回归：abort 先行 + shutdown 照常，force-exit timer 同步武装", async () => {
+		vi.useFakeTimers();
+		const exitSpy = vi.spyOn(process, "exit").mockImplementation((() => undefined) as never);
+		const stderrSpy = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+		const pi = createMockPi();
+		setupLoopGate(pi);
+
+		await driveToTerminal(pi);
+		// 优雅退出照常（R3 F-2 时序：abort 停当前 turn → shutdown 请求优雅退出）
+		expect(pi.ctx.abort).toHaveBeenCalledTimes(1);
+		expect(pi.ctx.shutdown).toHaveBeenCalledTimes(1);
+		expect(pi.ctx.abort.mock.invocationCallOrder[0]!)
+			.toBeLessThan(pi.ctx.shutdown.mock.invocationCallOrder[0]!);
+		// 无 stale 降级日志（分诊未命中）
+		expect(stderrSpy).not.toHaveBeenCalledWith(
+			expect.stringContaining("terminal teardown skipped"),
+		);
+		// timer 与优雅退出并存：正常退出发生在 15s 窗口内时 timer 随进程消亡，
+		// 但武装本身无条件发生（挂死兜底不依赖 stale 判定）
+		await vi.advanceTimersByTimeAsync(TEARDOWN_FORCE_EXIT_MS);
+		expect(exitSpy).toHaveBeenCalledTimes(1);
+		expect(exitSpy).toHaveBeenCalledWith(1);
+	});
+
+	it("③ 非 stale 真实错误原样上抛（守卫不吞 bug）：handler rejected，不武装 force-exit", async () => {
+		vi.useFakeTimers();
+		const exitSpy = vi.spyOn(process, "exit").mockImplementation((() => undefined) as never);
+		const stderrSpy = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+		const pi = createMockPi();
+		pi.ctx.abort.mockImplementation(() => {
+			throw new Error("real bug: not a stale error");
+		});
+		setupLoopGate(pi);
+
+		const ev = failedToolEndWith(GATE_ERROR);
+		await pi.emit("tool_execution_end", ev);
+		await pi.emit("tool_execution_end", ev);
+		// 非 stale 错误经守卫原样上抛 → async handler 变 rejected Promise（调用方可观测）
+		await expect(pi.emit("tool_execution_end", ev)).rejects.toThrow("real bug");
+		expect(pi.ctx.shutdown).not.toHaveBeenCalled();
+		// 守卫抛错中断了 teardown 链：timer 未武装，advance 后无硬退
+		await vi.advanceTimersByTimeAsync(TEARDOWN_FORCE_EXIT_MS);
+		expect(exitSpy).not.toHaveBeenCalled();
+		expect(stderrSpy).not.toHaveBeenCalledWith(
+			expect.stringContaining("terminal teardown skipped"),
+		);
 	});
 });

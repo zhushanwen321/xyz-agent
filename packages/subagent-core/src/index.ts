@@ -24,7 +24,7 @@
 // 0.4.0 = 首个公开发布的收敛收口面（0.3.0 为 2026-08-30 裁决的跳号占位，永不单独
 // 发布；+ minor changeset 收口面落本号）；与 package.json version 的一致性由
 // src/__tests__/smoke.test.ts 动态守护，改版本须两处同步。
-export const CORE_PACKAGE_VERSION = "0.7.1";
+export const CORE_PACKAGE_VERSION = "0.8.0";
 
 // ── 宿主端口接线面（core/）────────────────────────────────────
 // HostServices：dataRoot / log / discoveryRoots 端口 + configureCore 注入；
@@ -121,6 +121,16 @@ export {
   type D8CompatZcodeEngineDeps,
 } from "./execution/engine/d8-compat.ts";
 
+// 在途事件出口（u7a，D5）：壳层（subagent-workflow host/inflight-reporter）注册
+// 监听 + 求值绝对计数快照——core→壳回调出口的 barrel 消费面（exports 面收窄后
+// 壳侧生产消费必须经 barrel，无深路径豁免）。
+export {
+  setInFlightListener,
+  getInFlightSnapshot,
+  type InFlightSnapshot,
+  type InFlightListener,
+} from "./execution/engine/inflight-snapshot.ts";
+// W3 后内核宿主 = engine/host（host-bridge arm/disarm 委托点为在途迁移点），模块本体不经 engines/pi。
 // maxTurnsToWatchdogMs 为 maxTurns→watchdog 毫秒换算（U3/U4 / D7，floor 语义
 // 文档化——两宿主预算一致性 S2 的函数级锚点；[W3] 定义收敛在 pi-host-binding，
 // 原 inproc session-runner（已删） 定义随删件消亡）；killRecordChildWithEscalation 为

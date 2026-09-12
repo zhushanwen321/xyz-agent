@@ -9,68 +9,28 @@
  * - ports.ts：机器可检查的能力边界
  * - adapters/ports.ts：Pi → ServicePorts 桥接（单一构造点）
  * - service.ts：事件入口协调器（applyEvent）
- * - adapters/：Pi 桥接（command-adapter / event-adapter / ports）
+ * - adapters/：Pi 桥接（command-adapter / event-handlers / ports）
  * - projection/：渲染（widget / prompts）
  *
  * FR-4.2/D-16：ctx 必填，移除 lastCtx 模块级可变状态。
  * FR-6.4：移除 hasPendingInjection。
- * FR-6.7：移除 pendingPause（ESC 改用 ctx.signal.aborted 守卫，在 event-adapter）。
+ * FR-6.7：移除 pendingPause（ESC 改用 ctx.signal.aborted 守卫，在各 event handler）。
  */
 
-import type { ExtensionAPI, ExtensionCommandContext, ExtensionContext, Theme } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, ExtensionCommandContext, ExtensionContext, MessageEndEvent } from "@earendil-works/pi-coding-agent";
 import { Text } from "@earendil-works/pi-tui";
 
 import { handleGoalCommand } from "./adapters/command-adapter";
-import {
-	handleAgentEnd,
-	handleBeforeAgentStart,
-	handleMessageEnd,
-	handleSessionShutdown,
-	handleSessionStart,
-	handleTurnEnd,
-	type MessageEndLikeEvent,
-} from "./adapters/event-adapter";
+import { handleAgentEnd } from "./adapters/event-handlers/agent-end";
+import { handleBeforeAgentStart } from "./adapters/event-handlers/before-agent-start";
+import { handleMessageEnd } from "./adapters/event-handlers/message-end";
+import { handleSessionShutdown } from "./adapters/event-handlers/session-shutdown";
+import { handleSessionStart } from "./adapters/event-handlers/session-start";
+import { handleTurnEnd } from "./adapters/event-handlers/turn-end";
 import { registerGoalControlTool } from "./adapters/goal-control-adapter";
 import { buildPorts } from "./adapters/ports";
 import { createGoal } from "./service";
 import { createGoalSession, type GoalSession } from "./session";
-
-// ── Local Interfaces (Like*Event — 避免 any on Pi callback/event signatures) ────
-
-interface BeforeAgentStartLikeEvent {
-	type: "before_agent_start";
-	prompt: string;
-	systemPrompt: string;
-}
-
-interface TurnEndLikeEvent {
-	type: "turn_end";
-	turnIndex: number;
-}
-
-interface AgentEndLikeEvent {
-	type: "agent_end";
-	messages: unknown[];
-}
-
-interface SessionStartLikeEvent {
-	type: "session_start";
-	reason: string;
-}
-
-interface SessionShutdownLikeEvent {
-	type: "session_shutdown";
-	reason: "quit" | "reload" | "new" | "resume" | "fork";
-}
-
-interface LikeCustomMessage {
-	customType: string;
-	content: string | unknown;
-}
-
-interface LikeMessageRenderOptions {
-	expanded: boolean;
-}
 
 // ── Extension Factory ─────────────────────────────────
 
@@ -106,32 +66,32 @@ export default function goalExtension(pi: ExtensionAPI) {
 
 	registerGoalControlTool(pi, session);
 
-	// ── Events（全部委托 adapters/event-adapter）────────
+	// ── Events（全部委托 adapters/event-handlers）────────
 
-	pi.on("before_agent_start", async (_event: BeforeAgentStartLikeEvent, ctx: ExtensionContext) => {
+	pi.on("before_agent_start", async (_event, ctx: ExtensionContext) => {
 		return handleBeforeAgentStart(pi, session, ctx);
 	});
 
-	pi.on("turn_end", async (_event: TurnEndLikeEvent, ctx: ExtensionContext) => {
+	pi.on("turn_end", async (_event, ctx: ExtensionContext) => {
 		await handleTurnEnd(pi, session, ctx);
 	});
 
-	pi.on("message_end", async (event: MessageEndLikeEvent, ctx: ExtensionContext) => {
+	pi.on("message_end", async (event: MessageEndEvent, ctx: ExtensionContext) => {
 		await handleMessageEnd(session, ctx, event);
 	});
 
-	pi.on("agent_end", async (_event: AgentEndLikeEvent, ctx: ExtensionContext) => {
+	pi.on("agent_end", async (_event, ctx: ExtensionContext) => {
 		await handleAgentEnd(pi, session, ctx);
 	});
 
-	pi.on("session_start", async (_event: SessionStartLikeEvent, ctx: ExtensionContext) => {
+	pi.on("session_start", async (_event, ctx: ExtensionContext) => {
 		await handleSessionStart(pi, session, ctx);
 	});
 
 	// MF-R2-1 根修：session_shutdown 在 runner invalidate 之前触发（此刻 pi/ctx
 	// 仍可用），取消待发的退避 continuation timer——覆盖 reload / new / resume /
 	// fork / quit 全部失效路径，旧 timer 不再携 stale ctx 闭包存活到到期
-	pi.on("session_shutdown", async (_event: SessionShutdownLikeEvent, _ctx: ExtensionContext) => {
+	pi.on("session_shutdown", async (_event, _ctx: ExtensionContext) => {
 		await handleSessionShutdown(session);
 	});
 
@@ -141,7 +101,7 @@ export default function goalExtension(pi: ExtensionAPI) {
 	for (const customType of goalMessageTypes) {
 		pi.registerMessageRenderer(
 			customType,
-			(message: LikeCustomMessage, _options: LikeMessageRenderOptions, theme: Theme) => {
+			(message, _options, theme) => {
 				const prefix =
 					message.customType === "goal-context-exceeded"
 						? theme.fg("error", "[GOAL Budget] ")

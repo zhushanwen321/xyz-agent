@@ -1,6 +1,6 @@
 {
   "name": "@zhushanwen/pi-smart-context",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "type": "module",
   "main": "index.ts",
   "xyz-agent": {
@@ -40,6 +40,7 @@
     "test:watch": "vitest"
   },
   "dependencies": {
+    "@zhushanwen/pi-ext-guards": "workspace:*",
     "@zhushanwen/pi-extension-logger": "workspace:*",
     "@zhushanwen/pi-llm-shared": "workspace:*"
   },

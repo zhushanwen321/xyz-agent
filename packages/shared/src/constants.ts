@@ -253,3 +253,152 @@ export const ENGINE_LAUNCH_ENV_KEYS = {
  */
  
 export const UI_TOAST_LIMITS = { MAX_IN_FLIGHT: 5 } as const
+
+// ── 崩溃韧性共享契约（docs/design/crash-resilience.md §3.3，实施计划 u-foundation）──
+// 本段是 DAG 根共享契约：u4a（出站守卫）/ u4b（历史预算）/ u4c（读预检）/
+// u5a/u5b（日志保留期）从这里取值，禁止各单元自写魔数。
+
+/**
+ * server→client 出站帧告警阈值（默认 8MB）[crash-resilience §3.3 D3]。
+ *
+ * RPC reply 与 messageBus push 两种通路共用：序列化后超此值写 warn 日志
+ * （消息类型、sessionId、字节数），**不截断**——哨兵定位：pi 上游自截（read/bash
+ * 50KB/2000 行、图片 ≤16MB）一旦失效（新工具类型 / pi 升级 / MCP 外部工具大结果），
+ * 告警先于截断暴露（D3「8MB 告警档的价值是哨兵」）。
+ *
+ * 校准依据（设计 D3 指定公式：**renderer 堆上限 × 安全系数 ÷ UTF-16 膨胀系数**）：
+ * E3（9/9 崩溃报告）实证系统内存紧张时 renderer 可用堆余量仅几十 MB 量级；wire 帧
+ * 是 UTF-8 JSON，parse 成 JS 字符串后按 UTF-16 驻留（约 2 倍膨胀）再叠加对象图开销。
+ * 8MB = 截断档（OUTBOUND_FRAME_TRUNCATE_BYTES，32MB）的 1/4，取「尚未致命但已异常」
+ * 的分界线，与 MAX_WS_PAYLOAD_BYTES（入站方向）并列构成传输大小标尺。
+ */
+// eslint-disable-next-line no-magic-numbers -- 设计标定阈值非魔法数，校准依据见上方 JSDoc
+export const OUTBOUND_FRAME_WARN_BYTES: number = 8 * 1024 * 1024
+
+/**
+ * server→client 出站帧截断阈值（默认 32MB）[crash-resilience §3.3 D3]。
+ *
+ * 按通路分两种守卫形态：reply 通路超限 → 替换为 `payload_too_large` 错误 envelope
+ * （前端 pending 对 type:'error' 且 id 命中的 reply 走 reject，Promise 收口不悬挂）；
+ * push 通路超限 → publish 入口 **seq 分配前**「契约保持式截断」（消息类型不变，按
+ * 帧内字段路径注册表把大字段替换为占位文案，ring 回放 / 重订阅拉到同一份截断版，
+ * seq 连续性不被破坏），注册表 miss 或截断后仍超限 → seq 分配前整条丢弃（不占 seq
+ * 不触发 gap）。
+ *
+ * 校准依据（同上公式：renderer 堆上限 × 安全系数 ÷ UTF-16 膨胀系数）：32MB 帧按
+ * UTF-16 膨胀 + 对象图开销落到堆余量几十 MB 的 renderer 上即是 E3 型 OOM 的直接
+ * 触发点，故为传输层硬上限。与 READ_PRECHECK_MAX_BYTES（D5）同值——「读入」与
+ * 「传入」对 renderer 是同一内存后果，同一风险标尺。
+ */
+// eslint-disable-next-line no-magic-numbers -- 设计标定阈值非魔法数，校准依据见上方 JSDoc
+export const OUTBOUND_FRAME_TRUNCATE_BYTES: number = 32 * 1024 * 1024
+
+/**
+ * runtime 全量读预检阈值（默认 32MB）[crash-resilience §3.3 D5]。
+ *
+ * 五条全量读入口统一 statSync 大小预检：① getHistoryFromFilePath（含 subagent 历史
+ * 消费方）② 离线尾读 fallback ③ findLastEntryField fallback ④ readSessionJsonlText
+ * （Trace 视图）⑤ restore 附着 normalize。超限按调用方语义分档降级（逆序分块读 /
+ * oversize 标记 / 跳过 normalize + warn），消除「读巨文件 → OOM」恶性循环。
+ *
+ * 校准依据：本机实测 session 历史文件最大 6MB（探针 P-hist-sizes，`du` 实测）、单
+ * session tee 累计流量最大 198MB——32MB ≈ 历史文件实测最大值的 5 倍余量，正常流量
+ * 永不触发（命中即防御纵深）；与 OUTBOUND_FRAME_TRUNCATE_BYTES 同值（同一风险标尺）；
+ * D5 ②档「分块扩窗」的总读取量上限亦取此值。
+ */
+// eslint-disable-next-line no-magic-numbers -- 设计标定阈值非魔法数，校准依据见上方 JSDoc
+export const READ_PRECHECK_MAX_BYTES: number = 32 * 1024 * 1024
+
+/**
+ * session 历史加载双预算 [crash-resilience §3.3 D4]。
+ *
+ * 语义：活跃 session 的 doGetHistory 与离线尾读合并为同一预算逻辑——按「最近
+ * RECENT_TURNS turns 且总字节 ≤ MAX_BYTES」双条件截取，响应携带 truncated /
+ * loadedTurns / totalTurnsEstimate。切分粒度：预算作用于 **turn 选择**，单 turn 内
+ * entry 不切分（entry 原子性——切分会破坏 reducer 幂等与 parentId 链）；最近一个
+ * turn 自身超预算时仍完整放行（保证对话可见性连续），极端 turn 由 D3 帧守卫与
+ * U7 累积态截断兜底。
+ *
+ * 校准依据：两值**对齐现有离线窗口**——runtime session-history.ts 的
+ * DEFAULT_MAX_TURNS = 20 与 TAIL_WINDOW = max(256KB, maxTurns × 32KB) = 640KB
+ * （20 × 32KB/turn，注释自证「留余量防长 tool_result 触发不必要 fallback 全量读」）
+ * 逐值同源，预算化后活跃/离线两路径行为不回退。
+ */
+export const HISTORY_BUDGET = {
+  /** 最近 turns 数（与 runtime session-history.ts DEFAULT_MAX_TURNS 对齐）。
+   * 注：对象字面量属性值不触发 no-magic-numbers（规则默认 ignoreObjectRefs/属性位），
+   * 此处无需 disable 指令——留着会被 reportUnusedDisableDirectives 判 warning。 */
+  RECENT_TURNS: 20,
+  /** 字节预算（640KB = 20 × 32KB/turn，对齐离线尾读 TAIL_WINDOW 现值） */
+  // eslint-disable-next-line no-magic-numbers -- 对齐离线 TAIL_WINDOW=640KB 的设计预算
+  MAX_BYTES: 640 * 1024,
+} as const
+
+/** 日志保留天数默认值（runtime infra/logger.ts DEFAULT_KEEP_DAYS 等价提升，
+ *  main / runtime 清理扫描共用同一默认）。 */
+// eslint-disable-next-line no-magic-numbers -- 对齐 runtime logger DEFAULT_KEEP_DAYS=7 现状
+export const DEFAULT_LOG_KEEP_DAYS = 7 as const
+
+/**
+ * 读取日志保留天数：env `XYZ_LOG_KEEP_DAYS` 覆盖 || 默认 7（DEFAULT_LOG_KEEP_DAYS）。
+ *
+ * [crash-resilience §3.3 D6-⑦] 从 runtime infra/logger.ts:50-55 的模块级常量
+ * `Number(process.env.XYZ_LOG_KEEP_DAYS) || 7` **等价提升**为共享函数：main（每日
+ * 清理定时器）与 runtime（initLogger 清理）两进程同调同一函数——既保留用户 env
+ * 旋钮，也不出现两套值域漂移。语义与现状逐字等价：`Number(env)` 结果 falsy
+ * （未设 / 空串 / '0' / 非数字 NaN）回退默认；负数 truthy 透传（现状即如此，
+ * 等价提升不在函数内另加校验）。
+ *
+ * **默认参读 process.env：本文件被 renderer 大量 re-export，renderer 无参调用即
+ * ReferenceError（浏览器无 process）——renderer 消费须显式传 env（如 `{}`）**；
+ * main / runtime（Node 进程）走默认参。
+ */
+export function readLogKeepDays(env: Record<string, string | undefined> = process.env): number {
+  return Number(env.XYZ_LOG_KEEP_DAYS) || DEFAULT_LOG_KEEP_DAYS
+}
+
+// ── 空闲 pi 进程回收（idle-pi-reclamation D4，实施计划 u3）──
+// 三个旋钮的 env 变量名 + 默认值 SSOT。本文件保持纯常量：解析（env 读取 + 非法值回落）
+// 收口在 runtime 的 resolveReclaimConfig（startup-background-init.ts），此处不写函数。
+
+/**
+ * 空闲回收判定周期（ms）。`XYZ_RUNTIME_PI_RECLAIM_TICK_MS` env 覆盖，默认 5 分钟一拍（D4）。
+ */
+export const XYZ_RUNTIME_PI_RECLAIM_TICK_MS = 'XYZ_RUNTIME_PI_RECLAIM_TICK_MS'
+/**
+ * 空闲阈值（ms）。`XYZ_RUNTIME_PI_RECLAIM_IDLE_MS` env 覆盖，默认 2 小时（D4：被否
+ * 30min——回收/恢复抖动变常态；被否 24h——对午饭级离开太迟）。
+ */
+export const XYZ_RUNTIME_PI_RECLAIM_IDLE_MS = 'XYZ_RUNTIME_PI_RECLAIM_IDLE_MS'
+/**
+ * 查看豁免窗口（ms）。`XYZ_RUNTIME_PI_RECLAIM_VIEWED_WINDOW_MS` env 覆盖，默认 30 分钟
+ * （D2 #6：窗口内被 session.switch 查看过的 session 不回收）。
+ */
+export const XYZ_RUNTIME_PI_RECLAIM_VIEWED_WINDOW_MS = 'XYZ_RUNTIME_PI_RECLAIM_VIEWED_WINDOW_MS'
+
+/**
+ * 默认值三件套（与 runtime idle-pi-reaper.ts 的 DEFAULT_REAP_TICK_MS /
+ * DEFAULT_IDLE_THRESHOLD_MS / DEFAULT_VIEWED_WINDOW_MS 数值逐一同源）：reaper 模块内的
+ * DEFAULT_* 是「options 未传时」的 fallback 兜底（DI 纯单测场景），生产装配经
+ * resolveReclaimConfig 把此处权威值（可被 env 覆盖）传入 config——改默认值只改这里，
+ * reaper 内 fallback 仅保测试构造点不炸，两处数值失同步时以本处为准。
+ */
+// eslint-disable-next-line no-magic-numbers -- 设计标定阈值（D4），校准依据见上方 JSDoc
+export const DEFAULT_PI_RECLAIM_TICK_MS = 5 * 60 * 1000
+// eslint-disable-next-line no-magic-numbers -- 设计标定阈值（D4），校准依据见上方 JSDoc
+export const DEFAULT_PI_RECLAIM_IDLE_MS = 2 * 60 * 60 * 1000
+// eslint-disable-next-line no-magic-numbers -- 设计标定阈值（D2 #6），校准依据见上方 JSDoc
+export const DEFAULT_PI_RECLAIM_VIEWED_WINDOW_MS = 30 * 60 * 1000
+
+// ── 滚动重启计划内退出码（crash-forensics-and-watchdog §3.3 D5 ④，u7c）──
+
+/**
+ * runtime 滚动重启计划内退出的专用退出码（86）。supervisor（classifyRuntimeExit
+ * 判别式 + planned 立即重启分支）与 runtime 执行链（rolling-restart 触发的
+ * process.exit）双端共用——两进程依赖方向单向（main → runtime），runtime 无法
+ * import main 侧符号，SSOT 落 shared 消除双 86 字面量。
+ *
+ * apps/electron/main/supervisor/runtime-supervisor.ts 的 `PLANNED_EXIT_CODE` 是
+ * 本值的转发常量（导出面不变，u1f 既有测试与消费方 import 点不受影响）。
+ */
+export const RUNTIME_PLANNED_EXIT_CODE = 86

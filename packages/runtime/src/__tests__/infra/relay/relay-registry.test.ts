@@ -11,7 +11,7 @@ import { mkdtemp, mkdir, writeFile, readFile, rm, writeFile as writeFileAsync } 
 import { existsSync, readdirSync, readFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { initRelayServer, deinitRelayServer, isRelayServerActive, getActiveRelaySocketPath } from '../../../infra/relay/relay-server.js'
+import { initRelayServer, deinitRelayServer, isRelayServerActive, getActiveRelaySocketPath, getActiveRelayRegistry } from '../../../infra/relay/relay-server.js'
 import { RelayRegistry } from '../../../infra/relay/relay-registry.js'
 import { getRelaySocketPath, getRelayPidFilePath, getRelayChildrenDir } from '../../../infra/relay/relay-paths.js'
 import { topicOf } from '../../../services/message-bus/message-bus.js'
@@ -412,7 +412,7 @@ describe('relay server + registry（真 socket 环回 + 假 pi）', () => {
     await agent.waitForClosed()
   })
 
-  t('断连即杀：客户端断开 → 伪 child 收到 SIGTERM（marker 文件）', async () => {
+  t('断连即杀：客户端断开 → 伪 child 收到 SIGTERM（marker 文件）+ 结构化决策日志', async () => {
     await startServer()
     const marker = join(workDir, 'sigterm-marker')
     const agent = new TestAgent(getActiveRelaySocketPath()!)
@@ -425,9 +425,25 @@ describe('relay server + registry（真 socket 环回 + 假 pi）', () => {
     await waitFor(() => existsSync(getRelayPidFilePath('rec-1', dataDir)), 30_000, 'pid file written')
     // 等 handler 注册完再触发杀链：否则 SIGTERM 打进 node 启动期走默认终止，marker 永不出现
     await waitFor(() => existsSync(ready), 30_000, 'fake-pi ready (SIGTERM handler registered)')
-    agent.destroy()
-    await waitFor(() => existsSync(marker), 30_000, 'SIGTERM marker (kill-on-disconnect)')
-    await waitFor(() => !existsSync(getRelayPidFilePath('rec-1', dataDir)), 30_000, 'pid file cleaned after kill')
+    // 杀链决策日志（crash-resilience §3.3 D6-⑥）：spy 必须在 initLogger patch console
+    // 之后挂（spy 替换的是 patched 版本，调用路径经过 spy）；close handler 同步落行
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    try {
+      agent.destroy()
+      await waitFor(() => existsSync(marker), 30_000, 'SIGTERM marker (kill-on-disconnect)')
+      await waitFor(() => !existsSync(getRelayPidFilePath('rec-1', dataDir)), 30_000, 'pid file cleaned after kill')
+      // 决策行：动作 / 主 session（哪个主 session 死）/ recordId + 子进程 pid（连带杀谁）/ 原因
+      const decisionCall = warnSpy.mock.calls.find(([msg]) => msg === '[relay] kill decision')
+      expect(decisionCall).toBeDefined()
+      const meta = decisionCall![1] as Record<string, unknown>
+      expect(meta.action).toBe('kill_on_disconnect')
+      expect(meta.mainSessionId).toBe('main-1')
+      expect(meta.recordId).toBe('rec-1')
+      expect(typeof meta.childPid).toBe('number')
+      expect(String(meta.reason)).toContain('socket closed')
+    } finally {
+      warnSpy.mockRestore()
+    }
   })
 
   // 2026-09-04 runtime 整机崩溃事故回归：对端 FIN 后本端 conn 自动 end()
@@ -509,6 +525,63 @@ describe('relay server + registry（真 socket 环回 + 假 pi）', () => {
     expect(a2.rejectFrames()[0].reason).toBe('duplicate')
     a1.destroy()
     a2.destroy()
+  })
+
+  // idle pi reclamation D2 #3：hasByMainSessionId 真值表（reaper「在途 relay 子进程」
+  // 豁免判定的读面）。真注册/真清理链覆盖三态：无条目 false → 握手注册后 true →
+  // 条目清理（断连即杀 → child exit → cleanupEntry）后 false。注册完成信号 = pid 文件
+  // 落盘、清理完成信号 = pid 文件删除（与重复 recordId / 断连即杀用例同款信号，避免
+  // 探测私有 Map）。
+  t('hasByMainSessionId 真值表：无条目 false → 注册后 true → 条目清理后 false', async () => {
+    await startServer()
+    const registry = getActiveRelayRegistry()!
+    expect(registry).toBeDefined()
+    // 注册前：目标 mainSessionId 无任何在册条目
+    expect(registry.hasByMainSessionId('main-1')).toBe(false)
+    const agent = new TestAgent(getActiveRelaySocketPath()!)
+    await agent.opened
+    agent.send(validHandshake({ argv: [fakePi, 'hang'] }))
+    await waitFor(() => existsSync(getRelayPidFilePath('rec-1', dataDir)), 30_000, 'relay registered (pid file)')
+    expect(registry.hasByMainSessionId('main-1')).toBe(true)
+    // per-sid 精度：其他 mainSessionId 仍无条目
+    expect(registry.hasByMainSessionId('main-other')).toBe(false)
+    // 断连即杀 → kill 链 → child exit → cleanupEntry 注销（pid 文件删除为完成信号）
+    agent.destroy()
+    await waitFor(() => !existsSync(getRelayPidFilePath('rec-1', dataDir)), 30_000, 'entry cleaned up after disconnect kill')
+    expect(registry.hasByMainSessionId('main-1')).toBe(false)
+  })
+
+  // idle pi reclamation D3 第 5 步尾扫读面（u3a）：listTargetsByMainSessionId 真值表。
+  // kill 可调且有效 = SIGTERM marker 落盘（假 pi hang 模式注册 SIGTERM handler 后写
+  // ready，防杀链跑在 handler 注册前）；「杀完走注册表清理」断言 = pid 文件删除
+  // （child 'exit' → cleanupEntry 的既有事件链，与 hasByMainSessionId 用例同款完成
+  // 信号，不探测私有 Map）。
+  t('listTargetsByMainSessionId 真值表：无条目空数组 → 注册后含目标且 kill 可调 → 清理后空', async () => {
+    await startServer()
+    const registry = getActiveRelayRegistry()!
+    // 注册前：空数组
+    expect(registry.listTargetsByMainSessionId('main-1')).toEqual([])
+    const agent = new TestAgent(getActiveRelaySocketPath()!)
+    await agent.opened
+    const marker = join(workDir, 'sigterm-marker-list-targets')
+    const ready = join(workDir, 'ready-marker-list-targets')
+    const hs = validHandshake({ argv: [fakePi, 'hang'] })
+    ;(hs.env as Record<string, string>).XYZ_TEST_SIGTERM_MARKER = marker
+    ;(hs.env as Record<string, string>).XYZ_TEST_READY_MARKER = ready
+    agent.send(hs)
+    await waitFor(() => existsSync(getRelayPidFilePath('rec-1', dataDir)), 30_000, 'relay registered (pid file)')
+    await waitFor(() => existsSync(ready), 30_000, 'fake-pi ready (SIGTERM handler registered)')
+    const targets = registry.listTargetsByMainSessionId('main-1')
+    expect(targets).toHaveLength(1)
+    // per-sid 精度：其他 mainSessionId 仍为空
+    expect(registry.listTargetsByMainSessionId('main-other')).toEqual([])
+    // kill 可调且有效：kill 链发出 SIGTERM（假 pi 写 marker 后退出）
+    await targets[0]!.kill()
+    await waitFor(() => existsSync(marker), 30_000, 'SIGTERM marker (kill chain fired)')
+    // 杀完无需手工注销：child 'exit' handler 自动 cleanupEntry（pid 文件删除为完成信号）
+    await waitFor(() => !existsSync(getRelayPidFilePath('rec-1', dataDir)), 30_000, 'entry cleaned after kill')
+    expect(registry.listTargetsByMainSessionId('main-1')).toEqual([])
+    agent.destroy()
   })
 
   describe('重启残留扫描（伪造 stale pid 文件 + 时间戳）', () => {

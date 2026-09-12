@@ -11,7 +11,7 @@
 ## entry schema v2（数据量精简，长期采集友好）
 
 - hash 为 sha256 前 16 hex；**baseline entry** 存全量 9 hash + cwd（约 250B）；**normal entry** 只存变化项增量（约 120B）；无变化 turn 零写入
-- `seq` = 进程内 turn 计数（无论写不写 entry 都递增），跳跃 = 中间有无变化 turn 或漏记
+- `seq` = 进程内 before_agent_start 触发计数，随 entry 落盘供人工排序诊断；当前无自动消费方（analyze.py 不读 seq）
 
 ## 挂载方式（长期采集）
 

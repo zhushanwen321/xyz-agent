@@ -81,6 +81,18 @@ export {
 } from './extensions/session-manager/types'
 export { SESSION_MANAGER_MARKER, SESSION_MANAGER_ACTIONS } from './extensions/session-manager/marker'
 
+// ── subagent-inflight 协议（在途聚合上报：绝对计数帧经 select 通道 + marker；写侧实现在 extensions/universal/subagent-workflow host/inflight-reporter + subagent-core 出口，读侧在 runtime event-adapter u7b）──
+export type { InFlightReportKind, SubagentInFlightReport } from './extensions/subagent-inflight/types'
+export {
+  SUBAGENT_INFLIGHT_MARKER,
+  INFLIGHT_REPORT_KINDS,
+} from './extensions/subagent-inflight/marker'
+export {
+  INFLIGHT_REPORT_ACK,
+  isSubagentInFlightReport,
+  isInFlightReportAck,
+} from './extensions/subagent-inflight/types'
+
 // ── plugin-bridge 协议（plugin system bridge：插件工具/事件/拦截经 select 通道 + marker 桥接；实现在 extensions/taiji/plugin-bridge + runtime bridge-handler）──
 export type {
   BridgeMethod,

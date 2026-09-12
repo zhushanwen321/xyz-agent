@@ -1,5 +1,5 @@
 /**
- * domain/chat mutations 单测（W10 D-1 容器范式适配 + W13 R-17 核心断言重写 + W5 D5 锚定切分）。
+ * domain/chat mutations 单测（W10 D-1 容器范式适配 + W13 R-17 核心断言重写 + [u6] 游标翻页前插）。
  *
  * 锁定 commitMessages/deleteMessages/truncateMessagesFrom/prependHistory 在
  * `Map<string, ShallowRef<Message[]>>` 容器下的写入语义（07 文档 §3.3.2 不变式）：
@@ -7,9 +7,9 @@
  * 2. 每 sid 的分区 ref 一旦创建（首次 commit），引用在 session 存活期间稳定。
  * 3. 分区隔离：A sid commit 不触碰 B sid 的分区 ref（引用与内容均不动）。
  *
- * [W5 D5] splitHistoryBeforeAnchor 三级定位（exact / fingerprint / none）+
- * prependHistory 兜底断言（命中重复 warn + 行为仍去重）+ 「活跃 session 翻旧历史无重复」
- * 端到端行为断言（hydrate 尾窗 + live 消息混合 id 空间下 load-more 不重复前插）。
+ * [u6] 「加载更早」改走 session.history 游标翻页（crash-resilience §3.3 D4 中期），
+ * splitHistoryBeforeAnchor 锚定切分链整体退役；prependHistory 保留兜底断言
+ * （命中重复 warn + 行为仍去重）+ 游标页前插端到端行为断言。
  */
 import { describe, it, expect, vi, afterEach } from 'vitest'
 import { shallowRef } from 'vue'
@@ -20,7 +20,6 @@ import {
   deleteMessages,
   truncateMessagesFrom,
   prependHistory,
-  splitHistoryBeforeAnchor,
   type MessagesRef,
 } from '../mutations'
 
@@ -223,96 +222,17 @@ describe('prependHistory', () => {
   })
 })
 
-describe('splitHistoryBeforeAnchor（W5 D5 锚定切分）', () => {
+describe('prependHistory 游标翻页前插（u6 re-scope 后的唯一前插通路）', () => {
   afterEach(() => {
     vi.restoreAllMocks()
   })
 
-  it('exact：user 消息锚按 piEntryId 精确命中，只返回锚之前的段', () => {
-    const full = [
-      fileUser('ent-0', 'q0', 0),
-      fileSystem('ent-1', 'compaction', 1),
-      fileUser('ent-2', 'q2', 2), // ← 锚（hydrate 尾窗首条）
-      fileAssistant('ent-3', 'a3', 3),
-    ]
-    const { segment, strategy } = splitHistoryBeforeAnchor(full, 'ent-2', full[2])
-    expect(strategy).toBe('exact')
-    expect(segment.map((m) => m.id)).toEqual(['ent-0', 'ent-1'])
-  })
-
-  it('exact：system 消息锚（无 piEntryId 字段）按 id 命中——取值 piEntryId ?? id 的对称形态', () => {
-    // 尾窗首条是 compaction 等 system 族消息的场景：锚 = 其 id（无 piEntryId 字段）
-    const full = [fileUser('ent-0', 'q0', 0), fileSystem('ent-1', 'ctx compressed', 1), fileUser('ent-2', 'q2', 2)]
-    const { segment, strategy } = splitHistoryBeforeAnchor(full, 'ent-1', full[1])
-    expect(strategy).toBe('exact')
-    expect(segment.map((m) => m.id)).toEqual(['ent-0'])
-  })
-
-  it('exact：锚即全量首条 → 空段（没有更早历史，调用方据此隐藏加载更多）', () => {
-    const full = [fileUser('ent-0', 'q0', 0), fileUser('ent-1', 'q1', 1)]
-    const { segment, strategy } = splitHistoryBeforeAnchor(full, 'ent-0', full[0])
-    expect(strategy).toBe('exact')
-    expect(segment).toHaveLength(0)
-  })
-
-  it('fingerprint：锚 id 未命中（外部改写）时按 role+首段文本+timestamp 定位，取最后一个匹配位', () => {
-    // full[1] 与 full[2] 同指纹（同 role 同文本同 timestamp，如 steer 重发同文）；
-    // 取最后一个匹配位（最接近尾窗），取首个会多前插一段已存在的历史
-    const full = [
-      fileUser('ent-0', 'q0', 0),
-      fileUser('ent-x', 'dup text', 5),
-      fileUser('ent-y', 'dup text', 5), // ← 最后一个匹配位
-      fileUser('ent-3', 'q3', 6),
-    ]
-    const anchorSource = fileUser('rewritten-away', 'dup text', 5)
-    const { segment, strategy } = splitHistoryBeforeAnchor(full, 'rewritten-away', anchorSource)
-    expect(strategy).toBe('fingerprint')
-    expect(segment.map((m) => m.id)).toEqual(['ent-0', 'ent-x'])
-  })
-
-  it('fingerprint：Segment[] content 取首个 text 段（chip 段不参与指纹）', () => {
-    const full = [fileUser('ent-0', 'q0', 0), fileUser('ent-1', 'real text', 7)]
-    // 锚消息是 live/Segment[] 形态：首个 text 段与 full[1] 同文（chip 段不干扰）
-    const anchorSource: Message = {
-      id: 'gone',
-      role: 'user',
-      content: [{ type: 'skill', name: 'review' }, { type: 'text', text: 'real text' }],
-      status: 'complete',
-      timestamp: 7,
-    }
-    const { segment, strategy } = splitHistoryBeforeAnchor(full, 'gone', anchorSource)
-    expect(strategy).toBe('fingerprint')
-    expect(segment.map((m) => m.id)).toEqual(['ent-0'])
-  })
-
-  it('fingerprint：role 不同不算同一消息（同文本同时间的 user ≠ assistant）', () => {
-    const full = [fileUser('ent-0', 'q0', 0), fileAssistant('ent-1', 'same', 5)]
-    const anchorSource = fileUser('gone', 'same', 5)
-    const { segment, strategy } = splitHistoryBeforeAnchor(full, 'gone', anchorSource)
-    expect(strategy).toBe('none')
-    expect(segment).toHaveLength(2) // none = 全量返回，退回 id 去重兜底
-  })
-
-  it('none：零匹配（id 与指纹均未命中）→ 全量返回 + strategy none（调用方 warn + id 去重兜底）', () => {
-    const full = [fileUser('ent-0', 'q0', 0), fileUser('ent-1', 'q1', 1)]
-    const { segment, strategy } = splitHistoryBeforeAnchor(full, 'vanished', fileUser('vanished', 'other', 9))
-    expect(strategy).toBe('none')
-    expect(segment).toBe(full)
-  })
-
-  it('锚缺失（undefined）→ 直接走 none（无锚场景不尝试指纹）', () => {
-    const full = [fileUser('ent-0', 'q0', 0)]
-    const { segment, strategy } = splitHistoryBeforeAnchor(full, undefined, undefined)
-    expect(strategy).toBe('none')
-    expect(segment).toBe(full)
-  })
-
-  it('[用户可见行为] 活跃 session 翻旧历史无重复：hydrate 尾窗 + live 消息混合 id 空间，锚切分后旧历史前插一次', () => {
-    // 场景（设计文档机制 5，G5）：session hydrate 尾窗后又聊了两轮（live 消息），
-    // 点「加载更多」——旧实现按 id 去重会把 live 消息的文件对应物全部重复前插。
-    // 用户可见断言：对话流内容（用户在 UI 读到的消息序列）无重复、顺序稳定、live 消息不被动。
+  it('[用户可见行为] 游标页前插：锚前页（runtime 返回）prepend 后对话流完整无重复、live 消息不被动', () => {
+    // 场景（u6 crash-resilience §3.3 D4 中期）：session hydrate 最近窗口后又聊了两轮
+    // （live 消息），点「加载更早」——runtime 按游标（分区最旧消息身份）返回锚点之前的
+    // 最近窗口，页内容天然不与分区重叠。用户可见断言：对话流无重复、顺序稳定、live 不动。
     const tailWindow = [
-      fileUser('ent-u2', 'question 2', 20), // ← hydrate 尾窗首条 = 锚
+      fileUser('ent-u2', 'question 2', 20), // ← hydrate 窗口首条 = 游标
       fileAssistant('ent-a2', 'answer 2', 21),
     ]
     const liveMsgs = [
@@ -321,37 +241,40 @@ describe('splitHistoryBeforeAnchor（W5 D5 锚定切分）', () => {
     ]
     const ref = makeRef({ s1: [...tailWindow, ...liveMsgs] })
 
-    // getFullHistory（文件全量）：更早历史 + 尾窗对应物（id 相同）+ live 消息的文件对应物（id 永不相等）
-    const fullHistory = [
+    // runtime 游标页（锚点 ent-u2 之前的窗口）：只含更早历史，无尾窗/live 对应物
+    const cursorPage = [
       fileUser('ent-u0', 'question 0', 10),
       fileAssistant('ent-a0', 'answer 0', 11),
       fileUser('ent-u1', 'question 1', 15),
-      ...tailWindow, // 尾窗消息的文件形态（与 store 中 id 相同）
-      fileUser('ent-u3', 'question 3', 30), // live u-111 的文件对应物
-      fileAssistant('ent-a3', 'answer 3', 31), // live e0 的文件对应物
     ]
 
-    // hydrate 记锚（store.hydrate 同规则：尾窗首条 piEntryId ?? id）+ 锚消息 = store 最旧消息
-    const anchor = tailWindow[0].piEntryId ?? tailWindow[0].id
-    const anchorSource = ref.value.get('s1')!.value[0]
-    const { segment, strategy } = splitHistoryBeforeAnchor(fullHistory, anchor, anchorSource)
-    expect(strategy).toBe('exact')
+    prependHistory(ref, 's1', cursorPage)
 
-    prependHistory(ref, 's1', segment)
-
-    // 用户可见断言 1：对话流完整且无重复（内容视角——同一条消息只出现一次）
+    // 用户可见断言 1：对话流完整且无重复（更早页在前，尾窗与 live 依序保留）
     const finalMsgs = ref.value.get('s1')!.value
     const texts = finalMsgs.map((m) => (typeof m.content === 'string' ? m.content : JSON.stringify(m.content)))
     expect(texts).toEqual([
-      'question 0', 'answer 0', 'question 1', // 前插的更早历史（文件序）
-      'question 2', 'answer 2', // hydrate 尾窗
+      'question 0', 'answer 0', 'question 1', // 前插的更早页（文件序）
+      'question 2', 'answer 2', // hydrate 窗口
       JSON.stringify(textToSegments('question 3')), 'answer 3', // live 消息原样保留
     ])
-    // 用户可见断言 2：live 消息不被文件对应物重复（u-111/e0 恰好各出现一次，无 ent-u3/ent-a3 混入）
+    // 用户可见断言 2：live 消息不被重复（u-111/e0 恰好各一次）
     expect(finalMsgs.filter((m) => m.id === 'u-111')).toHaveLength(1)
     expect(finalMsgs.filter((m) => m.id === 'e0')).toHaveLength(1)
-    expect(finalMsgs.some((m) => m.id === 'ent-u3' || m.id === 'ent-a3')).toBe(false)
-    // 用户可见断言 3：总数 = 更早段 + 尾窗 + live（无任何重复前插）
+    // 用户可见断言 3：总数 = 更早页 + 窗口 + live
     expect(finalMsgs).toHaveLength(7)
+  })
+
+  it('空页（翻页到头 / cursor 未命中返回空页）不写入分区', () => {
+    const ref = makeRef({ s1: [fileUser('ent-0', 'q0', 0)] })
+    const before = ref.value.get('s1')!.value
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    try {
+      prependHistory(ref, 's1', [])
+      expect(ref.value.get('s1')!.value).toBe(before) // 引用不变（无 commit）
+      expect(warnSpy).not.toHaveBeenCalled()
+    } finally {
+      warnSpy.mockRestore()
+    }
   })
 })

@@ -1,12 +1,15 @@
 /**
  * Ports 桥接 — Pi → ServicePorts 适配（adapters 层）
  *
- * 单一 ports 构造点（DRY）：command-adapter / event-adapter / index 共用。
+ * 单一 ports 构造点（DRY）：command-adapter / goal-control-adapter / event-handlers / index 共用。
  *
  * - persistence: pi.appendEntry 映射到 appendState / appendHistory（type 字符串区分）
- * - ui: ctx.ui 的 setWidget/setStatus/notify + hasUI + theme 的 fg/bold（满足 ThemeLike 形状）
+ * - ui: ctx.ui 的 setWidget/setStatus/notify + hasUI + isGui + theme（fg/bold 适配 ThemeLike）
  * - messaging: pi.sendMessage 映射到 sendContextMessage / sendUserMessage
- * - session: ctx.sessionManager.getEntries + ctx.getContextUsage + ctx.signal
+ * - session: ctx.sessionManager.getEntries
+ *
+ * port/ctx 双通道惯例：port 对象仅用于传入 service/session 的实参；
+ * handler 自用的 UI/日志直呼 ctx（如 ctx.ui.notify、ctx.ui.setWidget）。
  */
 
 import type { ExtensionAPI, ExtensionContext, ThemeColor } from "@earendil-works/pi-coding-agent";
@@ -22,10 +25,6 @@ import type { ServicePorts } from "../service";
  *
  * persistence 的 appendState 用 ENTRY_TYPE，appendHistory 用 HISTORY_ENTRY_TYPE，
  * 与 serializeState / makeHistoryEntry 的输出对齐（session.ts reconstructGoalState 据此识别）。
- *
- * UiPort 接口未声明 fg/bold（D-22：只声明机器可检查的能力边界），
- * 构造满足 UiPort & ThemeLike 的对象后整体断言为 UiPort（多出的 fg/bold 运行时存在，
- * projection/widget.ts 的 asTheme 用 `as unknown as ThemeLike` 单步断言取出）。
  */
 export function buildPorts(pi: ExtensionAPI, ctx: ExtensionContext): ServicePorts {
 	const persistence: PersistencePort = {
@@ -40,7 +39,7 @@ export function buildPorts(pi: ExtensionAPI, ctx: ExtensionContext): ServicePort
 		},
 	};
 
-	const uiPort = {
+	const uiPort: UiPort = {
 		setWidget(name: string, content: string[] | string | undefined): void {
 			// SDK setWidget 重载只接受 string[] | undefined（或 factory）。本地 UiPort 允许单 string，
 			// 此处归一化：string 包一层成 [string]，再透传。
@@ -50,7 +49,7 @@ export function buildPorts(pi: ExtensionAPI, ctx: ExtensionContext): ServicePort
 		setGuiWidget(name: string, result: GuiRenderResult | undefined): void {
 			// GUI 协议 widget：guiSetWidget 在 RPC 模式用 marker 编码 GuiRenderResult JSON
 			// （component + meta 宿主元数据）进 string[]，复用 ctx.ui.setWidget 通道；
-			// host 侧 event-adapter 检测 marker 解码还原。guiSetWidget 无 isGui 守卫
+			// host 侧 EventAdapter（xyz-agent runtime 的 pi 事件适配层）检测 marker 解码还原。guiSetWidget 无 isGui 守卫
 			// （helpers.ts 仅查 ctx.ui?.setWidget 存在性），isGui 判定在 updateWidget
 			// 外层（projection/widget.ts）。
 			//
@@ -74,16 +73,18 @@ export function buildPorts(pi: ExtensionAPI, ctx: ExtensionContext): ServicePort
 			// 断言同 setGuiWidget：custom 泛型签名静态不兼容，mode 单字段运行时可靠。
 			return isGuiCapable(ctx as GuiContext);
 		},
-		// ThemeLike 形状：透传 ctx.ui.theme 的 fg/bold。
+		// ThemeLike 适配：透传 ctx.ui.theme 的 fg/bold。
 		// Theme.fg 只接受 ThemeColor 字面量 union（SDK 契约）；projection 层保证传入 union 内字面量，
 		// string → ThemeColor 是宽到窄单步断言（无需 unknown 中转）。
-		fg(color: string, text: string): string {
-			return ctx.ui.theme.fg(color as ThemeColor, text);
+		theme: {
+			fg(color: string, text: string): string {
+				return ctx.ui.theme.fg(color as ThemeColor, text);
+			},
+			bold(text: string): string {
+				return ctx.ui.theme.bold(text);
+			},
 		},
-		bold(text: string): string {
-			return ctx.ui.theme.bold(text);
-		},
-	} as UiPort;
+	};
 
 	const messaging: MessagingPort = {
 		sendContextMessage: (content, deliverAs, customType): void => {
@@ -103,13 +104,6 @@ export function buildPorts(pi: ExtensionAPI, ctx: ExtensionContext): ServicePort
 
 	const session: SessionPort = {
 		getEntries: () => ctx.sessionManager.getEntries(),
-		getContextUsage: () => {
-			const usage = ctx.getContextUsage();
-			return usage ? { tokens: usage.tokens, contextWindow: usage.contextWindow } : null;
-		},
-		get signal(): AbortSignal | undefined {
-			return ctx.signal;
-		},
 	};
 
 	return { persistence, ui: uiPort, messaging, session };

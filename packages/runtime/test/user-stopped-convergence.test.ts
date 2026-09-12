@@ -273,6 +273,8 @@ describe('MessageDispatcher 置位分型与显式投递清标记', () => {
     const client = {
       prompt: vi.fn(async () => ({}) as unknown as Awaited<ReturnType<IPiEngine['prompt']>>),
       abort: abortFn,
+      // idle-pi-reclamation D6-1：dispatcher 入口同步 touch（attached client 必有该面）
+      touchActivity: vi.fn(),
     } as unknown as IPiEngine
     const persistSessionOutcome = vi.fn()
     const svc: IDispatcherSessionOps = {

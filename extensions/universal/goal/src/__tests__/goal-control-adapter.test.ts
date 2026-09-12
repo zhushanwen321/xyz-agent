@@ -52,9 +52,11 @@ function makeFakePorts(): ServicePorts & {
 				notifications.push({ text, level });
 			},
 			hasUI: true,
-			// widget.asTheme 期望 fg/bold（ports.ts 的 uiPort 同样携带）
-			fg: (_color: string, text: string) => text,
-			bold: (text: string) => text,
+			// widget 渲染读 UiPort.theme（ports.ts 的 uiPort 同样以 theme 嵌套成员提供）
+			theme: {
+				fg: (_color: string, text: string) => text,
+				bold: (text: string) => text,
+			},
 		} as UiPort,
 		messaging: {
 			sendContextMessage: () => {},
@@ -62,8 +64,6 @@ function makeFakePorts(): ServicePorts & {
 		},
 		session: {
 			getEntries: () => [],
-			getContextUsage: () => null,
-			signal: undefined,
 		},
 	};
 }

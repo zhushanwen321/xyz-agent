@@ -9,7 +9,7 @@
  * 模式（对齐 w4 store.test.ts）：effectScope + createChatStore（真实 store）+ mockDeps
  * （chatApi/sessionStore/toast/compactQueue vi.fn），streamSubscribe mock 捕获 handler
  * 供测试主动 emit 消息（模拟 WS 事件流）。beforeEach resetChatModuleStateForTest() 清
- * 模块级 streamSubscriptions + historyTruncatedSessions + subscriptionStates（测试隔离）。
+ * 模块级 streamSubscriptions + subscriptionStates（测试隔离）。
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { effectScope, nextTick } from 'vue'
@@ -37,11 +37,10 @@ interface Fixture {
     bash: ReturnType<typeof vi.fn>
     abortBash: ReturnType<typeof vi.fn>
     getHistory: ReturnType<typeof vi.fn>
-    getFullHistory: ReturnType<typeof vi.fn>
     streamSubscribe: ReturnType<typeof vi.fn>
   }
   chatStore: ReturnType<typeof createChatStore>
-  sessionStore: { applySnapshot: ReturnType<typeof vi.fn> }
+  sessionStore: { applySnapshot: ReturnType<typeof vi.fn>; revive: ReturnType<typeof vi.fn> }
   toast: { error: ReturnType<typeof vi.fn>; warning: ReturnType<typeof vi.fn> }
   writeSegments: ReturnType<typeof vi.fn>
   compactQueue: {
@@ -69,8 +68,7 @@ function makeFixture(): Fixture {
     compact: vi.fn().mockResolvedValue(undefined),
     bash: vi.fn().mockResolvedValue(undefined),
     abortBash: vi.fn().mockResolvedValue(undefined),
-    getHistory: vi.fn().mockResolvedValue({ messages: [], historyTruncated: false }),
-    getFullHistory: vi.fn().mockResolvedValue([]),
+    getHistory: vi.fn().mockResolvedValue({ messages: [], truncated: false, loadedTurns: 0, totalTurnsEstimate: 0 }),
     streamSubscribe: vi.fn((sid: string, h: (m: ServerMessage) => void) => {
       streamHandlers.set(sid, h)
       return () => {
@@ -78,7 +76,7 @@ function makeFixture(): Fixture {
       }
     }),
   }
-  const sessionStore = { applySnapshot: vi.fn() }
+  const sessionStore = { applySnapshot: vi.fn(), revive: vi.fn() }
   const toast = { error: vi.fn(), warning: vi.fn() }
   // CompactQueueLike mock（session-occupancy D2：rejected 兜底入队 + flush 来源消歧）
   const compactQueue = {
@@ -271,9 +269,9 @@ describe('createUseChat factory 行为', () => {
     f.dispose()
   })
 
-  it('hydrateHistory：注入历史 + historyTruncated 标记', async () => {
+  it('hydrateHistory：注入历史 + truncated 窗口标志', async () => {
     const f = makeFixture()
-    f.chatApi.getHistory.mockResolvedValueOnce({ messages: [], historyTruncated: true })
+    f.chatApi.getHistory.mockResolvedValueOnce({ messages: [], truncated: true, loadedTurns: 20, totalTurnsEstimate: 20 })
     await f.useChat.hydrateHistory('s10')
     expect(f.useChat.hasMoreHistory('s10')).toBe(true)
     // 幂等：二次 hydrate 不重复请求
@@ -283,14 +281,29 @@ describe('createUseChat factory 行为', () => {
     f.dispose()
   })
 
-  it('loadMoreHistory：全量加载后清截断标记', async () => {
+  it('[u6] loadMoreHistory：游标翻页（cursor = 分区最旧消息身份）页响应收敛 truncated=false', async () => {
     const f = makeFixture()
-    f.chatApi.getHistory.mockResolvedValueOnce({ messages: [], historyTruncated: true })
+    f.chatApi.getHistory.mockResolvedValueOnce({ messages: [{ id: 'm1', role: 'user', content: 'q', status: 'complete', timestamp: 1 }], truncated: true, loadedTurns: 20, totalTurnsEstimate: 20 })
     await f.useChat.hydrateHistory('s11')
     expect(f.useChat.hasMoreHistory('s11')).toBe(true)
-    f.chatApi.getFullHistory.mockResolvedValueOnce([])
+    // 游标翻页走 getHistory（带 cursor = 分区最旧消息 m1 的 id）；空页（翻页到头）收敛
+    f.chatApi.getHistory.mockResolvedValueOnce({ messages: [], truncated: false, loadedTurns: 0, totalTurnsEstimate: 0 })
     await f.useChat.loadMoreHistory('s11')
+    expect(f.chatApi.getHistory).toHaveBeenLastCalledWith('s11', { cursor: 'm1' })
     expect(f.useChat.hasMoreHistory('s11')).toBe(false)
+    f.dispose()
+  })
+
+  it('[u6] loadMoreHistory：页响应仍 truncated=true → 顶部条入口保持', async () => {
+    const f = makeFixture()
+    f.chatApi.getHistory.mockResolvedValueOnce({ messages: [], truncated: true, loadedTurns: 20, totalTurnsEstimate: 42 })
+    await f.useChat.hydrateHistory('s11b')
+    // 窗口契约字段写入 store 窗口状态（u4b 透传）
+    expect(f.chatStore.getHistoryWindow('s11b')).toEqual({ truncated: true, loadedTurns: 20, totalTurnsEstimate: 42 })
+    // [u6] 游标翻页页响应仍截断（锚前有更早历史）
+    f.chatApi.getHistory.mockResolvedValueOnce({ messages: [], truncated: true, loadedTurns: 20, totalTurnsEstimate: 40 })
+    await f.useChat.loadMoreHistory('s11b')
+    expect(f.useChat.hasMoreHistory('s11b')).toBe(true)
     f.dispose()
   })
 
@@ -1309,6 +1322,64 @@ describe('defer flush 重投 timer 占用短路（D1）', () => {
     f.emit('d1d', msg('d1d', 'session.occupancy', { turn: 'idle', compacting: false, bash: false }))
     await vi.advanceTimersByTimeAsync(0)
     expect(f.compactQueue.flush).toHaveBeenCalledTimes(1)
+    f.dispose()
+  })
+})
+
+describe('恢复窗口过渡态的 message_start 收口 gate（crash-resilience T4 回流修复）', () => {
+  // 缺陷背景（Gate B A7 真机）：恢复窗口（respawnPending）内用户发消息 → runtime 惰性恢复
+  // join 先于 D7 自动恢复 timer 完成 → timer fire「already active/restoring — skip」→
+  // session.restored 帧永不发布 → 前端过渡态只能等 30s 超时回落 dead 终态页（而 session
+  // 实际已活）。收口信号 = 恢复窗口内该 session 的 message_start 到达（新 pi 已在处理）。
+
+  it('respawnPending 内 message_start 到达 → 过渡态收口 + T4 条入流 + sessionStore.revive', async () => {
+    const f = makeFixture()
+    await f.useChat.send('s-join', textToSegments('hello during recovery'))
+    f.chatStore.markRespawnPending('s-join')
+
+    f.emit('s-join', msg('s-join', 'message.message_start', { messageId: 'a-join' }))
+
+    // 过渡态收口（同步于 enqueue 前——流式帧处理前 T4 条已在流内，先于 assistant 气泡）
+    expect(f.chatStore.isRespawnPending('s-join')).toBe(false)
+    expect(f.sessionStore.revive).toHaveBeenCalledWith('s-join')
+    const notice = f.chatStore
+      .getMessages('s-join')
+      .find((m) => m.role === 'system' && (m.details as { variant?: string } | undefined)?.variant === 'restored')
+    expect(notice).toBeDefined()
+    // fallbackText 经 deps.t（fixture 返回 key 本身）
+    expect(notice!.content).toBe('panel.message.respawnRestored')
+    f.dispose()
+  })
+
+  it('非恢复窗口 message_start → gate no-op（无 T4 条、revive 不调）', async () => {
+    const f = makeFixture()
+    await f.useChat.send('s-normal', textToSegments('hi'))
+    f.emit('s-normal', msg('s-normal', 'message.message_start', { messageId: 'a1' }))
+    expect(f.sessionStore.revive).not.toHaveBeenCalled()
+    expect(
+      f.chatStore
+        .getMessages('s-normal')
+        .some((m) => m.role === 'system' && (m.details as { variant?: string } | undefined)?.variant === 'restored'),
+    ).toBe(false)
+    f.dispose()
+  })
+
+  it('restored 帧先行收口后 message_start 到达 → 二次收口 no-op（不插双条）', async () => {
+    const f = makeFixture()
+    await f.useChat.send('s-race', textToSegments('hi'))
+    f.chatStore.markRespawnPending('s-race')
+    // 模拟 restored 帧先到（renderer useMessageEffects.handleSessionRestored 的收口三件套）
+    f.chatStore.clearRespawnPending('s-race')
+    f.chatStore.appendRespawnNotice('s-race', 'restored', 'panel.message.respawnRestored')
+
+    f.emit('s-race', msg('s-race', 'message.message_start', { messageId: 'a1' }))
+
+    expect(f.sessionStore.revive).not.toHaveBeenCalled()
+    expect(
+      f.chatStore
+        .getMessages('s-race')
+        .filter((m) => m.role === 'system' && (m.details as { variant?: string } | undefined)?.variant === 'restored'),
+    ).toHaveLength(1)
     f.dispose()
   })
 })

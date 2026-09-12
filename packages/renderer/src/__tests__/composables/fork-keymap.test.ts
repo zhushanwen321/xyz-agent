@@ -79,8 +79,7 @@ vi.mock('@/api', () => ({ project: { load: vi.fn().mockResolvedValue({ projects:
     compact: vi.fn(() => Promise.resolve()),
     bash: vi.fn(() => Promise.resolve()),
     abortBash: vi.fn(() => Promise.resolve()),
-    getHistory: vi.fn(() => Promise.resolve({ messages: [], historyTruncated: false })),
-    getFullHistory: vi.fn(() => Promise.resolve([])),
+    getHistory: vi.fn(() => Promise.resolve({ messages: [], truncated: false, loadedTurns: 0, totalTurnsEstimate: 0 })),
     streamSubscribe: vi.fn(() => () => {}),
   },
   session: {

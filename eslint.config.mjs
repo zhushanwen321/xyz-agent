@@ -96,6 +96,20 @@ export default [
       'max-lines': 'off',
     },
   },
+  // [HISTORICAL·2026-09 idle-pi-reclamation] 空闲 pi 进程回收功能接入（reaper 装配 +
+  // 生命周期挂钩）：runtime index.ts 是进程组装 barrel，main 基线 501 行即超，本次 +41。
+  // 拆分归独立重构单元（见 docs/design/idle-pi-reclamation.impl-plan.md），
+  // 禁止在 lint 收敛批次内拆文件重构。短期 max-lines override 避免阻塞。
+  // [merge dev-0.9.17 2026-09] session-service.ts 已从本 off 块移除——config 末尾的
+  // 软上限块（warn 650）语义更严且后位覆盖，双块并存 = 冲突；以末尾块为唯一权威。
+  {
+    files: [
+      'packages/runtime/src/index.ts',
+    ],
+    rules: {
+      'max-lines': 'off',
+    },
+  },
   // [HISTORICAL] 复杂度债务偿还（docs/design/complexity-debt-full-repayment.md）产物：
   // 以下文件因行为保持提取（helper 签名/花括号/JSDoc 开销）代码行超 max-lines 阈值。
   // 职责内聚（每文件均为单一子系统的高复杂度函数原地拆解，cyclo 已全部 ≤12），
@@ -149,6 +163,26 @@ export default [
   // 解耦），属独立重构任务。与上方 4 个 override 同性质——唯一聚合中心，行数超 500。
   {
     files: ['packages/shared/src/protocol.ts'],
+    rules: {
+      'max-lines': 'off',
+    },
+  },
+  // [HISTORICAL] trigger-evaluator.ts 是重审触发条件的唯一目录 SSOT（crash-forensics-and-watchdog
+  // 设计 D2 + 附录 A 20 条）：条件清单、窗口谓词、各条评估逻辑共享同一状态表类型与
+  // inWindow/coverage 降权辅助——拆成多文件会把「20 条一一对应」的可核验性（测试按 id 全量断言）
+  // 变成跨文件分散，属独立重构任务。2026-09-11 交付时 539 行超 500。
+  {
+    files: ['apps/electron/main/diagnostics/trigger-evaluator.ts'],
+    rules: {
+      'max-lines': 'off',
+    },
+  },
+  // [HISTORICAL] logger.ts 是 runtime 日志设施的唯一聚合点：主日志/pi tee/relay tee 三形态
+  // writer（createPiStreamWriter 共享轮转，2026-09-11 u9 tee size 轮转）+ 内存水位打点与
+  // 自然日聚合（2026-09-11 u1e watermark-daily）共用 pendingLines/流引用/轮转序同一套状态机。
+  // 拆分需重新设计写者注册与 flush 生命周期，属独立重构任务；与 protocol.ts override 同型。
+  {
+    files: ['packages/runtime/src/infra/logger.ts'],
     rules: {
       'max-lines': 'off',
     },
@@ -606,10 +640,26 @@ export default [
   },
   // [HISTORICAL] session-dead u2/u3b 语义改动致超限（512>500），拆分登记为后续重构项，勿再增行。
   // 提额至 520 而非 off：微超即提额，保留软上限告警（与 provider-config-helper 提额先例同型）。
+  // [merge dev-0.9.17 2026-09] crash-resilience / crash-forensics-and-watchdog（respawn
+  // 编排 + 收殓 + inflight 镜像挂点）与对方 chat 域协议化（userStoppedGate / restore-abort
+  // 收敛环）并存，统计行 634 > 520 → 提额 650（微超即提额哲学不变；本块位于 config 末尾，
+  // 覆盖上方 idle-pi-reclamation 的 off 块——两块语义冲突时以本软上限为准）。
   {
     files: ['packages/runtime/src/services/session/session-service.ts'],
     rules: {
-      'max-lines': ['warn', { max: 520, skipBlankLines: true, skipComments: true }],
+      'max-lines': ['warn', { max: 650, skipBlankLines: true, skipComments: true }],
+    },
+  },
+  // [HISTORICAL] [u7a 生产补挂 2026-09-12] EngineClient 是引擎协议客户端唯一聚合点
+  // （spawn/帧编解码/反向路由/崩溃重建/pidfile），crash-forensics u7a 数据面桥接
+  // （反向通道镜像 → core 镜像投影 + 在途推送，D5）入列时净代码行 535 > 520。职责
+  // 内聚（桥接消费本类镜像广播），抽独立模块仍余微超且引入新模块边界——微超即提额
+  // 先例（session-service 650 / event-interpreter 700 同型）。提额而非 off：保留 650
+  // 软上限告警，超限即再暴露。
+  {
+    files: ['packages/subagent-core/src/execution/engine/client/engine-client.ts'],
+    rules: {
+      'max-lines': ['warn', { max: 650, skipBlankLines: true, skipComments: true }],
     },
   },
 ];

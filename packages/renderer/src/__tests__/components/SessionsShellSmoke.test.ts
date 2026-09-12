@@ -13,7 +13,7 @@ const mocks = vi.hoisted(() => ({
   switchSession: vi.fn().mockResolvedValue(undefined),
   list: vi.fn().mockResolvedValue([]),
   remove: vi.fn().mockResolvedValue(undefined),
-  getHistory: vi.fn().mockResolvedValue({ messages: [], historyTruncated: false }),
+  getHistory: vi.fn().mockResolvedValue({ messages: [], truncated: false, loadedTurns: 0, totalTurnsEstimate: 0 }),
   ensureStreamSub: vi.fn(),
   loadTree: vi.fn(),
   cancelFlow: vi.fn(),
@@ -53,7 +53,7 @@ vi.mock('@/api', async (importActual) => {
   return { ...actual, session, chat }
 })
 vi.mock('@/composables/features/chat/useChat', () => ({
-  useChat: vi.fn(() => ({ setHistoryTruncated: vi.fn(), disposeSession: vi.fn() })),
+  useChat: vi.fn(() => ({ disposeSession: vi.fn() })),
   ensureStreamSubscription: mocks.ensureStreamSub,
 }))
 vi.mock('@/composables/features/file-tree/useFileTree', () => ({ useFileTree: vi.fn(() => ({ loadTree: mocks.loadTree })) }))

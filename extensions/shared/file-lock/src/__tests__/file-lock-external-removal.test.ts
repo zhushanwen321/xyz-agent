@@ -13,9 +13,9 @@ import * as path from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import { withFileLock } from "../file-lock.ts";
+import { withFileLockSync } from "../file-lock.ts";
 
-describe("withFileLock 锁目录被外部删除（原 compromise 场景的自实现语义）", () => {
+describe("withFileLockSync 锁目录被外部删除（原 compromise 场景的自实现语义）", () => {
 	let tmpDir: string;
 	let target: string;
 
@@ -25,10 +25,10 @@ describe("withFileLock 锁目录被外部删除（原 compromise 场景的自实
 	});
 	afterEach(() => fs.rmSync(tmpDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 }));
 
-	it("fn 执行期间锁被外部删除 → fn 正常返回 + release 静默成功 + 可立即再锁", async () => {
-		const result = await withFileLock(
+	it("fn 执行期间锁被外部删除 → fn 正常返回 + release 静默成功 + 可立即再锁", () => {
+		const result = withFileLockSync(
 			target,
-			async () => {
+			() => {
 				// 模拟外部清理（对端 stale 夺取会先 rmdir 再 mkdir；此处直接删）：
 				// 自实现无保活定时器，删除本身不触发任何回调
 				fs.rmSync(`${target}.lock`, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
@@ -40,17 +40,17 @@ describe("withFileLock 锁目录被外部删除（原 compromise 场景的自实
 		// fn 结果原样返回（无 compromised 拦截——该机制随保活一并移除）
 		expect(result).toBe("fn-done");
 		// release 对已消失的锁目录静默成功（ENOENT 容忍）——由下一断言间接证明：
-		// 若 release 抛错，withFileLock 会吞错但此处再锁也必然成功；直接再锁验证锁已释放
-		await expect(withFileLock(target, async () => "again")).resolves.toBe("again");
+		// 若 release 抛错，sync 版 finally 不吞错会直接外抛；直接再锁验证锁已释放
+		expect(withFileLockSync(target, () => "again")).toBe("again");
 	});
 
-	it("fn 抛错且锁目录已被外部删除 → 错误照常外抛 + release 不叠加失败", async () => {
-		await expect(
-			withFileLock(target, () => {
+	it("fn 抛错且锁目录已被外部删除 → 错误照常外抛 + release 不叠加失败", () => {
+		expect(() =>
+			withFileLockSync(target, () => {
 				fs.rmSync(`${target}.lock`, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
 				throw new Error("boom");
 			}),
-		).rejects.toThrow("boom");
+		).toThrow("boom");
 		// finally 的 release 对 ENOENT 静默——不遮蔽原始 boom 错误（上方断言已过）
 	});
 });

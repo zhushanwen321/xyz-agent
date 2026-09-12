@@ -20,7 +20,7 @@ import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-a
 import { AUTO_CLEAR_TURNS, CONTEXT_USAGE_RATIO_LIMIT } from "../../constants";
 import { isActiveStatus, isTerminalStatus } from "../../engine/goal";
 import { contextInjectionPrompt } from "../../projection/prompts";
-import { asTheme, renderTerminalStatusLine } from "../../projection/widget";
+import { renderTerminalStatusLine } from "../../projection/widget";
 import type { GoalSession } from "../../session";
 import { cancelContinuationTimer, clearGoalSession } from "../../session";
 import { buildPorts } from "../ports";
@@ -92,7 +92,7 @@ function handleTerminalStateBeforeAgent(
 		return;
 	}
 	// 折叠 status bar（终态显示）
-	const statusText = renderTerminalStatusLine(state, asTheme(buildPorts(pi, ctx).ui));
+	const statusText = renderTerminalStatusLine(state, buildPorts(pi, ctx).ui.theme);
 	if (statusText && ctx.hasUI) ctx.ui.setStatus("goal", statusText);
 	if (ctx.hasUI) ctx.ui.setWidget("goal", undefined);
 }

@@ -20,6 +20,57 @@ export interface PiToolResultBody extends PiMessageBody {
 /** xyz-client-msg-id extension 写入的 customType 常量（与 extension 端字符串严格一致）。 */
 export const CLIENT_MSG_ID_TYPE = 'xyz.client-msg-id'
 
+// ── entryStates 条目级截断（crash-resilience §3.3 D6-⑧ / u7-memory-governance）──────
+
+/**
+ * 累积态单条 tool output 截断阈值：64KB（UTF-8 字节）。
+ *
+ * 与 truncate-tool-output.ts 的 TOOL_OUTPUT_MAX_BYTES(4KB) 是两个层级：4KB 是**渲染投影**
+ * （六类工具，reducer 之外的 display 层，entryStates 保持全量的旧契约）；本阈值是**累积态
+ * 本体**的条目级帽——entryStates 累积的 toolCall.output/outputRaw 超限即截断 + 标记
+ * （ToolCall.outputTruncated），消除「长会话大 entry 在 reducer 累积面无界」的内存压力
+ * （R3，单 session 累计 tee 流量 198MB 的主要成分之一）。
+ *
+ * 同时是 live/reload 截断层统一的根治点（D3 代价 C）：本函数被 reducer 的
+ * computeToolCallFill（live applyEntryFrame 与 reload replayEntries 共用）与 live overlay
+ * （registry tool_call_end handler）三方调用——六类截断工具之外的 write/edit/MCP 大结果
+ * 在 live 与重载后呈现一致形态，live ≡ reload 构造性恢复。
+ */
+export const ENTRY_TOOL_OUTPUT_MAX_BYTES = 65_536
+
+/** 累积态截断标记（对齐 truncate-tool-output.ts 的 TRUNCATION_MARKER 形态，渲染层零新增处理）。 */
+const ENTRY_TRUNCATION_MARKER = '\n\n[...output truncated...]'
+
+/** UTF-8 续字节判定掩码与前缀（10xxxxxx：续字节高 2 位）——codepoint 边界对齐用。 */
+const UTF8_CONTINUATION_MASK = 0xc0
+const UTF8_CONTINUATION_PREFIX = 0x80
+
+const entryTextEncoder = new TextEncoder()
+const entryTextDecoder = new TextDecoder('utf-8', { fatal: false })
+const ENTRY_MARKER_BYTES = entryTextEncoder.encode(ENTRY_TRUNCATION_MARKER).length
+
+/**
+ * 累积态条目级截断（64KB，UTF-8 codepoint 边界对齐）。
+ *
+ * ≤64KB 原样返回（truncated=false，零拷贝）；超限截到「64KB - 标记」并追加标记
+ * （含标记总长 ≤ 64KB）。codepoint 对齐逻辑与 truncate-tool-output.ts 的
+ * truncateToBytes 同型——不复用是模块群自包含约束（apply-entry 三件套只 import
+ * '@xyz-agent/shared' 与群内文件，防 vue 依赖渗入 runtime bundle，见文件头），
+ * 两处是「投影层 vs 累积层」不同变化轴的真差异，收敛归 shared 留待后续 wave。
+ */
+export function truncateEntryToolOutput(text: string): { text: string; truncated: boolean } {
+  const encoded = entryTextEncoder.encode(text)
+  if (encoded.length <= ENTRY_TOOL_OUTPUT_MAX_BYTES) return { text, truncated: false }
+  const bodyBudget = ENTRY_TOOL_OUTPUT_MAX_BYTES - ENTRY_MARKER_BYTES
+  let cutPos = bodyBudget
+  // UTF-8 续字节（10xxxxxx）回退找 codepoint 起点，不切断多字节字符
+  while (cutPos > 0 && (encoded[cutPos]! & UTF8_CONTINUATION_MASK) === UTF8_CONTINUATION_PREFIX) cutPos--
+  return {
+    text: entryTextDecoder.decode(encoded.subarray(0, cutPos)) + ENTRY_TRUNCATION_MARKER,
+    truncated: true,
+  }
+}
+
 // ── 确定性派生工具 ───────────────────────────────────────────────────
 
 /** ISO string → ms；非字符串（类型异常）兜底 0（pi entry.timestamp 契约恒为 string）。 */

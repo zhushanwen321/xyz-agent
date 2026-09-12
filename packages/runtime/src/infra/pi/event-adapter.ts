@@ -9,6 +9,14 @@
  *   ✗ 不持有可变态（currentMessageId/writeContents/diffChain 帧序态全在 interpreter）
  *   ✓ 只产出结构化中间事件（PiTranslatedEvent[]），交由 service 层 EventInterpreter 编排。
  *
+ * [D5 例外登记，u7b] subagent 在途上报（marker = SUBAGENT_INFLIGHT_MARKER）是本文件唯一的
+ * 显式副作用例外：帧在 **EventAdapter 监听器旁路**就地消费（写 inflight-mirror + 经注入的
+ * client 回 INFLIGHT_REPORT_ACK，见 consumeInflightReport），translate() 保持无副作用——
+ * 仅保留一条守卫分支（marker 帧恒不产出前端广播）。设计依据 docs/design/
+ * crash-forensics-and-watchdog.md §3.3 D5「extension 聚合上报」+「marker 路由不得广播前端」
+ *（[HISTORICAL] 广播前端 → 前端无人应答 runtime 内部消费的 select → pending 泄漏，
+ * session-manager 分支同类教训）。
+ *
  * pi RPC events have this structure:
  * - `message_update` = `{type, assistantMessageEvent, usage?}`（wire 恒无顶层 message——RPC
  *   toJsonEvent 剥离，见 pi-protocol.ts PiMessageUpdateEvent 注释）with nested
@@ -24,10 +32,12 @@
  */
 import type { ServerMessage, ServerMessageType, ExtensionInteractMethod, PiMessageEntry, PiToolCallEntryForm } from '@xyz-agent/shared'
 import { EXTENSION_EVENTS, SUBAGENT_RECORD_CUSTOM_TYPE, WORKFLOW_RECORD_CUSTOM_TYPE, SUBAGENT_DIRECTIVE_CUSTOM_TYPE, parseSubagentDirective } from '@xyz-agent/shared'
-import { GUI_WIDGET_MARKER, ASK_USER_MARKER, SESSION_MANAGER_MARKER, SESSION_MANAGER_ACTIONS, BRIDGE_MARKER, BRIDGE_METHODS, isGuiComponent, isGuiRenderResult } from '@xyz-agent/extension-protocol'
+import { GUI_WIDGET_MARKER, ASK_USER_MARKER, SESSION_MANAGER_MARKER, SESSION_MANAGER_ACTIONS, BRIDGE_MARKER, BRIDGE_METHODS, SUBAGENT_INFLIGHT_MARKER, INFLIGHT_REPORT_ACK, isGuiComponent, isGuiRenderResult, isSubagentInFlightReport } from '@xyz-agent/extension-protocol'
 import type { SessionManagerAction, BridgeRequest } from '@xyz-agent/extension-protocol'
 import type { PiEventListener } from '../../services/ports/pi-engine.js'
 import type { PiTranslatedEvent } from '../../services/session/types.js'
+// [u7b D5 例外] 在途镜像单例：marker 旁路写、u7c 滚动重启判定读（见文件头例外登记）
+import { inflightMirror } from '../../services/session/inflight-mirror.js'
 import { randomUUID } from 'node:crypto'
 import { stripAnsi, normalizePiToolResult } from './normalize-tool-result.js'
 import type {
@@ -464,6 +474,17 @@ function extensionUiRequestBroadcast(payload: Record<string, unknown>): PiTransl
     kind: 'message',
     message: { type: 'extension.ui_request' as ServerMessageType, payload },
   }
+}
+
+/**
+ * subagent 在途上报帧形状判定（select + title = SUBAGENT_INFLIGHT_MARKER，u7b）。
+ *
+ * translate() 的守卫分支与 EventAdapter 监听器旁路（consumeInflightReport）共用本判定，
+ * 防「两处标记判定漂移」：translate 侧只保证不广播，旁路侧负责镜像 + ack。
+ */
+function isInflightReportFrame(event: PiEvent): boolean {
+  const e = event as unknown as { type?: unknown; method?: unknown; title?: unknown }
+  return e.type === 'extension_ui_request' && e.method === 'select' && e.title === SUBAGENT_INFLIGHT_MARKER
 }
 
 /**
@@ -1396,6 +1417,12 @@ export function translate(event: PiEvent, sessionId: string): PiTranslatedEvent[
     console.log(`[PiEvent:raw] type=${eventType} sid=${sessionId} ${serialized}`, serialized === '(JSON.stringify failed)' ? event : '')
   }
 
+  // subagent 在途上报帧守卫（u7b，设计 §3.3 D5）：marker 帧恒不产出任何前端广播。
+  // 生产路径上帧已被 EventAdapter 监听器旁路消费（consumeInflightReport，含镜像 + ack），
+  // 此守卫覆盖直调 translate 的路径——结构性消灭「marker 帧落回普通 select 分支 →
+  // 前端出现无人应答的弹窗 pending 泄漏」形态（[HISTORICAL] session-manager 同类教训）。
+  if (isInflightReportFrame(event)) return []
+
   // Lifecycle events that produce no output
   if (NULL_EVENTS.has(eventType)) return []
 
@@ -1435,6 +1462,17 @@ function logInterpretFailure(sessionId: string, eventCount: number, err: unknown
 export type WsSender = (msg: ServerMessage) => void
 
 /**
+ * pi 事件订阅端的最小能力面（EventAdapter.attach 入参，结构窄化）。
+ *
+ * sendExtensionUiResponse 可选（IPiEngine / RpcClient 天然满足）：仅 subagent 在途上报的
+ * ack 回包用（u7b）；缺省时在途帧仍写镜像，仅不回 ack（reporter 按既有折叠重试）。
+ */
+export interface PiEventClient {
+  onEvent(listener: PiEventListener): () => void
+  sendExtensionUiResponse?(id: string, response: unknown, method?: string): void
+}
+
+/**
  * 绑定一个 pi session 的事件适配器：订阅事件 → 翻译 → 经 interpreter 回调消费。
  *
  * 纯订阅器：不持有业务态（currentMessageId/writeContents/diffChain 帧序态全部移到 interpreter），
@@ -1458,11 +1496,14 @@ export class EventAdapter {
     private onDetach?: () => void,
   ) {}
 
-  /** Start listening to events from an RpcClient. */
-  attach(client: { onEvent: (listener: PiEventListener) => (() => void) }): void {
+  /** Start listening to events from a RpcClient. */
+  attach(client: PiEventClient): void {
     this.unsub = client.onEvent((event) => {
       // [u-runtime-svc] 后台任务事件旁路：先于翻译独立判定（不改翻译输出），失败不干扰事件流
       this.notifyBackgroundTaskActivity(event)
+      // [u7b D5 例外] subagent 在途上报旁路：marker 帧就地消费（镜像 + ack），识别即吞掉
+      //（不进翻译 → 结构性零前端广播；translate 的守卫分支为第二道防线）。
+      if (this.consumeInflightReport(event, client)) return
       // PiEventListener 的 event 是 unknown（pi 动态 JSON），断言为 PiEvent 联合翻译。
       const events = translate(event as unknown as PiEvent, this.sessionId)
       if (events.length === 0) return
@@ -1495,6 +1536,42 @@ export class EventAdapter {
       // 旁路永不干扰翻译/事件流（畸形事件形态/未知异常仅留诊断）
       console.debug('[EventAdapter] background-task activity bypass check failed:', err instanceof Error ? err.message : err)
     }
+  }
+
+  /**
+   * subagent 在途上报旁路（u7b，设计 §3.3 D5「extension 聚合上报」）：识别
+   * select + SUBAGENT_INFLIGHT_MARKER → 解析 → inflight-mirror 绝对计数覆盖（非增量）→
+   * 经 client 回 INFLIGHT_REPORT_ACK。返回 true = 本帧已消费（调用方跳过翻译）。
+   *
+   * 坏帧 / 未知 schema / 缺 sessionId → 静默丢弃（仍返回 true，不抛不 ack）：不 ack 使
+   * reporter 按既有折叠重试（问题可感知），单帧丢弃由绝对计数语义自愈。永不向调用方抛错。
+   */
+  private consumeInflightReport(event: unknown, client: PiEventClient): boolean {
+    if (!isInflightReportFrame(event as PiEvent)) return false
+    try {
+      const report = parseSelectOptionsPayload(event as PiExtensionUiRequestEvent)
+      if (!isSubagentInFlightReport(report)) {
+        console.debug('[EventAdapter] subagent-inflight frame dropped: malformed payload')
+        return true
+      }
+      if (typeof report.sessionId !== 'string' || report.sessionId === '') {
+        // u7a 契约（extension-protocol subagent-inflight/types.ts）：sessionId 缺席 =
+        // 无法归属 → 丢弃整帧（不镜像不 ack；pi 延迟写入窗口过后 reporter 重试即可归属）。
+        // 不视为协议错误（与 plugin-bridge getSessionId 同款防御）。
+        return true
+      }
+      // 归属用 adapter 的 sessionId（帧来自本 pi 进程，与 session-manager/bridge 同口径）；
+      // report.sessionId 只作在场性判据，不比对——pi session id 与 runtime 会话键是两个 id 空间。
+      inflightMirror.applyReport(this.sessionId, report)
+      const requestId = String((event as PiExtensionUiRequestEvent).id ?? '')
+      // fire-and-forget 的送达判定（D5 缺席语义②）：reporter 侧 resolve(undefined) 与超时
+      // 不可区分，必须显式 ack 才能区分「已送达」与「旧版 runtime 无路由」。
+      if (requestId !== '') client.sendExtensionUiResponse?.(requestId, INFLIGHT_REPORT_ACK, 'select')
+    } catch (err) {
+      // 旁路永不干扰翻译/事件流（畸形帧形态 / ack 通道异常仅留诊断）
+      console.debug('[EventAdapter] subagent-inflight bypass failed:', err instanceof Error ? err.message : err)
+    }
+    return true
   }
 
   /** Stop listening. */

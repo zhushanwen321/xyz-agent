@@ -65,7 +65,7 @@ export interface CommandSourceInfo {
 // ── ClientMessageType（保持向后兼容）──────────────────────────
 
 export type ClientMessageType =
-  | 'session.create' | 'session.delete' | 'session.deleteByCwd' | 'config.sessions' | 'session.switch' | 'session.restore' | 'session.history' | 'session.getFullHistory' | 'session.getCommands' | 'session.getContext'
+  | 'session.create' | 'session.delete' | 'session.deleteByCwd' | 'config.sessions' | 'session.switch' | 'session.restore' | 'session.history' | 'session.getCommands' | 'session.getContext'
   | 'session.compact' | 'session.rename' | 'session.fork' | 'session.setProject'
   // composer-gen-stats（docs/design/composer-gen-stats.md §3.3 D4）：session.getGenStats 拉该 session
   // 当前模型的速度/缓存命中率快照（恢复腿——切 session 主动拉取，规避 broadcast 早于订阅的时序竞争）。
@@ -151,6 +151,7 @@ export type ClientMessageType =
   | 'config.setDefaultBaseBranch' | 'config.getDefaultBaseBranch'
   | 'config.setAutoRenameEnabled' | 'config.getAutoRenameEnabled'
   | 'config.setRenameModel' | 'config.getRenameModel'
+  | 'config.setRenameMode' | 'config.getRenameMode'
   | 'config.getSmartContextConfig'
   | 'config.setSmartContextEnabled'
   | 'config.setSmartContextCompactModel'
@@ -187,6 +188,9 @@ export type ClientMessageType =
   // 侧边栏的拉取/操作 RPC——list 拉全量并隐式把 session 加入 runtime watched 集合（D8③）；
   // output 按字节窗口 tail 输出尾部；kill 走 D6 分支矩阵。回执/广播登记见 ServerMessageType。
   | 'backgroundTask.list' | 'backgroundTask.output' | 'backgroundTask.kill'
+  // rollingRestart.status（crash-forensics-and-watchdog §3.3 D5，u7b）：滚动重启状态只读查询
+  // （无参数；reply 与 request 同名——session.subscribe 模式）。状态机实现在 u7c。
+  | 'rollingRestart.status'
 
 // ── Payload 类型定义 ────────────────────────────────────────────
 
@@ -303,6 +307,15 @@ export type BatchDeleteResult = {
   failed: Array<{ sessionId: string; error: string }>
 }
 
+/**
+ * rename-session 触发模式（设计 rename-session-three-modes §3.3 D1）。与 extension 侧
+ * extensions/universal/rename-session/src/pure.ts 的 RenameMode 值域同构——跨包不 import，
+ * 本处是协议层声明，供 runtime settings 通路（config.get/setRenameMode）与 renderer
+ * 模式 Select 共用；默认 first-stop（三处默认值真相：pure.ts DEFAULT_RENAME_CONFIG /
+ * package.json startupConfig.content / runtime worktree-config-helper 镜像）。
+ */
+export type RenameMode = 'first-prompt' | 'first-stop' | 'agent-tool'
+
 // ── ClientMessage discriminated union ───────────────────────────
 
 /** 每个 type 对应的 payload 类型映射 */
@@ -338,8 +351,15 @@ export interface ClientMessageMap {
   'session.switch': { sessionId: string }
   'session.restore': { sessionId: string }
   'session.forceQuit': { sessionId: string }
-  'session.history': { sessionId: string }
-  'session.getFullHistory': { sessionId: string }
+  // session.history 参数（crash-resilience §3.3 D4 中期分页协议，u6-paging-protocol）：
+  // - 不带 cursor：最近窗口（u4b 双预算现状）——「打开/切入 session」与 hydrate 通路。
+  // - 带 cursor：游标翻页——cursor = turn 边界锚点 entryId（renderer 当前窗口最早消息的
+  //   piEntryId），返回该锚点之前的最近 limitTurns turns（仍受 maxBytes 字节预算、单 turn
+  //   原子性、首 turn 豁免语义，同 u4b）；活跃/离线两路径共用同一参数语义。
+  // - cursor 指向的消息已不存在（被清理 / 超出预算扫描域）→ 返回空页 + truncated=false
+  //   （翻页到头语义，不报错）。
+  // limitTurns/maxBytes 缺省回落 HISTORY_BUDGET.RECENT_TURNS / HISTORY_BUDGET.MAX_BYTES。
+  'session.history': { sessionId: string; cursor?: string; limitTurns?: number; maxBytes?: number }
   'session.getCommands': { sessionId: string }
   'session.getContext': { sessionId: string }
   // session.getGenStats（docs/design/composer-gen-stats.md §3.3 D4）：生成指标恢复腿。
@@ -363,7 +383,7 @@ export interface ClientMessageMap {
   // 当 timestamp + role 在容差内仍匹配失败时（session-service.resolveEntryIdByTimestamp），
   // runtime 只 console.warn 后 fallback 取 msgEntries[last]——用户以为 fork 到消息 A，
   // 实际可能 fork 到完全不相关的最近一条。前端在能取到 piEntryId 时务必走 RPC 之外的路径
-  // （如 session.fullHistory 已填充 piEntryId 的 message）以保证 fork 点语义正确。
+  // （如 session.history 返回的 message 已填充 piEntryId）以保证 fork 点语义正确。
   'session.fork': {
     srcSessionId: string
     /** pi JSONL entry id（精确匹配，优先使用）。缺失时走 timestamp fallback（见上方风险注释）。 */
@@ -640,6 +660,10 @@ export interface ClientMessageMap {
   'config.setRenameModel': { model: string }
   /** config.getRenameModel：读取自动重命名标题生成模型（前端读取）。 */
   'config.getRenameModel': Record<string, never>
+  /** config.setRenameMode：设置自动重命名触发模式（非法值由 runtime 侧归一为默认 first-stop）。 */
+  'config.setRenameMode': { mode: RenameMode }
+  /** config.getRenameMode：读取自动重命名触发模式（前端读取）。 */
+  'config.getRenameMode': Record<string, never>
   /** config.getSmartContextConfig：读取智能上下文压缩配置（前端读取）。 */
   'config.getSmartContextConfig': Record<string, never>
   /** config.setSmartContextEnabled：设置智能上下文压缩开关（前端写入）。 */
@@ -706,6 +730,9 @@ export interface ClientMessageMap {
   'backgroundTask.output': { sessionId: string; taskId: string; maxBytes?: number }
   // kill：终止任务（D6 分支矩阵；reason 回执语义见 BackgroundTaskKillReason）。
   'backgroundTask.kill': { sessionId: string; taskId: string }
+  // rollingRestart.status（crash-forensics-and-watchdog §3.3 D5，u7b）：只读查询，无参数
+  //（全局状态，非 session 级）。reply 见 ServerMessageMap['rollingRestart.status']。
+  'rollingRestart.status': Record<string, never>
 }
 
 // ClientMessage 由 ClientMessageMap 直接派生：每个 type 字面量映射到
@@ -754,7 +781,7 @@ export type WorktreeUnknownErrorCode = 'worktree_failed'
 export type WorktreeEnvelopeCode = WorktreeErrorCode | WorktreeUnknownErrorCode
 
 export type ServerMessageType =
-  | 'session.created' | 'session.deleted' | 'session.deletedByCwd' | 'config.sessions' | 'session.history' | 'session.fullHistory' | 'session.switched'
+  | 'session.created' | 'session.deleted' | 'session.deletedByCwd' | 'config.sessions' | 'session.history' | 'session.switched'
   | 'session.compacting' | 'session.compacted' | 'session.renamed' | 'session.forkNotice' | 'session.skillNotice' | 'session.handoffStarted' | 'session.handoffComplete' | 'session.handoffAborted' | 'session.setProject'
   // session.occupancy（session-occupancy-send-closure P3）：占用三维快照广播（state topic，
   // last-value 语义——重连/切回 session 自动恢复，不依赖广播时序），renderer sessionPhase 唯一数据源。
@@ -821,6 +848,9 @@ export type ServerMessageType =
   // 同名（session.subscribe 模式，sendCommand 按 id resolve），payload 见 ServerMessageMapBase。
   | 'session.importCandidates' | 'session.import'
   | 'session.exited'
+  // crash-resilience §3.3 D7（u8-pi-respawn）：pi 崩溃自动恢复结果推送（payload 见
+  // ServerMessageMapBase 两行注释）。
+  | 'session.restored' | 'session.restoreFailed'
   | 'app.info'
   | 'config.plugins' | 'plugin:crashed' | 'plugin:notification'
   | 'plugin:statusChange' | 'plugin:permissionRequest'
@@ -873,6 +903,7 @@ export type ServerMessageType =
   | 'config.defaultBaseBranch'
   | 'config.autoRenameEnabled'
   | 'config.renameModel'
+  | 'config.renameMode'
   | 'config.smartContextConfig'
   | 'config.smartContextEnabled'
   | 'config.smartContextCompactModel'
@@ -904,6 +935,19 @@ export type ServerMessageType =
   // 经 IMessageBus.publish(sessionId, msg) session 级定向推。
   | 'backgroundTask.tasks' | 'backgroundTask.outputResult' | 'backgroundTask.killResult'
   | 'backgroundTask:updated'
+  // rollingRestart 域（crash-forensics-and-watchdog §3.3 D5，u7b 协议面）：status = 只读查询
+  // reply（与 request 同名）；deferred / forced = 全局推送事件（Server→Client 冒号
+  // camelCase，对齐 backgroundTask:updated 规则；与台账 event 值同源）；countdown =
+  // 执行前 T-30s 二次预告（D5 ③，u7c 补缺——推迟期内新开终端的知情窗口）。
+  | 'rollingRestart.status' | 'rollingRestart:deferred' | 'rollingRestart:countdown' | 'rollingRestart:forced'
+  // watchdog 域（crash-forensics-and-watchdog §3.3 D4，u6）：memoryPressure = 内存压力
+  // 全局推送（Server→Client 冒号 camelCase，对齐 rollingRestart:deferred 规则；越线期每
+  // 采样拍重发，payload 见 WatchdogMemoryPressurePayload）。
+  | 'watchdog:memoryPressure'
+  // reattach 域（crash-forensics-and-watchdog §3.3 D3 高水位延迟，偏差 #27）：deferred =
+  // 启动 reattach 高水位延迟推送（Server→Client 冒号 camelCase；进入单发 + 缓解退出单发，
+  // payload 见 ReattachDeferredPayload）。
+  | 'reattach:deferred'
 
 /** skill 缓存失效广播的作用域：global=全局 skill 变动，project=某项目 cwd 的 skill 变动。 */
 export type SkillCacheScope = 'global' | 'project'
@@ -1034,6 +1078,144 @@ export type SkillNoticeReason =
   | 'skill_read_failed'
   | 'marker_malformed'
   | 'mapping_unavailable'
+
+// ── 滚动重启协议面（crash-forensics-and-watchdog §3.3 D5，u7b 契约）────────────
+//
+// 三块：① rollingRestart.status 只读查询 RPC（状态机实现在 u7c，本处只钉类型契约；
+// renderer 重连/刷新后主动拉取恢复横幅——「broadcast 时序竞争」教训：需立即消费的持续
+// 状态必须可拉取，T-30s 广播只作加速显示）；② rollingRestart:deferred / rollingRestart:forced
+// 两个 WS 推送事件（Server→Client 冒号 camelCase，对齐 backgroundTask:updated 命名规则；
+// 与台账 event=rolling-restart-deferred / rolling-restart-forced 同源）。
+
+/** 滚动重启状态机相位（D5 ③ 执行链）。 */
+export type RollingRestartState =
+  | 'idle'       // 无滚动重启（常态；重启完成后清除，故重连拉取到 idle 即「横幅不重现」）
+  | 'deferred'   // 检测到在途（或计数未知）→ 推迟等待中
+  | 'countdown'  // 推迟结束，执行前 30s 二次预告中
+  | 'rolling'    // 正在执行滚动重启（完整 shutdown 序）
+
+/**
+ * 滚动重启成因 / 事件 reason 值域（D5 ②/④）：
+ * - 'inflight'：有在途任务 → 推迟（正常形态）
+ * - 'absent-report'：已注入但从未收到上报（旧版 extension 组合）→ errs 推迟；
+ *   在途计数字段取 null 独立标记（0 = 在场且无在途的已证事实，null = 计数未知）
+ * - 'hard-threshold'：双维硬升级（runtime heap ≥92% 或 memPressure 越限）→ 立即执行
+ * - 'defer-limit'：30min 推迟上限到点 → 强制执行（不含 absent-report 形态——errs 推迟必然
+ *   走到上限，其 defer-limit 在评估器 #8 占比子句分子中被排除）
+ */
+export type RollingRestartReason = 'inflight' | 'absent-report' | 'hard-threshold' | 'defer-limit'
+
+/**
+ * 滚动重启的在途摘要（D5 ④ 字段语义钉死）：镜像在途计数合计。
+ * null = 计数未知（errs 形态，配 reason='absent-report'）；0 = 在场且无在途的已证事实。
+ */
+export interface RollingRestartInflightSummary {
+  inFlight: number | null
+}
+
+/** rollingRestart:deferred —— 推迟开始推送（D5 ②；台账 event=rolling-restart-deferred 同源）。 */
+export interface RollingRestartDeferredPayload {
+  reason: 'inflight' | 'absent-report'
+  inflight: RollingRestartInflightSummary
+  /** 30min 推迟上限到点时刻（ms epoch）——横幅「等待有界」的数据源。 */
+  deferDeadlineAt: number
+}
+
+/** rollingRestart:forced —— 强制升级执行推送（D5 ②；台账 event=rolling-restart-forced 同源）。 */
+export interface RollingRestartForcedPayload {
+  reason: 'hard-threshold' | 'defer-limit'
+  inflight: RollingRestartInflightSummary
+}
+
+/**
+ * rollingRestart:countdown —— 执行前 T-30s 二次预告推送（D5 ③，u7c 生产）：
+ * 覆盖「推迟期内新开终端」的知情窗口（T0 横幅只覆盖预告时刻的终端集合）；
+ * forced（硬升级/到点）路径立即执行，不发本预告（红牌即执行）。
+ */
+export interface RollingRestartCountdownPayload {
+  /** 预计执行时刻（ms epoch）——横幅倒计时数据源。 */
+  executesAt: number
+  inflight: RollingRestartInflightSummary
+}
+
+/** rollingRestart.status 的 reply：状态机相位 + 成因 + 在途摘要（state='idle' 时 reason 缺省）。 */
+export interface RollingRestartStatusPayload {
+  state: RollingRestartState
+  reason?: RollingRestartReason
+  inflight: RollingRestartInflightSummary
+  /** deferred/countdown 态的推迟上限到点时刻（ms epoch）；其余态缺省。 */
+  deferDeadlineAt?: number
+}
+
+// ── reattach 域（crash-forensics-and-watchdog §3.3 D3 高水位延迟，偏差 #27）────
+//
+// reattach:deferred = 启动 reattach 高水位延迟的全局推送（Server→Client 冒号 camelCase，
+// 对齐 rollingRestart:deferred 命名规则；无 sessionId——窗口级全局态，非 session 级消息，
+// 不受「session 级消息必带 sessionId」约束）。生产方 = startup-reattach 高水位轮询循环
+// （u5 交付，#27 补广播半腿：进入单发 + 缓解退出单发——广播形态选择见
+// ReattachDeferredPayload 注释）；消费方 = renderer useRollingRestartStatus（reattach
+// 延迟横幅腿，与滚动重启横幅共用窗口级容器——两种延迟态时域不相交：reattach 延迟只在
+// runtime 启动后短窗口，滚动重启推迟只在运行期，互斥不冲突）。无只读拉取 RPC（D3 高
+// 水位延迟是启动期瞬态，非持续态；滚动重启的「持续态必须可拉取」教训按状态生命周期
+// 区分适用）。
+
+/**
+ * reattach 高水位延迟原因（D3：崩溃本身由内存高压诱发时，集中 spawn 会诱发二次崩溃——
+ * 「恢复→再崩→退避」循环的缓解；当前唯一成因 = 系统级 memPressure 越限，开放枚举预留）。
+ */
+export type ReattachDeferReason = 'high-memory'
+
+/**
+ * reattach:deferred 的 payload。active=true 进入延迟 / active=false 压力缓解恢复执行。
+ *
+ * **广播形态裁决（单次进入 + 单次退出，非延迟中每拍重发）**：每拍重发对「窗口内重连」
+ * 自愈更快，但缓解退出帧两种形态都是单发——重连错过退出帧的陈旧态残留窗口等价，重发
+ * 只增冗余帧；且 reattach 延迟只存在于启动后短窗口（收割等待 + 高水位轮询），无只读
+ * 拉取面（协议面仅本事件）。残余窗口 = 「进入帧后断连、退出帧也错过后重连」的低概率
+ * 组合，接受并登记。
+ *
+ * **预计恢复语义**：高压复查周期 pollMs 随帧携带——恢复无总上限（D3：高压持续则逐拍
+ * 复查至缓解；总时长不可预估），横幅文案据此不承诺恢复时刻；手动 lazy 恢复恒可用。
+ */
+export interface ReattachDeferredPayload {
+  /** true = 进入延迟（高压，reattach spawn 暂停）；false = 压力缓解，恢复执行。 */
+  active: boolean
+  /** 延迟成因（当前唯一 'high-memory'）。 */
+  reason: ReattachDeferReason
+  /** 高压复查周期 ms（生产方 DEFAULT_HIGH_WATER_POLL_MS，缺省 30s——逐拍复查至缓解）。 */
+  pollMs: number
+}
+
+// ── 看门狗协议面（crash-forensics-and-watchdog §3.3 D4，u6）────────────────
+//
+// watchdog:memoryPressure = 内存压力全局推送（Server→Client 冒号 camelCase，对齐
+// rollingRestart:deferred 命名规则；无 sessionId——窗口级全局态，非 session 级消息，
+// 不受「session 级消息必带 sessionId」约束）。生产方 = runtime 看门狗采样环（u6），
+// 消费方 = renderer useMemoryPressure composable（memory-relief 降级的 renderer 半边：
+// 收到 warn 及以上 → 收紧 renderer 侧 LRU 缓存）。
+
+/**
+ * 看门狗内存压力级别（D4 两级阈值）。'normal' 不广播（renderer 缺省态即 normal，
+ * 压力解除的回落不产生帧——消费方回落感知走下一帧缺失 + 本地常态假设）。
+ */
+export type WatchdogMemoryLevel = 'warn' | 'critical'
+
+/** watchdog:memoryPressure 的 payload：当前用量 + 阈值 + 动作级别（越线期每采样拍重发——
+ *  广播重发作低配拉取，renderer 重连/刷新后最多丢一个采样周期即补上）。 */
+export interface WatchdogMemoryPressurePayload {
+  /** 动作级别：warn = memory-relief 档；critical = 滚动重启决策档（D5，u7c 消费）。 */
+  level: WatchdogMemoryLevel
+  /** 当前 heap used（bytes，process.memoryUsage().heapUsed）。 */
+  heapUsed: number
+  /** heap 上限（bytes，v8.getHeapStatistics().heap_size_limit）。 */
+  heapSizeLimit: number
+  /** 当前用量占上限百分比（0-100，两位精度由生产方预舍入）。 */
+  usedPercent: number
+  /** 告警档阈值（%，默认 70，env 可覆盖——阈值面随帧携带使 renderer 无需同步配置）。 */
+  warnPercent: number
+  /** 临界档阈值（%，默认 85，env 可覆盖）。 */
+  criticalPercent: number
+}
 
 /**
  * # ServerMessageMap —— Runtime → Client payload 类型映射
@@ -1203,6 +1385,19 @@ export interface ServerMessageMapBase {
   // reason: 人类可读的错误原因（含 stderr 尾部截断），供诊断面板展开显示。
   // code: pi 进程退出码（null 表示进程被信号杀死无退出码）。
   'session.exited': { sessionId: string; code: number | null; reason: string }
+  // session.restored / session.restoreFailed（crash-resilience §3.3 D7，u8-pi-respawn）：
+  // pi 非主动退出后的自动恢复结果推送（恢复编排点 = ProcessManager onSessionExit 链 →
+  // pi-respawn.ts 编排；5s 延迟 + 连续 2 次失败熔断）。两者只在「非主动退出触发的自动
+  // 恢复」链路产生——用户手动强制退出（forceQuitSession，不经 onSessionExit）与惰性
+  // 恢复（ensureActive）都不推。
+  // session.restored：自动恢复成功。前端在对话流插入恢复提示条（T4 文案：在途回合未保留、
+  // 后台任务/子代理已终止不自动恢复、可继续发消息），并恢复 session dead 态标记。
+  'session.restored': { sessionId: string; attempts: number }
+  // session.restoreFailed：一次自动恢复尝试失败。willRetry=false（连续失败达熔断阈值）
+  // 时前端把提示条切换为失败态（「引擎恢复失败，点此重试或新建会话」+ 手动重试按钮）；
+  // willRetry=true 仅落 runtime 日志（前端不渲染中间失败，避免闪烁）。
+  // reason: 人类可读失败原因（含 cwd 死路径附着的 MissingSessionCwdError 场景，P-restore-skip 分支二）。
+  'session.restoreFailed': { sessionId: string; attempts: number; willRetry: boolean; reason: string }
   // 扩展 UI 推送通道（EventAdapter 翻译 pi setWidget/setStatus，runtime 固定形状生产）
   'extension:widget': { sessionId: string; widgetKey: string; lines: string[] }
   // 结构化 widget（GuiComponent 经 NUL marker 编码透传，event-adapter 检测 marker 解码）
@@ -1263,8 +1458,10 @@ export interface ServerMessageMapBase {
   'session.import': ImportReply
   // session.subagents：当前 session 派生的 subagent 列表（runtime 从主 session JSONL 提取）
   'session.subagents': { sessionId: string; subagents: SubagentRecord[] }
-  // session.subagentHistory：subagent 对话流消息（runtime 直读 subagent JSONL，复用 convertPiHistory）
-  'session.subagentHistory': { sessionId: string; subagentId: string; messages: import('./message').Message[] }
+  // session.subagentHistory：subagent 对话流消息（runtime 直读 subagent JSONL，复用 convertPiHistory）。
+  // truncated：u4b（D5①）巨型 subagent JSONL（高发源）超预检阈值后逆序窗口降级标志
+  //（optional——mock / 旧 runtime 不带此键，消费方按 false 处理）。
+  'session.subagentHistory': { sessionId: string; subagentId: string; messages: import('./message').Message[]; truncated?: boolean }
   // [U7] getSubagentEngineConfig 的 reply（engines = extension engines.json 动态清单；形状与 extension-protocol 契约一致）
   'session.subagentEngineConfig': { engines: string[]; defaultEngine: string }
   // [U7] setSubagentDefaultEngine 的 reply（写 config.json 后确认；新 session 生效）。
@@ -1285,8 +1482,9 @@ export interface ServerMessageMapBase {
   }
   // session.workflows：当前 session 派生的 workflow 列表（runtime 从主 session JSONL 的 workflow-state-link 提取）
   'session.workflows': { sessionId: string; workflows: WorkflowRunRecord[] }
-  // session.agentCallHistory：workflow 内 agent call 的对话流消息（runtime 按 trace[].sessionId 查找 JSONL）
-  'session.agentCallHistory': { sessionId: string; agentCallSessionId: string; messages: import('./message').Message[] }
+  // session.agentCallHistory：workflow 内 agent call 的对话流消息（runtime 按 trace[].sessionId 查找 JSONL）。
+  // truncated：u4b（D5①）巨型 JSONL 超预检阈值后逆序窗口降级标志（optional，消费方按 false 处理）。
+  'session.agentCallHistory': { sessionId: string; agentCallSessionId: string; messages: import('./message').Message[]; truncated?: boolean }
   // session.agentCallFilePath：agent call 对话流 JSONL 绝对路径（PanelHeader overlay 文件名展示用，找不到为空串）
   'session.agentCallFilePath': { sessionId: string; agentCallSessionId: string; filePath: string }
   // session.workflowUpdate：workflow 状态变化增量信号（event-interpreter 推送，发起/结束时刻）。
@@ -1296,7 +1494,9 @@ export interface ServerMessageMapBase {
   // session.traceEntries：session.getTraceEntries 的 reply。source 区分数据通路：
   //   rpc = 活跃 session（pi get_entries 权威解析 + 文件首行补 header）；
   //   file = 非活跃/降级（JSONL 直读 + sidecar 合并）；
-  //   empty = session 未落盘（pi 延迟写入窗口，规则 6——空态标记，前端显示「尚未落盘」）。
+  //   empty = session 未落盘（pi 延迟写入窗口，规则 6——空态标记，前端显示「尚未落盘」）；
+  //   oversize = 文件超 runtime 读取预检阈值（crash-resilience D5④，u4c）——entries 恒空、
+  //     oversizeMessage 提供降级文案（体积 + 源文件绝对路径），不与 empty 混淆。
   // header 是 JSONL 首行 type=session 的完整 entry（字段镜像 core TraceSessionHeader——
   // shared 不依赖 core，结构兼容即协议兼容；parentSession 两形态（源文件路径/源 sessionId
   // fallback）原样透传，溯源解析归消费端）。entries 是 pi entry JSON 逐条（消费端按 core
@@ -1304,7 +1504,7 @@ export interface ServerMessageMapBase {
   // pi get_entries 静默跳坏行，由 runtime 补文件解析占位，G1 损坏行不静默丢失）。
   'session.traceEntries': {
     sessionId: string
-    source: 'rpc' | 'file' | 'empty'
+    source: 'rpc' | 'file' | 'empty' | 'oversize'
     /** session JSONL 绝对路径（reveal 按钮数据源——MALFORMED 行「打开所在目录」经 Electron
      *  shell.showItemInFolder 定位；empty 未落盘/路径未知时缺省）。 */
     filePath?: string | null
@@ -1314,6 +1514,8 @@ export interface ServerMessageMapBase {
     sessionEnd?: SessionTraceSessionEndPayload
     /** 当前叶子 entry id（RPC 路径；增量腿 since 基准）。文件路径无 leaf 概念，缺省。 */
     leafId?: string | null
+    /** D5④ oversize 降级文案（source='oversize' 时提供：「Trace 过大无法渲染（XX MB），源文件：<绝对路径>」）。 */
+    oversizeMessage?: string
   }
   // session.traceEntryAppended：增量腿推送（event-interpreter 触发事件 → get_entries(since=lastLeafId)
   // 拉取后的 delta entries；lifecycle RPC 成功后 runtime 主动补拉同走此通道）。entries 为空时
@@ -1480,6 +1682,8 @@ export interface ServerMessageMapBase {
   'config.autoRenameEnabled': { enabled: boolean }
   /** config.renameModel：config.getRenameModel / config.setRenameModel 的 reply（"provider/modelId"，空串 = 未设置）。 */
   'config.renameModel': { model: string }
+  /** config.renameMode：config.getRenameMode / config.setRenameMode 的 reply（归一后生效值，默认 first-stop）。 */
+  'config.renameMode': { mode: RenameMode }
   /** config.smartContextConfig：config.getSmartContextConfig 的 reply（compactModel 为 "provider/modelId" 复合串，空串 = 未设置；thresholds 为 token 绝对数）。 */
   'config.smartContextConfig': {
     enabled: boolean
@@ -1581,12 +1785,17 @@ export interface ServerMessageMapBase {
   'session.handoffAborted': { srcSessionId: string }
   // session.history：session.history 的成功 reply（显式历史拉取 RPC；wave:perf-w20 后 switch
   // reply 已拆分到 session.switched，不再复用本类型）。session optional 保留向后兼容。
-  // historyTruncated：历史超上限截断标志（前端据此提示「历史已截断」）。
+  // truncated/loadedTurns/totalTurnsEstimate：历史加载双预算窗口契约（crash-resilience §3.3 D4）——
+  // truncated=true 表示窗口外仍有历史；loadedTurns=本次返回的完整 turn 数；
+  // totalTurnsEstimate=session 的 turn 总数估计（读到头为精确值，窗口截断时为下界）。
+  // [u6] legacy historyTruncated 字段已退役（偏差表 D7 清账：与 truncated 同值并存的双轨收口）。
   'session.history': {
     sessionId: string
     session?: SessionSummary
     messages: Message[]
-    historyTruncated: boolean
+    truncated: boolean
+    loadedTurns: number
+    totalTurnsEstimate: number
   }
   // session.switched：session.switch 的成功 reply（wave:perf-w20 R-11 瘦身——switch reply 不再
   // 无条件全量 getHistory 塞 messages，被驱逐 session 切回走显式 session.history RPC（全量），
@@ -1596,8 +1805,8 @@ export interface ServerMessageMapBase {
     sessionId: string
     session: SessionSummary
   }
-  // session.fullHistory：session.getFullHistory reply（session-message-handler.ts:115 reply { sessionId, messages }，全量无截断）。
-  'session.fullHistory': { sessionId: string; messages: Message[] }
+  // [u6] session.fullHistory / session.getFullHistory 已退役（crash-resilience §3.3 D4 中期：
+  // 「加载更早」改走 session.history 游标翻页，全量通路删除——游标翻页完全替代）。
   // model.switched：model.switch reply（settings-message-handler.ts:324-339 reply { sessionId, provider, modelId }，U6 后回传 pi 生效值拆解）。
   // [C-pi-14/ADR-0065] mutation reply（分支一后端可变换）：provider/modelId = pi 生效值，必需不 optional。
   'model.switched': ModelSwitchMutationReply
@@ -1772,6 +1981,28 @@ export interface ServerMessageMapBase {
   //（架构约定「runtime broadcast 时序竞争」C6：拉取兜底是唯一真相入口）。
   // corrupted 语义与 backgroundTask.tasks 同源（损坏空表标记，S7）；缺省/false = 正常拍。
   'backgroundTask:updated': { sessionId: string; tasks: BackgroundTaskRegistryEntry[]; corrupted?: boolean }
+
+  // ── rollingRestart 域（crash-forensics-and-watchdog §3.3 D5，u7b 协议面）──
+  // status：只读查询 reply（u7c 状态机生产；renderer 重连/刷新后主动拉取恢复横幅——持续态
+  // 不可依赖广播时序，T-30s 广播只作加速显示）。
+  'rollingRestart.status': RollingRestartStatusPayload
+  // deferred / forced：推迟开始 / 强制升级执行的全局推送（u7c 生产；与台账
+  // rolling-restart-deferred / rolling-restart-forced 同源，在途摘要字段语义见 payload 类型）。
+  'rollingRestart:deferred': RollingRestartDeferredPayload
+  // countdown：执行前 T-30s 二次预告（D5 ③，u7c 补缺；status 拉取是持续态唯一真相，
+  // 本广播只作加速显示——「broadcast 时序竞争」教训同源）。
+  'rollingRestart:countdown': RollingRestartCountdownPayload
+  'rollingRestart:forced': RollingRestartForcedPayload
+
+  // ── watchdog 域（crash-forensics-and-watchdog §3.3 D4，u6）──
+  // memoryPressure：内存压力全局推送（u6 看门狗生产；renderer useMemoryPressure 消费——
+  // warn 及以上收紧 renderer 侧 LRU；字段语义见 payload 类型）。
+  'watchdog:memoryPressure': WatchdogMemoryPressurePayload
+
+  // ── reattach 域（crash-forensics-and-watchdog §3.3 D3 高水位延迟，偏差 #27）──
+  // deferred：启动 reattach 高水位延迟推送（u5 生产；renderer useRollingRestartStatus
+  // 消费——高压延迟横幅腿；active 进入/缓解退出两态，字段语义见 payload 类型）。
+  'reattach:deferred': ReattachDeferredPayload
 }
 
 /**
@@ -1905,7 +2136,6 @@ export interface ReplyPayloadMap {
   'session.getGenStats': ServerMessageMap['session.stats_update']
   'session.getTraceEntries': ServerMessageMap['session.traceEntries']
   'session.fetchCurrentSystemPrompt': ServerMessageMap['session.currentSystemPrompt']
-  'session.getFullHistory': ServerMessageMap['session.fullHistory']
   'session.getSubagentHistory': ServerMessageMap['session.subagentHistory']
   'session.getSubagentEngineConfig': ServerMessageMap['session.subagentEngineConfig']
   'session.setSubagentDefaultEngine': ServerMessageMap['session.subagentDefaultEngineSet']
@@ -1965,6 +2195,8 @@ export interface ReplyPayloadMap {
   'config.getAutoRenameEnabled': ServerMessageMap['config.autoRenameEnabled']
   'config.setRenameModel': ServerMessageMap['config.renameModel']
   'config.getRenameModel': ServerMessageMap['config.renameModel']
+  'config.setRenameMode': ServerMessageMap['config.renameMode']
+  'config.getRenameMode': ServerMessageMap['config.renameMode']
   'config.getSmartContextConfig': ServerMessageMap['config.smartContextConfig']
   'config.setSmartContextEnabled': ServerMessageMap['config.smartContextEnabled']
   'config.setSmartContextCompactModel': ServerMessageMap['config.smartContextCompactModel']
@@ -2069,6 +2301,9 @@ export interface ReplyPayloadMap {
   'backgroundTask.list': ServerMessageMap['backgroundTask.tasks']
   'backgroundTask.output': ServerMessageMap['backgroundTask.outputResult']
   'backgroundTask.kill': ServerMessageMap['backgroundTask.killResult']
+  // rollingRestart.status（crash-forensics-and-watchdog §3.3 D5，u7b）：只读查询 reply
+  //（payload 消费型；与 request 同名——session.subscribe / backgroundTask.list 同款模式）。
+  'rollingRestart.status': ServerMessageMap['rollingRestart.status']
 
   // terminal.* 都是 ack 型，统一 reply 'terminal.ack'（空 payload，前端 command() 按 id 匹配 resolve）
   'terminal.attach': ServerMessageMap['terminal.ack']

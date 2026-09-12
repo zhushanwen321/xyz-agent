@@ -197,7 +197,15 @@ infra/      ← pi 适配（实现 ports，连接 + 翻译合并）
 | `services/git-service.ts` | 21 | `parseGitStatus`, `deriveCounts`, `parseNumstat`, `parseNumstatByFile` |
 | `services/file-service.ts` | 21-22 | `IgnoreMatcher`(type), `compileIgnoreRules`, `matchPath` |
 
-> **新增 services→infra import 时的判断准则**：logger 类横切关注点（无业务语义、process-wide 单例）可直接 import；kernel 类纯函数（无状态、无副作用、无 IO，与 shared 同性质）——含 pi-paths 路径解析、git-status-parser/ignore-parser 等纯解析/匹配函数——可直接 import。其余 infra 模块——含 pi 协议类型、RPC 子进程、有状态/有 IO 的文件操作、安装器等——一律经 port 访问，不得直接 import。
+#### ③b crash-journal —— 跨切面取证日志设施（2026-09-11 增补）
+
+`infra/crash-journal.ts` 是统一崩溃台账 writer（[crash-forensics-and-watchdog](../design/crash-forensics-and-watchdog.md) 设计 D1）：append-only JSONL + 10MB×3 段轮转，与 ① logger 完全同类——**无业务语义、process-wide 单例、best-effort**（写失败降级不抛进业务链）。services 层在死亡/自愈决策点双写台账行（crash/deleted/reaped/reclaimed 等），为它定义 port 并注入只会复制 logger 裁决已否定的无意义间接层。归受控例外（合规），`.githooks/check_services_infra_import.py` 白名单同名登记。
+
+#### ③c mem-pressure —— os 级内存压力即时查询（2026-09-11 增补）
+
+`infra/mem-pressure.ts` 是 os 级内存压力即时查询（[crash-forensics-and-watchdog](../design/crash-forensics-and-watchdog.md) 设计 D3 高水位延迟 / D4 采样形态裁决；u5 交付、u7c 滚动重启硬升级后续消费），与 ① logger / ③b crash-journal 同类的横切关注点——**无业务语义、无状态、无副作用、best-effort**：每次调用重新读 os（node:os freemem/totalmem + 平台 swap 探针），零采样环/缓存（D4「即时查询」裁决的字面要求），查询永不 reject。services 层消费方 = startup-reattach（D3 高水位延迟）；为它定义 port 并注入只会复制 logger 裁决已否定的无意义间接层。归受控例外（合规），`.githooks/check_services_infra_import.py` 白名单同名登记。
+
+> **新增 services→infra import 时的判断准则**：logger 类横切关注点（无业务语义、process-wide 单例）可直接 import——含 logger、crash-journal（取证台账，2026-09-11 增补）与 mem-pressure（os 级内存压力即时查询，无状态只读，2026-09-11 增补）；kernel 类纯函数（无状态、无副作用、无 IO，与 shared 同性质）——含 pi-paths 路径解析、git-status-parser/ignore-parser 等纯解析/匹配函数——可直接 import。其余 infra 模块——含 pi 协议类型、RPC 子进程、有状态/有 IO 的文件操作、安装器等——一律经 port 访问，不得直接 import。
 
 #### ④ node:fs / node:child_process 直用 —— 基线债登记（非合规例外，R3 收编）
 
@@ -208,6 +216,12 @@ infra/      ← pi 适配（实现 ports，连接 + 翻译合并）
 **机器防线现状**：`check_services_infra_import.py` 只拦截 services→infra 方向的 value import（白名单与基线模块清单见该脚本 docstring）；node:fs 直用**无机器拦截**，目前仅靠 review-arch-boundary 审查面把关（本轮 must-fix 即由该审查面报出后回落到本登记）。
 
 **本批显式列入清单**：`services/session/background-task-reaper.ts`（555 行，直用 node:fs + node:child_process spawnSync）。它是后台收殓任务（孤儿后台任务补杀 + registry 终态回写），横切基础设施性质与 ① logger 同类，不在业务请求路径上；判定逻辑已有测试覆盖 175/175 行（runtime incremental coverage）。裁决理由：单独 ports 化这一个文件将与存量 45 文件形成 1:45 双轨，违反一致性；留待 R3 ports 收编统一治理。
+
+**补登（2026-09-12，crash-resilience 批次新增文件随批登记，review MF-8）**：
+- `services/startup-reattach.ts`（node:fs `existsSync`/`unlinkSync`）：启动重附探测的残留 checkpoint 文件清理——启动期一次性路径，与 background-task-reaper 同类不在业务请求路径上；
+- `services/session/runtime-checkpoint.ts`（node:fs 多符号）：runtime checkpoint 读写本体（崩溃取证/恢复链的自有文件 IO，非 pi 文件），文件即该模块的存在理由；
+- `services/session/rolling-restart.ts`（node:v8 `getHeapStatistics`）：滚动重启硬升级判定的 heap 水位读取——os 级只读探针语义与 ③c mem-pressure 同类（无业务语义、无状态、best-effort），v8 而非 os 模块仅为数据源差异；
+- `services/session/history-reverse-read.ts`（node:fs `openSync`/`readSync`/`closeSync`/`fstatSync`）：通用 JSONL 逆序分块读工具——按「通用 fs IO 工具不属 services 业务层」裁决**已迁 utils/history-reverse-read.ts**（与 jsonl.ts 同层，infra/services 双向消费方合法依赖），不再占本清单。
 
 **收编路线**：新增 services 代码优先经 port 接口访问文件系统；存量文件随阶段 R3（ports 接口落地）分批迁移；迁移完成前，本登记作为架构审查对该形态的豁免依据。
 

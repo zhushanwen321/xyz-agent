@@ -13,10 +13,27 @@
  */
 import type { WebSocket as WsType } from 'ws'
 import type { ServerMessage, ServerMessageMap, ServerMessageType, SkillCacheScope, ProviderInfo } from '@xyz-agent/shared'
+import { OUTBOUND_FRAME_WARN_BYTES, OUTBOUND_FRAME_TRUNCATE_BYTES } from '@xyz-agent/shared'
 import type { ISessionService, IConfigService, IModelService, IMessageBroker, IPluginService, IExtensionService } from '../interfaces.js'
 import { buildDirConfigs, PRESET_SKILL_DIRS, PRESET_AGENT_DIRS, PRESET_EXTENSION_DIRS } from '../services/skill-dir-config.js'
+import { formatReplyOversizeMessage, appendReplyFrameJournal } from '../services/message-bus/outbound-frame-registry.js'
 import type { ErrorDetails } from './message-context.js'
 import { WS_OPEN } from './connection-manager.js'
+
+/**
+ * reply 通路守卫阈值（u4a：阈值参数化——生产默认 shared 常量 8MB/32MB，测试注入小阈值）。
+ * 告警/截断档语义与 push 通路（outbound-frame-registry.ts）共用同一标尺。
+ */
+export interface ReplyGuardOptions {
+  warnBytes: number
+  truncateBytes: number
+  /**
+   * 组合根注入的 session 文件路径解析（reply 超限错误 envelope 恢复指引用）——与
+   * OutboundFrameGuardOptions.resolveSessionFilePath 同名同语义（push 通路对称接线）。
+   * 未注入时占位文案退化为「（见 runtime 日志）」。
+   */
+  resolveSessionFilePath?: (sessionId: string) => string | null | undefined
+}
 
 /** broker 访问连接池的最小契约（由 ConnectionManager 实现：clients Set）。 */
 export interface ClientPool {
@@ -66,6 +83,7 @@ export class ServerMessageBroker implements IMessageBroker {
   constructor(
     private pool: ClientPool,
     private services: BrokerServices,
+    private replyGuard: ReplyGuardOptions = { warnBytes: OUTBOUND_FRAME_WARN_BYTES, truncateBytes: OUTBOUND_FRAME_TRUNCATE_BYTES },
   ) {}
 
   /** push 消息 id 生成器（broadcast helper / sendInitialState 共用）。 */
@@ -136,9 +154,45 @@ export class ServerMessageBroker implements IMessageBroker {
   /**
    * D2 reply 惯用法：发送带请求 id 的回复，消灭 46 处 `send(ws,{type,id:msg.id,payload})` 样板。
    * E1 泛型化：`type` 字面量收窄 `payload` 到 `ServerMessageMap[T]`，构造侧字段错误在编译期暴露（ADR-0016 双向保护）。
+   *
+   * u4a reply 通路出站守卫（crash-resilience D3）：序列化后超截断档 → 整个 reply 替换为
+   * `payload_too_large` 错误 envelope——前端 pending.resolveEnvelope（core/transport/api/
+   * pending.ts:186-214）对 type:'error' 且 id 命中 pending 的 reply 走 reject，Promise 正常
+   * 收口不悬挂；envelope message 含「加载更早」分页入口与 session 文件路径恢复指引。
+   * 超告警档（未超截断档）写 warn 哨兵日志，不改动 reply。
+   *
+   * 实现注：本方法序列化一次后直接 ws.send(text)——与 send()（readyState 检查 + stringify）
+   * 行为等价，但守卫需要帧字节数，单次序列化避免大 reply 双重 stringify 开销。
+   * 序列化失败（循环引用等）→ 复用 sendError 收口为 error envelope（Promise 不悬挂），不抛错。
    */
   reply<T extends ServerMessageType>(ws: WsType, id: string | undefined, type: T, payload: ServerMessageMap[T]): void {
-    this.send(ws, { type, id, payload })
+    let text: string
+    try {
+      text = JSON.stringify({ type, id, payload })
+    } catch (e) {
+      console.error(`[broker] reply serialization failed (type=${type}) — sending error envelope instead:`, e)
+      this.sendError(ws, 'reply_serialization_failed', 'reply payload serialization failed', id)
+      return
+    }
+    const bytes = Buffer.byteLength(text, 'utf8')
+    const sid = (payload as { sessionId?: string } | undefined)?.sessionId
+    if (bytes > this.replyGuard.truncateBytes) {
+      console.warn(`[outbound-frame-guard] oversize reply replaced with error envelope: type=${type} sessionId=${sid ?? 'unknown'} bytes=${bytes}`)
+      // u1e（crash-forensics D1）：reply 超限整帧替换 → frame-truncated(trunc-tier)。
+      appendReplyFrameJournal('trunc-tier', type, sid, bytes)
+      this.sendError(ws, 'payload_too_large', formatReplyOversizeMessage(bytes, sid, {
+        warnBytes: this.replyGuard.warnBytes,
+        truncateBytes: this.replyGuard.truncateBytes,
+        resolveSessionFilePath: this.replyGuard.resolveSessionFilePath,
+      }), id, sid !== undefined ? { sessionId: sid } : undefined)
+      return
+    }
+    if (bytes > this.replyGuard.warnBytes) {
+      console.warn(`[outbound-frame-guard] large outbound reply (warn): type=${type} sessionId=${sid ?? 'unknown'} bytes=${bytes}`)
+      // u1e（crash-forensics D1）：reply 告警档 → frame-truncated(warn-tier)。
+      appendReplyFrameJournal('warn-tier', type, sid, bytes)
+    }
+    if (ws.readyState === WS_OPEN) ws.send(text)
   }
 
   // ── Shared payload builders ─────────────────────────────────────

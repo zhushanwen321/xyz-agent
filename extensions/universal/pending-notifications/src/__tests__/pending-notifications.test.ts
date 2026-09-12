@@ -1,13 +1,16 @@
 // 测试框架：vitest
 // 运行命令：npx vitest run src/__tests__/pending-notifications.test.ts
 //
-// W1 核心实现测试。覆盖 plan.md U1-U11。
+// 覆盖 entries 单一权威源终态：countActiveFromEntries 差集原语 + 工厂写侧/读侧现算。
 //
 // 测试策略：
 // - 用最小 mock 的 ExtensionAPI（mock events.on/emit、appendEntry、on、registerTool）
 // - 用最小 mock 的 ExtensionContext（mock sessionManager.getEntries/getSessionId）
+// - 共享 entries 数组 = session JSONL 的单测层镜像：appendEntry mock 同步 push 进该数组
+//   （P1 单测层镜像：pi dist 实证 _appendEntry 同步入账），listener 落盘后的写侧前置
+//   判断与工具查询立即可见——现算方案的物理前提
 // - 调 pendingNotificationsExtension(pi) 触发工厂注册 handler
-// - 手动触发 session_start / events / tool / session_shutdown，断言 state + appendEntry
+// - 手动触发 session_start / events / tool，断言 entries 差集与 appendEntry
 
 /* eslint-disable taste/no-unsafe-cast */
 
@@ -16,22 +19,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import pendingNotificationsExtension from "../index";
 import type { PendingEntry } from "../state";
-import {
-	countActiveFromEntries,
-	createRegistry,
-	getActive,
-	PENDING_LIFECYCLE,
-	normalizePendingType,
-	rebuildFromEntries,
-	register,
-	unregister,
-} from "../state";
+import { countActiveFromEntries, normalizePendingType } from "../state";
 
 // ── Mock 工具 ───────────────────────────────────────
 
 interface HandlerRegistry {
 	sessionStart: ((event: unknown, ctx: ExtensionContext) => void | Promise<void>) | undefined;
-	sessionShutdown: ((event: unknown, ctx: ExtensionContext) => void | Promise<void>) | undefined;
 	pendingRegister: ((data: unknown) => void) | undefined;
 	pendingUnregister: ((data: unknown) => void) | undefined;
 }
@@ -44,6 +37,8 @@ interface MockSessionEntry {
 interface MockSetup {
 	pi: ExtensionAPI;
 	handlers: HandlerRegistry;
+	/** 共享 entries 数组 = session JSONL 的单测层镜像（appendEntry mock 同步 push 进来） */
+	entries: MockSessionEntry[];
 	appendEntryMock: ReturnType<typeof vi.fn>;
 	registerToolMock: ReturnType<typeof vi.fn>;
 	sendMessageMock: ReturnType<typeof vi.fn>;
@@ -52,11 +47,15 @@ interface MockSetup {
 function createMockPi(): MockSetup {
 	const handlers: HandlerRegistry = {
 		sessionStart: undefined,
-		sessionShutdown: undefined,
 		pendingRegister: undefined,
 		pendingUnregister: undefined,
 	};
-	const appendEntryMock = vi.fn();
+	// P1 单测层镜像：pi dist 实证 _appendEntry 同步 push（fileEntries）——appendEntry
+	// mock 同步入账共享 entries，落盘后前置判断/工具查询立即可见。
+	const entries: MockSessionEntry[] = [];
+	const appendEntryMock = vi.fn((customType: string, data: Record<string, unknown>) => {
+		entries.push({ customType, data });
+	});
 	const registerToolMock = vi.fn();
 	const sendMessageMock = vi.fn();
 
@@ -66,7 +65,6 @@ function createMockPi(): MockSetup {
 		sendMessage: sendMessageMock,
 		on: vi.fn((event: string, handler: (event: unknown, ctx: ExtensionContext) => void | Promise<void>) => {
 			if (event === "session_start") handlers.sessionStart = handler;
-			if (event === "session_shutdown") handlers.sessionShutdown = handler;
 		}),
 		events: {
 			emit: vi.fn(),
@@ -77,21 +75,21 @@ function createMockPi(): MockSetup {
 		},
 	} as unknown as ExtensionAPI;
 
-	return { pi, handlers, appendEntryMock, registerToolMock, sendMessageMock };
+	return { pi, handlers, entries, appendEntryMock, registerToolMock, sendMessageMock };
 }
 
-function createMockCtx(entries: MockSessionEntry[], sessionId = "sess-current"): ExtensionContext {
+function createMockCtx(setup: MockSetup, sessionId = "sess-current"): ExtensionContext {
 	return {
 		sessionManager: {
-			getEntries: () => entries as unknown[],
+			getEntries: () => setup.entries as unknown[],
 			getSessionId: () => sessionId,
 		},
 	} as unknown as ExtensionContext;
 }
 
-function fireSessionStart(setup: MockSetup, ctx: ExtensionContext): void {
+function fireSessionStart(setup: MockSetup, sessionId?: string): void {
 	if (!setup.handlers.sessionStart) throw new Error("session_start handler not registered");
-	void setup.handlers.sessionStart({ type: "session_start", reason: "resume" }, ctx);
+	void setup.handlers.sessionStart({ type: "session_start", reason: "resume" }, createMockCtx(setup, sessionId));
 }
 
 async function runTool(
@@ -107,7 +105,7 @@ async function runTool(
 			ctx: ExtensionContext,
 		) => Promise<{ content: Array<{ type: string; text: string }>; details: unknown }>;
 	};
-	return tool.execute("test-call-id", params, undefined, undefined, createMockCtx([]));
+	return tool.execute("test-call-id", params, undefined, undefined, createMockCtx(setup));
 }
 
 async function getCount(setup: MockSetup): Promise<number> {
@@ -119,7 +117,9 @@ async function getCount(setup: MockSetup): Promise<number> {
 
 const NOW = 1_700_000_000_000;
 
-function makeRegisterEntry(id: string, extra: Partial<PendingEntry> = {}): MockSessionEntry {
+/** 盘上 pending:register entry 的形状（终态写入侧无 expiresAt 键；extra 可注入历史
+ *  遗留字段如 expiresAt，用于证明读取侧不校验该键） */
+function makeRegisterEntry(id: string, extra: Record<string, unknown> = {}): MockSessionEntry {
 	return {
 		customType: "pending:register",
 		data: {
@@ -127,7 +127,6 @@ function makeRegisterEntry(id: string, extra: Partial<PendingEntry> = {}): MockS
 			type: "workflow",
 			name: `op-${id}`,
 			registeredAt: NOW,
-			expiresAt: NOW + 3_600_000,
 			sessionId: "sess-current",
 			...extra,
 		},
@@ -138,323 +137,28 @@ function makeUnregisterEntry(id: string): MockSessionEntry {
 	return { customType: "pending:unregister", data: { id } };
 }
 
-function rebuild(
-	entries: MockSessionEntry[],
-	currentSessionId: string,
-	now: number,
-): { activeIds: string[]; expiredToFlush: Array<{ id: string; status: string }> } {
-	return rebuildFromEntries(createRegistry(), entries as unknown[], currentSessionId, now);
-}
-
 // ────────────────────────────────────────────────────
 // state.ts 纯函数测试
 // ────────────────────────────────────────────────────
 
 describe("state pure functions", () => {
-	describe("register", () => {
-		it("registers a new active operation", () => {
-			const r = createRegistry();
-			const op: PendingEntry = {
-				id: "w-1", type: "workflow", name: "test", status: "active",
-				registeredAt: NOW, expiresAt: NOW + 3_600_000, sessionId: "s",
-			};
-			register(r, op);
-			expect(getActive(r).map((o) => o.id)).toEqual(["w-1"]);
-		});
-
-		it("ignores duplicate active id (U6)", () => {
-			const r = createRegistry();
-			const op: PendingEntry = {
-				id: "w-1", type: "workflow", name: "test", status: "active",
-				registeredAt: NOW, expiresAt: NOW + 3_600_000, sessionId: "s",
-			};
-			register(r, op);
-			register(r, { ...op, name: "dup" });
-			expect(getActive(r)).toHaveLength(1);
-			expect(getActive(r)[0].name).toBe("test");
-		});
-	});
-
-	describe("unregister", () => {
-		it("marks existing op non-active (U7)", () => {
-			const r = createRegistry();
-			register(r, {
-				id: "w-1", type: "workflow", name: "test", status: "active",
-				registeredAt: NOW, expiresAt: NOW + 3_600_000, sessionId: "s",
-			});
-			unregister(r, "w-1", "completed");
-			expect(getActive(r)).toHaveLength(0);
-		});
-
-		it("ignores unknown id without error (U8)", () => {
-			const r = createRegistry();
-			expect(() => unregister(r, "nope", "completed")).not.toThrow();
-		});
-	});
-
-	describe("rebuildFromEntries", () => {
-		it("U1: register without unregister → 1 active", () => {
-			const comp = rebuild([makeRegisterEntry("w-1")], "sess-current", NOW);
-			expect(comp.activeIds).toEqual(["w-1"]);
-			expect(comp.expiredToFlush).toEqual([]);
-		});
-
-		it("U2: register + matching unregister → 0 active", () => {
-			const comp = rebuild([makeRegisterEntry("w-1"), makeUnregisterEntry("w-1")], "sess-current", NOW);
-			expect(comp.activeIds).toEqual([]);
-			expect(comp.expiredToFlush).toEqual([]);
-		});
-
-		it("[W4 翻档] U3 机器对现存类型不可达：workflow（process 档）超 TTL → 仍 active、无 flush", () => {
-			// 翻档后三类型全 process 档：expiresAt 判定短路（isExpiredEntry 恒 false）。
-			// 旧行为（session 档 1h TTL 过期 → flush expired unregister）已被移除——
-			// 长任务注册不再被 TTL 静默清除（事故环 4 放大器），收口归注销发射点枚举 +
-			// core 注册对账 sweep。
-			const comp = rebuild(
-				[makeRegisterEntry("w-1", { expiresAt: NOW - 1 })],
-				"sess-current",
-				NOW,
-			);
-			expect(comp.activeIds).toEqual(["w-1"]);
-			expect(comp.expiredToFlush).toEqual([]);
-		});
-
-		it("[W4 读侧过滤③] U4 跨 session 残留 → 不入 registry、不补注销（读侧过滤替代 U4 中性化）", () => {
-			// 翻档后 fork 继承的父级注册残留由 rebuild 读侧过滤兜住（≠ 当前 session →
-			// 跳过），残留 entry 留在 session 文件（差集消费方各自过滤），落盘收口归
-			// core 注册对账 sweep——不再补 expired unregister。
-			const comp = rebuild(
-				[makeRegisterEntry("w-1", { sessionId: "sess-other" })],
-				"sess-current",
-				NOW,
-			);
-			expect(comp.activeIds).toEqual([]);
-			expect(comp.expiredToFlush).toEqual([]);
-		});
-
-		it("entries 含 null/undefined 元素 → 跳过不抛 TypeError（S-10）", () => {
-			const comp = rebuildFromEntries(
-				createRegistry(),
-				[null, makeRegisterEntry("w-1"), undefined],
-				"sess-current",
-				NOW,
-			);
-			expect(comp.activeIds).toEqual(["w-1"]);
-			expect(comp.expiredToFlush).toEqual([]);
-		});
-	});
-
-	describe("normalizeRegisterEntry defaults (via rebuild)", () => {
-		it("[W4 翻档] entry with only {id} → type=workflow（process 档）, name=id, sessionId=current, expiresAt=undefined", () => {
-			const r = createRegistry();
-			const result = rebuildFromEntries(
-				r,
-				[{ customType: "pending:register", data: { id: "w-min" } }],
-				"sess-current",
-				Date.now(),
-			);
-			expect(result.activeIds).toEqual(["w-min"]);
-			const entry = r.operations.get("w-min")!;
-			expect(entry.type).toBe("workflow");
-			expect(entry.name).toBe("w-min");
-			expect(entry.sessionId).toBe("sess-current");
-			expect(entry.status).toBe("active");
-			// 翻档后 workflow = process 档：无 TTL（normalizePendingType 默认归 workflow
-			// 的偏好 = 缺失/未知 type 宁挂账不失明，清理通道 = core 对账 sweep）。
-			expect(entry.expiresAt).toBeUndefined();
+	describe("normalizePendingType", () => {
+		it("subagent/bash 直通，其余（缺失/未知/大小写不符）归 workflow", () => {
+			expect(normalizePendingType("subagent")).toBe("subagent");
+			expect(normalizePendingType("bash")).toBe("bash");
+			expect(normalizePendingType("workflow")).toBe("workflow");
+			expect(normalizePendingType(undefined)).toBe("workflow");
+			expect(normalizePendingType("scheduler")).toBe("workflow");
+			expect(normalizePendingType("Bash")).toBe("workflow");
 		});
 	});
 });
 
-// ────────────────────────────────────────────────────
-// index.ts 工厂集成测试（U1-U11）
-// ────────────────────────────────────────────────────
-
-describe("pendingNotificationsExtension factory", () => {
-	let setup: MockSetup;
-
-	beforeEach(() => {
-		vi.useFakeTimers();
-		vi.setSystemTime(NOW);
-		setup = createMockPi();
-		pendingNotificationsExtension(setup.pi);
-	});
-
-	afterEach(() => {
-		vi.useRealTimers();
-	});
-
-	describe("session_start rebuild (U1-U4)", () => {
-		it("U1: 1 register no unregister → 1 active, no flush", async () => {
-			fireSessionStart(setup, createMockCtx([makeRegisterEntry("w-1")]));
-			expect(await getCount(setup)).toBe(1);
-			const stateChangeCalls = setup.appendEntryMock.mock.calls.filter(
-				(c) => c[0] === "pending:register" || c[0] === "pending:unregister",
-			);
-			expect(stateChangeCalls).toHaveLength(0);
-		});
-
-		it("U2: register + unregister → 0 active", async () => {
-			fireSessionStart(setup, createMockCtx([makeRegisterEntry("w-1"), makeUnregisterEntry("w-1")]));
-			expect(await getCount(setup)).toBe(0);
-		});
-
-		it("[W4 翻档] expired register（process 档）→ 仍 active、不补 unregister entry", async () => {
-			vi.setSystemTime(NOW + 3_700_000);
-			fireSessionStart(setup, createMockCtx([makeRegisterEntry("w-1", { expiresAt: NOW })]));
-			expect(await getCount(setup)).toBe(1);
-			expect(setup.appendEntryMock).not.toHaveBeenCalledWith(
-				"pending:unregister",
-				expect.objectContaining({ id: "w-1" }),
-			);
-		});
-
-		it("[W4 读侧过滤③] different sessionId → 不入 registry（active=0）、不补 unregister entry", async () => {
-			fireSessionStart(setup, createMockCtx([makeRegisterEntry("w-1", { sessionId: "sess-old" })], "sess-current"));
-			expect(await getCount(setup)).toBe(0);
-			expect(setup.appendEntryMock).not.toHaveBeenCalledWith(
-				"pending:unregister",
-				expect.objectContaining({ id: "w-1" }),
-			);
-		});
-	});
-
-	describe("events.on pending:register (U5-U6)", () => {
-		it("U5: register event → active + appendEntry", async () => {
-			fireSessionStart(setup, createMockCtx([]));
-
-			setup.handlers.pendingRegister!({ id: "w-1", type: "workflow", name: "test" });
-
-			expect(await getCount(setup)).toBe(1);
-			expect(setup.appendEntryMock).toHaveBeenCalledWith(
-				"pending:register",
-				expect.objectContaining({ id: "w-1", type: "workflow", name: "test" }),
-			);
-		});
-
-		it("U6: duplicate register event → ignored", async () => {
-			fireSessionStart(setup, createMockCtx([]));
-
-			setup.handlers.pendingRegister!({ id: "w-1", type: "workflow", name: "first" });
-			setup.handlers.pendingRegister!({ id: "w-1", type: "workflow", name: "second" });
-
-			expect(await getCount(setup)).toBe(1);
-			const registerCalls = setup.appendEntryMock.mock.calls.filter((c) => c[0] === "pending:register");
-			expect(registerCalls).toHaveLength(1);
-		});
-	});
-
-	describe("events.on pending:unregister (U7-U8)", () => {
-		it("U7: unregister event → non-active + appendEntry", async () => {
-			fireSessionStart(setup, createMockCtx([]));
-
-			setup.handlers.pendingRegister!({ id: "w-1", type: "workflow", name: "test" });
-			setup.appendEntryMock.mockClear();
-			setup.handlers.pendingUnregister!({ id: "w-1", reason: "completed" });
-
-			expect(await getCount(setup)).toBe(0);
-			expect(setup.appendEntryMock).toHaveBeenCalledWith(
-				"pending:unregister",
-				expect.objectContaining({ id: "w-1", reason: "completed" }),
-			);
-		});
-
-		it("U8: unregister unknown id → ignored, no appendEntry, no throw", () => {
-			fireSessionStart(setup, createMockCtx([]));
-			setup.appendEntryMock.mockClear();
-
-			expect(() => setup.handlers.pendingUnregister!({ id: "nope", reason: "completed" })).not.toThrow();
-			const stateChangeCalls = setup.appendEntryMock.mock.calls.filter(
-				(c) => c[0] === "pending:register" || c[0] === "pending:unregister",
-			);
-			expect(stateChangeCalls).toHaveLength(0);
-		});
-	});
-
-	describe("tool count/list (U9-U10)", () => {
-		it("U9: count returns active count", async () => {
-			fireSessionStart(setup, createMockCtx([]));
-			setup.handlers.pendingRegister!({ id: "w-1", type: "workflow", name: "a" });
-
-			const res = await runTool(setup, { action: "count" });
-			expect(res.content[0].text).toContain("1");
-		});
-
-		it("U10: list returns active list", async () => {
-			fireSessionStart(setup, createMockCtx([]));
-			setup.handlers.pendingRegister!({ id: "w-1", type: "workflow", name: "a" });
-			setup.handlers.pendingRegister!({ id: "s-1", type: "subagent", name: "b" });
-
-			const res = await runTool(setup, { action: "list" });
-			const ids = (res.details as { items: PendingEntry[] }).items.map((i) => i.id);
-			expect(ids.sort()).toEqual(["s-1", "w-1"]);
-		});
-	});
-
-	describe("session_shutdown (U11)", () => {
-		it("[W4 翻档] U11 对全部现存类型（process 档）不再发生：shutdown 不标 cancelled、不补 unregister", async () => {
-			// process 档语义跨 shutdown 存活：任务收尾归任务自身/reaper/监督器，不由
-			// session 退出裁定（设计 D4 连带面 3 显式接受）；清理痕迹由 core 注册对账
-			// sweep 兜底。U11 机器留存待未来 session 档类型，勿误认清理仍在工作。
-			fireSessionStart(setup, createMockCtx([]));
-			setup.handlers.pendingRegister!({ id: "w-1", type: "workflow", name: "a" });
-			setup.handlers.pendingRegister!({ id: "s-1", type: "subagent", name: "b" });
-			setup.appendEntryMock.mockClear();
-
-			if (!setup.handlers.sessionShutdown) throw new Error("session_shutdown not registered");
-			void setup.handlers.sessionShutdown({ type: "session_shutdown" }, createMockCtx([]));
-
-			const unregisterCalls = setup.appendEntryMock.mock.calls.filter((c) => c[0] === "pending:unregister");
-			expect(unregisterCalls).toHaveLength(0);
-			expect(await getCount(setup)).toBe(2);
-		});
-	});
-
-
-	describe("safeAppendEntry error handling", () => {
-		it("appendEntry throwing (stale context) does not break register listener, registry still updated", async () => {
-			// listener 先 register(registry) 更新内存，再 safeAppendEntry；appendEntry 抛错被 catch，registry 仍已更新
-			fireSessionStart(setup, createMockCtx([]));
-			setup.appendEntryMock.mockImplementationOnce(() => {
-				throw new Error("stale context");
-			});
-
-			expect(() => setup.handlers.pendingRegister!({ id: "w-1", type: "workflow", name: "test" })).not.toThrow();
-
-			expect(await getCount(setup)).toBe(1);
-		});
-	});
-
-	describe("parse null/malformed events", () => {
-		it("parseRegisterEvent: null and missing-id data → no throw, no register entry", () => {
-			fireSessionStart(setup, createMockCtx([]));
-			setup.appendEntryMock.mockClear();
-
-			expect(() => setup.handlers.pendingRegister!(null)).not.toThrow();
-			expect(() => setup.handlers.pendingRegister!({ type: "workflow" })).not.toThrow();
-
-			const registerCalls = setup.appendEntryMock.mock.calls.filter((c) => c[0] === "pending:register");
-			expect(registerCalls).toHaveLength(0);
-		});
-
-		it("parseUnregisterEvent: null and missing-id data → no throw, no unregister entry", () => {
-			fireSessionStart(setup, createMockCtx([]));
-			setup.appendEntryMock.mockClear();
-
-			expect(() => setup.handlers.pendingUnregister!(null)).not.toThrow();
-			expect(() => setup.handlers.pendingUnregister!({ reason: "completed" })).not.toThrow();
-
-			const unregisterCalls = setup.appendEntryMock.mock.calls.filter((c) => c[0] === "pending:unregister");
-			expect(unregisterCalls).toHaveLength(0);
-		});
-	});
-});
-
-describe("countActiveFromEntries（纯差集，供 goal / subagent-workflow 复用）", () => {
+describe("countActiveFromEntries（纯差集，供 goal / subagent-workflow / 工具投影复用）", () => {
 	const mkRegister = (id: string, type: "subagent" | "workflow" = "subagent", overrides: Record<string, unknown> = {}) => ({
 		type: "custom",
 		customType: "pending:register",
-		data: { id, type, name: id, registeredAt: 1000, expiresAt: 1000 + 3_600_000, sessionId: "s-1", ...overrides },
+		data: { id, type, name: id, registeredAt: 1000, sessionId: "s-1", ...overrides },
 	});
 	const mkUnregister = (id: string, reason = "completed") => ({
 		type: "custom",
@@ -520,16 +224,17 @@ describe("countActiveFromEntries（纯差集，供 goal / subagent-workflow 复�
 		expect(countActiveFromEntries([bad, good]).ids).toEqual(["bg-1"]);
 	});
 
-	it("跨 session 残留（fork 继承的 register）缺省不校验 sessionId——传入 currentSessionId 时按 [W4 读侧过滤①] 跳过", () => {
+	it("跨 session 残留（fork 继承的 register）缺省不校验 sessionId——对账补注销后的历史 entry 不干扰差集", () => {
 		// 差集口向后兼容：不传 currentSessionId = 不过滤（既有调用方零改动）。
-		// 模拟 P fork 主 session：继承来主 session 的 register（sessionId=s-0），已被 rebuild 补 unregister(expired)
+		// 模拟 fork 继承：继承来主 session 的 register（sessionId=s-0），bte 对账已
+		// 补 unregister 平掉差集，只剩本 session 的注册计入。
 		const inherited = mkRegister("parent-bg", "subagent", { sessionId: "s-0" });
 		const flushed = mkUnregister("parent-bg", "expired");
 		const own = mkRegister("my-bg");
 		expect(countActiveFromEntries([inherited, flushed, own]).ids).toEqual(["my-bg"]);
 	});
 
-	it("[W4 读侧过滤①] currentSessionId 过滤：跨 session entry 跳过、本 session 计入", () => {
+	it("[跨 session 残留过滤] currentSessionId 过滤：跨 session entry 跳过、本 session 计入", () => {
 		const inherited = mkRegister("parent-bg", "subagent", { sessionId: "s-0" });
 		const own = mkRegister("my-bg", "subagent", { sessionId: "s-1" });
 		const bashOwn = mkRegister("bt-1", "bash", { sessionId: "s-1" });
@@ -540,99 +245,21 @@ describe("countActiveFromEntries（纯差集，供 goal / subagent-workflow 复�
 		expect(countActiveFromEntries([inherited, own, bashOwn]).count).toBe(3);
 	});
 
-	it("[W4 读侧过滤①] entry 缺 sessionId 的旧形态条目视为本 session（不过滤，宁放行不误杀）", () => {
+	it("[跨 session 残留过滤] entry 缺 sessionId 的旧形态条目视为本 session（不过滤，宁放行不误杀）", () => {
 		const legacy = { type: "custom", customType: "pending:register", data: { id: "old-1", type: "subagent", name: "o" } };
 		expect(
 			countActiveFromEntries([legacy], { currentSessionId: "s-1" }).ids,
 		).toEqual(["old-1"]);
 	});
-});
-
-// ────────────────────────────────────────────────────
-// D16 lifecycle 分档（M3）：process 档（type=bash）纯函数行为
-// ────────────────────────────────────────────────────
-
-/** bash register entry 的真实落盘形状：无 expiresAt 键（写入侧省略，D16） */
-function makeBashRegisterEntry(id: string, overrides: Record<string, unknown> = {}): MockSessionEntry {
-	return {
-		customType: "pending:register",
-		data: {
-			id,
-			type: "bash",
-			name: `task-${id}`,
-			registeredAt: NOW,
-			sessionId: "sess-current",
-			...overrides,
-		},
-	};
-}
-
-describe("D16 lifecycle 分档：常量与 type 归一化", () => {
-	it("[W4 翻档] PENDING_LIFECYCLE：subagent/workflow/bash 全 process 档（session 档机器留存待未来类型）", () => {
-		expect(PENDING_LIFECYCLE).toEqual({
-			subagent: "process",
-			workflow: "process",
-			bash: "process",
-		});
-	});
-
-	it("normalizePendingType：subagent/bash 直通，其余（缺失/未知/大小写不符）归 workflow", () => {
-		expect(normalizePendingType("subagent")).toBe("subagent");
-		expect(normalizePendingType("bash")).toBe("bash");
-		expect(normalizePendingType("workflow")).toBe("workflow");
-		expect(normalizePendingType(undefined)).toBe("workflow");
-		expect(normalizePendingType("scheduler")).toBe("workflow");
-		expect(normalizePendingType("Bash")).toBe("workflow");
-	});
-});
-
-describe("D16 process 档（type=bash）纯函数行为", () => {
-	it("读取侧不回填 TTL：无 expiresAt 的 bash entry → registry entry.expiresAt=undefined 且 active", () => {
-		const r = createRegistry();
-		const result = rebuildFromEntries(r, [makeBashRegisterEntry("bt-1")], "sess-current", NOW);
-		expect(result.activeIds).toEqual(["bt-1"]);
-		expect(result.expiredToFlush).toEqual([]);
-		expect(r.operations.get("bt-1")!.expiresAt).toBeUndefined();
-	});
-
-	it("U3 不判过期：bash entry 注册超 1h（TTL 之外）→ 仍 active、无 expiredToFlush", () => {
-		const entry = makeBashRegisterEntry("bt-1", { registeredAt: NOW - 3_700_000 });
-		const comp = rebuild([entry], "sess-current", NOW);
-		expect(comp.activeIds).toEqual(["bt-1"]);
-		expect(comp.expiredToFlush).toEqual([]);
-	});
-
-	it("[W4 读侧过滤③] U4 跨 session 残留（含 bash）→ 不入 registry（读侧过滤一刀对全部类型生效）", () => {
-		// 读侧过滤③不分类型：跨 session 残留在 rebuild 入口即被跳过（W6 的 bash 跨
-		// session 可见性断言钉成的显式选择——子 session goal 不再为父 session bash
-		// 任务 defer）。残留 entry 的落盘收口归 core 注册对账 sweep。
-		const comp = rebuild(
-			[makeBashRegisterEntry("bt-1", { sessionId: "sess-other" })],
-			"sess-current",
-			NOW,
-		);
-		expect(comp.activeIds).toEqual([]);
-		expect(comp.expiredToFlush).toEqual([]);
-	});
-
-	it("[W4 翻档] 同形状（无 expiresAt 键）的 workflow entry → 不回填 TTL、照常 active（process 档）", () => {
-		// 翻档后 workflow = process 档：读取侧不回填 TTL（normalizeRegisterEntry 对
-		// process 档恒 undefined），注册不再被 1h TTL 静默清除（守卫不失明）。
-		const legacy = {
-			customType: "pending:register",
-			data: { id: "w-1", type: "workflow", name: "w", registeredAt: NOW - 3_700_000, sessionId: "sess-current" },
-		};
-		const comp = rebuild([legacy], "sess-current", NOW);
-		expect(comp.activeIds).toEqual(["w-1"]);
-		expect(comp.expiredToFlush).toEqual([]);
-	});
 
 	it("差集路径识别 bash entry：register 计入且 type 保留，unregister 抵消", () => {
-		const bashReg = makeBashRegisterEntry("bt-1");
+		const bashReg = {
+			customType: "pending:register",
+			data: { id: "bt-1", type: "bash", name: "task-bt-1", registeredAt: NOW, sessionId: "sess-current" },
+		};
 		const res = countActiveFromEntries([bashReg] as unknown[]);
 		expect(res.count).toBe(1);
 		expect(res.entries[0].type).toBe("bash");
-		expect(res.entries[0].expiresAt).toBeUndefined();
 
 		expect(
 			countActiveFromEntries([bashReg, makeUnregisterEntry("bt-1")] as unknown[]).count,
@@ -640,17 +267,27 @@ describe("D16 process 档（type=bash）纯函数行为", () => {
 	});
 
 	it("types 过滤：bash 可作为过滤类型", () => {
-		const entries = [makeBashRegisterEntry("bt-1"), makeRegisterEntry("w-1")] as unknown[];
+		const bashReg = {
+			customType: "pending:register",
+			data: { id: "bt-1", type: "bash", name: "task-bt-1", registeredAt: NOW, sessionId: "sess-current" },
+		};
+		const entries = [bashReg, makeRegisterEntry("w-1")] as unknown[];
 		expect(countActiveFromEntries(entries, { types: ["bash"] }).ids).toEqual(["bt-1"]);
 		expect(countActiveFromEntries(entries, { types: ["workflow"] }).ids).toEqual(["w-1"]);
+	});
+
+	it("entry with only {id} → 归一化 type=workflow、name=id、status=active（缺字段容错）", () => {
+		const res = countActiveFromEntries([{ customType: "pending:register", data: { id: "w-min" } }]);
+		expect(res.ids).toEqual(["w-min"]);
+		expect(res.entries[0]).toMatchObject({ id: "w-min", type: "workflow", name: "w-min", status: "active" });
 	});
 });
 
 // ────────────────────────────────────────────────────
-// D16 lifecycle 分档（M3）：process 档（type=bash）工厂行为
+// index.ts 工厂集成测试（写侧现算 + 读侧现算）
 // ────────────────────────────────────────────────────
 
-describe("D16 process 档（type=bash）工厂行为", () => {
+describe("pendingNotificationsExtension factory", () => {
 	let setup: MockSetup;
 
 	beforeEach(() => {
@@ -664,67 +301,218 @@ describe("D16 process 档（type=bash）工厂行为", () => {
 		vi.useRealTimers();
 	});
 
-	it("register 写入：bash → 落盘 data 无 expiresAt 键且 type=bash 直通（不被归并为 workflow）", async () => {
-		fireSessionStart(setup, createMockCtx([]));
+	describe("session_start 后查询（entries 现算，无状态重建）", () => {
+		it("盘上 register 无 unregister → count=1、不补写任何 entry", async () => {
+			setup.entries.push(makeRegisterEntry("w-1"));
+			fireSessionStart(setup);
 
-		setup.handlers.pendingRegister!({ id: "bt-1", type: "bash", name: "run tests" });
+			expect(await getCount(setup)).toBe(1);
+			const stateChangeCalls = setup.appendEntryMock.mock.calls.filter(
+				(c) => c[0] === "pending:register" || c[0] === "pending:unregister",
+			);
+			expect(stateChangeCalls).toHaveLength(0);
+		});
 
-		expect(await getCount(setup)).toBe(1);
-		const regCall = setup.appendEntryMock.mock.calls.find((c) => c[0] === "pending:register");
-		expect(regCall).toBeDefined();
-		const data = regCall![1] as Record<string, unknown>;
-		expect(data.type).toBe("bash");
-		expect("expiresAt" in data).toBe(false);
+		it("盘上 register + unregister → count=0", async () => {
+			setup.entries.push(makeRegisterEntry("w-1"), makeUnregisterEntry("w-1"));
+			fireSessionStart(setup);
+
+			expect(await getCount(setup)).toBe(0);
+		});
+
+		it("[跨 session 残留] other session 的 register → 不进投影、不补 unregister entry", async () => {
+			// fork 继承的父级注册残留不进差集（currentSessionId 过滤），且落盘收口归
+			// 对账通道——本包不做任何补写。
+			setup.entries.push(makeRegisterEntry("w-1", { sessionId: "sess-old" }));
+			fireSessionStart(setup, "sess-current");
+
+			expect(await getCount(setup)).toBe(0);
+			expect(setup.appendEntryMock).not.toHaveBeenCalledWith(
+				"pending:unregister",
+				expect.objectContaining({ id: "w-1" }),
+			);
+		});
 	});
 
-	it("[W4 翻档] workflow register → 落盘 data 无 expiresAt 键（process 档写入侧豁免）", async () => {
-		fireSessionStart(setup, createMockCtx([]));
+	describe("events.on pending:register (U5-U6)", () => {
+		it("U5: register event → active + appendEntry", async () => {
+			fireSessionStart(setup);
 
-		setup.handlers.pendingRegister!({ id: "w-1", type: "workflow", name: "run" });
+			setup.handlers.pendingRegister!({ id: "w-1", type: "workflow", name: "test" });
 
-		const regCall = setup.appendEntryMock.mock.calls.find((c) => c[0] === "pending:register");
-		const data = regCall![1] as Record<string, unknown>;
-		expect("expiresAt" in data).toBe(false);
+			expect(await getCount(setup)).toBe(1);
+			expect(setup.appendEntryMock).toHaveBeenCalledWith(
+				"pending:register",
+				expect.objectContaining({ id: "w-1", type: "workflow", name: "test" }),
+			);
+		});
+
+		it("U6: duplicate register event → ignored（只落盘一条）", async () => {
+			fireSessionStart(setup);
+
+			setup.handlers.pendingRegister!({ id: "w-1", type: "workflow", name: "first" });
+			setup.handlers.pendingRegister!({ id: "w-1", type: "workflow", name: "second" });
+
+			expect(await getCount(setup)).toBe(1);
+			const registerCalls = setup.appendEntryMock.mock.calls.filter((c) => c[0] === "pending:register");
+			expect(registerCalls).toHaveLength(1);
+		});
 	});
 
-	it("U3 工厂级：bash entry 超 1h 后 session_start rebuild → 仍 active、不补 unregister", async () => {
-		vi.setSystemTime(NOW + 3_700_000);
-		const stale = makeBashRegisterEntry("bt-1", { registeredAt: NOW });
-		fireSessionStart(setup, createMockCtx([stale]));
+	describe("events.on pending:unregister (U7-U8)", () => {
+		it("U7: unregister event → 差集归零 + appendEntry", async () => {
+			fireSessionStart(setup);
 
-		expect(await getCount(setup)).toBe(1);
-		const flushCalls = setup.appendEntryMock.mock.calls.filter((c) => c[0] === "pending:unregister");
-		expect(flushCalls).toHaveLength(0);
+			setup.handlers.pendingRegister!({ id: "w-1", type: "workflow", name: "test" });
+			setup.appendEntryMock.mockClear();
+			setup.handlers.pendingUnregister!({ id: "w-1", reason: "completed" });
+
+			expect(await getCount(setup)).toBe(0);
+			expect(setup.appendEntryMock).toHaveBeenCalledWith(
+				"pending:unregister",
+				expect.objectContaining({ id: "w-1", reason: "completed" }),
+			);
+		});
+
+		it("U8: unregister unknown id → ignored, no appendEntry, no throw", () => {
+			fireSessionStart(setup);
+			setup.appendEntryMock.mockClear();
+
+			expect(() => setup.handlers.pendingUnregister!({ id: "nope", reason: "completed" })).not.toThrow();
+			const stateChangeCalls = setup.appendEntryMock.mock.calls.filter(
+				(c) => c[0] === "pending:register" || c[0] === "pending:unregister",
+			);
+			expect(stateChangeCalls).toHaveLength(0);
+		});
 	});
 
-	it("[W4 翻档] session_shutdown：bash 与 workflow（全 process 档）都不标 cancelled、内存仍 active", async () => {
-		fireSessionStart(setup, createMockCtx([]));
-		setup.handlers.pendingRegister!({ id: "bt-1", type: "bash", name: "run tests" });
-		setup.handlers.pendingRegister!({ id: "w-1", type: "workflow", name: "run" });
-		setup.appendEntryMock.mockClear();
+	describe("tool count/list (U9-U10)", () => {
+		it("U9: count returns active count", async () => {
+			fireSessionStart(setup);
+			setup.handlers.pendingRegister!({ id: "w-1", type: "workflow", name: "a" });
 
-		if (!setup.handlers.sessionShutdown) throw new Error("session_shutdown not registered");
-		void setup.handlers.sessionShutdown({ type: "session_shutdown" }, createMockCtx([]));
+			const res = await runTool(setup, { action: "count" });
+			expect(res.content[0].text).toContain("1");
+		});
 
-		const unregisterCalls = setup.appendEntryMock.mock.calls.filter((c) => c[0] === "pending:unregister");
-		expect(unregisterCalls).toHaveLength(0);
-		expect(await getCount(setup)).toBe(2);
+		it("U10: list returns active list", async () => {
+			fireSessionStart(setup);
+			setup.handlers.pendingRegister!({ id: "w-1", type: "workflow", name: "a" });
+			setup.handlers.pendingRegister!({ id: "s-1", type: "subagent", name: "b" });
+
+			const res = await runTool(setup, { action: "list" });
+			const ids = (res.details as { items: PendingEntry[] }).items.map((i) => i.id);
+			expect(ids.sort()).toEqual(["s-1", "w-1"]);
+		});
 	});
 
-	it("[W4 读侧过滤③ 投影] fork 继承残留不入 registry：session 替换后 pending_notifications 工具不虚报跨 session 活跃", async () => {
-		// A9② 场景：父 session（sess-parent）注册 bg-parent → fork 出子 session
-		//（sess-child，继承父 entries）→ 子 session_start rebuild 按 sessionId 过滤
-		// 残留 → 工具 count/list 只见子 session 自己的注册。
-		const parentEntries = [
-			{ customType: "pending:register", data: { id: "bg-parent", type: "subagent", name: "p", registeredAt: NOW, sessionId: "sess-parent" } },
-		];
-		fireSessionStart(setup, createMockCtx(parentEntries, "sess-child"));
-		// 子 session 自己的新注册（listener 写入，sessionId=sess-child）
-		setup.handlers.pendingRegister!({ id: "bg-own", type: "subagent", name: "own" });
+	describe("写侧幂等（P2）", () => {
+		it("bte 对账已直接落盘 unregister 后，收尾尽力补 emit 不重复落盘", async () => {
+			// bte 对账权威路径 = 直接 appendEntry（不经本包 listener）；对账平掉差集后，
+			// 任务收尾的尽力补 emit 到达 listener——前置判断对同一份 entries 现算发现
+			// 已注销 → 跳过（历史内存态形态下此路径会产生第二条重复 unregister entry）。
+			fireSessionStart(setup);
+			setup.handlers.pendingRegister!({ id: "bt-1", type: "bash", name: "run" });
 
-		expect(await getCount(setup)).toBe(1);
-		const res = await runTool(setup, { action: "list" });
-		const ids = (res.details as { items: PendingEntry[] }).items.map((i) => i.id);
-		expect(ids).toEqual(["bg-own"]);
+			// 对账直接落盘（模拟 bte：不经 listener 的 pi.appendEntry）
+			setup.appendEntryMock("pending:unregister", { id: "bt-1", reason: "completed", status: "completed" });
+			// 收尾尽力补 emit 到达 listener
+			setup.handlers.pendingUnregister!({ id: "bt-1", reason: "completed" });
+
+			const unregisterCalls = setup.appendEntryMock.mock.calls.filter((c) => c[0] === "pending:unregister");
+			expect(unregisterCalls).toHaveLength(1);
+			expect(await getCount(setup)).toBe(0);
+		});
+	});
+
+	describe("safeAppendEntry error handling", () => {
+		it("appendEntry throwing (stale context) does not break listener; entries and query stay consistent", async () => {
+			// 单一权威源语义：落盘失败 → entries 没有该注册 → 工具同样查不到（不再出现
+			// 「内存已收、盘上没有」的工具/守卫分裂）；listener 不被异常打断，后续注册正常。
+			fireSessionStart(setup);
+			setup.appendEntryMock.mockImplementationOnce(() => {
+				throw new Error("stale context");
+			});
+
+			expect(() => setup.handlers.pendingRegister!({ id: "w-1", type: "workflow", name: "test" })).not.toThrow();
+			expect(await getCount(setup)).toBe(0);
+
+			setup.handlers.pendingRegister!({ id: "w-2", type: "workflow", name: "other" });
+			expect(await getCount(setup)).toBe(1);
+		});
+	});
+
+	describe("parse null/malformed events", () => {
+		it("parseRegisterEvent: null and missing-id data → no throw, no register entry", () => {
+			fireSessionStart(setup);
+			setup.appendEntryMock.mockClear();
+
+			expect(() => setup.handlers.pendingRegister!(null)).not.toThrow();
+			expect(() => setup.handlers.pendingRegister!({ type: "workflow" })).not.toThrow();
+
+			const registerCalls = setup.appendEntryMock.mock.calls.filter((c) => c[0] === "pending:register");
+			expect(registerCalls).toHaveLength(0);
+		});
+
+		it("parseUnregisterEvent: null and missing-id data → no throw, no unregister entry", () => {
+			fireSessionStart(setup);
+			setup.appendEntryMock.mockClear();
+
+			expect(() => setup.handlers.pendingUnregister!(null)).not.toThrow();
+			expect(() => setup.handlers.pendingUnregister!({ reason: "completed" })).not.toThrow();
+
+			const unregisterCalls = setup.appendEntryMock.mock.calls.filter((c) => c[0] === "pending:unregister");
+			expect(unregisterCalls).toHaveLength(0);
+		});
+	});
+
+	describe("写入侧落盘契约与跨 session 投影", () => {
+		it("register 落盘契约：data 含 id/type/name/registeredAt/sessionId，无条件无 expiresAt 键（bash）", async () => {
+			fireSessionStart(setup);
+
+			setup.handlers.pendingRegister!({ id: "bt-1", type: "bash", name: "run tests" });
+
+			expect(await getCount(setup)).toBe(1);
+			const regCall = setup.appendEntryMock.mock.calls.find((c) => c[0] === "pending:register");
+			expect(regCall).toBeDefined();
+			const data = regCall![1] as Record<string, unknown>;
+			expect(data.type).toBe("bash");
+			expect(data).toHaveProperty("registeredAt");
+			expect(data).toHaveProperty("sessionId");
+			expect("expiresAt" in data).toBe(false);
+		});
+
+		it("register 落盘契约：workflow 同样无 expiresAt 键（三类型统一 process 档写入形态）", async () => {
+			fireSessionStart(setup);
+
+			setup.handlers.pendingRegister!({ id: "w-1", type: "workflow", name: "run" });
+
+			const regCall = setup.appendEntryMock.mock.calls.find((c) => c[0] === "pending:register");
+			const data = regCall![1] as Record<string, unknown>;
+			expect("expiresAt" in data).toBe(false);
+		});
+
+		it("[fork 过滤] 子 session 工具投影不见父 session 注册，父残留不被补注销", async () => {
+			// fork 子 session（继承父 entries）：父级注册（sessionId=sess-parent）不进
+			// 子 session 投影（currentSessionId 过滤），且本包不为残留补写任何 entry
+			//（落盘收口归 core 对账 sweep / bte 对账通道）。
+			setup.entries.push({
+				customType: "pending:register",
+				data: { id: "bg-parent", type: "subagent", name: "p", registeredAt: NOW, sessionId: "sess-parent" },
+			});
+			fireSessionStart(setup, "sess-child");
+			// 子 session 自己的新注册（listener 写入，sessionId=sess-child）
+			setup.handlers.pendingRegister!({ id: "bg-own", type: "subagent", name: "own" });
+
+			expect(await getCount(setup)).toBe(1);
+			const res = await runTool(setup, { action: "list" });
+			const ids = (res.details as { items: PendingEntry[] }).items.map((i) => i.id);
+			expect(ids).toEqual(["bg-own"]);
+
+			const parentUnregister = setup.appendEntryMock.mock.calls.filter(
+				(c) => c[0] === "pending:unregister" && (c[1] as { id: string }).id === "bg-parent",
+			);
+			expect(parentUnregister).toHaveLength(0);
+		});
 	});
 });

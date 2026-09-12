@@ -56,7 +56,6 @@ const chatApiPort: ChatApiPort = {
   bash: chatApi.bash,
   abortBash: chatApi.abortBash,
   getHistory: chatApi.getHistory,
-  getFullHistory: chatApi.getFullHistory,
   streamSubscribe: chatApi.streamSubscribe,
 }
 

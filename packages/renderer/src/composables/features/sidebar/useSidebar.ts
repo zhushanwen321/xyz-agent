@@ -115,8 +115,8 @@ export function useSidebar() {
     getHistory: (sid) => chatApi.getHistory(sid),
     isHydrated: (sid) => chat.isHydrated(sid),
     hydrate: (sid, messages) => chat.hydrate(sid, messages),
-    reconcileHistory: (sid, messages) => chat.reconcileHistory(sid, messages),
-    setHistoryTruncated: (sid, truncated) => useChat().setHistoryTruncated(sid, truncated),
+    // [u4d] window 透传 store reconcile——截断窗口状态 SSOT 在 chat store（N1 setHistoryTruncated 退役）
+    reconcileHistory: (sid, messages, window) => chat.reconcileHistory(sid, messages, window),
     clearHistoryError: (sid) => chat.clearHistoryError(sid),
     markHistoryFailed: (sid) => chat.markHistoryFailed(sid),
   }
@@ -225,6 +225,12 @@ export function useSidebar() {
     if (newTaskFlow.isActive.value) newTaskFlow.cancelFlow()
 
     await sessionApi.restoreSession(id)
+    // [T4] restore RPC 成功 = 恢复事实已发生（runtime 侧 spawn+attach 完成），即收口
+    // respawnPending 过渡态（恢复窗口内用户点了「重新打开」走手动 restore——手动路径
+    // runtime 不再 publish session.restored，此清理是过渡态在该路径的唯一出口；清在
+    // selectSession 之前，UI 切入失败也不留过渡条干等超时）。超时 timer 到期查
+    // isRespawnPending no-op 自清，无需跨模块卸载。
+    useChatStore().clearRespawnPending(id)
     await core.selectSession(id)
     sessionStore.revive(id)
   }

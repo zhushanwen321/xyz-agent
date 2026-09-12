@@ -40,10 +40,9 @@ export function truncateText(text: string, max: number): string {
  *
  * Pi 框架在参数层校验失败（immediate 路径）与 execute 抛错时，均构造
  * `{ content: [{ type: "text", text }] }` 塞进 result.content[0].text
- * （agent-loop.js createErrorToolResult；见 extensions/universal/unified-hooks 的
- * extractErrorText 及其文档：SDK 事件结构里没有独立 errorMessage 字段，错误文本只能从
- * result.content 里取）。loop-gate（D3）复用本函数提取签名原料，workflow-hook 取
- * steer 回灌文本。
+ * （agent-loop.js createErrorToolResult；SDK 事件结构里没有独立 errorMessage 字段，
+ * 错误文本只能从 result.content 里取）。loop-gate（D3）复用本函数提取签名原料，
+ * workflow-hook 取 steer 回灌文本。
  * 这里防御性取多种结构，取不到就返回 undefined（调用方降级为通用提示）。
  */
 export function extractToolErrorText(result: unknown): string | undefined {

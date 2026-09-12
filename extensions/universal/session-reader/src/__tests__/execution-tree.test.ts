@@ -1,10 +1,8 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { tmpdir } from 'node:os'
-import { execSync } from 'node:child_process'
 import { mkdtemp, mkdir, writeFile, rm } from 'node:fs/promises'
 import { join } from 'node:path'
 import { buildExecutionTree, formatExecutionTreeText, type ExecutionTreeNode } from '../core/execution-tree.js'
-import { listRecordManifests } from '../discovery/subagents.js'
 
 /**
  * M3b U7 buildExecutionTree 单测（design m3b 6 testCases）。
@@ -19,8 +17,11 @@ import { listRecordManifests } from '../discovery/subagents.js'
  * - TC-m3b-cycle-detection：workflow 指针环（A→B→A），visited Set 防环
  * - TC-m3b-single-node：单节点树（无后代，ES5）
  * - TC-m3b-source-priority：parentRecordId 三级数据源优先级（manifest>identity>flat，DM4）
- * - TC-m3b-real-data-guard：运行时动态选根（从真实 records 聚合出有关联 subagent record 的
- *   main session），不抛错 + 树非空（sourceMode 为两种合法形态之一）；无数据/无合适根诚实 skip
+ * - TC-m3b-real-data-guard：真实形态数据守卫（合成 fixture）。原直读本机 ~/.pi/agent 动态
+ *   发现家族根（skipIf CI 无数据），真实数据演化后确定性红且触碰真实数据目录（TEST-STRATEGY
+ *   红线），2026-09 数据面合成化：mkdtemp 临时目录仿真真实 agentDir 布局（时间戳前缀文件名 /
+ *   新旧机制混合 / 孤儿 manifest / 坏 manifest / 外来家族），guard 语义不变——解析不抛错 /
+ *   树非空 / 结构自洽，不锁 sourceMode 具体值
  */
 
 // ---- fixture 常量（uuid 特征，互不为子串，满足 extractSessionIdFromFilename）----
@@ -33,51 +34,6 @@ const X_REAL = '0aaaaaaa-bbbb-7ccc-dddd-000000000006'
 // workflow-state-link runId
 const RUN_A = 'wf-1786121304924-runA'
 const RUN_B = 'wf-1786121304924-runB'
-
-/** 真实 pi agent 目录（本机），用于集成测试守卫。 */
-const REAL_AGENT_DIR = '/Users/zhushanwen/.pi/agent'
-const HAS_REAL = (() => {
-  try {
-    return (
-      execSync(`find ${REAL_AGENT_DIR}/sessions -maxdepth 1 -type d 2>/dev/null | head -1`, {
-        encoding: 'utf8',
-      }).trim().length > 0
-    )
-  } catch {
-    return false
-  }
-})()
-
-/**
- * 真实数据动态选根（TC-m3b-real-data-guard，方案 A）。
- *
- * 从真实 records（subagents/<cwdSlug>/records/*.json，与 buildExecutionTree 同源数据）聚合
- * rootSessionId，选关联 record 数最多的 main session 作根——存在关联 subagent record
- * ⇒ 树必然非空。禁止硬编码 session id（外部状态烤死即失效）。
- *
- * @returns rootSessionId；真实数据中无任何有关联 record 的 session 时 undefined（调用方诚实 skip）
- */
-async function pickRealRootSessionId(): Promise<string | undefined> {
-  let manifests
-  try {
-    manifests = await listRecordManifests(REAL_AGENT_DIR)
-  } catch {
-    return undefined
-  }
-  const countByRoot = new Map<string, number>()
-  for (const m of manifests) {
-    countByRoot.set(m.rootSessionId, (countByRoot.get(m.rootSessionId) ?? 0) + 1)
-  }
-  let best: string | undefined
-  let bestCount = 0
-  for (const [sid, count] of countByRoot) {
-    if (count > bestCount) {
-      best = sid
-      bestCount = count
-    }
-  }
-  return best
-}
 
 // ---- fixture helpers（自包含，拓扑同 subagents.test.ts）----
 
@@ -97,6 +53,7 @@ async function writeMainSession(dir: string, slug: string, id: string): Promise<
 /**
  * 写 subagent session 文件：首行 header（真实 id）+ 占位 message + 尾行 identity。
  * identity 尾行含 rootSessionId/slug/agent，可选 parentRecordId（数据源 ② 测试用）。
+ * fileName 可选：默认 `<realId>.jsonl`；真实形态守卫用例传时间戳前缀名（<ts>_<id>.jsonl）。
  */
 async function writeSubagentSession(
   dir: string,
@@ -109,10 +66,11 @@ async function writeSubagentSession(
     parentRecordId?: string
     task?: string
   },
+  fileName: string = `${realId}.jsonl`,
 ): Promise<string> {
   const sessionDir = join(dir, 'subagents', slug, 'sessions')
   await mkdir(sessionDir, { recursive: true })
-  const path = join(sessionDir, `${realId}.jsonl`)
+  const path = join(sessionDir, fileName)
   const data: Record<string, unknown> = {
     id: `sa-${realId.slice(0, 8)}`,
     rootSessionId: identity.rootSessionId,
@@ -721,28 +679,140 @@ describe('buildExecutionTree - fixture', () => {
 })
 
 // ============================================================
-// 真实数据守卫（CI 无本机 ~/.pi/agent，或无有关联 record 的 session → skip）
+// 真实形态数据守卫（合成 fixture，2026-09 测试债修复）
 // ============================================================
+//
+// 原用例直读本机 ~/.pi/agent（execSync 探测 + findRealTreeRoot 扫真实 records 动态发现
+// 家族根，skipIf CI 无数据）：真实数据演化后确定性红（impl-plan 台账登记根因），且触碰
+// 真实数据目录违反 TEST-STRATEGY 红线。数据面合成化——mkdtemp 临时目录仿真真实 agentDir
+// 布局，guard 语义断言（解析不抛错 / 树非空 / 结构自洽 / sourceMode 值域）原样保留。
 
-describe.skipIf(!HAS_REAL)('buildExecutionTree - 真实数据守卫', () => {
-  it('TC-m3b-real-data-guard：运行时动态选根（有关联 record 的 main session），不抛错 + 树非空', async (ctx) => {
-    // 方案 A：运行时从真实数据选根，不硬编码 session id；方案 C：无合适根诚实跳过（优于假绿）。
-    // [HISTORICAL] 前形态硬编码 FAM 家族 id + 弱断言（该家族 records 被 pi GC 清空后 2026-09-11
-    // 假红），动态选根结构性消除对特定家族存量的依赖。
-    const rootSessionId = await pickRealRootSessionId()
-    if (rootSessionId === undefined) {
-      ctx.skip('真实数据中不存在任何有关联 subagent record 的 main session，无可守卫目标')
-      return
-    }
-    const tree = await buildExecutionTree(rootSessionId, REAL_AGENT_DIR)
-    // sourceMode 是数据形态描述非守卫目标：真实数据随 parentRecordId 演化，两种形态均合法
-    expect(['flat-fallback', 'precise']).toContain(tree.sourceMode)
-    // 树非空：选根保证该 main session 有关联 subagent record（root + ≥1 后代节点）
-    expect(tree.totalNodes).toBeGreaterThan(1)
-    // 不抛错（已隐含：到这行说明成功）
+describe('buildExecutionTree - 真实形态数据守卫（合成）', () => {
+  let dir: string
+
+  beforeEach(async () => {
+    dir = await makeAgentDir()
+  })
+  afterEach(async () => {
+    await rm(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 })
+  })
+
+  it('TC-m3b-real-data-guard：真实形态布局（时间戳文件名/新旧机制混合/孤儿 manifest/坏 manifest/外来家族）解析不抛错，树非空且结构自洽', async () => {
+    // 仿真真实 agentDir 数据形态（原直读本机 ~/.pi/agent，合成化后确定性可重跑）：
+    // - session 文件名带时间戳前缀（<ISO 时间戳>_<sessionId>.jsonl，真实 pi 落盘形态）
+    // - 混合新旧机制：A 顶层（无 parentRecordId）→ B 嵌套（manifest.parentRecordId 精确链）；
+    //   C 旧机制顶层（manifest/identity 均无 parentRecordId → flat 挂 main）
+    // - 孤儿 manifest D：sessionFile 已被 30 天 GC、manifest 残留（真实数据常态）
+    // - 坏 manifest（JSON 损坏）不中断扫描（ES4）
+    // - 外来家族 X（同 agentDir 其他 main 的 record）不应泄漏进目标树
+    const CWD = '--guard-cwd--'
+    const TS = '2026-09-11T10-00-00-000Z'
+    const OTHER_MAIN = '0aaaaaaa-bbbb-7ccc-dddd-000000000009'
+    const prefixed = (id: string): string => `${TS}_${id}.jsonl`
+
+    await writeMainSession(dir, CWD, MAIN)
+    // A：顶层 subagent（identity 尾行走数据源 ② 读路径，无 parentRecordId → 顶层挂 main）
+    const saA = await writeSubagentSession(
+      dir,
+      CWD,
+      A_REAL,
+      { rootSessionId: MAIN, slug: 'guard-a' },
+      prefixed(A_REAL),
+    )
+    await writeRecordManifest(dir, CWD, 'rec-ga', {
+      rootSessionId: MAIN,
+      agentName: 'explorer',
+      sessionFile: saA,
+      slug: 'guard-a',
+      status: 'completed',
+    })
+    // B：A 的嵌套后代（manifest.parentRecordId 精确链，新机制）
+    const saB = await writeSubagentSession(
+      dir,
+      CWD,
+      B_REAL,
+      { rootSessionId: MAIN, slug: 'guard-b' },
+      prefixed(B_REAL),
+    )
+    await writeRecordManifest(dir, CWD, 'rec-gb', {
+      rootSessionId: MAIN,
+      agentName: 'worker',
+      sessionFile: saB,
+      slug: 'guard-b',
+      status: 'completed',
+      parentRecordId: 'rec-ga',
+    })
+    // C：旧机制顶层 subagent（manifest/identity 均无 parentRecordId → flat 挂 main）
+    const saC = await writeSubagentSession(
+      dir,
+      CWD,
+      C_REAL,
+      { rootSessionId: MAIN, slug: 'guard-c' },
+      prefixed(C_REAL),
+    )
+    await writeRecordManifest(dir, CWD, 'rec-gc', {
+      rootSessionId: MAIN,
+      agentName: 'explorer',
+      sessionFile: saC,
+      slug: 'guard-c',
+      status: 'completed',
+    })
+    // D：孤儿 manifest（sessionFile 指向已被 GC 的不存在文件——manifest 残留形态）
+    await writeRecordManifest(dir, CWD, 'rec-gd', {
+      rootSessionId: MAIN,
+      agentName: 'worker',
+      sessionFile: join(dir, 'subagents', CWD, 'sessions', prefixed(D_REAL)),
+      status: 'completed',
+    })
+    // 坏 manifest（JSON 损坏，listRecordManifests 容错跳过不中断）
+    await mkdir(join(dir, 'subagents', CWD, 'records'), { recursive: true })
+    await writeFile(join(dir, 'subagents', CWD, 'records', 'broken.json'), '{oops')
+    // 外来家族 X：同 agentDir 内其他 main（OTHER_MAIN）的 subagent，不应泄漏进 MAIN 的树
+    const saX = await writeSubagentSession(
+      dir,
+      CWD,
+      X_REAL,
+      { rootSessionId: OTHER_MAIN, slug: 'foreign-x' },
+      prefixed(X_REAL),
+    )
+    await writeRecordManifest(dir, CWD, 'rec-gx', {
+      rootSessionId: OTHER_MAIN,
+      agentName: 'explorer',
+      sessionFile: saX,
+      status: 'completed',
+    })
+
+    const tree = await buildExecutionTree(MAIN, dir)
+
+    // 契约值域：sourceMode 只能是两种精度模式之一（record 含 parentRecordId → precise，
+    // 全无 → flat-fallback），不锁具体值
+    expect(['precise', 'flat-fallback']).toContain(tree.sourceMode)
+    // 家族树非空：main + 顶层 A/C/D + A 的嵌套后代 B = 5；外来 X 不泄漏（合成数据确定性
+    // 可数，精确计数即非泄漏守卫）
+    expect(tree.totalNodes).toBe(5)
     expect(tree.root.type).toBe('main')
-    expect(tree.root.sessionId).toBe(rootSessionId)
-  }, 60000)
+    expect(tree.root.sessionId).toBe(MAIN)
+    expect(findNode(tree.root, 'subagent', X_REAL)).toBeUndefined()
+    // 孤儿 D 仍入树（sessionFile 残留路径，不因文件缺失抛错/丢弃 record——原真实数据守卫
+    // 独有覆盖面，合成化后保留）
+    const nodeD = findNode(tree.root, 'subagent', D_REAL)
+    expect(nodeD).toBeDefined()
+    expect(nodeD!.sessionFile).toBe(join(dir, 'subagents', CWD, 'sessions', prefixed(D_REAL)))
+    // 树结构自洽（ExecutionTreeNode 契约，与具体数据形态无关）：DFS 实际节点数 ===
+    // totalNodes；子节点 depth = 父 depth + 1；全树 rootSessionId 共享同一顶层 main
+    let count = 0
+    const walk = (node: ExecutionTreeNode): void => {
+      count++
+      expect(node.rootSessionId).toBe(tree.root.rootSessionId)
+      for (const c of node.children) {
+        expect(c.depth).toBe(node.depth + 1)
+        walk(c)
+      }
+    }
+    walk(tree.root)
+    expect(count).toBe(tree.totalNodes)
+    // 不抛错（已隐含：到这行说明成功）
+  })
 })
 
 // ============================================================

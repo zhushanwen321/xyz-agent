@@ -1,6 +1,6 @@
 {
   "name": "xyz-agent",
-  "version": "0.9.17",
+  "version": "0.9.18",
   "private": true,
   "type": "module",
   "packageManager": "pnpm@10.27.0",
@@ -21,7 +21,7 @@
     "changeset:version": "changeset version",
     "release:npm": "pnpm --filter @xyz-agent/extension-protocol build && changeset publish",
     "extensions:typecheck": "cd extensions && npx tsc --noEmit",
-    "extensions:lint": "npx eslint extensions/",
+    "extensions:lint": "node scripts/check-stale-ctx-audit-coverage.mjs && npx eslint extensions/",
     "extensions:test": "pnpm -r --filter '@zhushanwen/pi-*' test",
     "extensions:test:isolated": "pnpm -r --filter '@zhushanwen/pi-*' test:isolated",
     "verify:coexistence-flag": "node scripts/verify-coexistence-flag.mjs",

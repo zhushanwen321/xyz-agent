@@ -52,8 +52,8 @@ goal/
     ├── service.ts      # 协调层 — createGoal / finalizeAndPersist / applyEvent
     ├── persistence.ts  # serialize/deserialize + GoalHistoryEntry
     ├── session.ts      # 运行时句柄 + 状态重建（append-only 只读最新一条，无 entry GC）
-    ├── engine/         # 零 Pi 依赖的纯状态机（goal/budget/types）
-    ├── adapters/       # Pi 桥接（goal-control-adapter / command-adapter / event-adapter
-    │                   #   + event-handlers/ + ports / success-criteria）
+    ├── engine/         # 零 Pi 依赖的纯状态机（goal/budget/types/liveness）
+    ├── adapters/       # Pi 桥接（goal-control-adapter / command-adapter / ports /
+    │                   #   success-criteria + event-handlers/）
     └── projection/     # 渲染（widget / prompts / gui）
 ```

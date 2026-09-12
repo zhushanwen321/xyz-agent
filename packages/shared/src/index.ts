@@ -4,6 +4,7 @@ export type {
   ServerMessageType, ServerMessage, ServerMessageMap, ServerMessageMapBase, ServerMessageUnion,
   ReplyPayloadMap,
   BatchDeleteResult,
+  RenameMode,
   SystemPromptConfig,
   CommandSourceInfo,
   WorktreeErrorCode, WorktreeUnknownErrorCode, WorktreeEnvelopeCode,
@@ -11,6 +12,11 @@ export type {
   SkillCacheScope, SkillCacheInvalidatedPayload,
   SessionTraceHeaderPayload, SessionTraceMalformedLine, SessionTraceSessionEndPayload,
   SessionViewSnapshot,
+  WatchdogMemoryLevel, WatchdogMemoryPressurePayload,
+  RollingRestartState, RollingRestartReason, RollingRestartInflightSummary,
+  RollingRestartDeferredPayload, RollingRestartCountdownPayload, RollingRestartForcedPayload,
+  RollingRestartStatusPayload,
+  ReattachDeferReason, ReattachDeferredPayload,
   ConnectionTestResultRow,
 } from './protocol'
 export { isMessage, isSessionSummary, isSubagentRecord } from './protocol'
@@ -21,8 +27,9 @@ export type {
   CompactionSummary, BranchSummary, SteerFollowUpMode,
   BgNotifyRecord, BgNotifyDetails,
   SubagentDirectiveData,
+  PiRespawnNoticeVariant,
 } from './message'
-export { parseBgNotifyDetails, COMPLETE_NOTIFY_CUSTOM_TYPES, SUBAGENT_DIRECTIVE_CUSTOM_TYPE, parseSubagentDirective } from './message'
+export { parseBgNotifyDetails, COMPLETE_NOTIFY_CUSTOM_TYPES, SUBAGENT_DIRECTIVE_CUSTOM_TYPE, parseSubagentDirective, PI_RESPAWN_NOTICE_CUSTOM_TYPE, parseRespawnNoticeVariant } from './message'
 // w21 pi-entry：pi session entry wire 类型（runtime 实时重构 ↔ core reducer ↔ protocol payload 三方共用）
 export type {
   PiEntry, PiEntryBase, PiMessageEntry, PiMessageBody,
@@ -56,8 +63,56 @@ export { BASH_RPC_TIMEOUT_MS, COMPACT_RPC_TIMEOUT_MS, RENDERER_RPC_MARGIN_MS } f
 export * from './extension'
 export * from './git'
 export * from './plugin'
-export { BASE_PORT, DEV_PORT_OFFSET, MAX_PORT, ENV_WHITELIST_PREFIXES, AMBIENT_ENV_NAMES, SUBAGENT_TOOL_NAMES, WORKFLOW_TOOL_NAMES, SUBAGENT_RECORD_CUSTOM_TYPE, WORKFLOW_RECORD_CUSTOM_TYPE, PROVIDER_API_TYPES, KNOWN_PI_API_TYPES, SYSTEM_PROMPT_MAX_LENGTH, PRESET_SKILL_DIRS, PRESET_AGENT_DIRS, PRESET_EXTENSION_DIRS, IMAGE_LIMITS, MAX_WS_PAYLOAD_BYTES, PLUGIN_NOTIFY_LIMITS, UI_TOAST_LIMITS, ENGINE_LAUNCH_ENV_KEYS } from './constants'
+export { BASE_PORT, DEV_PORT_OFFSET, MAX_PORT, ENV_WHITELIST_PREFIXES, AMBIENT_ENV_NAMES, SUBAGENT_TOOL_NAMES, WORKFLOW_TOOL_NAMES, SUBAGENT_RECORD_CUSTOM_TYPE, WORKFLOW_RECORD_CUSTOM_TYPE, PROVIDER_API_TYPES, KNOWN_PI_API_TYPES, SYSTEM_PROMPT_MAX_LENGTH, PRESET_SKILL_DIRS, PRESET_AGENT_DIRS, PRESET_EXTENSION_DIRS, IMAGE_LIMITS, MAX_WS_PAYLOAD_BYTES, PLUGIN_NOTIFY_LIMITS, UI_TOAST_LIMITS, ENGINE_LAUNCH_ENV_KEYS, XYZ_RUNTIME_PI_RECLAIM_IDLE_MS, XYZ_RUNTIME_PI_RECLAIM_TICK_MS, XYZ_RUNTIME_PI_RECLAIM_VIEWED_WINDOW_MS, DEFAULT_PI_RECLAIM_IDLE_MS, DEFAULT_PI_RECLAIM_TICK_MS, DEFAULT_PI_RECLAIM_VIEWED_WINDOW_MS } from './constants'
 export type { ProviderApiType } from './constants'
+// 崩溃韧性共享契约 SSOT（docs/design/crash-resilience.md §3.3，实施计划 u-foundation：
+// 出站帧守卫阈值 D3 / 全量读预检阈值 D5 / 历史双预算 D4 / 日志保留期 D6-⑦）。
+// 注意：readLogKeepDays 是 Node-only 函数（函数体访问 process.env）——本 barrel 被
+// renderer（浏览器）整包 import，import 本身安全（constants.ts 模块顶层无 process 访问），
+// 但 renderer 严禁调用（process 未定义 ReferenceError）；main / runtime 专用，
+// 完整警示见 constants.ts 内 JSDoc。
+export { OUTBOUND_FRAME_WARN_BYTES, OUTBOUND_FRAME_TRUNCATE_BYTES, READ_PRECHECK_MAX_BYTES, HISTORY_BUDGET, DEFAULT_LOG_KEEP_DAYS, readLogKeepDays, RUNTIME_PLANNED_EXIT_CODE } from './constants'
+// Electron IPC 通道名 SSOT（crash-resilience u-foundation：renderer-log 上报通道 D2 /
+// image-cache 落盘通道族首成员 D6-⑨）；既有通道仍内联于 preload/main 不在此收敛，
+// 存量边界说明见 ipc-channels.ts 头注释。
+export { RENDERER_LOG, IMAGE_CACHE_WRITE, DEBUG_RUN_LOG_RETENTION, DIAGNOSTICS_EXPORT_BUNDLE } from './ipc-channels'
+// renderer-log 通道 payload 类型（crash-resilience u2：preload ElectronAPI 签名与 main
+// handler 校验共用同一形态声明，防两端漂移；main 侧仍做运行时再校验，见 ipc-payloads.ts 头注释）。
+export type { RendererErrorSource, RendererMemorySnapshot, RendererLogPayload } from './ipc-payloads'
+// image-cache 落盘通道 payload 类型（crash-resilience u7 D6-⑨：core 编排层 / preload
+// ElectronAPI 签名 / main handler 校验三方共用同一形态声明，防漂移）。
+export type {
+  ImageCacheWriteImage,
+  ImageCacheWritePayload,
+  ImageCacheWriteImageResult,
+  ImageCacheWriteResult,
+} from './ipc-payloads'
+// debug:run-log-retention 通道返回类型（crash-resilience A9② 验收调试口：preload
+// ElectronAPI 签名与 main handler 返回共用同一形态声明，防漂移）。
+export type { DebugRunLogRetentionResult } from './ipc-payloads'
+// diagnostics:export-bundle 通道契约（crash-forensics u3a：请求 payload / 三态返回类型 /
+// 知情提示文案常量——main handler、preload ElectronAPI 与 u3b renderer 确认对话框三方共用）。
+export {
+  DIAGNOSTIC_EXPORT_PRIVACY_NOTICE,
+  type DiagnosticExportBundlePayload,
+  type DiagnosticExportSummary,
+  type DiagnosticExportError,
+  type DiagnosticExportBundleResult,
+} from './ipc-payloads'
+// 崩溃台账事件 Schema SSOT（docs/design/crash-forensics-and-watchdog.md §3.3 D1，
+// 实施计划 u1a：layer/event/reason 枚举 + 字段集 + writer 接口——u1b runtime 与
+// u1c main 两 writer 共用，禁止复制定义；纯类型/常量无 node 依赖，barrel 安全）。
+export type {
+  CrashJournalLayer,
+  CrashJournalEventName,
+  CrashJournalReason,
+  CrashJournalMemPressure,
+  CrashJournalEvent,
+  CrashJournalFileRole,
+  CrashJournalWriterOptions,
+  CrashJournalWriter,
+} from './crash-journal-schema'
+export { CRASH_JOURNAL_LAYERS, CRASH_JOURNAL_EVENTS, CRASH_JOURNAL_KNOWN_REASONS } from './crash-journal-schema'
 // 出站 env 契约 SSOT + 子进程 env 构建器（纯常量/纯函数无 node 依赖，renderer barrel 安全）。
 // main 进程 safe-env 薄封装与 runtime infra/spawn-env.ts 门面均经此消费。
 export type { BuildOutboundChildEnvOptions, SpawnEnvForwardEntry } from './spawn-env-contract'

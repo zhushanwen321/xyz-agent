@@ -47,6 +47,8 @@ function createMockSessionStore(mainSessionFile: string, mainSessionId: string):
   }
   return {
     scanSessions: () => [meta],
+    // u4c（D5⑤）：ISessionStore 新增流式归一化成员（本文件不触达，no-op 满足类型）
+    normalizeSessionFileStreaming: () => {},
     invalidateScanCache: () => {},
     refreshAll: () => {},
     persistSessionEnd: () => {},
@@ -122,7 +124,7 @@ describe('SessionService.getSubagentHistory engine routing (P5)', () => {
   it('routes zcode record to the engine chain (tier3 outcome-only)', async () => {
     mockExtract.mockReturnValue([zcodeRecord({ poolKey: 'reviewer', sessionRef: {} })])
 
-    const messages = await createSvc(tempDir).getSubagentHistory('main-sess-id', 'bg-route-1')
+    const { messages } = await createSvc(tempDir).getSubagentHistory('main-sess-id', 'bg-route-1')
 
     expect(messages).toHaveLength(2)
     expect(messages[0]?.role).toBe('user')
@@ -146,7 +148,7 @@ describe('SessionService.getSubagentHistory engine routing (P5)', () => {
       zcodeRecord({ poolKey: 'reviewer', sessionRef: { dbPath: '.zcode/cli/db/db.sqlite', sessionId: 's1' }, journalPath }),
     ])
 
-    const messages = await createSvc(tempDir).getSubagentHistory('main-sess-id', 'bg-route-1')
+    const { messages } = await createSvc(tempDir).getSubagentHistory('main-sess-id', 'bg-route-1')
 
     expect(messages[1]?.role).toBe('assistant')
     expect(messages[1]?.content).toBe('journal answer')
@@ -159,7 +161,7 @@ describe('SessionService.getSubagentHistory engine routing (P5)', () => {
     delete record.engineHandle
     mockExtract.mockReturnValue([record])
 
-    const messages = await createSvc(tempDir).getSubagentHistory('main-sess-id', 'bg-route-1')
+    const { messages } = await createSvc(tempDir).getSubagentHistory('main-sess-id', 'bg-route-1')
     expect(messages).toEqual([])
     // 现有链路读取了主 session 文件（scanSessions 定位）——路由确实落在 pi 分支
     expect(mockExtract).toHaveBeenCalled()

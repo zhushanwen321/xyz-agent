@@ -37,8 +37,7 @@ vi.mock('@xyz-agent/core/transport/api/domains/chat', () => ({
   // w5：useChat 薄包装的 chatApiPort 组装需 bash/abortBash
   bash: vi.fn().mockResolvedValue(undefined),
   abortBash: vi.fn().mockResolvedValue(undefined),
-  getHistory: vi.fn().mockResolvedValue({ messages: [], historyTruncated: false }),
-  getFullHistory: vi.fn().mockResolvedValue([]),
+  getHistory: vi.fn().mockResolvedValue({ messages: [], truncated: false, loadedTurns: 0, totalTurnsEstimate: 0 }),
   streamSubscribe: chatStreamSubscribeMock,
 }))
 

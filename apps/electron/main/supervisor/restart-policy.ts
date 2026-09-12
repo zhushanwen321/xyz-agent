@@ -27,6 +27,10 @@ export const MAX_RESTART_DELAY_MS = 16_000
 export const MAX_RESTARTS = 5
 /** 稳定运行窗口（ms）：成功运行超过此时长后计数清零，视为「瞬时故障已过去」 */
 export const STABLE_MS = 10_000
+/**
+ * planned 边的重启延迟 = 0（立即重启，零退避——crash-forensics D5 ④）。
+ */
+export const PLANNED_RESTART_DELAY_MS = 0
 
 /**
  * 重启策略状态机（纯逻辑）。
@@ -38,6 +42,12 @@ export const STABLE_MS = 10_000
  *   │                  └─稳定 STABLE_MS─ recordSuccess ──▶ idle（清零）
  *   └─recordSuccess（无操作，计数本就 0）
  * exhausted ──reset──▶ idle（手动重试入口）
+ *
+ * recordPlanned（u7c）：planned 边 idle ──▶ idle——计划内滚动重启退出（码 86）不进
+ * counting 状态机：不递增计数、不产生退避（返回 PLANNED_RESTART_DELAY_MS=0 立即重启）、
+ * 不受 MAX/shouldRestart 门约束（设计 D5 ④「立即重启、跳过退避与崩溃计数」）。
+ * recordSuccess 的稳定窗口清零照常适用（planned 重启成功 = 新稳定周期，既有 crash
+ * 计数按窗口规则自然收敛）。
  * ```
  */
 export class RestartPolicy {
@@ -96,6 +106,19 @@ export class RestartPolicy {
     this.restartCount++
     const raw = RESTART_BASE_DELAY_MS * Math.pow(RESTART_BACKOFF_EXPONENT, this.restartCount - 1)
     return Math.min(raw, MAX_RESTART_DELAY_MS)
+  }
+
+  /**
+   * 记录一次计划内退出并返回重启延迟（u7c：crash-forensics D5 ④ planned 边）。
+   *
+   * 与 recordCrashAndGetDelay 的差异（A4 验收语义）：不递增 restartCount（不进
+   * counting 状态机）、不做 shouldRestart 门检查（planned 不受 MAX 配额约束——
+   * exhausted 态下滚动重启仍须照常重启）、返回 PLANNED_RESTART_DELAY_MS=0（立即
+   * 重启零退避）。不动 stopping/lastSuccessAt（后者由重启成功后的 recordSuccess
+   * 按既有稳定窗口规则处理）。
+   */
+  recordPlanned(): number {
+    return PLANNED_RESTART_DELAY_MS
   }
 
   /**

@@ -52,6 +52,7 @@ import type {
   ToolCall,
 } from '@xyz-agent/shared'
 import { normalizePiToolResult } from '../apply-entry'
+import { truncateEntryToolOutput } from '../apply-entry-utils'
 import type { RetryState, QueueState, FinalizeReason } from '../store-types'
 import type { MessageEffectContext, MessageEffectHandler } from '../effect-types'
 export type { MessageEffectContext, MessageEffectHandler } from '../effect-types'
@@ -323,6 +324,37 @@ function insertContentBlockByIndex(blocks: ContentBlock[], block: ContentBlock):
   const next = [...blocks]
   next.splice(insertAt, 0, block)
   return next
+}
+
+/**
+ * tool_call_end overlay 终态派生段（纯函数提取，复杂度门禁 Gate-1.5）：normalize +
+ * 64KB 截断。三态归一在消费侧做：传 entry.message（body）——与 reducer
+ * computeToolCallFill 同语义（content block 数组 → join text），entry.content 已由
+ * adapter 归一为数组形态（W21）。content 缺失（mock/异常帧）三值全 undefined——
+ * 上层条件写入保留 running 期间的旧值（迁移前 `?? c.output` 同语义）。
+ * [D6-⑧] live overlay 与 reducer（computeToolCallFill）过同一 64KB 截断函数——
+ * 非六类工具（write/edit/MCP）大结果 live 与 reload 形态一致（D3 代价 C 根治）。
+ */
+function deriveToolCallEndOverlay(message: PiMessageEntry['message']): {
+  hasContent: boolean
+  output: string | undefined
+  outputRaw: string | undefined
+  outputTruncated: boolean
+  images: Array<{ data: string; mimeType: string }> | undefined
+} {
+  const hasContent = message.content !== undefined
+  const { output: rawOutput, outputRaw: rawOutputRaw, images } = hasContent
+    ? normalizePiToolResult(message)
+    : { output: undefined, outputRaw: undefined, images: undefined }
+  const outputT = rawOutput !== undefined ? truncateEntryToolOutput(rawOutput) : undefined
+  const outputRawT = rawOutputRaw !== undefined ? truncateEntryToolOutput(rawOutputRaw) : undefined
+  return {
+    hasContent,
+    output: outputT?.text,
+    outputRaw: outputRawT?.text,
+    outputTruncated: (outputT?.truncated ?? false) || (outputRawT?.truncated ?? false),
+    images,
+  }
 }
 
 const messageEffects: Partial<Record<ServerMessageType, MessageEffectHandler>> = {
@@ -602,13 +634,9 @@ const messageEffects: Partial<Record<ServerMessageType, MessageEffectHandler>> =
     if (idx < 0) return
     // details：pi tool_execution_end result.details（结构化扩展数据）。
     // subagent sync 模式的 progress 快照（currentTool/turn/tokens）在这里，前端 Block.vue 据此滚动更新。
-    // 三态归一在消费侧做：传 entry.message（body）——与 reducer computeToolCallFill 同语义
-    //（content block 数组 → join text），entry.content 已由 adapter 归一为数组形态（W21）。
-    // content 缺失（mock/异常帧）保留 running 期间的旧值（迁移前 `?? c.output` 同语义）。
-    const hasContent = entry.message.content !== undefined
-    const { output, outputRaw } = hasContent
-      ? normalizePiToolResult(entry.message)
-      : { output: undefined, outputRaw: undefined }
+    // 三态归一 / content 缺省保留旧值 / 64KB 截断的派生语义见 deriveToolCallEndOverlay
+    //（纯派生段提取，条件写入语义不变——下方 spread 按字段缺省不触碰既有值）。
+    const { hasContent, output, outputRaw, outputTruncated, images } = deriveToolCallEndOverlay(entry.message)
     const details = entry.message.details
     const isError = entry.message.isError === true
     const next = [...prev]
@@ -617,6 +645,11 @@ const messageEffects: Partial<Record<ServerMessageType, MessageEffectHandler>> =
         ? truncateToolCall({
           ...c,
           ...(output !== undefined && { output }),
+          ...(outputTruncated && { outputTruncated: true }),
+          // [D6-⑨] live 期 toolResult 图片回填（与重放路径 fillHostToolCall 同语义）：
+          // 缺此回填则 live 期 toolCall.images 恒 undefined，设计「live 期新到图片在
+          // 剩余额度内即写」无法成立（渲染层 ToolResultImages 无数据源）。
+          ...(images !== undefined && images.length > 0 && { images }),
           // end 有 content 时无条件写入 outputRaw（含 undefined 显式清空）——running 期
           // tool_call_update 写入的 outputRaw 在 end 文本无 ANSI 时会残留，用户终态看到
           // 带色陈旧尾窗而非 end 文本（错误信息），且 live ≠ reload。

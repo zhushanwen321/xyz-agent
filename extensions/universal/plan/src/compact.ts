@@ -2,10 +2,14 @@ import * as fs from "node:fs";
 import { basename } from "node:path";
 
 import type { ExtensionAPI, ExtensionContext, SessionBeforeCompactEvent, SessionBeforeTreeEvent } from "@earendil-works/pi-coding-agent";
+import { guardStaleCtx, toErrorMessage } from "@zhushanwen/pi-ext-guards";
 import type { GoalInitFn } from "@zhushanwen/pi-goal";
+import { getLogger } from "@zhushanwen/pi-extension-logger";
 
 import type { PlanSessionMap, PlanState } from "./state.js";
 import { getPlanState } from "./state.js";
+
+const logger = getLogger("pi-plan");
 
 export function registerPlanEventHandlers(
   pi: ExtensionAPI,
@@ -217,14 +221,30 @@ export function handlePlanComplete(
     case "compact": {
       ctx.compact({
         customInstructions: `Plan file: ${planFilePath}. Read plan and execute implementation.`,
+        // E1 同构崩溃点（crash-resilience D1）：onComplete/onError 由 compact 内部
+        // Promise 链异步调用、不在 pi runner emit() 的 try/catch 内——压缩进行中用户
+        // 切换/重载 session 后，回调触碰捕获的 pi/ctx 命中 stale 同步抛错即杀 pi 进程。
+        // 守卫 stale 静默降级（执行消息不投递，用户可手动 Read plan 文件执行），非
+        // stale 错误原样上抛。plan 未注入代际计数器（低频路径），分诊依赖 PS-30 门禁
+        // 守卫的 stale 文案兜底（D1 降级语义声明的合法形态）。
         onComplete: () => {
-          pi.sendUserMessage(executeMessage, { deliverAs: "steer" });
-          tryGoalInit(pi, planFilePath, ctx);
+          guardStaleCtx(() => {
+            pi.sendUserMessage(executeMessage, { deliverAs: "steer" });
+            tryGoalInit(pi, planFilePath, ctx);
+          }, {
+            label: "plan:compact-onComplete",
+            onStale: (error) => logger.warn("plan execution notice delivery skipped (stale ctx)", { error: toErrorMessage(error) }),
+          });
         },
         onError: (_error: Error) => {
-          ctx.ui.notify("Compact failed, continuing without isolation.", "warning");
-          pi.sendUserMessage(executeMessage, { deliverAs: "steer" });
-          tryGoalInit(pi, planFilePath, ctx);
+          guardStaleCtx(() => {
+            ctx.ui.notify("Compact failed, continuing without isolation.", "warning");
+            pi.sendUserMessage(executeMessage, { deliverAs: "steer" });
+            tryGoalInit(pi, planFilePath, ctx);
+          }, {
+            label: "plan:compact-onError",
+            onStale: (error) => logger.warn("plan execution notice delivery skipped (stale ctx)", { error: toErrorMessage(error) }),
+          });
         },
       });
       break;

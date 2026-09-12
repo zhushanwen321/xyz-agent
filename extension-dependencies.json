@@ -21,9 +21,14 @@
           "reason": "subagent 执行 + workflow 编排两端均需 structured-output 扩展加载以提供 schema 结构化输出 tool（代码层不 import，仅运行时 tool 名引用）"
         },
         {
+          "package": "@zhushanwen/pi-ext-guards",
+          "type": "package",
+          "reason": "代码层静态 import guardStaleCtx/toErrorMessage（src/interface/loop-gate.ts、helpers.ts、session-lifecycle.ts 等 interface/ 与 host/ 下多个文件 top-level import），缺失时模块加载即抛 Cannot find module，是强依赖"
+        },
+        {
           "package": "@zhushanwen/pi-pending-notifications",
           "type": "package",
-          "reason": "代码层静态 import countActiveFromEntries（src/execution/session-pending.ts top-level import），缺失时模块加载即抛 Cannot find module，是强依赖。另有 T2 通知合并运行时用途：subagent-workflow 的 subagent-service/lifecycle/error-recovery emit pending:register/pending:unregister 事件，pending-notifications 消费该事件并向用户发送完成通知"
+          "reason": "代码层静态 import countActiveFromEntries（src/host/pi-host.ts top-level import），缺失时模块加载即抛 Cannot find module，是强依赖。另有 pending 状态投影运行时协作：pending:register/unregister 事件的 emit 端在 subagent-core（notify-host.ts / orchestration/lifecycle.ts / worker-message-pump.ts / round-supervisor/reconcile-sweep.ts 崩溃恢复 sweep 补注销）与 base-tool-enhance（bash 投影），subagent-workflow 自身仅在崩溃恢复时 emit pending:unregister（src/session-lifecycle.ts recoverCrashedRuns 回调）；pending-notifications 消费该事件落盘 session entries（活跃 pending 的唯一状态源）。后台任务完成通知不经该事件——由 subagent-workflow 自有通道承担（notifier.ts 设 display+triggerTurn，bg-notify-render 渲染完成块并唤醒父 agent）"
         },
         {
           "package": "@xyz-agent/session-delivery",
@@ -35,7 +40,13 @@
     {
       "name": "@zhushanwen/pi-structured-output",
       "directory": "extensions/universal/structured-output",
-      "dependsOn": []
+      "dependsOn": [
+        {
+          "package": "@zhushanwen/pi-ext-guards",
+          "type": "package",
+          "reason": "代码层静态 import guardStaleCtx/toErrorMessage（src/loop-gate.ts top-level import），缺失时模块加载即抛 Cannot find module，是强依赖"
+        }
+      ]
     },
     {
       "name": "@zhushanwen/pi-goal",
@@ -70,17 +81,6 @@
       ]
     },
     {
-      "name": "@zhushanwen/pi-unified-hooks",
-      "directory": "extensions/universal/unified-hooks",
-      "dependsOn": [
-        {
-          "package": "@zhushanwen/pi-extension-logger",
-          "type": "package",
-          "reason": "代码层静态 import getLogger/setPiHandle（src/index.ts、hooks/tool-error-handler.ts、hooks/subagent-list-injector.ts top-level import），缺失时模块加载即抛 Cannot find module，是强依赖"
-        }
-      ]
-    },
-    {
       "name": "@zhushanwen/pi-plan",
       "directory": "extensions/universal/plan",
       "dependsOn": [
@@ -88,6 +88,11 @@
           "package": "@zhushanwen/pi-goal",
           "type": "optional",
           "reason": "complete action 通过 __goalInit 启动 goal，缺失时降级通知用户"
+        },
+        {
+          "package": "@zhushanwen/pi-ext-guards",
+          "type": "package",
+          "reason": "代码层静态 import guardStaleCtx/toErrorMessage（src/compact.ts top-level import），缺失时模块加载即抛 Cannot find module，是强依赖"
         }
       ]
     },
@@ -120,6 +125,11 @@
           "package": "@zhushanwen/pi-llm-shared",
           "type": "package",
           "reason": "top-level 静态 import callLLM/resolveModel/loadConfig/saveConfig/migrateLegacyConfig（src/config.ts、src/production.ts、src/classifier/classifier.ts、src/index.ts），缺失即模块加载抛 Cannot find module"
+        },
+        {
+          "package": "@zhushanwen/pi-ext-guards",
+          "type": "package",
+          "reason": "代码层静态 import oncePerProcess（src/index.ts top-level import），缺失时模块加载即抛 Cannot find module，是强依赖"
         }
       ]
     },
@@ -127,6 +137,11 @@
       "name": "@zhushanwen/pi-scheduler",
       "directory": "extensions/universal/scheduler",
       "dependsOn": [
+        {
+          "package": "@zhushanwen/pi-ext-guards",
+          "type": "package",
+          "reason": "代码层静态 import guardStaleCtx/toErrorMessage（src/runtime.ts top-level import），缺失时模块加载即抛 Cannot find module，是强依赖"
+        },
         {
           "package": "@xyz-agent/session-delivery",
           "type": "package",
@@ -209,6 +224,11 @@
           "package": "@zhushanwen/pi-extension-logger",
           "type": "package",
           "reason": "top-level 静态 import createLogger/setPiHandle（src/compact-handler.ts、src/index.ts），缺失即模块加载抛 Cannot find module"
+        },
+        {
+          "package": "@zhushanwen/pi-ext-guards",
+          "type": "package",
+          "reason": "代码层静态 import guardStaleCtx/toErrorMessage（src/tool.ts top-level import），缺失时模块加载即抛 Cannot find module，是强依赖"
         }
       ]
     },

@@ -51,7 +51,7 @@ afterEach(() => {
 });
 
 // ────────────────────────────────────────────────────
-// extractUserPromptText（D1：标题输入信号之一——首条 user prompt 提取）
+// extractUserPromptText（标题输入信号之一——首条 user prompt 提取）
 // ────────────────────────────────────────────────────
 
 describe("extractUserPromptText", () => {
@@ -119,7 +119,7 @@ describe("extractUserPromptText", () => {
 });
 
 // ────────────────────────────────────────────────────
-// extractFinalText（D2：final text = 触发 turn 的 assistant text blocks）
+// extractFinalText（final text = 触发 turn 的 assistant text blocks）
 // ────────────────────────────────────────────────────
 
 describe("extractFinalText", () => {
@@ -146,7 +146,7 @@ describe("extractFinalText", () => {
 });
 
 // ────────────────────────────────────────────────────
-// truncateForTitle（D3：输入段按码点截断保护，超长才加 '…'）
+// truncateForTitle（输入段按码点截断保护，超长才加 '…'）
 // ────────────────────────────────────────────────────
 
 describe("truncateForTitle", () => {
@@ -174,7 +174,7 @@ describe("truncateForTitle", () => {
 });
 
 // ────────────────────────────────────────────────────
-// buildTitleMessages（D1：两段信号 + 指令的三段式构造）
+// buildTitleMessages（两段信号 + 指令的三段式构造）
 // ────────────────────────────────────────────────────
 
 describe("buildTitleMessages", () => {
@@ -233,7 +233,7 @@ describe("isSubagentSession", () => {
 });
 
 // ────────────────────────────────────────────────────
-// RENAME_SYSTEM_PROMPT / RENAME_INSTRUCTION（D4 slug 风格约束 + few-shot 锚定）
+// RENAME_SYSTEM_PROMPT / RENAME_INSTRUCTION（slug 风格约束 + few-shot 锚定）
 // ────────────────────────────────────────────────────
 
 describe("RENAME_SYSTEM_PROMPT / RENAME_INSTRUCTION", () => {
@@ -255,6 +255,105 @@ describe("RENAME_SYSTEM_PROMPT / RENAME_INSTRUCTION", () => {
 			expect(c).toContain("kebab-case");
 			expect(c).toContain("名词或动名词");
 		}
+	});
+});
+
+// ────────────────────────────────────────────────────
+// 设计 rename-session-three-modes.md D5 空 ref fallback（空 ref → ctx.model 跟随会话主模型；非空无效 ref → 静默跳过 + warn）
+// ────────────────────────────────────────────────────
+
+describe("callRenameLLM D5 空 ref fallback（跟随会话主模型）", () => {
+	beforeEach(() => {
+		vi.clearAllMocks();
+	});
+
+	it("TC-D5-1: 空 ref + ctx.model 可用 → 用 ctx.model 发起调用，resolveModel 不被调（探针 P2：首轮 ctx.model 非 undefined）", async () => {
+		const ctx = createCtx(undefined, STUB_MODEL);
+		vi.mocked(callLLM).mockResolvedValue({ ok: true, content: "标题" });
+
+		const result = await callRenameLLM(ctx, { ...BASE_CONFIG, model: { type: "ref", ref: "" } }, FINAL_MESSAGE);
+
+		expect(result).toBe("标题");
+		expect(resolveModel).not.toHaveBeenCalled(); // 空 ref 不走独立选模
+		expect(callLLM).toHaveBeenCalledTimes(1);
+		const callOpts = vi.mocked(callLLM).mock.calls[0][1] as { model: unknown };
+		expect(callOpts.model).toBe(STUB_MODEL); // 传给 callLLM 的就是 ctx.model
+	});
+
+	it("TC-D5-2: 空 ref + ctx.model undefined → 返回 null + warn（维持现状可诊断，不报错）", async () => {
+		loggerMock.warn.mockClear();
+		const ctx = createCtx(undefined, undefined);
+		vi.mocked(callLLM).mockResolvedValue({ ok: true, content: "标题" });
+
+		const result = await callRenameLLM(ctx, { ...BASE_CONFIG, model: { type: "ref", ref: "" } }, FINAL_MESSAGE);
+
+		expect(result).toBeNull();
+		expect(loggerMock.warn).toHaveBeenCalledWith("model not available, skipping");
+		expect(callLLM).not.toHaveBeenCalled();
+	});
+
+	it("TC-D5-3: 非空无效 ref（显式配错）→ 仍走 resolveModel 独立选模，null 时静默跳过 + warn（不掩盖配置错误）", async () => {
+		loggerMock.warn.mockClear();
+		vi.mocked(resolveModel).mockReturnValue(null);
+
+		const result = await callRenameLLM(createCtx(undefined, STUB_MODEL), BASE_CONFIG, FINAL_MESSAGE);
+
+		expect(resolveModel).toHaveBeenCalledTimes(1); // 非空 ref 才走独立选模
+		expect(result).toBeNull();
+		expect(loggerMock.warn).toHaveBeenCalledWith("model not available, skipping");
+		expect(callLLM).not.toHaveBeenCalled();
+	});
+
+	it("TC-D5-4: 非空有效 ref → resolveModel 结果优先于 ctx.model（显式配置不被会话模型遮蔽）", async () => {
+		const configured: Model<Api> = { ...STUB_MODEL, id: "configured-model" };
+		vi.mocked(resolveModel).mockReturnValue(configured);
+		vi.mocked(callLLM).mockResolvedValue({ ok: true, content: "标题" });
+
+		await callRenameLLM(createCtx(undefined, STUB_MODEL), BASE_CONFIG, FINAL_MESSAGE);
+
+		const callOpts = vi.mocked(callLLM).mock.calls[0][1] as { model: unknown };
+		expect(callOpts.model).toBe(configured);
+	});
+});
+
+// ────────────────────────────────────────────────────
+// promptText 选项（设计 rename-session-three-modes.md D2 first-prompt：文本从 message_end 载荷取，不走 entries）
+// ────────────────────────────────────────────────────
+
+describe("callRenameLLM promptText 选项（first-prompt 载荷取文本）", () => {
+	beforeEach(() => {
+		vi.clearAllMocks();
+	});
+
+	it("TC-D2-1: 传 promptText → user prompt 从选项取（entries 里的 user 不被读取）", async () => {
+		vi.mocked(resolveModel).mockReturnValue(STUB_MODEL);
+		vi.mocked(callLLM).mockResolvedValue({ ok: true, content: "标题" });
+		// entries 故意无 user message：first-prompt 时点 entries 尚未 append 本条（探针 P1），
+		// 若代码误走 entries 路径会得到 null → 不调 callLLM，本用例红
+		const ctx = createCtx([]);
+
+		await callRenameLLM(ctx, BASE_CONFIG, { content: [] }, { promptText: "载荷里的完整 prompt" });
+
+		expect(callLLM).toHaveBeenCalledTimes(1);
+		const callOpts = vi.mocked(callLLM).mock.calls[0][1] as {
+			messages: { role: string; content: { type: string; text: string }[] }[];
+		};
+		// finalText 空（first-prompt 不等回复）→ 两条降级：user(promptText) + user(instruction)
+		expect(callOpts.messages.map((m) => m.role)).toEqual(["user", "user"]);
+		expect(callOpts.messages[0].content[0].text).toBe("载荷里的完整 prompt");
+		expect(callOpts.messages[1].content[0].text).toBe(RENAME_INSTRUCTION);
+	});
+
+	it("TC-D2-2: 不传 promptText → 走 entries 提取（first-stop 现状路径回归锚）", async () => {
+		vi.mocked(resolveModel).mockReturnValue(STUB_MODEL);
+		vi.mocked(callLLM).mockResolvedValue({ ok: true, content: "标题" });
+
+		await callRenameLLM(createCtx(), BASE_CONFIG, FINAL_MESSAGE);
+
+		const callOpts = vi.mocked(callLLM).mock.calls[0][1] as {
+			messages: { role: string; content: { type: string; text: string }[] }[];
+		};
+		expect(callOpts.messages[0].content[0].text).toBe("hi"); // 来自 entries 的首条 user
 	});
 });
 
@@ -291,11 +390,12 @@ const STUB_MODEL: Model<Api> = {
 const BASE_CONFIG: RenameSessionConfig = {
 	enabled: true,
 	model: { type: "ref", ref: "stub/stub-model" },
+	mode: "first-stop",
 	maxTitleLength: 50,
 	thinkingLevel: "off",
 };
 
-/** 触发 turn 的最终 assistant message（turn_end 的 event.message，D2）——thinking 混排验证只取 text。 */
+/** 触发 turn 的最终 assistant message（turn_end 的 event.message）——thinking 混排验证只取 text。 */
 const FINAL_MESSAGE = {
 	stopReason: "stop",
 	content: [
@@ -304,7 +404,7 @@ const FINAL_MESSAGE = {
 	],
 };
 
-function createCtx(entries?: unknown[]): ExtensionContext {
+function createCtx(entries?: unknown[], model?: Model<Api> | undefined): ExtensionContext {
 	return {
 		sessionManager: {
 			getEntries: () =>
@@ -313,6 +413,7 @@ function createCtx(entries?: unknown[]): ExtensionContext {
 				],
 			getSessionId: () => "test-session-id",
 		},
+		model,
 		signal: new AbortController().signal,
 	} as unknown as ExtensionContext;
 }
@@ -370,11 +471,11 @@ describe("callRenameLLM", () => {
 		expect(callOpts.systemPrompt).toBe(RENAME_SYSTEM_PROMPT);
 		expect(callOpts.systemPrompt.length).toBeLessThan(200);
 		expect(callOpts.maxTokens).toBe(64);
-		// D7：固定 30s 超时（超时归一 ok:false 走静默跳过）
+		// 固定 30s 超时（超时归一 ok:false 走静默跳过）
 		expect(callOpts.timeoutMs).toBe(30000);
 		expect(callOpts.signal).toBeInstanceOf(AbortSignal);
 		expect(callOpts.sessionId).toBe("test-session-id");
-		// 三段式（D1/D2）：user(prompt) + assistant(finalText) + user(instruction)
+		// 三段式：user(prompt) + assistant(finalText) + user(instruction)
 		expect(callOpts.messages.map((m) => m.role)).toEqual(["user", "assistant", "user"]);
 		expect(callOpts.messages[0].content[0].text).toBe("hi");
 		// finalText 只取 text block（FINAL_MESSAGE 内 thinking 跳过）
@@ -449,7 +550,7 @@ describe("callRenameLLM", () => {
 		const result = await callRenameLLM(ctx, BASE_CONFIG, FINAL_MESSAGE);
 
 		expect(result).toBe("修复登录超时");
-		// 内省日志在请求发起前已打出（D9 时序契约）
+		// 内省日志在请求发起前已打出（debug 证据链时序契约）
 		expect(logAtCallTime).toContain("LLM request messages:");
 		expect(logAtCallTime).toContain('"role":"user"');
 		// 截断格式（C3）：head 200 + 字面 … + tail 100，中段被截掉
@@ -557,7 +658,7 @@ describe("callRenameLLM", () => {
 });
 
 // ────────────────────────────────────────────────────
-// usage 落账回调（appendUsageEntry 注入，设计 §3.3 ③ / §3.6）
+// usage 落账回调（appendUsageEntry 注入；时点与 catch 归属契约见 llm.ts CallRenameLLMOptions）
 // ────────────────────────────────────────────────────
 
 /** 合法 Usage 夹具（pi-ai Usage 全必填字段，消除 unsafe-cast 强断言）。 */
@@ -570,7 +671,7 @@ const STUB_USAGE: Usage = {
 	cost: { input: 0.01, output: 0.02, cacheRead: 0, cacheWrite: 0, total: 0.03 },
 };
 
-describe("callRenameLLM usage 落账回调（appendUsageEntry，设计 §3.3 ③）", () => {
+describe("callRenameLLM usage 落账回调（appendUsageEntry 注入）", () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
 	});
@@ -591,7 +692,7 @@ describe("callRenameLLM usage 落账回调（appendUsageEntry，设计 §3.3 ③
 		expect(result).toBe("修复登录bug");
 		expect(appendUsageEntry).toHaveBeenCalledTimes(1);
 		expect(appendUsageEntry).toHaveBeenCalledWith("stub/stub-model", STUB_USAGE);
-		// 时点契约（§3.3 ③）：ok:true && usage 后立即、cleanTitle 之前
+		// 时点契约：ok:true && usage 后立即、cleanTitle 之前
 		expect(appendUsageEntry.mock.invocationCallOrder[0]).toBeLessThan(
 			vi.mocked(cleanTitle).mock.invocationCallOrder[0],
 		);
@@ -611,7 +712,7 @@ describe("callRenameLLM usage 落账回调（appendUsageEntry，设计 §3.3 ③
 		expect(appendUsageEntry).toHaveBeenCalledWith("stub/stub-model", STUB_USAGE);
 	});
 
-	it("usage 缺失（provider 不回）→ 跳过回调不落账（§3.6 存在性守卫），标题照常返回", async () => {
+	it("usage 缺失（provider 不回）→ 跳过回调不落账（存在性守卫），标题照常返回", async () => {
 		vi.mocked(resolveModel).mockReturnValue(STUB_MODEL);
 		vi.mocked(callLLM).mockResolvedValue({ ok: true, content: "修复登录bug" });
 		const appendUsageEntry = vi.fn();
@@ -624,14 +725,14 @@ describe("callRenameLLM usage 落账回调（appendUsageEntry，设计 §3.3 ③
 		expect(appendUsageEntry).not.toHaveBeenCalled();
 	});
 
-	it("回调内部抛错被回调实现 catch（§3.6 契约，模拟 index.ts 注入的真实回调）→ 不阻断 cleanTitle 流程，标题照常返回", async () => {
+	it("回调内部抛错被回调实现 catch（契约：catch 位于回调实现内部，模拟 index.ts 注入的真实回调）→ 不阻断 cleanTitle 流程，标题照常返回", async () => {
 		vi.mocked(resolveModel).mockReturnValue(STUB_MODEL);
 		vi.mocked(callLLM).mockResolvedValue({ ok: true, content: "修复登录bug", usage: STUB_USAGE });
 		const appendUsageEntry = vi.fn((_model: string, _usage: Usage) => {
 			try {
 				throw new Error("session switched"); // 模拟 pi.appendEntry 抛错（session 已切换等）
 			} catch {
-				// 回调体内 catch（§3.6：catch 必须位于回调实现内部）——index.ts 注入实现同款
+				// 回调体内 catch（catch 必须位于回调实现内部）——index.ts 注入实现同款
 			}
 		});
 
@@ -643,7 +744,7 @@ describe("callRenameLLM usage 落账回调（appendUsageEntry，设计 §3.3 ③
 		expect(appendUsageEntry).toHaveBeenCalledTimes(1);
 	});
 
-	it("违约回调（实现未自吞错直接抛出）→ callRenameLLM reject（llm.ts 不吞错——§3.6 catch 归属钉死回调实现内部，防双重 catch 漂移；真实接线的兜底由 index.ts 回调体内 catch + 外层 .catch 覆盖）", async () => {
+	it("违约回调（实现未自吞错直接抛出）→ callRenameLLM reject（llm.ts 不吞错——catch 归属钉死回调实现内部，防双重 catch 漂移；真实接线的兜底由 index.ts 回调体内 catch + 外层 .catch 覆盖）", async () => {
 		vi.mocked(resolveModel).mockReturnValue(STUB_MODEL);
 		vi.mocked(callLLM).mockResolvedValue({ ok: true, content: "修复登录bug", usage: STUB_USAGE });
 		const appendUsageEntry = vi.fn(() => {

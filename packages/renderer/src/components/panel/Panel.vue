@@ -38,6 +38,10 @@
         <RotateCcw class="mr-1.5 size-3.5" />
         {{ t('panel.panel.reopen') }}
       </Button>
+      <!-- [crash-forensics-and-watchdog §3.3 D6 / u3b] 死态第二入口：进程退出后导出诊断包
+           （崩溃归因一键可达）。ghost 次级动作对齐「删除此项」行；知情确认与三态反馈
+           收敛在 DiagnosticsExportAction（与设置页共享，行为不分叉）。 -->
+      <DiagnosticsExportAction variant="ghost" :label="t('panel.panel.exportDiagnostics')" />
     </div>
 
     <!-- session-trace（D5a/D5c）：Trace 视图替换对话流位置（composer 保留，§3.1「不打断对话能力」）。
@@ -84,6 +88,26 @@
          对话历史全程可见，composer 消失输入禁止（不再走全屏 modal）。
          [U7] overlay 移除后 composer 常驻（不再 v-if="!isViewingSubagent"）。 -->
     <div class="composer-band flex flex-shrink-0 flex-col gap-1.5 px-5 pb-3.5">
+      <!-- [crash-resilience T4] 「引擎恢复中」过渡条（pi 意外退出 → 自动 respawn 窗口）。
+           数据源 = chat store respawnPending 分区（与 usePanelView 的 isSessionRespawning
+           同源）；此时 panelView.kind 恒为 conversation/trace（respawning 抑制 dead），
+           对话流 + composer 保持可用，恢复窗口发消息经 runtime join 等恢复完成后送达。
+           restored 到达 / 熔断 / 超时由 useMessageEffects 收口分区 → 本条随之消失。 -->
+      <div
+        v-if="respawnPending"
+        data-testid="respawn-pending-bar"
+        class="flex items-center gap-2 rounded-[var(--radius-sm)] border border-warn/40 bg-warn-soft px-3 py-2"
+        role="status"
+      >
+        <LoaderCircle class="size-3.5 shrink-0 animate-spin text-warn" />
+        <span class="text-xs text-text">{{ t('panel.message.respawnPending') }}</span>
+      </div>
+      <!-- [crash-forensics-and-watchdog §3.3 D8 / u10a 挂载点] 入站超界帧终止阀的会话级
+           静态提示（与上方 respawnPending 同区——都是「本会话数据流异常」的带内提示，不
+           打断对话流/composer）。状态源 = useInboundFrameGuard 的 trippedSessionIds
+           （App 装配层 installInboundFrameGuard 已安装）；组件内部按 sessionId 自判 tripped，
+           非本 session 不渲染（不连坐）。恢复动作 = 用户切走再切回本会话。 -->
+      <InboundFrameDroppedNotice v-if="sessionId" :session-id="sessionId" />
       <!-- [session-dead V5② 接通] turn 进展观测条挂载在 overlay/composer 互斥对**之外**：
            ask_user 等待期 Composer 整体卸载（下方 v-if/v-else-if 互斥），观测条原挂
            Composer 内会在等待期一起消失——awaitingUser 分型文案无处渲染（Gate B 实测
@@ -123,7 +147,7 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { MessageSquare, AlertCircle, RotateCcw, Trash2 } from '@lucide/vue'
+import { MessageSquare, AlertCircle, RotateCcw, Trash2, LoaderCircle } from '@lucide/vue'
 import { isAskUserQuestion, type AskUserQuestion } from '@xyz-agent/extension-protocol'
 import { WidgetArea } from '@xyz-agent/ui'
 import MessageStream from './MessageStream.vue'
@@ -132,6 +156,8 @@ import TraceView from './trace/TraceView.vue'
 import { Button } from '@/components/ui/button'
 import Landing from '@/components/new-task/Landing.vue'
 import AskUserOverlay from '@/components/extension/ask-user/AskUserOverlay.vue'
+import InboundFrameDroppedNotice from '@/components/ui/InboundFrameDroppedNotice.vue'
+import DiagnosticsExportAction from './DiagnosticsExportAction.vue'
 import TurnProgressBar from './TurnProgressBar.vue'
 import { usePanelView } from '@/composables/features/panel/usePanelView'
 import { useChat } from '@/composables/features/chat/useChat'
@@ -224,6 +250,12 @@ async function onProgressAbort(): Promise<void> {
 /** getHistory 失败态（landing 重试出口，AC-2.6） */
 const historyError = computed(() =>
   props.sessionId ? chat.failedHistory.has(props.sessionId) : false,
+)
+
+/** [T4] 「引擎恢复中」过渡态（chat store respawnPending 分区；与 usePanelView 的
+ *  isSessionRespawning 同源——过渡条渲染位在 composer band，不进派生 kind）。 */
+const respawnPending = computed(() =>
+  props.sessionId ? chat.isRespawnPending(props.sessionId) : false,
 )
 
 /** Landing 重试 → useSidebar.retryHistory（#2 AC-2.6） */

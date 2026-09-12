@@ -25,7 +25,7 @@ import { useToast } from '@/composables/useToast'
 // ensureStreamSubscription 导出作 no-op stub：U9 测回滚编排，不验真实流式订阅。
 const disposeSessionMock = vi.fn()
 vi.mock('@/composables/features/chat/useChat', () => ({
-  useChat: () => ({ editAndResend: vi.fn(), disposeSession: disposeSessionMock, setHistoryTruncated: vi.fn() }),
+  useChat: () => ({ editAndResend: vi.fn(), disposeSession: disposeSessionMock }),
   ensureStreamSubscription: vi.fn(),
 }))
 vi.mock('@/composables/features/drawer/useSideDrawer', () => ({

@@ -1,6 +1,8 @@
 # Session Trace 实现计划（cw-cli 2.0 执行层）
 
 > 上游设计：[`design.md`](./design.md)（技术方案层，已过对抗式审查）。本文是下一层——把设计 §5 的 5 个单元落到 cw 2.0 的 unit / spec / 验收命令映射，补齐「机器可执行验收」这层缺口。层声明：本文 = 实现计划（任务拆分 + 可执行验收 + 依赖排序），不重复方案论证。
+>
+> **历史时点标注（2026-09-12）**：本文为规划期历史记录，按「不改写历史时点」惯例保留原文。验收 id 的现行 SSOT 是 `.cw-specs/trace-ext.json`（随 ext-simplify-02 同步）：包路径已迁移 `extensions/taiji/system-prompt-trace/`；下文 A12 描述的「自持久化小文件」基线路径已随 ext-simplify-02 删除（终态三档：stash / fork previousSessionFile / 直读）；A13 探针已随同一设计目标 5 定案关闭（fork 档维持 resume，执行记录见该设计 §6.5），manual gate 条目已从 spec 删除。
 
 ## 1. cw 树结构
 

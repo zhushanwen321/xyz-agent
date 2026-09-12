@@ -14,6 +14,8 @@ import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 // vi.mock node:fs：fork/restore 用 readFileSync/writeFileSync/unlinkSync/existsSync
+// statSync（u4c D5⑤ 预检引入）：返回小 size 使 normalizeInactiveSessionFileIfNeeded
+// 走原全量路径（readFileSync mock），本文件只关心 preset 逻辑，归一化行为维持旧形态
 const fsMock = vi.hoisted(() => ({ existsSync: vi.fn(() => true) }))
 vi.mock('node:fs', () => ({
   existsSync: fsMock.existsSync,
@@ -21,6 +23,7 @@ vi.mock('node:fs', () => ({
   writeFileSync: vi.fn(),
   unlinkSync: vi.fn(),
   mkdirSync: vi.fn(),
+  statSync: vi.fn(() => ({ size: 100, mtimeMs: 0 })),
 }))
 
 vi.mock('node:fs/promises', () => ({

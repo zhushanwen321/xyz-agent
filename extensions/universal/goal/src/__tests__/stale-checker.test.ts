@@ -1,5 +1,5 @@
 /**
- * event-adapter 并发保护辅助函数测试（TC-3）
+ * agent-end stale-check 辅助函数测试（TC-3）
  *
  * 直接测试 makeStaleChecker 的快照语义，
  * 非间接覆盖。重点：makeStaleChecker 在 state=null 时 snapshot=undefined，
@@ -7,7 +7,7 @@
  */
 import { describe, expect, it } from "vitest";
 
-import { makeStaleChecker } from "../adapters/event-handlers/shared";
+import { makeStaleChecker } from "../adapters/event-handlers/agent-end";
 import { createGoalState } from "../engine/goal";
 import type { GoalRuntimeState } from "../engine/types";
 import { createGoalSession } from "../session";

@@ -5,6 +5,7 @@
  * 设计文档：docs/extensions/smart-context/design.md（D5 门控矩阵 / D6 阈值保护 / D8 配置 schema）。
  */
 
+import { estimateTokens } from "@earendil-works/pi-coding-agent";
 import type { ModelSelector } from "@zhushanwen/pi-llm-shared";
 import { loadConfig } from "@zhushanwen/pi-llm-shared";
 
@@ -304,22 +305,15 @@ export function collectKeptReadFiles(branchEntries: ReadonlyArray<unknown>, firs
 
 /**
  * 被压段 token 估算（收缩校验分母：仅 messagesToSummarize；turnPrefixMessages 是保留段前缀，
- * 不属于被压段，不计入）。pi 的 estimateTokens 按 message 内容估算；此处 chars/4 的保守替代：
- * serialize 后长度 / 4（与 pi 同口径量级，用于"摘要 >= 原文"的粗判已足）。
+ * 不属于被压段，不计入）。与 pi 自身压缩用量核算同源：逐条 estimateTokens 求和
+ * （toolCall arguments 与 thinking 块计入分母），消息类型经其签名反推、随 pi 升级自动跟随。
  */
 export function estimateShadowedTokens(
-	messagesToSummarize: ReadonlyArray<{ role: string; content?: unknown }>,
+	messagesToSummarize: ReadonlyArray<Parameters<typeof estimateTokens>[0]>,
 ): number {
-	let chars = 0;
+	let tokens = 0;
 	for (const m of messagesToSummarize) {
-		const content = m.content;
-		if (typeof content === "string") {
-			chars += content.length;
-		} else if (Array.isArray(content)) {
-			for (const b of content as ReadonlyArray<{ type?: string; text?: string }>) {
-				if (typeof b.text === "string") chars += b.text.length;
-			}
-		}
+		tokens += estimateTokens(m);
 	}
-	return Math.ceil(chars / CHARS_PER_TOKEN_ESTIMATE);
+	return tokens;
 }
