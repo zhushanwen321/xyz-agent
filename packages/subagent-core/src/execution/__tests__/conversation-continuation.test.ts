@@ -823,7 +823,11 @@ describe("集成：close 抢先（S7）与 closeAfterRound 退役（D4 close = a
     await vi.waitFor(() => expect(fake.runs.length).toBe(1));
     // 在途轮打断入队
     await service.chatActions.deliverChatMessage(record, "queued msg");
-    const conts = (service as unknown as { continuations: Map<string, { pendingCount: number }> }).continuations;
+    // [R4 深绑改写] continuations 队列已迁 RunOrchestration 聚合——读取路径改经
+    // 聚合实例（断言对象与强度不变）。
+    const conts = (
+      service as unknown as { runOrchestration: { continuations: Map<string, { pendingCount: number }> } }
+    ).runOrchestration.continuations;
     expect(conts.get(record.id)?.pendingCount).toBe(1);
 
     await service["closeSubagent"](record, false);
@@ -876,15 +880,19 @@ describe("集成：one-shot（非 chatMode）settleOneShotOutcome 四分支零�
     result: { text: string; success: boolean; error?: string },
     aborted: boolean,
   ): Promise<void> {
+    // [R4 深绑改写] settleOneShotOutcome 本体已迁 RunOrchestration 聚合（顶部
+    // D7 origin==="workflow" CAS 抢锁分支原样随迁）——bracket 调用改经聚合实例。
     await (
       service as unknown as {
-        settleOneShotOutcome: (
-          r: ExecutionRecord,
-          result: { text: string; success: boolean; error?: string },
-          aborted: boolean,
-        ) => Promise<void>;
+        runOrchestration: {
+          settleOneShotOutcome: (
+            r: ExecutionRecord,
+            result: { text: string; success: boolean; error?: string },
+            aborted: boolean,
+          ) => Promise<void>;
+        };
       }
-    ).settleOneShotOutcome(record, result as never, aborted);
+    ).runOrchestration.settleOneShotOutcome(record, result as never, aborted);
   }
 
   it("分支①：成功（无挂起）→ doFinalizeRoundToIdle 保持 running-resumable（SP-5——成功轮不终态化）", async () => {

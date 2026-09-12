@@ -641,14 +641,16 @@ describe("引擎死亡与 adopt 豁免（§3.4 + 决策表）", () => {
   it("豁免点一（runEngineTask catch）：workflow record 不 adopt → finalizeFailed 立即终态化；tool 对照照常 adopt", async () => {
     const { service, store } = makeHarness();
     const supervisor = Reflect.get(service, "roundSupervisor") as { supervisedIds(): string[] };
+    // [R4 深绑改写] runEngineTask 本体已迁 RunOrchestration 聚合（service/
+    // run-orchestration.ts）——bracket 路径改经聚合实例（断言对象与强度不变）。
     const runEngineTask = (
-      Reflect.get(service, "runEngineTask") as (
+      Reflect.get(Reflect.get(service, "runOrchestration"), "runEngineTask") as (
         record: ExecutionRecord,
         opts: { task: string; slug: string },
         engine: EnginePort,
         signal: AbortSignal | undefined,
       ) => Promise<boolean>
-    ).bind(service);
+    ).bind(Reflect.get(service, "runOrchestration"));
     const deadEngine: EnginePort = {
       id: "pi",
       capabilities: () => ({ ...STRICT_CAPS, conversation: "native", sandbox: "emulated", resume: "native", maxTurns: true }),
@@ -687,12 +689,14 @@ describe("引擎死亡与 adopt 豁免（§3.4 + 决策表）", () => {
   it("豁免点二（finalizeEngineOutcome exitCode===null）：workflow record 不 adopt → 正常终态化", async () => {
     const { service, store } = makeHarness();
     const supervisor = Reflect.get(service, "roundSupervisor") as { supervisedIds(): string[] };
+    // [R4 深绑改写] finalizeEngineOutcome 本体已迁 RunOrchestration 聚合（豁免点二
+    // 分诊形态原样随迁）——bracket 路径改经聚合实例。
     const finalizeEngineOutcome = (
-      Reflect.get(service, "finalizeEngineOutcome") as (
+      Reflect.get(Reflect.get(service, "runOrchestration"), "finalizeEngineOutcome") as (
         record: ExecutionRecord,
         outcome: { content: string; engineId: string; error: string; exitCode: null },
       ) => Promise<boolean>
-    ).bind(service);
+    ).bind(Reflect.get(service, "runOrchestration"));
 
     const wfRecord: ExecutionRecord = {
       ...createRecord("sa-triage2-wf", {

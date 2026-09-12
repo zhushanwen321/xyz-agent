@@ -107,15 +107,17 @@ describe("T4① notify gate closedReason whitelist", () => {
     record.closedReason = "parent-new";
     // [W3] 轮次编排入口 kickOffChatRound（私有，bracket 调用先例）——协议 run 发起后
     // 挂起，编排性关闭先行，再模拟引擎应答（迟到回注被门拦）。
-    const kickOffChatRound = (
-      service as unknown as Record<string, (...args: unknown[]) => void>
-    )["kickOffChatRound"];
+    // [R4 深绑改写] kickOffChatRound 本体已迁 RunOrchestration 聚合——bracket 路径
+    // 改经聚合实例（断言对象与强度不变；this 绑定 = 聚合实例，即方法真实宿主）。
+    const orchestration = (
+      service as unknown as { runOrchestration: { kickOffChatRound: (...args: unknown[]) => void } }
+    ).runOrchestration;
     const identity = {
       agent: "general-purpose",
       agentConfig: undefined,
       resolved: { model: { id: "model", name: "Model", provider: "test", reasoning: false }, thinkingLevel: undefined },
     };
-    kickOffChatRound.call(service, record, { task: "t", slug: "gate" }, identity, undefined, 1000);
+    orchestration.kickOffChatRound(record, { task: "t", slug: "gate" }, identity, undefined, 1000);
     await vi.waitFor(() => expect(fake.runs.length).toBe(1));
     fake.runs[0]!.settle({ content: "late round text" });
     await Promise.resolve();
@@ -141,15 +143,17 @@ describe("T4① notify gate closedReason whitelist", () => {
       controller: new AbortController(),
     });
     record.closedReason = "gc";
-    const kickOffChatRound = (
-      service as unknown as Record<string, (...args: unknown[]) => void>
-    )["kickOffChatRound"];
+    // [R4 深绑改写] kickOffChatRound 本体已迁 RunOrchestration 聚合——bracket 路径
+    // 改经聚合实例（断言对象与强度不变；this 绑定 = 聚合实例，即方法真实宿主）。
+    const orchestration = (
+      service as unknown as { runOrchestration: { kickOffChatRound: (...args: unknown[]) => void } }
+    ).runOrchestration;
     const identity = {
       agent: "general-purpose",
       agentConfig: undefined,
       resolved: { model: { id: "model", name: "Model", provider: "test", reasoning: false }, thinkingLevel: undefined },
     };
-    kickOffChatRound.call(service, record, { task: "t", slug: "gate" }, identity, undefined, 1000);
+    orchestration.kickOffChatRound(record, { task: "t", slug: "gate" }, identity, undefined, 1000);
     await vi.waitFor(() => expect(fake.runs.length).toBe(1));
     fake.runs[0]!.settle({ content: "round" });
     await vi.waitFor(() => expect(pi.sendMessage).toHaveBeenCalled());
