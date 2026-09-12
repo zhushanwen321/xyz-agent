@@ -483,10 +483,11 @@ export default [
   //（impl-plan §7 ⑤ 预授权动作：移除而非抬阈值；演化史——旧位 2141 行即超限，抽离
   // 1245 → 无界等待修复 1415 → u-h2 1471 → W4 监督器 1548 → W3 协议化 1684 →
   // R0 重排折算 1842 → R1 1785 → R2 1640 → R3 后触发告警 → R4 移除本 override）。
-  // run-orchestration.ts 单列：R4 核心编排聚合（1505 物理行，折算 800）——[D-R4-1]
-  // G1 容量偏差的 lint 面（R4 域段实测 1662 物理行 > 两文件 2×700 上限，workflow-
-  // dispatch.ts 529 物理行合规、本文件超限待主 agent 裁决后续拆，备选第三文件
-  // chat-rounds.ts）；阈值紧贴实际折算值，禁止再抬。
+  // run-orchestration.ts 单列：R4 核心编排聚合——[D-R4-1] G1 容量偏差的 lint 面
+  //（R4 域段实测 1662 物理行 > 两文件 2×700 上限，主 agent 裁决追认超限，备选第三
+  // 文件 chat-rounds.ts 未采纳，理由见 impl-plan §5 D-R4-1）。终态实测（阶段3 复核）：
+  // 本文件 1506 物理行 / 798 折算（R6 常量归一后），workflow-dispatch.ts 527 物理行
+  // 合规；阈值 800 实余 2 行（零余量锁定语义不变——增长即告警），禁止再抬。
   {
     files: ['packages/subagent-core/src/execution/service/run-orchestration.ts'],
     rules: {

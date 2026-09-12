@@ -181,7 +181,7 @@ R0 实施单元产出（实施依据：[impl-plan](subagent-service-decompositio
 
 ### 3.3 通道边界结论（R1-R4 实施约束）
 
-1. **A 通道（16 处直写）**：H3 零行为变化下**不收口**（H4 写原语落点）；R4 抽取 RunOrchestration 时 12 处随迁（#14 区），R3 迁 1 处（promoteSessionFileFromEngineHandle），R2/R1 零直写。
+1. **A 通道（16 处直写）**：H3 零行为变化下**不收口**（H4 写原语落点）；R4 抽取 RunOrchestration 时 14 处随迁（#14 区 13 处 + workflow-dispatch 1 处），R3 迁 2 处（promoteSessionFileFromEngineHandle + closeSubagent.closeAfterRound），R2/R1 零直写。[阶段3 P1-5 勘误：初记「R4=12/R3=1」小计漏 3 处，终态 grep 分布 = record-lifecycle 2 / run-orchestration 13 / workflow-dispatch 1，合计 16 与清单②一致]
 2. **#5 SyncCollect 的 store 直调通道**（appendBatchFinalizedEntry → reportSubagentRecord、scanLastRecordEntries 读）保持原样随 R2 迁移，**不得改道 RecordLifecycle**。
 3. record 对象仍是跨聚合共享可变对象（D1 两级归属的第二级现状）；聚合间经壳共享 record 引用，字段级写点分布即上表——R3「store 与终态迁移入口的唯一宿主」= store 入口 + 终态迁移语义宿主，**非唯一访问者**。
 
@@ -193,7 +193,7 @@ R0 实施单元产出（实施依据：[impl-plan](subagent-service-decompositio
 
 改写形态三分类（D6 口径）：**SI** = ServiceInternals 内部访问（重定义路径）/ **FR** = 运行时字段替换（依赖「闭包经 this 读取」语义）/ **SP** = spyOn 内部方法或 bracket 调私有方法。
 
-### 4.1 真深绑文件（12 个）
+### 4.1 真深绑文件（13 个）
 
 | 文件 | 命中 | 深绑形态 | 深绑目标（域 → 抽取单元） | 改写形态预判 |
 |---|---|---|---|---|

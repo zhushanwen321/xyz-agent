@@ -1332,9 +1332,11 @@ fi
 #   staged 命中六聚合（packages/subagent-core/src/execution/service/）或壳
 #   （subagent-service.ts）或守卫脚本自身时触发：
 #   scripts/check-subagent-service-boundary.mjs —— 三方向检查（聚合→聚合 import
-#   台账门 + 环检测 / 聚合→壳 import 禁则 / 跨聚合私有访问 grep 门）。
-#   合法边台账（ALLOWED_EDGES）以符号级精确登记在守卫脚本内（现状三条：
-#   ENV_SELF_RECORD_ID 常量单向 + ResolvedIdentity type-only ×2，依据 D-R3-2 / D-R4-8）。
+#   台账门 + 环检测 / 聚合→壳 import 禁则 / 跨聚合私有访问 grep 门）+ 支撑文件
+#   方向门（service-bootstrap/service-constants，H3/R6 扩）。
+#   合法边台账（ALLOWED_EDGES）以符号级精确登记在守卫脚本内（现状两条：
+#   ResolvedIdentity type-only ×2，依据 D-R4-8；[HISTORICAL] 建立时第三条
+#   ENV_SELF_RECORD_ID 常量单向 D-R3-2 已随 R6 常量归位删除）。
 #   触发面并入本路径范围的 staged 删除（pathspec 清单天然含 D）：单独 staged 删除
 #   守卫脚本也必须触发——下方 [ ! -f ] 存在性检查正是删除场景的防线。
 #   注：不设独立 SKIP_* 开关（R1 后惯例，总闸 SKIP_ALL_CHECKS 兜底）。

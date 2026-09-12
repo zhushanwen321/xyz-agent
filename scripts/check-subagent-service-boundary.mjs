@@ -18,6 +18,11 @@
 //      （非 private 成员）即红。防「聚合经 deps 拿兄弟实例调其内部」的未来回退；
 //      现状协作全部是窄函数接口注入（resolveIdentity / finalizeRecord 等），
 //      该通道应天然零命中。
+//      [阶段3 P3-4 覆盖面登记] 本检查可机械覆盖子集 = 「deps getter 直调」单一
+//      文本形态；三条通道不覆盖、显式划归 code review 职责：① getter 返回类型
+//      接口化（结构兼容接口名 ≠ 聚合 class 名 → 不入 getter 映射）；② 实例缓存
+//      局部变量后调用；③ 聚合实例经方法/构造参数流入（import 门只封文件内静态
+//      符号获得，不封运行时实例流动）。不建议扩正则追局部变量（文本守卫性价比拐点）。
 //   5. [H3/R6] 支撑文件方向门（service-bootstrap.ts / service-constants.ts）：
 //      - 支撑→聚合：允许（提供 type/常量/工厂；入环检测图）
 //      - 聚合→支撑：service-constants.ts 允许（import 常量）；service-bootstrap.ts
@@ -30,6 +35,13 @@
 // 预告——①号边（ENV_SELF_RECORD_ID）随常量归位 service-constants.ts 从台账删除：
 //   ② run-orchestration.ts → record-access.ts  : ResolvedIdentity（type-only 单向）
 //   ③ workflow-dispatch.ts → record-access.ts  : ResolvedIdentity（type-only 单向）
+//
+// [阶段3 P3-3 已知盲区登记] 静态 `import/export … from` 之外的模块引用通道不检测：
+//   动态 `import()` / `require()` / `createRequire` / 指向包 barrel（../../index.ts）
+//   的相对 import（经 barrel 中转取兄弟聚合值可绕方向门）/ tsconfig paths。存量
+//   实测（2026-09-12 阶段3 审查）：service/ 目录内上述形态零命中，无现实违规；
+//   新增使用前须先扩本守卫或在此登记豁免理由。tsconfig paths/vitest alias 无现实
+//   通道（subagent-core tsconfig 无 paths、vitest.config 无 alias）。
 //
 // 退出码：0 通过 / 2 违规。文本级守卫（正则解析，无 AST 依赖），对存量结构零误报。
 
@@ -66,11 +78,13 @@ const SUPPORT_SHELL_EDGES = new Map([
 
 // ── 解析工具 ───────────────────────────────────────────────────────────────
 
-/** 解析单个 import 语句 → { symbols: [{ name, typeOnly }], target }；非 import 行返回 null。
- *  覆盖形态：`import { A, type B } from "..."` / `import type { A } from "..."` /
- *  `import { default as X } from "..."` / `import * as ns from "..."`。 */
+/** 解析单个 import / re-export 语句 → { symbols: [{ name, typeOnly }], target }；
+ *  非该类行返回 null。覆盖形态：`import { A, type B } from "..."` /
+ *  `import type { A } from "..."` / `import { default as X } from "..."` /
+ *  `import * as ns from "..."` / `export { A } from "..."`（[阶段3 P3-3] re-export
+ *  通道与 import 同构——聚合互相转发值符号时按值符号入各方向门）。 */
 function parseImport(line) {
-  const m = line.match(/^\s*import\s+(type\s+)?(?:\{([^}]*)\}|\*\s+as\s+[\w$]+|[\w$]+)\s*from\s*['"]([^'"]+)['"]/);
+  const m = line.match(/^\s*(?:import|export)\s+(type\s+)?(?:\{([^}]*)\}|\*\s+as\s+[\w$]+|[\w$]+)\s*from\s*['"]([^'"]+)['"]/);
   if (!m) return null;
   const blockTypeOnly = Boolean(m[1]);
   const named = m[2];
@@ -137,11 +151,9 @@ function extractAggregateClassNames() {
   for (const line of logicalImportLines(readFileSync(shellPath, "utf-8"))) {
     const parsed = parseImport(line);
     if (!parsed || !parsed.target.startsWith("./service/")) continue;
-    const fileName = parsed.target.replace("./service/", "");
     for (const sym of parsed.symbols) {
       if (sym.name !== "*" && !sym.typeOnly) names.add(sym.name);
     }
-    if (fileName) names.add(`__file__${fileName}`); // 文件级登记（getter 目标文件对照备用）
   }
   return names;
 }
