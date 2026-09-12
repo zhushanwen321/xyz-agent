@@ -73,6 +73,11 @@ graph TD
 | R2 | D-R2-2 max-lines warning 提前消解 | 折算 1785→1640 < 1700；override 收窄/移除仍留 R4（lint 配置领地外） |
 | R2 | D-R2-3 modelService 依赖窄化 | collectSyncSection 改节读取 getter，聚合不感知 ModelConfigService（读取链逐行等价） |
 | R2 | D-R2-4 recoverSyncCollectBatch 转发形态 | async 方法 → 非 async 返回 Promise 单行转发（名称/参数/返回类型不变，可观察等价） |
+| R3 | D-R3-1 G1 超限拆两文件 | 八域段实测 833 物理行，聚合估算 ~975 超「每聚合 ≤700」；拆 record-lifecycle.ts（终态写面，D5/H4 落点）+ record-access.ts（读建面），边界 = 终态写∣读建、组间零互调零 import。dev agent 停线报告、主 agent 核验追认（拆分边界与 D5 宿主语义吻合）。G1「聚合」计数按两文件各自达标 |
+| R3 | D-R3-2 ENV_SELF_RECORD_ID 单向 import | record-access → session-baselines 常量单向引用（SSOT 所在、禁碰冻结文件故不迁）；非环非方法互调，R6 常量外移时归位独立文件 |
+| R3 | D-R3-3 六个 async 方法壳转发转非 async | Promise 单行返回（D-R2-4 同款可观察等价） |
+| R3 | D-R3-4 源文本守卫测试形态 | readFileSync+正则守卫（robustness-medium-batch2 M6）为清单③ grep 口径外第五类深绑，本单元实改 1 文件（守卫随本体迁聚合文件+正则适配 deps 通道字面）；R5 归位复扫口径纳入 |
+| R3 | D-R3-5 聚合化后可见性放宽 | 原壳 private 方法转聚合 public（strangler 壳转发必然，非行为变化；G2 私有互调禁则不涉壳经 public 面转发） |
 
 ## 6 状态表
 
@@ -81,7 +86,7 @@ graph TD
 | R0 | committed | 1 | （基线后首个 commit）：18 域分区纯移动重排（独立复核 = 非注释行多重集 md5 一致 + 113 块锚点断言）+ r0-inventory.md 三清单（①34 字段重收敛口径 + 12 构造器赋值 + 7 跨聚合边；②16 直写写点通道表；③28 文件/87 命中 → 13 真深绑定性）+ 两条机械对账（34/34、16/16）+ 基线绿 2903/4；偏差 8 条登记于清单 §6（关键：impl-plan「字段 17」口径不可复现重收敛为 34；R1 字段清单漏列 uiObservability/execNesting/forkDepthAls 以清单为准；finalizeRoundToIdle 归 R4） |
 | R1 | committed | 1 | 7 文件 +535/-286：session-baselines.ts 397 行聚合（≤700 达标）+ 壳转发化（折算 1842→1785）+ 跨聚合边收敛 2/7（C-2 deps 回调、C-3 disposeSessionUi）+ 深绑改写 13 处全等价（对照表在报告）+ 聚合面零变化（diff 零命中）+ 模式打样固化于聚合文件头（晚绑定 deps/窄结构类型/单写者 getter/常量 SSOT 迁移）。偏差 5 条：D-R1-1 SessionInit 接口本体迁聚合（R6 交叠预告）/ D-R1-2 4 个 ENV 常量 SSOT 提前迁（R6 部分提前）/ D-R1-3 R0 清单③ grep 口径缺 `Reflect.get(service,` 形态，补录 4 文件 6 处（R5 复扫口径纳入）/ D-R1-4 _seq 死字段删除 / D-R1-5 SessionInit.mode JSDoc 陈旧注释随迁留清 |
 | R2 | committed | 1 | 2 文件 +570/-377：sync-collect-domain.ts 518 行聚合 + 壳转发化（折算 1785→1640，max-lines warning 提前消解）；检查点① 落地（flushBatch 依赖两分：聚合私有 this + 8 晚绑定 getter，service 整实例零注入）；C-1 收口（lazyDispose）+ R1 回调改接（聚合间零直写，互不 import）；D1 v3 不改道逐行自查过；E9 时序 + flush 屏障断言绿（R3 检查点③前置已锁定）；涉本域 6 个深绑文件零改写（晚绑定现读保 FR 语义）。偏差 4 条：D-R2-1 清单③三文件改写预判未发生（晚绑定形态根因，R5 按实际核销）/ D-R2-2 warning 提前消解（override 收窄仍留 R4）/ D-R2-3 modelService 窄化为节读取 getter / D-R2-4 recoverSyncCollectBatch 转发 async→非 async Promise（可观察等价） |
-| R3 | in_flight | - | dev 已派发（检查点③ dispose 时序等价 + 被否谱系#3 回收面必须含 + 只搬不改/H4 宿主红线 + settleOneShotOutcome 边界越界即停） |
+| R3 | committed | 1 | 62ce78dcf，4 文件 +1264/-752：**D-R3-1 拆两文件**——record-lifecycle.ts 530 行（终态写面 #4/#11/#17/#18，被否谱系#3 回收面完整在内，D5「store 与终态迁移入口唯一宿主」= H4 落点）+ record-access.ts 540 行（读建面 #3/#8/#10/#13），组间零互调零 import 已验证（唯一跨文件 import = record-access 单向引 session-baselines 常量，D-R3-2）；壳 3129→2564 物理（-565），转发全单行。检查点③ 落地：dispose 方法体 HEAD vs 工作区剔注释后逐字节一致（DISPOSE-BODY-IDENTICAL，E9→批量 archive→flush→store.dispose 时序保持）。只搬不改：机械审计 27 方法依赖通道替换后逐字节一致 + onChange 初始化器特例提取（/tmp/r3-move-audit.py 复跑 AUDIT-FINAL-PASS）。跨聚合边：C-5 收敛为 deps 回调（onRecordFinalizedCleanup + abortContinuationQueue）、C-4/C-6 留置（R4 领地/闭包天然兼容，清单①预判兑现）。深绑：7 文件零改写 + robustness-medium-batch2 M6 源文本守卫随本体迁（readFileSync 源文本正则 = 清单③口径外第五类，D-R3-4）。主 agent 独立核验：全量 2903/4 与基线逐项一致 + tsc 0 + eslint 0（max-lines 未触发）+ 三抽查（dispose diff / 零互调 grep / 审计复跑）全过。settleOneShotOutcome 等 12 处 A 通道直写按红线留壳未触碰（R4 领地） |
 | R4 | pending | - | |
 | R5 | pending | - | |
 | R6 | pending | - | |
