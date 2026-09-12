@@ -457,16 +457,18 @@ describe("RecordStore", () => {
       expect(found?.status).toBe("closed");
     });
 
-    // ── 分支 3: .alive + 活 pid → running + externalInstance ──
-    it(".alive + 存活 pid → running + externalInstance=true", () => {
+    // ── 分支 3→4: .alive + 活 pid → running 兜底（U4a / D3b (a)：投影退役）──
+    it(".alive + 存活 pid → running 兜底，无 externalInstance 投影（探活读面走现查探针）", () => {
       const sessionFile = writeBaseSession();
-      const recentStartedAt = Date.now() - 1000; // 1 秒前，确保未超 24h
+      const recentStartedAt = Date.now() - 1000; // 1 秒前
       const marker: AliveMarker = { pid: process.pid, id: SESSION_ID, startedAt: recentStartedAt };
       writeAliveMarker(sessionFile, marker);
       const store = new RecordStore(tmpDir);
       const found = store.collectRecords(100).find((r) => r.id === SESSION_ID);
       expect(found?.status).toBe("running");
-      expect(found?.externalInstance).toEqual(marker);
+      // externalInstance 字段链已删（D3b (a)：重建投影不再携带探活缓存，
+      // fork-from 守卫/孤儿恢复改 findForeignLiveInstance 现查）。
+      expect(found).not.toHaveProperty("externalInstance");
     });
 
     // ── 分支 3→4: .alive + 死 pid → running（SP-2：跨重启可恢复）──
@@ -477,7 +479,7 @@ describe("RecordStore", () => {
       const store = new RecordStore(tmpDir);
       const found = store.collectRecords(100).find((r) => r.id === SESSION_ID);
       expect(found?.status).toBe("running");
-      expect(found?.externalInstance).toBeUndefined();
+      expect(found).not.toHaveProperty("externalInstance");
     });
 
     // ── 分支 4: 都无 sidecar → running（SP-2：跨重启可恢复）──
@@ -488,10 +490,10 @@ describe("RecordStore", () => {
       expect(found?.status).toBe("running");
     });
 
-    // ── 分支 4: >24h 软超时 → running（SP-2：跨重启可恢复，无视探活）──
-    it(">24h 软超时 → running（SP-2，即使 pid 存活）", () => {
+    // ── 分支 4: 老旧 .alive（原 >24h 软超时形态）→ running（status 与 .alive 解耦）──
+    it(".alive 存在即不影响 status 判定 → running 兜底（软超时/探活读面已退役）", () => {
       const sessionFile = writeBaseSession();
-      // startedAt 设为 25 小时前
+      // startedAt 设为 25 小时前（旧三判据形态下的软超时区——现已无判定参与）
       const oldStartedAt = Date.now() - 25 * 60 * 60 * 1000;
       const marker: AliveMarker = { pid: process.pid, id: SESSION_ID, startedAt: oldStartedAt };
       writeAliveMarker(sessionFile, marker);
@@ -505,7 +507,7 @@ describe("RecordStore", () => {
       const store = new RecordStore(tmpDir);
       const found = store.collectRecords(100).find((r) => r.id === SESSION_ID);
       expect(found?.status).toBe("running");
-      expect(found?.externalInstance).toBeUndefined();
+      expect(found).not.toHaveProperty("externalInstance");
     });
 
     // ── 兼容读回归：存量旧名共存时 .cancelled 优先于 .finalized ──

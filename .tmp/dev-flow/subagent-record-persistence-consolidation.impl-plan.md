@@ -169,6 +169,15 @@ graph TD
 
 **挂账 U5 的跨单元测试适配**：subagent-service-notify-gate.test.ts（parent-new 门，record 未 register 进 store 致 markRoundIdle 内存 no-op）+ workflow-agent-dispatch.test.ts（成功终态化 archive 断言，假路径 /tmp/wf 触发 ENOENT → markFinalized 返回 false 不 archive）——根因 = U1/U2a 语义变化的存量测试形态过时，两实验归因（U2a/U2b 各自二分）共同确认非 U2b 挂钩引入；测试文件不在任何已派单元领地，U5（__tests__/** 领地）收口。
 
+**U4a（轮 1，2026-09-12）**——dev 报备 + 协调者核验接受：
+1. F1 清理半径超「分支 3 + refreshAlive」字面：alive 缓存链全删（FileStamps.alive/FileCacheEntry.alive 等——探活缓存角色退役后均死数据，stamps.alive 使每文件白做一次 statSync）
+2. now 参数链连带删除（refreshAlive/分支 3 移除后 m.now 零消费）
+3. F2 self-pid 语义裁决：boot 孤儿清理语境 self-pid 排除 = 放行清理（pid 复用残留 ⟹ 原持有者已死 ⟹ 确为孤儿）——比旧 externalInstance 判据更正确，第三用例钉住
+4. 分支编号不重排（沿用设计文档「分支 4」表述，注释注明缘由）
+5. 遗留清扫挂 U5：subagent-actions-core.ts:715-717 注释过时表述 + subagent-service-multiproc-guard.test.ts:32 mock 工厂多余键
+
+**认知外改动登记（2026-09-12 二次）**：docs/architecture/runtime-module-map.md / subagent-engine-abstraction.md / docs/extensions/subagents/data-model.md 三个文件的「2026-09-12 重数行数」统计刷新——与 H4 无关的并行产物，全程不碰不裹挟（同 timeout 文档处置）。
+
 **U2a（轮 1，2026-09-12）**——dev 报备 + 协调者核验接受：
 1. record-access.ts 领地外 +3 行机械接线（ColdLookupDeps 新必填字段 markResurrected 装配点 :471，计划遗漏的编译必需连带）
 2. delivery-methods.test.ts 领地外测试适配 +9（3 用例补 register 对齐生产形态——record 恒在内存）
@@ -186,7 +195,7 @@ graph TD
 | U2b | committed | 1 | 核验 2026-09-12：C1-C3 达成（领地 39/39 绿 + 六名 grep 零命中 + D3a 闭环链断言）；C3 挂钩收口 writeBindingForRecord（max-lines 预算）登记；D2 移交修复轮续派 |
 | U3 | committed | 1 | 核验 2026-09-12：D1+D3 达成（批写归口 grep 零命中 + manifestDir 接线 + 领地 46/46 绿）；D2 两项被领地封锁移交 U2b 修（见偏差登记表尾） |
 | U4b | committed | 1 | 核验 2026-09-12：3 文件领地吻合；E1 grep 仅注释残留；actions-core 41 + transparent-resume 15 单绿；transparent-resume 回归收账 |
-| U4a | in-progress | 1 | 后台派发 2026-09-12（U1+U2a+U4b committed 解锁；U2b 并行在途，核验口径 = 领地单绿） |
+| U4a | committed | 1 | 核验 2026-09-12：F1-F5 达成（领地 106/106 绿 + externalInstance/ALIVE_SOFT_TIMEOUT_MS 代码级零残留 + doc-symbol-drift 绿 + tsc 零错） |
 | U4c | pending | 0 | — |
 | U5 | pending | 0 | — |
 

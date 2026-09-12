@@ -1,16 +1,15 @@
 // src/execution/alive-store.ts
 //
-// .alive sidecar 生产者 + pid 探活。
+// .alive sidecar：跨进程写权声明的生产者 + pid 探活。
 //
-// 子进程启动时写 .alive（pid+id+startedAt），心跳检测时读它 + isProcessAlive
-// 判活。finalize/cancel 收尾时 remove。与宿主侧终态 sidecar（.state）构成两件套。
-//
-// 设计对齐 state-marker：单文件 sidecar、best-effort I/O、无全局 index。
-//
-// [U1 / D3 v7] `.alive` 角色重定义为「跨进程写权声明」：写/删面经 RecordStore 意图
-// 原语归口（acquire = markResurrected / acquireWriteLease；release = markFinalized /
-// markCancelled / markIdleArchived 内部删）；探针判据 = pid 单判据 + self-pid 排除
-// （见 findForeignLiveInstance）。本模块头完整重写（含写权声明语义）归 P4a（D3d）。
+// [U4a / D3 v7] 角色重定义（D3d 模块头权威表述）：
+//   - 宿主 resurrect/接管归口写：写权声明 acquire（markResurrected/acquireWriteLease）
+//     / release（markFinalized/markCancelled/markIdleArchived 内部删）；
+//   - 判活 = pid 单判据（findForeignLiveInstance：self-pid 排除 + isProcessAlive，
+//     软超时已退役——谱系 #12，跨轮保留 × startedAt 一次性不刷新的组合下超时会
+//     误判在持声明陈旧）。
+// 写/删动作均经 RecordStore 意图原语归口（G1：本模块不直接面向调用方，write/remove
+// 是 store 内部写面的实现件）。
 
 import * as fs from "node:fs";
 
@@ -19,20 +18,6 @@ import { getLogger } from "../core/logger.ts";
 import type { AliveMarker } from "./types.ts";
 
 const logger = getLogger("subagents");
-
-// ============================================================
-// 常量
-// ============================================================
-
-/**
- * .alive marker 的软超时（1h，自 record-store.ts 迁移为共享常量）。
- *
- * [U1 / D3b 谱系 #12] 探针判据已退役软超时（findForeignLiveInstance 改 pid 单判据
- * ——跨轮保留 × startedAt 一次性不刷新的组合下，>1h idle 的在持声明会被误判陈旧，
- * 探针超时放行开双写窗）。本常量**保留不删**：现存消费点 = record-store.ts
- * buildRecord 分支 3 / refreshAlive 的 externalInstance 投影（随 P4a 读面收尾一并移除）。
- */
-export const ALIVE_SOFT_TIMEOUT_MS = 3_600_000;
 
 // ============================================================
 // 公开函数

@@ -88,7 +88,6 @@ import {
 } from "./session-reconstructor.ts";
 import type {
   AgentEvent,
-  AliveMarker,
   ClosedReason,
   ExecutionRecord,
   ExecutionStatus,
@@ -96,7 +95,9 @@ import type {
   SubagentRecord,
 } from "./types.ts";
 import { CLOSED_REASONS as CLOSED_REASON_LIST } from "./types.ts";
-import { isProcessAlive, readAliveMarker, writeAliveMarker, removeAliveMarker, ALIVE_SOFT_TIMEOUT_MS } from "./alive-store.ts";
+// [U4a / D3b (a″)] findForeignLiveInstance：孤儿恢复的活实例跳过判据——现查探针
+// 替代重建时 externalInstance 缓存（pid 单判据 + self-pid 排除，比缓存更新鲜）。
+import { writeAliveMarker, removeAliveMarker, findForeignLiveInstance } from "./alive-store.ts";
 import type { RoundSettlementOutcome } from "./finalize-record.ts";
 import { writeAtomicFileSync } from "../shared/atomic-write.ts";
 
@@ -113,8 +114,6 @@ const STATUS_PRIORITY: Record<ExecutionStatus, number> = {
   running: 0,
   closed: 3,
 };
-
-// .alive 软超时常量已迁移至 alive-store.ts（v8.5 D 透明重生探针共用同一判据 SSOT）。
 
 /** [D8 v7] manifest 同步写的 JSON 缩进空格数——与 ManifestStore.writeManifest 字节
  *  形态一致（读写两侧格式互认，外部 session-reader 直读不感知差异）。 */
@@ -152,16 +151,16 @@ interface Stamp {
   size: number;
 }
 
-/** sidecar 状态矩阵输入（buildLightRecord / getFullRecord 共享）。 */
+/** sidecar 状态矩阵输入（buildLightRecord / getFullRecord 共享）。
+ *  [U4a / D3b (a)] alive 维度已随 externalInstance 投影移除——非终态统一兜底 running，
+ *  探活读面由 (a′)(a″) 的 findForeignLiveInstance 现查探针承担（不在重建缓存）。 */
 interface SidecarMatrix {
   /** 终态 sidecar（.state 优先，兼容旧 .finalized/.cancelled 归一）。undefined = 未终态化。 */
   state: StateMarker | undefined;
-  alive: AliveMarker | undefined;
   /** jsonl mtime（light 分支 2 的 endedAt 近似——finalize 后文件不再变化）。 */
   jsonlMtimeMs: number;
   /** 全量重建可得的精确结束时间（最后 entry ts）；light 传 undefined 回落 mtime。 */
   fullEndedAt?: number;
-  now: number;
 }
 
 /**
@@ -172,7 +171,7 @@ interface SidecarMatrix {
  *          full === light 是哨兵（「已尝试但无详情可补」，如无 assistant message
  *          的文件），避免重复全文重读；stat 戳变化时随 light 一起重置重试。
  *
- * 校验：jsonl + 终态 sidecar + alive + record 绑定（[UF-1]）的 stat 戳对比（终态戳为该组文件 .state/.finalized/.cancelled 的合并戳，见 state-marker.statStateStamp）。任何写操作至少改变一个戳 →
+ * 校验：jsonl + 终态 sidecar + record 绑定（[UF-1]）的 stat 戳对比（终态戳为该组文件 .state/.finalized/.cancelled 的合并戳，见 state-marker.statStateStamp；[U4a / D3b (a)] alive 戳已随 externalInstance 投影移除——light 态不依赖 .alive，探活读面走现查探针）。任何写操作至少改变一个戳 →
  * 只重建该文件，其余 N-1 个复用缓存（statSync 毫秒级，取代旧的整体失效重扫）。
  */
 interface FileCacheEntry {
@@ -182,12 +181,10 @@ interface FileCacheEntry {
   full: SubagentRecord | undefined;
   jsonl: Stamp;
   state: Stamp | null;
-  alive: Stamp | null;
   /** [UF-1] record 绑定 sidecar 戳（null = 无绑定文件）。 */
   binding: Stamp | null;
   /** 最近一次重建时读到的终态 sidecar 内容（校验命中路径复用，不重读文件）。 */
   stateMarker: StateMarker | undefined;
-  aliveData: AliveMarker | undefined;
 }
 
 /** 负缓存条目：确认无 identity 的文件（损坏/异构）。缓存「没有」这一事实，
@@ -196,7 +193,6 @@ interface NegativeFileEntry {
   negative: true;
   jsonl: Stamp;
   state: Stamp | null;
-  alive: Stamp | null;
   /** [UF-1] 绑定戳纳入负缓存：绑定文件后到（run 应答回填点落盘）改变戳，
    *  打破负缓存触发重探测——「先扫描后绑定落盘」时序的恢复能力锚点。 */
   binding: Stamp | null;
@@ -205,18 +201,17 @@ interface NegativeFileEntry {
 /** fileCache 值类型：正常条目或负缓存条目。 */
 type FileCacheValue = FileCacheEntry | NegativeFileEntry;
 
-/** scanFile 单文件本轮 stat 戳集合（jsonl + 终态 sidecar（含旧名合并戳）+ alive + record 绑定）。 */
+/** scanFile 单文件本轮 stat 戳集合（jsonl + 终态 sidecar（含旧名合并戳）+ record 绑定；
+ *  [U4a / D3b (a)] alive 戳退役——light 态不依赖 .alive，省去每文件一次 statSync）。 */
 interface FileStamps {
   jsonl: Stamp;
   state: Stamp | null;
-  alive: Stamp | null;
   binding: Stamp | null;
 }
 
 /** sidecar payload 读取结果（索引命中与探测重建两分支共享的读点）。 */
 interface SidecarPayloads {
   state: StateMarker | undefined;
-  aliveData: AliveMarker | undefined;
   /** [UF-1] record 绑定载荷（identity miss 时的身份重建源）。 */
   binding: RecordBinding | undefined;
 }
@@ -481,7 +476,6 @@ function isFreshCache(cached: FileCacheValue, stamps: FileStamps): boolean {
   return (
     sameStamp(cached.jsonl, stamps.jsonl) &&
     sameNullableStamp(cached.state, stamps.state) &&
-    sameNullableStamp(cached.alive, stamps.alive) &&
     sameNullableStamp(cached.binding, stamps.binding)
   );
 }
@@ -499,14 +493,13 @@ function detectIdentity(file: string, size: number): IdentityHeaderRecon | undef
 }
 
 /**
- * sidecar payload 读取（读顺序：终态 marker → alive marker → record 绑定）。
- * 三者都是活态数据，调用方沿用每轮重读语义；终态 marker 静态数据仅在戳非空时读
+ * sidecar payload 读取（读顺序：终态 marker → record 绑定）。
+ * 两者都是活态数据，调用方沿用每轮重读语义；终态 marker 静态数据仅在戳非空时读
  * （文件小，成本可忽略）。
  */
 function readSidecarPayloads(file: string, stamps: FileStamps): SidecarPayloads {
   return {
     state: stamps.state !== null ? readStateMarker(file) : undefined,
-    aliveData: stamps.alive !== null ? readAliveMarker(file) : undefined,
     binding: stamps.binding !== null ? readRecordBinding(file) : undefined,
   };
 }
@@ -1216,7 +1209,8 @@ export class RecordStore {
   }
 
   /**
-   * 孤儿终态恢复：对重建矩阵分支 4 兜底（running 且无 externalInstance）的 record
+   * 孤儿终态恢复：对重建矩阵兜底分支（running 且无异宿主在持声明；编号沿用设计
+   * D3b 文档的「分支 4」表述，分支 3 已随 externalInstance 投影移除）的 record
    * 判定真实终态并落 entry，消除「父扩展死后再无人写终态 → 侧栏永久 running」。
    *
    * 判定（residual-fixes §5.2 三判据 + chat 分流）：
@@ -1242,8 +1236,15 @@ export class RecordStore {
   recoverOrphanRecords(rootSessionFilter?: string, mainSessionFile?: string): void {
     const lastById = new Map(this.scanLastRecordEntries(mainSessionFile).map((r) => [r.id, r]));
     for (const rec of this.reconstructAll(rootSessionFilter)) {
-      // 分支 4 命中集 = running 且无活进程实例（分支 3 带 externalInstance，分支 1/2 已 closed）。
-      if (rec.status !== "running" || rec.externalInstance !== undefined) continue;
+      if (rec.status !== "running") continue; // 分支 1/2 已 closed：无需恢复
+      // [U4a / D3b (a″)] 活实例跳过换 findForeignLiveInstance 现查探针（pid 单判据）：
+      // marker pid 活 = 异宿主在持声明，不可清——boot 误终态化会击穿跨进程写权防御
+      // （同 root 双宿主下宿主 A 会把宿主 B 持有中的 record 直断 gc）。比重建时缓存
+      // 的 externalInstance 更新鲜（resurrect 回边可随时改写 marker）。self-pid 排除下，
+      // pid 复用到本进程的残留 marker 同样放行清理——原持有者已死，record 确为孤儿。
+      if (rec.sessionFile !== undefined && findForeignLiveInstance(rec.sessionFile) !== undefined) {
+        continue;
+      }
       if (this.orphanJudged.has(rec.id)) continue;
       this.orphanJudged.add(rec.id);
       this.finalizeOrphanRecord(rec, lastById.get(rec.id));
@@ -1488,14 +1489,17 @@ export class RecordStore {
   // ── 内部 ──────────────────────────────────────────────────
 
   /**
-   * 四分支状态矩阵重建（终态 marker / alive / 兜底；[perf] light 版）。
+   * 三分支状态矩阵重建（终态 marker / 兜底；[perf] light 版）。
    *
    * 优先级：
    *   1. 终态 sidecar status=cancelled → closed（closedReason=cancelled）
    *   2. 终态 sidecar status=finalized → closed（closedReason=内容 reason；空/旧格式 → disconnected）
    *   （旧名 .finalized/.cancelled 由 readStateMarker 归一，判定分支不区分来源）
-   *   3. .alive + pid 存活 + 未超软超时 → running, externalInstance=true
-   *   4. 兜底（无 marker、pid 死、超时）→ running（v4 B-1 可续聊语义）
+   *   3. 兜底（其余一切，含 .alive 在持形态）→ running（v4 B-1 可续聊语义）
+   *
+   * [U4a / D3b (a)] 原分支 3（.alive + pid 活 → running + externalInstance 投影）已
+   * 移除：探活缓存的读面角色由 (a′)(a″) 的 findForeignLiveInstance 现查探针替代，
+   * status 判定与 .alive 解耦（终态判定由 `.state` 权威分支承接）。
    *
    * [perf]：逐文件 scanFile（stat 戳校验 + 头部 identity 轻量重建）。命中缓存的
    * 文件零文件读取；变化的文件只重建自身，其余 N-1 个复用缓存。
@@ -1507,15 +1511,11 @@ export class RecordStore {
     // [perf] 目录 mtime 快路径：sessionsDir mtime 未变 ⇒ 文件集合与 sidecar 集合都未变
     //（任何文件新建/删除/重命名都改目录 mtime），且 jsonl append 不影响 light 态
     //（identity/status 由首行与 sidecar 决定，进度重数据走 getFullRecord 的独立 stat
-    //校验）→ 跳过 readdir + N×4 statSync，直接复用缓存 light。/subagents overlay 打开
-    //期间 250ms 动画 timer + 120ms debounce 双驱动高频扫描，快路径把 ~N×4 stat 降到
-    // 1 次（目录本身）+ 少量 pid 探活（refreshAlive，内存无 IO）。
+    //校验）→ 跳过 readdir + N×3 statSync，直接复用缓存 light。/subagents overlay 打开
+    //期间 250ms 动画 timer + 120ms debounce 双驱动高频扫描，快路径把 ~N×3 stat 降到
+    // 1 次（目录本身）。
     // 已知局限（与 mtime 缓存同族）：目录 mtime 粒度粗糙的文件系统（NFS/2s FAT）
-    // 可能漏判——APFS 微秒级可靠。invalidate 语义由文件写入侧保证，但**仅限 sidecar
-    // 新建/删除/重命名**（这些操作必改目录 mtime）；覆盖写已存在的 sidecar 不改目录
-    // mtime——`.alive` 覆盖写（resume spawn 后 pid 变化重写 marker）后快路径会复用旧
-    // aliveData（旧 pid/旧 startedAt），refreshAlive 探活与 1h 软超时判定可能滞后一拍
-    //（status 判定不受影响：分支 3 探活失败只清 externalInstance，不改 status）。
+    // 可能漏判——APFS 微秒级可靠。
     let dirMtimeMs: number;
     try {
       dirMtimeMs = fs.statSync(this.sessionsDir).mtimeMs;
@@ -1531,11 +1531,9 @@ export class RecordStore {
       this.indexHigherVersion = loaded.higherVersion;
     }
     if (this.dirStamp !== null && this.dirStamp.mtimeMs === dirMtimeMs) {
-      const now = Date.now();
       const out: SubagentRecord[] = [];
       for (const entry of this.fileCache.values()) {
         if (entry.negative) continue;
-        RecordStore.refreshAlive(entry, now);
         out.push(entry.light);
       }
       return rootSessionFilter === undefined
@@ -1565,10 +1563,9 @@ export class RecordStore {
       }
     }
 
-    const now = Date.now();
     const out: SubagentRecord[] = [];
     for (const file of files) {
-      const entry = this.scanFile(file, now);
+      const entry = this.scanFile(file);
       if (entry) out.push(entry.light);
     }
     this.dirStamp = { mtimeMs: dirMtimeMs };
@@ -1578,14 +1575,14 @@ export class RecordStore {
   }
 
   /**
-   * 扫描单文件：stat 戳（jsonl + 终态 sidecar + alive + record 绑定）校验，全同 →
+   * 扫描单文件：stat 戳（jsonl + 终态 sidecar + record 绑定）校验，全同 →
    * 复用缓存（零文件读取，含负缓存直接返回 null）；否则重建 light。
    * identity 定位两级：头部 64KB（首轮会话）→ 全文 fallback（续聊场景 identity
    * append 在尾部）；两级都找不到 → [UF-1] record 绑定 sidecar 回退（宿主侧身份
    * 载荷重建 light）→ 仍无 → 写负缓存（防每轮全文重读）。
    * 返回 null：文件消失/读失败/无 identity 且无绑定 → 跳过。
    */
-  private scanFile(file: string, now: number): FileCacheEntry | null {
+  private scanFile(file: string): FileCacheEntry | null {
     const jsonl = statStamp(file);
     if (!jsonl) {
       this.fileCache.delete(file);
@@ -1594,16 +1591,12 @@ export class RecordStore {
     const stamps: FileStamps = {
       jsonl,
       state: statStateStamp(file),
-      alive: statStamp(`${file}.alive`),
       binding: statStamp(`${file}${RECORD_BINDING_SIDECAR_EXT}`),
     };
 
     const cached = this.fileCache.get(file);
     if (cached !== undefined && isFreshCache(cached, stamps)) {
       if (cached.negative) return null; // 负缓存命中：确认无 identity，零读取跳过
-      // pid 探活结果不落盘（进程死亡无 IO）——分支 3 的 running 项每扫重查，
-      // 保留原语义（旧实现每次 collectRecords 都重新 isProcessAlive）。
-      RecordStore.refreshAlive(cached, now);
       return cached;
     }
 
@@ -1613,7 +1606,7 @@ export class RecordStore {
     // [UF-1] 绑定 sidecar 存在的文件跳过索引投影：SessionsIndexEntry 不含
     // chatMode/round（身份域子集），索引命中会把绑定承载的对话形态域抹成 undefined。
     if (stamps.binding === null) {
-      const fromIndex = this.buildEntryFromIndex(file, stamps, now);
+      const fromIndex = this.buildEntryFromIndex(file, stamps);
       if (fromIndex !== undefined) return fromIndex;
     }
 
@@ -1633,7 +1626,7 @@ export class RecordStore {
       this.fileCache.set(file, { negative: true, ...stamps });
       return null;
     }
-    const entry = RecordStore.buildFileCacheEntry(base, file, stamps, payloads, now);
+    const entry = RecordStore.buildFileCacheEntry(base, file, stamps, payloads);
     // [UF-1] 绑定承载的对话形态域补投影：IdentityHeaderRecon 无 round 槽位
     //（既有语义：identity entry 磁盘重建不恢复 round），绑定路径在其上恢复——
     // 续聊轮数随绑定快照可滞后一拍（state-marker.RecordBinding.round 契约）。
@@ -1688,14 +1681,14 @@ export class RecordStore {
 
   /**
    * [perf L-1] 磁盘索引查询（首扫惰性装载，miss/空索引时 get 恒 undefined = 无索引）。
-   * 条目戳匹配 jsonl 当前 stat → 零内容读取构造缓存条目。sidecar payload（终态 marker /
-   * alive）是活态数据，沿用探测分支的每轮重读语义；终态 reason 静态数据仅在
-   * sidecar 存在时读一次（文件小，成本可忽略）。
+   * 条目戳匹配 jsonl 当前 stat → 零内容读取构造缓存条目。sidecar payload（终态 marker）
+   * 是活态数据，沿用探测分支的每轮重读语义；终态 reason 静态数据仅在 sidecar 存在
+   * 时读一次（文件小，成本可忽略）。
    *
    * 返回 undefined = 索引未命中/戳不匹配（调用方落到原三级探测）；null = 负条目命中
    * （「确认无 identity」跨实例持久，零探测跳过，与内存负缓存同款形态）。
    */
-  private buildEntryFromIndex(file: string, stamps: FileStamps, now: number): FileCacheEntry | null | undefined {
+  private buildEntryFromIndex(file: string, stamps: FileStamps): FileCacheEntry | null | undefined {
     if (this.indexEntries === null) return undefined;
     const hit = this.indexEntries.get(path.basename(file));
     if (hit === undefined || hit.mtimeMs !== stamps.jsonl.mtimeMs || hit.size !== stamps.jsonl.size) {
@@ -1719,7 +1712,6 @@ export class RecordStore {
       file,
       stamps,
       payloads,
-      now,
     );
     this.fileCache.set(file, entry);
     this.idToFile.set(hit.id, file);
@@ -1806,7 +1798,7 @@ export class RecordStore {
   findLightById(id: string): SubagentRecord | undefined {
     const file = this.idToFile.get(id);
     if (!file) return undefined;
-    return this.scanFile(file, Date.now())?.light;
+    return this.scanFile(file)?.light;
   }
 
   /**
@@ -1825,17 +1817,15 @@ export class RecordStore {
 
     const file = this.idToFile.get(id);
     if (!file) return undefined;
-    const entry = this.scanFile(file, Date.now());
+    const entry = this.scanFile(file);
     if (!entry) return undefined;
     if (entry.full === undefined) {
       const recon = reconstructFromFile(file);
       if (recon) {
         entry.full = RecordStore.buildRecord(recon, {
           state: entry.stateMarker,
-          alive: entry.aliveData,
           jsonlMtimeMs: entry.jsonl.mtimeMs,
           fullEndedAt: recon.endedAt,
-          now: Date.now(),
         });
       } else {
         entry.full = entry.light; // 哨兵：无详情可补，后续直取 light（戳变化时重置重试）
@@ -1844,43 +1834,27 @@ export class RecordStore {
     return entry.full;
   }
 
-  /** alive 探活刷新（scanFile 缓存命中与 reconstructAll 快路径共用）：
-   *  分支 3 的 running + alive 条目每扫重查 pid（结果不落盘，进程死亡无 IO），
-   *  保留旧实现「每次 collectRecords 重新 isProcessAlive」的语义。 */
-  private static refreshAlive(entry: FileCacheEntry, now: number): void {
-    if (entry.alive === null || entry.light.status !== "running") return;
-    const marker = entry.aliveData;
-    if (!marker) return;
-    const live = isProcessAlive(marker.pid) && now - marker.startedAt < ALIVE_SOFT_TIMEOUT_MS;
-    entry.light.externalInstance = live ? marker : undefined;
-  }
-
   /** identity 基底 + sidecar 状态矩阵 → 缓存条目（索引命中与探测重建两分支的公共装配点）。 */
   private static buildFileCacheEntry(
     base: IdentityHeaderRecon,
     file: string,
     stamps: FileStamps,
     payloads: SidecarPayloads,
-    now: number,
   ): FileCacheEntry {
     return {
       light: RecordStore.buildRecord(base, {
         state: payloads.state,
-        alive: payloads.aliveData,
         jsonlMtimeMs: stamps.jsonl.mtimeMs,
-        now,
       }),
       full: undefined,
       jsonl: stamps.jsonl,
       state: stamps.state,
-      alive: stamps.alive,
       binding: stamps.binding,
       stateMarker: payloads.state,
-      aliveData: payloads.aliveData,
     };
   }
 
-  /** identity 基底（头部 light 或全量 recon）+ 四分支状态矩阵（终态 marker / alive / 兜底）→ SubagentRecord。 */
+  /** identity 基底（头部 light 或全量 recon）+ sidecar 状态矩阵（终态 marker / 兜底两态）→ SubagentRecord。 */
   private static buildRecord(
     base: IdentityHeaderRecon | ReconstructedRecord,
     m: SidecarMatrix,
@@ -1972,17 +1946,11 @@ export class RecordStore {
       // 文件不再变化，误差 <1s），避免重建后耗时随墙钟无限增长。
       rec.endedAt = m.fullEndedAt ?? m.jsonlMtimeMs;
     }
-    // ── 分支 3: .alive + pid 存活 + 未超软超时 ──
-    else if (
-      m.alive !== undefined &&
-      isProcessAlive(m.alive.pid) &&
-      m.now - m.alive.startedAt < ALIVE_SOFT_TIMEOUT_MS
-    ) {
-      markReconstructedStatus(rec, "running");
-      rec.externalInstance = m.alive;
-    }
-    // ── 分支 4: 兜底（都无 / .alive 但 pid 死 / 超时）──
+    // ── 分支 4: 兜底（其余一切——无 sidecar / .alive 在持 / pid 死）──
     // v4 B-1：跨重启可续聊态落点 = running。endedAt 保持 undefined（非终态）。
+    // [U4a / D3b (a)] 原分支 3（.alive + pid 活 → running + externalInstance 投影）
+    // 已移除：非终态统一落此兜底，探活读面由 (a′)(a″) findForeignLiveInstance
+    // 现查探针承担（防御保留、数据源换新——fork-from 守卫与孤儿恢复跳过）。
     else {
       markReconstructedStatus(rec, "running");
     }

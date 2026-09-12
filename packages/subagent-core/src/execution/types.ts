@@ -852,8 +852,6 @@ export interface SubagentRecord {
    * （轮终 idle / 重建孤儿兜底），GUI 侧据此排除「真在跑」判定。
    */
   resumable?: boolean;
-  /** 外部 Pi 实例（进程隔离模式下由外部启动的子进程）。 */
-  externalInstance?: AliveMarker;
   /** fork 模式下的 worktree handle。 */
   worktreeHandle?: WorktreeHandle;
   /**

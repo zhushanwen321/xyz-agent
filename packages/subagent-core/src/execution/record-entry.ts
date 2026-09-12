@@ -31,10 +31,11 @@ export const SUBAGENT_RECORD_CUSTOM_TYPE = "subagent-record";
  * `subagent-record` entry 的 data schema（v1）。
  *
  * = 完整 SubagentRecord 快照（GUI 侧列表/详情需要的全部持久化字段）+ 版本号。
- * 显式排除三个非持久化字段（与 SubagentRecord 的差集）：
+ * 显式排除两个非持久化字段（与 SubagentRecord 的差集）：
  *   - currentActivity：running 时的瞬时流态，重开 session 无重建价值；
- *   - externalInstance：跨重启探活态（pid/startedAt），由 .alive sidecar 重建；
  *   - worktreeHandle：不可 JSON 序列化的运行时句柄（布尔投影 worktree 保留）。
+ *（[U4a / D3b (a)] externalInstance 投影已随字段链删除——探活态由 .alive sidecar
+ * 现查探针承担，不再进 record 快照。）
  *
  * undefined 字段经 JSON.stringify 自然缺省（与 SubagentRecord 重建侧语义一致）。
  *
