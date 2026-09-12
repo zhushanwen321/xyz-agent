@@ -13,10 +13,12 @@ import { describe, it, expect, beforeEach } from 'vitest'
 import { createPinia, setActivePinia } from 'pinia'
 import { ref } from 'vue'
 import { useSidebarCounts } from '@/composables/features/sidebar/useSidebarCounts'
+import { useSessionStore } from '@/stores/session'
 import { useSubagentStore } from '@/stores/subagent'
+import { toggleMarkedDone, __resetCacheForTest } from '@/composables/useSessionMarkers'
 import { countSubagents } from '@/lib/subagent-bucket'
 import { SUBAGENT_RECORD_CUSTOM_TYPE } from '@xyz-agent/shared'
-import type { SubagentRecord } from '@xyz-agent/shared'
+import type { SessionGroup, SessionSummary, SubagentRecord } from '@xyz-agent/shared'
 // R3-1④：跨包消费 runtime extractor 真实投影产物构造 fixture——手工拼 SubagentRecord
 // 会掩盖 runtime 投影白名单断链（origin 恒 undefined 时下游过滤用例照样绿，假绿）。
 // 投影白名单删 origin 时本文件的投影断言与下游过滤断言共同转红（红锚联动）。
@@ -181,5 +183,76 @@ describe('useSidebarCounts × runtime extractor 真实投影产物（R3-1④/R3-
 
     const counts = useSidebarCounts(sid)
     expect(counts.subagentList.value.map((r) => r.subagentId)).toEqual(['bg-list-legacy'])
+  })
+})
+
+// ── sessionCount（设计 sidebar-tab-count-restore §2.3 口径表第 1 行 / §3.1 终态）──
+// 口径 = 侧边栏全量会话数 − 已归档（markedDone）数；死会话计入；全局口径不随焦点变化。
+// markers 隔离：useSessionMarkers 是模块级 cache + localStorage 持久化，跨用例残留会污染
+// 归档断言——沿用 useSessionMarkers.test.ts 的隔离模式（localStorage.clear + __resetCacheForTest）。
+describe('useSidebarCounts sessionCount（sidebar-tab-count-restore 口径）', () => {
+  const MARKERS_STORAGE_KEY = 'xyz-agent:session-markers'
+
+  function makeSummary(id: string, status: SessionSummary['status'] = 'idle'): SessionSummary {
+    return { id, label: id, cwd: '/proj', status, lastActiveAt: 1, modelId: 'm1', tokenCount: 0 }
+  }
+
+  function seedSessions(sessions: SessionSummary[]): void {
+    useSessionStore().applySnapshot({ groups: [{ cwd: '/proj', sessions }] } satisfies SessionGroup[])
+  }
+
+  beforeEach(() => {
+    localStorage.clear()
+    __resetCacheForTest()
+  })
+
+  it('无归档时 = session.list 长度；列表为空 → 0', () => {
+    const sid = ref<string | null>('sess-count-a')
+    const counts = useSidebarCounts(sid)
+
+    // 空列表（加载失败 / 未加载时 groups 为空同形态）→ 0
+    expect(counts.sessionCount.value).toBe(0)
+
+    seedSessions([makeSummary('s1'), makeSummary('s2'), makeSummary('s3')])
+    expect(counts.sessionCount.value).toBe(3)
+  })
+
+  it('归档一条后 −1，取消归档恢复（markers cache 响应式联动）', () => {
+    const sid = ref<string | null>('sess-count-b')
+    seedSessions([makeSummary('s1'), makeSummary('s2'), makeSummary('s3')])
+
+    const counts = useSidebarCounts(sid)
+    expect(counts.sessionCount.value).toBe(3)
+
+    // 写入口 = useSessionMarkers.toggleMarkedDone（SessionItem Archive 按钮同源链路），
+    // 替换 cache.value 触发 computed 重算
+    toggleMarkedDone('s2')
+    expect(counts.sessionCount.value).toBe(2)
+
+    toggleMarkedDone('s2')
+    expect(counts.sessionCount.value).toBe(3)
+  })
+
+  it('死会话（dead）计入——侧边栏列表仍渲染（置灰降权），数字与列表一致不穿帮', () => {
+    const sid = ref<string | null>('sess-count-c')
+    seedSessions([makeSummary('s1', 'dead'), makeSummary('s2', 'idle'), makeSummary('s3', 'idle')])
+
+    const counts = useSidebarCounts(sid)
+    expect(counts.sessionCount.value).toBe(3)
+  })
+
+  it('markers 未 hydrate 首读正确：localStorage 已有归档标记，首次计算即扣减', () => {
+    // beforeEach 已 __resetCacheForTest（hydrated=false），此处先落盘再读——
+    // 走 isMarkedDone → ensureCache 的首次 hydrate 路径，不允许依赖任何前置读取
+    localStorage.setItem(
+      MARKERS_STORAGE_KEY,
+      JSON.stringify({ s2: { markedDone: true }, s1: { unread: true } }),
+    )
+    seedSessions([makeSummary('s1'), makeSummary('s2'), makeSummary('s3')])
+
+    const sid = ref<string | null>('sess-count-d')
+    const counts = useSidebarCounts(sid)
+    // 仅 s2 markedDone 扣减；s1 只 unread 不影响归档口径
+    expect(counts.sessionCount.value).toBe(2)
   })
 })

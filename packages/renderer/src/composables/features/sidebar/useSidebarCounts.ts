@@ -1,27 +1,43 @@
 /**
  * useSidebarCounts —— Sidebar tab 计数（从 Sidebar.vue 提取，减行用）。
  *
- * 职责：fileTree / subagent / workflow 在当前焦点 session 下的计数 computed，
- * 供 SegmentedTab 渲染数量徽标 + SubagentList/WorkflowList 列表数据。
+ * 职责：session（全局）+ fileTree / subagent / workflow（焦点 session）的计数 computed，
+ * 供 SegmentedTab 渲染计数数字 + SubagentList/WorkflowList 列表数据。
  *
- * 依赖 fileTreeStore / subagentStore / workflowStore / panelStore（pinia 单例 store，
- * composable 内部安全调用）。focusedSessionId 由调用方注入（来自 useSidebar）。
+ * 依赖 sessionStore / fileTreeStore / subagentStore / workflowStore / panelStore
+ * （pinia 单例 store，composable 内部安全调用）+ useSessionMarkers.isMarkedDone
+ * （模块级响应式 Map cache）。focusedSessionId 由调用方注入（来自 useSidebar）。
  */
 import { computed } from 'vue'
 import type { Ref } from 'vue'
 import { useFileTreeStore } from '@/stores/fileTree'
 import { usePanelStore } from '@/stores/panel'
+import { useSessionStore } from '@/stores/session'
 import { useSubagentStore } from '@/stores/subagent'
 import { useWorkflowStore } from '@/stores/workflow'
+import { isMarkedDone } from '@/composables/useSessionMarkers'
 import { subagentBucket } from '@/lib/subagent-bucket'
 
 export function useSidebarCounts(focusedSessionId: Ref<string | null>) {
+  const sessionStore = useSessionStore()
   const fileTreeStore = useFileTreeStore()
   const panelStore = usePanelStore()
   const subagentStore = useSubagentStore()
   const workflowStore = useWorkflowStore()
 
-  /** tab 计数（fileTree / subagent / workflow） */
+  /** tab 计数（session / fileTree / subagent / workflow） */
+  // session tab 计数（设计 sidebar-tab-count-restore §2.3 口径表第 1 行 / §3.1 终态）：
+  // 侧边栏全量会话数 − 已归档（markedDone）数。为什么是全局口径（不按焦点 session 过滤）：
+  // 会话 tab 列表 = 全局列表，数字与列表一致才不穿帮；死会话（dead）计入——列表仍渲染
+  // （置灰降权），数字跟随列表。session 列表为空 / listLoadError 时 groups 为空 → 0，
+  // 错误态由列表区错误卡承载，计数不重复报错。
+  // 为什么 computed 内逐条调 isMarkedDone：markers 是模块级响应式 Map cache，读 cache.value
+  // 即建立依赖，归档 toggle / session 列表广播（groups 变化）任一变化都触发重算；O(n) 遍历
+  // + Map 查询（n = 侧边栏会话数，§3.3 性能账 <0.1ms），不加索引/缓存层（决策 3）。
+  const sessionCount = computed(() => {
+    const sessions = sessionStore.list
+    return sessions.length - sessions.filter((s) => isMarkedDone(s.id)).length
+  })
   const fileCount = computed(() => {
     const sid = focusedSessionId.value
     if (!sid) return 0
@@ -65,6 +81,7 @@ export function useSidebarCounts(focusedSessionId: Ref<string | null>) {
   )
 
   return {
+    sessionCount,
     fileCount,
     subagentCount,
     subagentRunningCount,

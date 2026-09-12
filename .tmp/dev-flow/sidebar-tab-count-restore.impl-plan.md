@@ -45,13 +45,15 @@ graph LR
 
 ## 5 合理偏差登记表
 
-（空）
+| Unit | 偏差 | 判定 |
+|------|------|------|
+| u-counts | useSidebarCounts.ts 文件头注释同步更新（补 session 全局口径 + useSessionMarkers 依赖描述） | 合理：注释级偏离不改口径，新增计数后不同步会误导 |
 
 ## 6 状态表
 
 | Unit | 状态 | 轮次 | 证据指针 |
 |------|------|------|----------|
-| u-counts | pending | 0 | — |
+| u-counts | committed | 1 | 主 agent 核验：领地 2 文件吻合；vitest 13/13 绿（useSidebarCounts.test.ts）；合理偏差 1 条已登记（§5） |
 | u-display | pending | 0 | — |
 
 ## 7 残留风险与变更历史
