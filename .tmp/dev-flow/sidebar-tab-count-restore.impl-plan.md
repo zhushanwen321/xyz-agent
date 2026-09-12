@@ -1,6 +1,6 @@
 # sidebar-tab-count-restore 实施计划
 
-基线: （本文件 commit 后回填） | 来源设计: docs/design/sidebar-tab-count-restore.md | 日期: 2026-09-12
+基线: 935612f8f | 来源设计: docs/design/sidebar-tab-count-restore.md | 日期: 2026-09-12
 
 ## 0 章节映射
 
