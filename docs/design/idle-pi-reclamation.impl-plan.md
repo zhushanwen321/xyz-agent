@@ -147,3 +147,4 @@ graph TD
 - 48927ed6b design-code-sync round 2 复审决议（0 must-fix；2 suggestions + 1 info）——变更历史排序声明修正（「按提交序」→「按主题分批，批内提交序」+ 批内真序重排）、D3 归属表悬空符号 registerSession → getOrCreateDelivery、变更历史补 b930bc28d 节点。
 - 30b24a52a design-code-sync round 3 全量再审查修复（16 findings：4 must-fix / 7 suggestion / 5 info，三分区 reviewer 聚合，全 doc/注释侧零行为改动）——设计文档：useChat 锚点重定位至 core ensureStreamSubscription、message-bus 行号刷新、sendRaw 口径改写（extension_ui_response 无回执生产通道）、归属表补 respawn.cancel 行、P1/P3/P6 探针状态按 Gate B 证据回写（P4 部分闭环，relay 真机腿归 V6）、§5 检查点收窄；impl-plan：变更历史补本行前两 commit、u3 拆分指针、P7 注释坐标刷新；session-lifecycle.ts 注释（⑥a/⑥b 标号 + SIGCONT 前置）。
 - （本行所在 commit）round 3 聚焦复审收尾——主 agent 亲为（两次 subagent 派发均被限流击杀）：16/16 真修复核验 + 补登 30b24a52a 变更历史 + §0 映射表检查点口径随 §5 收窄同步。
+- e0f72d89f 跨线修订（crash-forensics 线，2026-09-11 20:12）：设计 D7 台账事件名 `pi-reclaimed` → `reclaimed` 对齐 crash-forensics-and-watchdog.md §3.3 D1 event 闭合枚举——本 impl-plan 未涉，随 crash 线 CRASH_JOURNAL_KNOWN_REASONS 扩充（6→27）同 commit 回写设计文档。

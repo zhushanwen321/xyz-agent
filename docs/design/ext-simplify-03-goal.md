@@ -35,7 +35,7 @@
 **Out-of-scope**：
 - **isGui 四分支组合 helper**（todo+goal 跨包同构）：修复点在 extension-protocol（设计 13 裁决）。本包消费侧配合点：`updateWidget`（widget.ts:235-260）与 `setGuiWidget`/`isGui` 断言注释（adapters/ports.ts:60-77）在 UiPort 接口收敛时的联动——设计 13 落地时本包只改消费代码，不再动接口定义。
 - **rename-session 的 `TurnEndLikeEvent`**：审计称「复用 goal 的 TurnEndLikeEvent」**不成立**——实读证实它是 rename-session 本地独立定义（rename-session/src/index.ts:17，读 `message.stopReason`、带 `& object` 逆变考量），与 goal 无 import 关系。归设计 15。
-- **engine/projection 其余 low 发现**（getBudgetColor 单位口径、状态后缀双份、slug fallback 双口径、90% 通知 else-if 时序、DEFAULT_BUDGET 空展开、getElapsedSeconds 转发、renderProgressBar width 参数）：不在本次任务覆盖清单，移交后续 code-simplify 批次；其中 DEFAULT_BUDGET（engine/types.ts:44）与 M14 同文件，实现期触达时可顺带删除，不单独立单元。
+- **engine/projection 其余 low 发现**（getBudgetColor 单位口径、状态后缀双份、slug fallback 双口径、90% 通知 else-if 时序、DEFAULT_BUDGET 空展开、getElapsedSeconds 转发、renderProgressBar width 参数）：不在本次任务覆盖清单，移交后续 code-simplify 批次；其中 DEFAULT_BUDGET（engine/types.ts:44）与 M14 同文件，实现期触达时可顺带删除，不单独立单元（实施注记：u3 触达 types.ts 时未顺带删除，现随本清单其余 low 项一并归 code-simplify 移交）。
 - **message renderer 的 `LikeCustomMessage`/`LikeMessageRenderOptions` 消费逻辑**：只换类型不动渲染行为。
 
 ## 3. 现状：使用者与维护者眼下是什么样的

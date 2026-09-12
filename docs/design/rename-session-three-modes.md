@@ -141,7 +141,7 @@ rename 落库后的完整链路与断点：
 
 #### D4：显示层扇出修复（选定：onSessionRenamed 补 broadcastSessionList + 空 label 回落）
 
-- **采用**：runtime 组合根 `onSessionRenamed`（index.ts:380-386）在 `setLabelCache` 后追加 `broadcastSessionList()`——行为契约对齐手动 rename（session-message-handler.ts:674）。活跃 session 的内存 label 已新鲜（broadcast 现算直读内存），非活跃 session 靠磁盘扫描且 metaCache 键 `(mtime,size)` 因 session_info 追加自然失效。同批顺手修：`name === undefined`（pi 清名事件）时 `setLabelCache(sid, '')` 会把 label 置空串——改为回落 basename 派生（复用 session-lifecycle.ts:361-365 语义），保持与 scanner 兜底一致。
+- **采用**：处理体见 `packages/runtime/src/services/session/session-rename-fanout.ts`（`createSessionRenamedHandler`，组合根 index.ts :558 接线），先 `setLabelCache` 后 `broadcastSessionList()`——行为契约对齐手动 rename（session-message-handler.ts:703）。活跃 session 的内存 label 已新鲜（broadcast 现算直读内存），非活跃 session 靠磁盘扫描且 metaCache 键 `(mtime,size)` 因 session_info 追加自然失效。同批顺手修：`name === undefined`（pi 清名事件）时 `setLabelCache(sid, '')` 会把 label 置空串——改为回落 basename 派生（回落实现同在 session-rename-fanout.ts，与 scanner 兜底及 create/fork 初始 label 同语义）。
 - **覆盖面限定（已核实）**：修复覆盖 **xyz-agent 管理的 pi 进程内**的全部 rename 来源——三模式自动、rename_session 工具、GUI 手动（经 runtime RPC）、以及任何该进程内 `setSessionName` 调用（统一走 `session_info_changed` 事件）。**已知边界**：xyz session 目录外的进程写入（原生 pi TUI `/name`、`pi --name` CLI）不产生 xyz 可见事件——xyz 数据目录隔离（独立 `--session-dir` + `PI_CODING_AGENT_DIR`）使常规场景不触发；显式指向共享目录的高级场景靠懒收敛兜底（下次任意整表广播时 metaCache 因 mtime 变化失效带出新名）。
 - **连带量级声明**：GUI 手动 rename 路径此后每次产生 **2 次**整表广播（handler 显式调用 + 事件回调追加，毫秒级间隔）——renderer 侧 `mergeViewSnapshot` scan 来源分流守卫幂等无风暴，手动 rename 为低频操作，判定可接受；「收敛为事件单源（删 handler 显式调用）」登记为未来清理项，本期不动（避免与 D4 修复耦合回归面）。
 - **被否**：① 保留定向帧即可——多窗口/订阅驱逐窗口收不到，结构性缺口；② fs watch session 目录——事件桥已存在，纯增复杂度；③ broadcast 防抖——rename 是低频事件（手动 rename 路径同样每次广播），16 处先例均无防抖。

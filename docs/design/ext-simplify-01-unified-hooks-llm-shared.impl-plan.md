@@ -65,7 +65,7 @@
 
 | # | 条款 | 命令/判据 | 覆盖 |
 |---|---|---|---|
-| A1 | 登记/代码面命中 ⊆ 白名单 | `rg -l "unified-hooks" --glob '!**/*.md' --glob '!docs/**'` 命中集合 = 恰 11 项（现状 19 实测，本次起草复核）：extension-logger/src/index.ts、bte 6 文件（bash-tool.ts / force-patterns.ts / index.ts / tool-error-audit.ts / __tests__/force-patterns.test.ts / __tests__/tool-error-audit.test.ts）、subagent-workflow 2 文件（index.ts / injectors/subagent-list-injector.ts）、runtime/scripts/record-get-entries-fixtures.mjs、shared/mandatory-extensions.json | 场景 1 第一条 |
+| A1 | 登记/代码面命中 ⊆ 白名单 | `rg -l "unified-hooks" --glob '!**/*.md' --glob '!docs/**'` 命中集合 = 恰 11 项（现状 19 实测，本次起草复核；后续批次 95a40bc81——14 号 stage-6 sync——将 extension-logger JSDoc 举例移出 "unified-hooks" 字样，该文件退出命中集，**现基数 10 项**，2026-09-12 实跑复核）：extension-logger/src/index.ts（已退出，95a40bc81）、bte 6 文件（bash-tool.ts / force-patterns.ts / index.ts / tool-error-audit.ts / __tests__/force-patterns.test.ts / __tests__/tool-error-audit.test.ts）、subagent-workflow 2 文件（index.ts / injectors/subagent-list-injector.ts）、runtime/scripts/record-get-entries-fixtures.mjs、shared/mandatory-extensions.json | 场景 1 第一条 |
 | A2 | 登记文件零命中 | `rg "unified-hooks" extension-dependencies.json pnpm-lock.yaml` 零命中 | 场景 1 第二条 |
 | A3 | changeset config 零命中（hidden 守门，勿省略） | `rg "pi-unified-hooks" .changeset/config.json` 零命中（显式路径下 rg 不跳过 hidden，现状命中 :21） | 场景 1 第三条 |
 | A4 | 目录消失 | `ls extensions/universal/ \| grep unified-hooks` 零输出 | E1 / 场景 1 |

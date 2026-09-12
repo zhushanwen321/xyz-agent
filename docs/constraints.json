@@ -2319,7 +2319,7 @@
       "summary": "runtime checkpoint 五契约（crash-forensics D3/D5）：①删除属主双轨——main 在 app 退出链删（before-quit 专属 await 链成功段确认 child exit 事件后执行，stop() reject/killed 短路跳过；liveness 强杀重启与滚动重启都不删），新 runtime reattach 编排在全部尝试完后删；runtime 自身任何退出路径一律不删（SIGINT/SIGTERM/uncaughtException 三源共用 shutdown 序，「app 级识别信号」不存在）；②marker 与 checkpoint 解耦——run/main-running.marker 语义 =「main 存活」挂 will-quit 无条件清；冷启动可信度判定在 main 侧（consumeResidualRunMarker 补记 unclean-exit → resolveColdStartTrust 三态：只有 unclean 才可信，clean exit 但残留 → 忽略 + 隔离进 checkpoint-failed-<ts> 家族 + 记 reattach-skipped，隔离 rename 同域失败 ENOENT=已隔离 / EACCES=原地残留幂等静默）；③完整性 = 原子写 tmp+rename，解析失败记 checkpoint-corrupt 一次并退 lazy 恢复；④失败现场 checkpoint-failed-<ts> 保留最近 3 份新覆盖旧；⑤风暴防护与收割时序 = 分批并发 2 + 高水位延迟（即时系统级 memPressure 查询，不依赖采样环历史）+ live 孤儿必须等收割完成后再 spawn（宁 lazy 不双持）",
       "scope": [
         "packages/runtime/src/services/session/runtime-checkpoint.ts",
-        "packages/runtime/src/services/session/startup-reattach.ts",
+        "packages/runtime/src/services/startup-reattach.ts",
         "packages/runtime/src/services/session/session-service.ts",
         "packages/runtime/src/services/session/idle-pi-reaper.ts",
         "apps/electron/main/main.ts"
@@ -2385,7 +2385,7 @@
     },
     {
       "id": "C-proc-20",
-      "summary": "孤儿收割判据 v2 marker 化（crash-forensics D1 reaped 行）：收割候选清单 = 组合根注入 readSpawnMarkerList（run/pi-spawn-markers.json，port 纪律——reap-orphan-pi 不自行拼路径），命中 = marker 清单 ∩ argv 匹配 ∩ ppid===1 合取（ppid=1 是 reparent 证据、跨实例保护的关键防线——本机打包版与 dev 并存时对方活跃 pi ppid=对方 runtime pid，必须不杀）；v1「--session-dir 精确相等」argv 口径已被取代，禁回退（残留 v1 文案 = 已登记正名待办）；单实例锁不承担误杀防线职责的分工不变",
+      "summary": "孤儿收割判据 v2 marker 化（crash-forensics D1 reaped 行）：收割候选清单 = 组合根注入 readSpawnMarkerList（run/pi-spawn-markers.json，port 纪律——reap-orphan-pi 不自行拼路径），命中 = marker 清单 ∩ argv 匹配 ∩ ppid===1 合取（ppid=1 是 reparent 证据、跨实例保护的关键防线——本机打包版与 dev 并存时对方活跃 pi ppid=对方 runtime pid，必须不杀）；v1「--session-dir 精确相等」argv 口径已被取代，禁回退（v1 残留文案已正名为 v2 判据描述，2026-09-12）；单实例锁不承担误杀防线职责的分工不变",
       "scope": [
         "packages/runtime/src/services/reap-orphan-pi.ts",
         "packages/runtime/src/infra/pi/spawn-markers.ts",

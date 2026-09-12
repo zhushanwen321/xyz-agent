@@ -157,7 +157,7 @@ README.md 同样写「跳跃 = 中间有无变化 turn 或漏记」。消费端�
 
 - **采用**：①extension-logger 头注释显式声明 size 豁免与依据（进程短命 + 7 天保留期 + DEBUG 档系开发者主动排障；执行项 E13），接受代价四要素见 §7；②「三通道」描述修正（index.ts:12-17 注释 + package.json description 改为如实表述「实装两通道封装，第三通道留给 pi 原生」；执行项 E10）；③「参数漂移破坏互斥」注释修正（同款失准活注释共四处：extensions file-lock.ts:64-65、runtime utils/file-lock.ts:56-60、subagent-core worktree-registry.ts:42-44（在 E12① 要改写的注释块内，随其同口径修正）、runtime parity 测试头注释 :5；执行项 E5 + E12①）：互斥由 lockfile 路径 + mkdir 原子协议保证，默认值对齐的意义是两侧夺取时机（stale）与失败速度（重试参数）行为一致，parity 测试锚定防无意识漂移。三个子项逐一对应执行项（E13/E10/E5），①此前仅在正文声明、无执行项承载，第 1 轮补齐。
 - **被否**：**实装单文件 size cap**——需要轮转命名变体，而清理逻辑的文件名 regex（index.ts:385 `/^.+-\d{4}-\d{2}-\d{2}\.log$/`）不匹配带序号的轮转文件，须联动改造清理规则；为低风险场景引入机制链，成本显著大于收益。
-- **证据**：fileLog 实读 index.ts:422-442（仅 date 分文件 + 7 天 mtime 清理，无 size 逻辑）；EXT_LOG=1 由 runtime rpc-client 托管注入（真实触发场景）；pi 进程每 session 短命（extension-logger index.ts:76-77 注释自证该模型）。
+- **证据**：fileLog 实读 index.ts:422-442（仅 date 分文件 + 7 天 mtime 清理，无 size 逻辑）；`XYZ_AGENT_EXT_LOG=1` 由 runtime rpc-client 托管注入（真实触发场景，env 名实装恒为 `XYZ_AGENT_EXT_LOG`——extension-logger/src/index.ts:15/:51/:354，注入点 packages/runtime/src/infra/pi/rpc-client.ts:196）；pi 进程每 session 短命（extension-logger index.ts:76-77 注释自证该模型）。
 - **效果**：目标 2；F4 消灭；与项目「date + size 双策略」日志规范的差异从「无声明」变为「有依据的显式豁免」。
 
 ### 5.5 执行项总表
