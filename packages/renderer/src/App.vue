@@ -62,6 +62,7 @@ import { bindHandoffEffect } from '@/composables/effects/useHandoffEffect'
 import { bindSessionStreamSync } from '@/composables/effects/useSessionStreamSync'
 import { useCompactQueue } from '@/composables/panel/useCompactQueue'
 import { installInboundFrameGuard, uninstallInboundFrameGuard } from '@/composables/useInboundFrameGuard'
+import { useMemoryPressure } from '@/composables/useMemoryPressure'
 import { hydrateStreamingIdleTimeout } from '@/composables/features/chat/streaming-idle-hydration'
 
 // 应用挂载（onMounted bootstrap 第 2 步）即提交连接编排（mock 模式 200ms 直进 connected；真 runtime 走端口发现）。
@@ -103,6 +104,12 @@ bindSessionStreamSync()
 // 首次调用绑定 app 级 scope（onScopeDispose 随 App 卸载触发，registerSessionCleanup 常驻，
 // 防模块级 onScopeDispose 警告与过早反注册）。
 useCompactQueue()
+// 内存压力降级消费（crash-forensics-and-watchdog §3.3 D4，u7d / 偏差 #28② 的 renderer 半边）：
+// 窗口级单例挂载（refCount 订阅，onScopeDispose 随 App 卸载退订）——订阅 watchdog:memoryPressure，
+// warn 持续拍压窗 LRU 8→4 + evictIfNeeded 驱逐。Gate W 默认 off 时 runtime 不广播、零成本待命。
+// 【oe-audit C2】此前全链零装配（hook 零调用方 = 双重休眠，impl-plan u7d「经 useRollingRestartStatus
+// 引用链生产挂载」登记失实——该文件仅注释引用范式）；本挂载补齐生产消费方。
+useMemoryPressure()
 // 入站超界帧守卫消费编排（crash-forensics-and-watchdog §3.3 D8）：模块级单例（状态源在
 // core ws-client），幂等安装一次——丢帧上报 + 终止阀静态提示态投影 + 切走切回重试订阅。
 // App setup 顶层装配（与 bindForkNoticeEffect 同区），teardown 在 onBeforeUnmount 配对；
