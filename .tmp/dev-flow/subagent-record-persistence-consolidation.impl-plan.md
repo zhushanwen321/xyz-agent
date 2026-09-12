@@ -150,7 +150,17 @@ graph TD
 7. findForeignLiveInstance 移除 now 形参（软超时退役后死参）
 8. 领地裁量：cold-lookup.test.ts 两例模拟手法修复（A4 self-pid 排除使 process.pid 模拟失义，改 FOREIGN_LIVE_PID=1；源码未动，断言语义零变化）
 
-**U1 连带回归挂账**：extensions/universal/subagent-workflow/src/__tests__/transparent-resume.test.ts:315「异进程活实例→拒绝」失败（同因：process.pid 模拟失义）——挂 U4b 领地一并修复（同族探针测试适配）。
+**U1 连带回归挂账**：extensions/universal/subagent-workflow/src/__tests__/transparent-resume.test.ts:315「异进程活实例→拒绝」失败（同因：process.pid 模拟失义）——**已收账（U4b committed 2589cd38c）**。
+
+**U3（轮 1，2026-09-12）**——dev 报备 + 协调者核验接受，阶段 3 终裁：
+1. 领地超出计划登记：批写点实体在 service/sync-collect-domain.ts（H3 拆分迁入，计划 U3 领地登记滞后；writeBatchMemberManifest 本体是该文件私有方法非 manifest-store.ts）——按 task 语义定位授权迁入
+2. **flushBatch 源序翻转**：「屏障→写账→落标」变「落标（markBatchFinalized 合一原语）→写账（notifyBatch）」——构造性 barrier 优先于幂等窗口源序；代价 = markBatchFinalized 返回到写账完成间微任务级崩溃窗内通知不再由 E1 补发（旧对称窗内是 at-least-once 良性）；accepted=false 形态幂等覆写无差异。**行为语义变化，阶段 3 重点终裁项**
+3. S11 miss 成员兜底现也写 manifest；E9 manifest 从 fire-and-forget 变同步写（D8 停机窗方向一致）
+4. 屏障失败 warn 定位线索收窄（message 含语义 + detail.id，不直书 manifest 路径——record-store U1 定稿行为）
+5. 「两处轮始写点」现状核实为已合一处：conversation-continuation.ts dispatchRoundAsync:316-322 全仓唯一轮始写点
+6. 测试适配两例（accepted=false 断言翻转 / 屏障失败注入面迁移）
+
+**U3→U2b D2 移交项（协调者登记）**：①markRoundStarted 轮始写点（conversation-continuation.ts dispatchRoundAsync:320-322 + ContinuationHost 接口新增方法 + run-orchestration.ts:1300-1316 host 装配实现）②adoptEngineDeath 收养点（run-orchestration.ts:818-824 本体 + :799/:851 调用点）——两处全在 U2b 领地（run-orchestration.ts）+ conversation-continuation.ts（需扩 U2b 领地）。U2b 合入后定向修复轮派发。U1 record-store.ts:867 注释「U3 迁移」预期与计划严禁清单矛盾，随移交修正。
 
 ## 6 状态表
 
@@ -159,7 +169,7 @@ graph TD
 | U1 | committed | 1 | 核验 2026-09-12：领地吻合（cold-lookup.test.ts 裁量已登记）；subagent-core vitest 2937 passed / 4 skipped；P-B4 探针 PASS（pi dist appendCompaction 直驱，custom entry 全保留） |
 | U2a | in-progress | 1 | 后台派发 2026-09-12 W2 批 |
 | U2b | in-progress | 1 | 后台派发 2026-09-12 W2 批 |
-| U3 | in-progress | 1 | 后台派发 2026-09-12 W2 批 |
+| U3 | committed | 1 | 核验 2026-09-12：D1+D3 达成（批写归口 grep 零命中 + manifestDir 接线 + 领地 46/46 绿）；D2 两项被领地封锁移交 U2b 修（见偏差登记表尾） |
 | U4b | committed | 1 | 核验 2026-09-12：3 文件领地吻合；E1 grep 仅注释残留；actions-core 41 + transparent-resume 15 单绿；transparent-resume 回归收账 |
 | U4a | pending | 0 | — |
 | U4c | pending | 0 | — |

@@ -266,18 +266,20 @@ export class SubagentService {
     this.sessionsDir = sessionsDir;
     this.recordsDir = recordsDir;
     this.manifestStore = new ManifestStore(recordsDir);
-    this.store = new RecordStore(sessionsDir, this.manifestStore, this.pi ?? undefined);
+    // [U1 偏差 3 收尾 / D8 v7] 第 4 参 manifestDir 接线（与 manifestStore 同源同一
+    // recordsDir，构造点同语句保证不漂移）：终态原语（markFinalized/markCancelled/
+    // markBatchFinalized）的 manifest 面走 writeAtomicFileSync 同步落盘——停机窗
+    // fire-and-forget 竞态构造性消灭；缺省该参数时 store 降级异步写（双轨期语义）。
+    this.store = new RecordStore(sessionsDir, this.manifestStore, this.pi ?? undefined, recordsDir);
     // [R2] 域 #5 聚合：sync 批自闭合语义（collectCoordinator 装配 + E9 dispose 转账 +
     // E1 崩溃恢复 + settled 有界重扫 + collectSync 配置读取）。deps 全晚绑定闭包（构造期
-    // 零求值——store/notifyHost/manifestStore/baselines 基线字段等运行时可变态经闭包
+    // 零求值——store/notifyHost/baselines 基线字段等运行时可变态经闭包
     // 现读，形态先例 = D4 late-bound getter 与 R1 装配）；[检查点①] flushBatch 显式依赖
     // 注入随聚合落地：CollectCoordinator 在聚合构造器内装配，flushBatch 闭包的外部状态
     // 经 deps getter 现读，service 整实例零注入。
     this.syncCollect = new SyncCollectDomain({
       getStore: () => this.store,
       getNotifyHost: () => this.notifyHost,
-      getManifestStore: () => this.manifestStore,
-      getRecordsDir: () => this.recordsDir,
       getPi: () => this.pi,
       getSessionRootId: () => this.sessionRootId,
       getMainSessionFile: () => this.mainSessionFile,
