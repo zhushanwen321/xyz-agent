@@ -232,10 +232,11 @@ describe('MessageStream bashExecution 路由', () => {
  * 验证（mount 后）：
  * - streaming assistant turn 的 DOM 节点存在（在窗口内、未被虚拟列表卸载）
  * - bash 消息 DOM 存在（BashOutputBlock 真组件渲染）
- * - bash DOM 在 streaming turn DOM 之后（DOM 顺序与 renderItems 一致）
+ * - bash DOM 由 streaming turn 内 notices 渲染（[W3 v2] rule 4 归因，位于 turn-stub 根 div 内部）
  *
- * 钉扎算法的单元覆盖已由 use-virtual-turn-list.test.ts W3T1-T3 保证；happy-dom 下经本文件的
- * virtua mock（全量渲染 stub）驱动真实模板分支，本用例聚焦「mount 后共存双挂载 + 顺序正确」。
+ * 钉扎算法的单元覆盖由 use-streaming-pin.test.ts（W3 共存防护系列）保证，顶层顺序守护同样
+ * 由该单测 + core message-turns.incremental.test.ts R4 接管；happy-dom 下经本文件的 virtua
+ * mock（全量渲染 stub）驱动真实模板分支，本用例聚焦「mount 后共存双挂载 + rule 4 归因成立」。
  */
 // 共存测试的 Turn stub：渲染带 turn index testid 的 div，便于断言 DOM 存在 + 顺序。
 // 用 defineComponent 而非 template 字符串：props.turn 是对象，模板字符串取不到字段。
@@ -275,7 +276,7 @@ describe('MessageStream 共存钉扎（W5T1，streaming turn + bash 消息双挂
     HTMLElement.prototype.scrollTo = vi.fn()
   })
 
-  it('W5T1: 共存场景 mount → streaming turn DOM + bash DOM 双挂载，bash 在 streaming turn 之后', async () => {
+  it('W5T1: 共存场景 mount → streaming turn DOM + bash DOM 双挂载，bash 由 turn 内 notices 渲染', async () => {
     const chat = useChatStore()
     const sid = 'sess-coexist'
     // 1) streaming assistant turn：user + status:'streaming' 的 assistant（最后一条 assistant
@@ -336,12 +337,11 @@ describe('MessageStream 共存钉扎（W5T1，streaming turn + bash 消息双挂
     // （实测指向 stub 根 div 而非 bash-output-block）——本用例 skip 期间从未真跑故未暴露。
     const bashEl = wrapper.find('[data-testid="bash-output-block"]').element as HTMLElement
 
-    // DOM 顺序：bash 在 streaming turn 之后（renderItems 顺序 = messages 顺序；[W3 v2] bash
-    // 归 turn 内 notices → bash-output-block 在 turn-stub 根内部，文档序仍位于 streaming 气泡后）
-    // 用 compareDocumentPosition：bashEl 包含 turnEl 时 NODE_PRECEDING=2 成立（bash 在 turn 之前）
-    const relation = turnEl.element.compareDocumentPosition(bashEl)
-    // 期望 bash 在 turn 之后 → turn 在 bash 之前 → relation 含 Node.DOCUMENT_POSITION_FOLLOWING (4)
-    expect(relation & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    // 归因断言：bash 由 turn 内 notices 渲染（[W3 v2] rule 4 归因）→ bash-output-block 必在
+    // turn-stub 根 div 内部。rule 4 回归（bash 逃逸回顶层渲染项）时 bashEl 在 turn-stub 之外，
+    // contains 为 false → 红。顶层顺序守护已由 use-streaming-pin.test.ts（W3 共存防护）+
+    // core message-turns.incremental.test.ts R4 单测接管，此处不做文档序断言。
+    expect(turnEl.element.contains(bashEl)).toBe(true)
   })
 })
 
