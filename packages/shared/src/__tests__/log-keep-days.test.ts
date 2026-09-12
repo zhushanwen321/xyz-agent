@@ -60,4 +60,10 @@ describe('readLogKeepDays（D6-⑦：env 覆盖 || 默认，等价 logger.ts 现
     process.env[ENV_KEY] = String(DEFAULT_LOG_KEEP_DAYS + 2)
     expect(readLogKeepDays()).toBe(DEFAULT_LOG_KEEP_DAYS + 2)
   })
+
+  it('显式 env 参与宿主 process.env 解耦：显式对象优先（renderer 传参契约）', () => {
+    // 函数体回归为直读 process.env（忽略参数）时本用例红灯：宿主干扰值 30 ≠ 显式参 3
+    process.env[ENV_KEY] = '30'
+    expect(readLogKeepDays({ [ENV_KEY]: '3' })).toBe(3)
+  })
 })

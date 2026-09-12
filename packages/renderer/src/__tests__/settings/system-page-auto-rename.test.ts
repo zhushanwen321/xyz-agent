@@ -8,6 +8,8 @@
  *  - 触发模式 Select：DOM 含 trigger（data-testid=setting-rename-mode）+ getRenameMode 回显 +
  *    三模式选项点选 setRenameMode；开关关闭时仍可用（agent-tool 工具注册不受开关 flag 门控，
  *    与 model Select 随开关 disabled 的差异行为）。
+ *  - rename-model Select reply 回填：setRenameModel 归一生效值 ≠ 请求值 ≠ 初始值时 UI 显示
+ *    生效值（镜像 mode 侧 reply 回填用例形态，锁定 onRenameModelChange 的 reply.model 回填行）。
  *  - hint 边界（D1 正交契约）：renameModeHint 文案说明开关依赖——自动生成模式需开关开启、
  *    agent 自主命名不受限。
  *  - 成功 toast 分流：开关关 + 切自动模式 → 提示需开启开关（不承诺已生效，自动路径被
@@ -21,6 +23,9 @@
  *  - vi.mock('@xyz-agent/core/transport/api/domains/settings') 捕获 getAutoRenameEnabled / setAutoRenameEnabled。
  *  - vi.mock('@/composables/useToast') 隔离 toast 全局副作用。
  *  - vi.mock('@/lib/ipc') mock listSystemSounds（容器用例挂 SystemSoundSection onMounted 调用）。
+ *  - vi.mock('@/composables/features/settings/useAuthedModelGroups') 部分注入（importOriginal 保
+ *    sentinel/映射/stale 纯函数真实实现，useAuthedModelGroups 默认空分组 = 无 provider 测试态等价；
+ *    rename-model 回填用例按需注入分组）。
  *
  * 运行：pnpm --filter @xyz-agent/frontend run test -- src/__tests__/settings/system-page-auto-rename.test.ts
  */
@@ -55,6 +60,12 @@ const settingsMock = vi.hoisted(() => ({
 /** toast 捕获（成功 toast 分流断言用；error/warning 仅隔离副作用不需断言）。 */
 const toastMock = vi.hoisted(() => ({ info: vi.fn() }))
 
+/** rename-model 分组注入槽（useAuthedModelGroups 部分 mock 的数据源）：默认空分组
+ *  （= 真实 composable 在无 authed provider 测试态的返回），rename-model 回填用例按需注入。 */
+const authedGroups = vi.hoisted(() => ({
+  groups: [] as Array<{ providerId: string; providerName: string; models: Array<{ value: string; label: string }> }>,
+}))
+
 vi.mock('@xyz-agent/core/transport/api/domains/settings', () => ({
   getAutoRenameEnabled: settingsMock.getAutoRenameEnabled,
   setAutoRenameEnabled: settingsMock.setAutoRenameEnabled,
@@ -77,6 +88,20 @@ vi.mock('@/composables/useToast', () => ({
   // info 走共享 toastMock 捕获（分流断言用）；error/warning 仅隔离副作用
   useToast: () => ({ info: toastMock.info, error: vi.fn(), warning: vi.fn() }),
 }))
+
+// 部分注入 useAuthedModelGroups：纯函数（sentinel/双向映射/stale 判定）保真实实现，仅数据源换
+// 可注入分组槽——model Select 选项可控（真实数据源 settingsStore.providers 测试态为空）
+vi.mock('@/composables/features/settings/useAuthedModelGroups', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/composables/features/settings/useAuthedModelGroups')>()
+  const { computed } = require('vue') as typeof import('vue')
+  return {
+    ...actual,
+    useAuthedModelGroups: () => ({
+      modelGroups: computed(() => authedGroups.groups),
+      availableValues: computed(() => new Set(authedGroups.groups.flatMap((g) => g.models.map((m) => m.value)))),
+    }),
+  }
+})
 
 // storeToRefs 要求真正的 reactive 属性，故用 ref 暴露 appCommands / shortcutOverrides
 vi.mock('@/composables/features/command/useCommandStore', () => {
@@ -127,6 +152,7 @@ beforeEach(() => {
   settingsMock.setRenameModel.mockResolvedValue({ model: '' })
   settingsMock.getRenameMode.mockResolvedValue({ mode: 'first-stop' })
   settingsMock.setRenameMode.mockImplementation((mode: string) => Promise.resolve({ mode }))
+  authedGroups.groups = []
   toastMock.info.mockClear()
 })
 
@@ -246,6 +272,45 @@ describe('SystemAutoRenameSection 会话自动重命名开关', () => {
     expect(triggerAfter.text()).toContain('首轮回复完成')
     expect(triggerAfter.text()).not.toContain('agent 自主命名')
     expect(triggerAfter.text()).not.toContain('首次请求时')
+  })
+
+  it('setRenameModel reply 归一值回填：runtime 生效值 ≠ 请求值时 UI 显示生效值', async () => {
+    // 镜像 mode 侧 reply 回填用例形态（三态分离）：初始 prov/init-model；请求选 prov/req-model；
+    // runtime 回执归一为 prov/eff-model —— UI 必须显示 reply 生效值，而非乐观更新的请求值/初始值
+    // （锁定 onRenameModelChange 的 renameModel.value = reply.model 回填行）
+    settingsMock.getRenameModel.mockResolvedValue({ model: 'prov/init-model' })
+    settingsMock.setRenameModel.mockResolvedValue({ model: 'prov/eff-model' })
+    authedGroups.groups = [
+      {
+        providerId: 'prov',
+        providerName: 'Prov',
+        models: [
+          { value: 'prov/init-model', label: 'prov/init-model' },
+          { value: 'prov/req-model', label: 'prov/req-model' },
+          { value: 'prov/eff-model', label: 'prov/eff-model' },
+        ],
+      },
+    ]
+    wrapper = mount(SystemAutoRenameSection, { props: { system: systemFixture() } })
+    await flushPromises()
+
+    const trigger = wrapper.find('[data-testid="setting-rename-model"]').element as HTMLElement
+    trigger.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }))
+    trigger.click()
+    await flushPromises()
+
+    const options = document.body.querySelectorAll('[role="option"]')
+    const target = Array.from(options).find((el) => (el.textContent ?? '').includes('prov/req-model'))
+    expect(target).toBeTruthy()
+    target!.dispatchEvent(new PointerEvent('pointerup', { bubbles: true }))
+    target!.click()
+    await flushPromises()
+
+    expect(settingsMock.setRenameModel).toHaveBeenCalledWith('prov/req-model')
+    const triggerAfter = wrapper.find('[data-testid="setting-rename-model"]')
+    expect(triggerAfter.text()).toContain('prov/eff-model')
+    expect(triggerAfter.text()).not.toContain('prov/req-model')
+    expect(triggerAfter.text()).not.toContain('prov/init-model')
   })
 
   it('renameModeHint 说明开关依赖：自动生成需开关开启，agent 自主命名不受限', async () => {
