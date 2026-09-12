@@ -10,7 +10,14 @@
 //
 // 唯一职责（V2 §5.2 五项职责的存留）：
 //   1. idle timer —— agent_settled arm / 新 turn disarm / 超时触发 onTimeout（决策 4）
-//      【已接线：subagent-service.ts chat 域 arm/disarm】
+//      【[H1 U6 后现状] arm 链已失活：旧「subagent-service.ts chat 域 arm/disarm」接线
+//      随 chat 域退役删除，armIdleTimer 唯一剩余接线在 createHostBridge
+//      （host-bridge.ts）——而后者全仓无生产调用点。运行时 timer 永不 armed，
+//      disarmIdleTimer 仅剩 record-lifecycle 终态化路径的幂等清扫（对永不 armed
+//      的 timer 为 no-op，保持终态清扫完整性）。模块与函数保留 = 既有判据形态
+//      （lifecycle-predicates.isIdle 消费 hasIdleTimer）与 env/API 面
+//      （ExecuteOptions.idleTimeoutMs 校验文案引用 DEFAULT_IDLE_TIMEOUT_MS）不删，
+//      语义变化/显式 idle 状态设计属独立议题（impl-plan Gate B 收口 backlog）】
 // 其余四项已删除：职责 2 全局 ceiling / 职责 3 shutdown 收割 / 职责 4 孤儿扫描自
 // 落地起无生产接线；职责 5 activate 互斥的历史接线点（冷路径 resume 前）随协议化
 // 重构消失、仅余自持单测。未来需要时按
@@ -41,6 +48,12 @@ const SECONDS_PER_MINUTE = 60;
  *
  * V2 §5.4 / 决策 4：初拟 ≤ prompt cache TTL（~5min）——超出 cacheTTL 的活进程白占
  * 内存（续聊仍 cache miss），小于则 kill 丢热 cache。实测定（P-timeout）。
+ *
+ * [H1 U6 后现状] 「5min 超时回收保活进程」语义已无对象（每轮 = 新进程，轮末随
+ * agent_settled 回收，无长驻进程可超时）。常量存活消费 = assertIdleTimeoutMsSafe
+ * 错误文案基准（run-orchestration.ts）+ env XYZ_SUBAGENT_IDLE_TIMEOUT_MS 非法值
+ * 回落默认 + ExecuteOptions.idleTimeoutMs API 校验域——属 API 面常量，非活性
+ * timer 语义。
  */
 const IDLE_TIMEOUT_MINUTES = 5;
 export const DEFAULT_IDLE_TIMEOUT_MS = IDLE_TIMEOUT_MINUTES * SECONDS_PER_MINUTE * MS_PER_SECOND;

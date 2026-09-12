@@ -47,8 +47,9 @@ export const DEFAULT_AGENT_NAME = "general-purpose";
  * 旧 cancelled 折入 closed（closedReason='cancelled' 区分）。
  *
  * running = 活跃态。含两种子态（由派生谓词区分，见 lifecycle-predicates.ts）：
- *   - 对话模式等待续聊（旧 idle）：进程可能保活（isIdle=hasIdleTimer）或已回收
- *     待冷路径 resume（isResumable=running && 无活进程句柄）。
+ *   - 对话模式等待续聊（旧 idle）：进程已回收，待冷路径 resume
+ *     （isResumable=running && 无活进程句柄）。旧「进程保活待热路径」形态随
+ *     H1 U6 长驻退役消亡，isIdle（hasIdleTimer）生产恒 false。
  *   - 正在执行（有活进程句柄）。
  *
  * closed = 统一终态（done/failed/crashed/cancelled 合并）。具体关闭原因由
