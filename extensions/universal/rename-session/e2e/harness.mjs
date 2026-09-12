@@ -336,6 +336,20 @@ export function lastStopAssistantEndT(timeline) {
  * @param {string[] | null | undefined} lines session JSONL 行数组
  * @returns {number}
  */
+/**
+ * 单条 session entry 内指定工具的 toolCall block 计数（countToolCalls 内层提取，控制圈复杂度）。
+ * 非 assistant message entry / content 非数组按 0 计。
+ */
+function countToolCallsInEntry(entry, toolName) {
+	if (entry?.type !== "message" || entry.message?.role !== "assistant") return 0;
+	if (!Array.isArray(entry.message.content)) return 0;
+	let count = 0;
+	for (const block of entry.message.content) {
+		if (block?.type === "toolCall" && block.name === toolName) count++;
+	}
+	return count;
+}
+
 export function countToolCalls(lines, toolName) {
 	if (typeof toolName !== "string") throw new TypeError("countToolCalls: toolName must be string");
 	if (lines === null || lines === undefined) return 0;
@@ -348,11 +362,7 @@ export function countToolCalls(lines, toolName) {
 		} catch {
 			continue; // 坏行跳过
 		}
-		if (entry?.type !== "message" || entry.message?.role !== "assistant") continue;
-		if (!Array.isArray(entry.message.content)) continue;
-		for (const block of entry.message.content) {
-			if (block?.type === "toolCall" && block.name === toolName) count++;
-		}
+		count += countToolCallsInEntry(entry, toolName);
 	}
 	return count;
 }
