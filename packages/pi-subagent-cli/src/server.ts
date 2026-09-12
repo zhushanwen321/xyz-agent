@@ -29,6 +29,7 @@ import {
   assertChatConversationSupported,
   isResponseFrame,
   isReverseRequestFrame,
+  isUiResponse,
   type AgentCallOpts,
   type AgentEvent,
   type EngineHandleData,
@@ -70,6 +71,8 @@ interface ReversePending {
   resolve: (result: unknown) => void;
   reject: (err: Error) => void;
   timer: NodeJS.Timeout;
+  /** 反向通道名（settle 时按通道守卫应答形态；S7 askUser 应答面守卫用）。 */
+  method: string;
 }
 
 /** 反向请求应答等待缺省上限（ms）——数据面分类 core 侧 10s，两阶段等待放宽一档兜底。 */
@@ -218,6 +221,8 @@ export class EngineProtocolServer {
     // [H1 U3] chat 轮 = run 派发形态（每轮一进程，agent_settled 收敛即收割），
     // 同走 per-run 绑定；「会话跨 run 存活、askUser 固定绑定」的 chat 特判随
     // ChatSessionRegistry 退役（bindHostChannels 面已随 U5 删除）。
+    // [S7] 应答形态守卫在 settleReverse（host/askUser 通道 isUiResponse 判定，不合法
+    // 走 engine_protocol_bad_frame reject）——此处的 cast 是守卫后窄化，非无守卫裸 cast。
     this.engine.bindAskUser?.((request: UiRequest) =>
       this.reverseRequestInternal("host/askUser", { runId, request }) as Promise<UiResponse>,
     );
@@ -349,7 +354,7 @@ export class EngineProtocolServer {
         reject(new Error(`reverse request ${method} (${id}) timed out after ${this.reverseTimeoutMs}ms`));
       }, this.reverseTimeoutMs);
       if (typeof timer.unref === "function") timer.unref();
-      this.reversePending.set(id, { resolve, reject, timer });
+      this.reversePending.set(id, { resolve, reject, timer, method });
       this.reverseClock?.started(id);
       this.write({ id, method, params });
     });
@@ -375,8 +380,24 @@ export class EngineProtocolServer {
     this.reversePending.delete(String(id));
     clearTimeout(pending.timer);
     this.reverseClock?.settled(String(id));
-    if (frame.error !== undefined) pending.reject(new Error(`reverse request ${String(id)} rejected: ${toErrorMessage(frame.error)}`));
-    else pending.resolve(frame.result as ReverseResponseResult);
+    if (frame.error !== undefined) {
+      pending.reject(new Error(`reverse request ${String(id)} rejected: ${toErrorMessage(frame.error)}`));
+      return;
+    }
+    // [S7] askUser 应答面守卫（A6 方向防御同族——宿主→引擎方向已有 assertResumeRunFrame
+    // 先例）：畸形 UiResponse 不落 resolve（否则静默流入 ui-request-queue），复用
+    // engine_protocol_bad_frame 语义走 reject。
+    if (pending.method === "host/askUser" && !isUiResponse(frame.result)) {
+      pending.reject(
+        new EngineSdkError(
+          "engine_protocol_bad_frame",
+          `host/askUser response is not a valid UiResponse (got: ${JSON.stringify(frame.result)})`,
+          "The host must answer host/askUser with a UiResponse shape ({value}|{confirmed}|{cancelled}|{ack}).",
+        ),
+      );
+      return;
+    }
+    pending.resolve(frame.result as ReverseResponseResult);
   }
 }
 

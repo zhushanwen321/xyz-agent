@@ -194,7 +194,10 @@ export class RecordAccess {
   private rematerializeReconnectableEntryManifests(): void {
     if (this.deps.getMainSessionFile() === undefined) return;
     const visibleIds = new Set(
-      this.deps.getStore().collectRecords(COLD_LOOKUP_SCAN_LIMIT, "all", undefined).map((r) => r.id),
+      // [S3] includeWorkflow:true：已可见判定是全量存在性判定（幂等跳过守卫），
+      // 不吃 origin 缺省过滤——否则已可见的 reconnectable workflow record 被误判
+      // 不可见，每次 boot 冗余重物化 manifest（治理/全态查询语义，同 lookupRecordAnyState）。
+      this.deps.getStore().collectRecords(COLD_LOOKUP_SCAN_LIMIT, "all", undefined, true).map((r) => r.id),
     );
     for (const rec of this.deps.getStore().scanLastRecordEntries(this.deps.getMainSessionFile())) {
       if (visibleIds.has(rec.id)) continue; // 查询面已可见：磁盘锚或 manifest 幸存
@@ -431,7 +434,9 @@ export class RecordAccess {
     }
     const direct = this.deps.getStore().findLightById(id);
     if (direct) return direct;
-    return this.deps.getStore().collectRecords(COLD_LOOKUP_SCAN_LIMIT, "all", undefined).find((r) => r.id === id);
+    // [S2] 全扫兜底传 includeWorkflow:true：错误文案指引「add includeWorkflow:true」
+    // 意味着本查询必须能找到 workflow record，否则文案与查询能力不一致（治理/全态语义）。
+    return this.deps.getStore().collectRecords(COLD_LOOKUP_SCAN_LIMIT, "all", undefined, true).find((r) => r.id === id);
   }
 
   /** 订阅 store 变更（widget/list requestRender）。返回取消订阅。 */

@@ -474,7 +474,7 @@ function sameNullableStamp(a: Stamp | null, b: Stamp | null): boolean {
   return sameStamp(a, b);
 }
 
-/** 缓存条目与本轮 stat 戳全同（jsonl + 终态 sidecar + alive + record 绑定，null 语义对齐）→ 零读取复用。 */
+/** 缓存条目与本轮 stat 戳全同（jsonl + 终态 sidecar + record 绑定，null 语义对齐）→ 零读取复用。 */
 function isFreshCache(cached: FileCacheValue, stamps: FileStamps): boolean {
   return (
     sameStamp(cached.jsonl, stamps.jsonl) &&

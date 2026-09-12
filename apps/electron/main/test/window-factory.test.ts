@@ -13,8 +13,39 @@
  *
  * 运行：cd apps/electron/main && npx vitest run test/window-factory.test.ts
  */
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { readFileSync } from 'node:fs'
+
+// ── showInactive env 矩阵（S10：mock BrowserWindow 运行时行为断言）────────
+// 源码断言（下方）验证配置文本存在；本组用 runtime mock 验证行为：
+// XYZ_E2E=1 / XYZ_DEV_BACKGROUND=1 → showInactive（不抢前台焦点）；均未置 → show。
+const { showSpy, showInactiveSpy, captureOnce } = vi.hoisted(() => ({
+  showSpy: vi.fn(),
+  showInactiveSpy: vi.fn(),
+  captureOnce: { cb: undefined as undefined | (() => void) },
+}))
+
+vi.mock('electron', () => {
+  class MockBrowserWindow {
+    show = showSpy
+    showInactive = showInactiveSpy
+    on = vi.fn()
+    once = (_event: string, cb: () => void) => { captureOnce.cb = cb }
+    isDestroyed = () => false
+    destroy = vi.fn()
+    loadFile = vi.fn().mockResolvedValue(undefined)
+    loadURL = vi.fn()
+    setWindowOpenHandler = vi.fn()
+    webContents = { on: vi.fn(), send: vi.fn(), openDevTools: vi.fn(), setWindowOpenHandler: vi.fn() }
+  }
+  return {
+    app: { getAppPath: () => '/mock-app-root' },
+    shell: { openExternal: vi.fn() },
+    BrowserWindow: MockBrowserWindow,
+  }
+})
+
+const { createWindow } = await import('../window/window-factory.ts')
 
 const sourcePath = new URL('../window/window-factory.ts', import.meta.url)
 const source = readFileSync(sourcePath, 'utf-8')
@@ -31,5 +62,45 @@ describe('window-factory: D-6 窗口级拓扑配置', () => {
 
   it('win/linux：frame:false（renderer TrafficLight 自绘圆点 mimic mac）', () => {
     expect(source).toContain(': { frame: false }')
+  })
+})
+
+describe('window-factory: ready-to-show 焦点策略 env 矩阵（S10）', () => {
+  beforeEach(() => {
+    showSpy.mockClear()
+    showInactiveSpy.mockClear()
+    captureOnce.cb = undefined
+  })
+  afterEach(() => {
+    vi.unstubAllEnvs()
+  })
+
+  async function createAndFireReadyToShow() {
+    const { win } = await createWindow(undefined, { isDev: false, generateId: () => 'w-test' })
+    expect(captureOnce.cb).toBeTypeOf('function')
+    captureOnce.cb!()
+    return win
+  }
+
+  it('XYZ_E2E=1 → showInactive（E2E 构建产物形态，不抢焦点）', async () => {
+    vi.stubEnv('XYZ_E2E', '1')
+    await createAndFireReadyToShow()
+    expect(showInactiveSpy).toHaveBeenCalledTimes(1)
+    expect(showSpy).not.toHaveBeenCalled()
+  })
+
+  it('XYZ_DEV_BACKGROUND=1 → showInactive（dev 实例 AI 验收，不抢焦点）', async () => {
+    vi.stubEnv('XYZ_DEV_BACKGROUND', '1')
+    await createAndFireReadyToShow()
+    expect(showInactiveSpy).toHaveBeenCalledTimes(1)
+    expect(showSpy).not.toHaveBeenCalled()
+  })
+
+  it('两 env 均未置 → show（前台正常形态）', async () => {
+    vi.stubEnv('XYZ_E2E', '')
+    vi.stubEnv('XYZ_DEV_BACKGROUND', '')
+    await createAndFireReadyToShow()
+    expect(showSpy).toHaveBeenCalledTimes(1)
+    expect(showInactiveSpy).not.toHaveBeenCalled()
   })
 })

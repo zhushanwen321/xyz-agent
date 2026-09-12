@@ -335,6 +335,10 @@ describe("chat 工具域引擎路由分叉（U0：D4/D5/D10）", () => {
   // ============================================================
 
   it("[F6] pi 路由 kickOffChatRound：runCtx 带 sessionRootId（initSession 注入的根 id，relay 归属键权威源）", async () => {
+    // [S5 同根] initSession 读 env PI_SUBAGENT_ROOT_SESSION_ID 优先于 init.sessionId——
+    // 在 pi subagent 进程内跑测试（该 env 已注入）必红。显式 stub 为 undefined（空串
+    // 会被条件 spread 过滤为缺键，同样破坏断言），不依赖外层环境。
+    vi.stubEnv("PI_SUBAGENT_ROOT_SESSION_ID", undefined);
     const { service, piEngine } = setup(agentDir);
     const handle = await service.execute(baseOpts(agentDir));
     await vi.waitFor(() => expect(piEngine.runs.length).toBe(1));
@@ -342,6 +346,7 @@ describe("chat 工具域引擎路由分叉（U0：D4/D5/D10）", () => {
     // kickOffChatRound 是 pi 引擎 background 派发主路径（isPiRoute 恒路由至此，含
     // workflow 域一次性 run），漏注 = GUI pi 派发 relay 拒绝 exit 13（Gate B F6 形态）。
     expect(piEngine.runs[0]!.ctx.sessionRootId).toBe("test-session");
+    vi.unstubAllEnvs();
   });
 
   it("[D5] 全缺省 pi record：engine===undefined 且 entry JSON 不含 engine 键", async () => {

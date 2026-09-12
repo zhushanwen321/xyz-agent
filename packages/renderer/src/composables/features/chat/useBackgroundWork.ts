@@ -25,16 +25,11 @@ export function useBackgroundWork() {
    * H2 W1（record-unification D1③）：workflow 脚本派发的 subagent（origin==='workflow'）
    * 不算本 session 的后台工作——其生命周期由 workflow run 承载（终态化收口见 D7），
    * 混入会让主 session 在 workflow 运行期间被误判 working。origin 缺省（undefined =
-   * tool 语义，存量 record）恒参与判定。subagent 判据与 store.hasRunning 同源
-   * （running + 无 result + 非 resumable），origin 排除是唯一差异——store 侧判据变更时
-   * 两处须同步。
+   * tool 语义，存量 record）恒参与判定。判据单源 = store.hasRunning（S1：origin 排除
+   * 经 opts 传入，不再内联复刻判据）。
    */
   function hasBackgroundWork(sessionId: string): boolean {
-    const subagentWorking = subagentStore
-      .recordsOf(sessionId)
-      .value.some(
-        (s) => s.origin !== 'workflow' && s.status === 'running' && s.result === undefined && s.resumable !== true,
-      )
+    const subagentWorking = subagentStore.hasRunning(sessionId, { excludeOrigin: 'workflow' })
     return subagentWorking || workflowStore.hasRunningOrPaused(sessionId)
   }
 

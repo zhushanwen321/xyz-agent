@@ -39,18 +39,18 @@
 
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { dirname, join, relative, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 const PROJECT_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
 /** R1 六名模式：真实导出名（D7 v2，含 .alive 写/删两名——轮 5 补）。 */
-const WRITE_FN_RE = /\b(writeFinalizedState|writeCancelledState|writeManifest|saveIndex|writeAliveMarker|removeAliveMarker)\s*\(/;
+export const WRITE_FN_RE = /\b(writeFinalizedState|writeCancelledState|writeManifest|saveIndex|writeAliveMarker|removeAliveMarker)\s*\(/;
 
 /** R2 subagent-record custom entry 写形态：同一行 appendEntry + customType 字面量
  *  （appendEntry 是 pi 全局通路，全域禁不可行——按 customType 限定到「写」形态；
  *  读面（失效回调 / 事件类型联合 / 常量定义）不拦，如 runtime event-interpreter
  *  的 onRecordEntriesInvalidated 判别参数与 shared SUBAGENT_RECORD_CUSTOM_TYPE）。 */
-const RECORD_ENTRY_WRITE_RE = /\bappendEntry\b[^\n]*["'`]subagent-record["'`]|["'`]subagent-record["'`][^\n]*\bappendEntry\b/;
+export const RECORD_ENTRY_WRITE_RE = /\bappendEntry\b[^\n]*["'`]subagent-record["'`]|["'`]subagent-record["'`][^\n]*\bappendEntry\b/;
 
 /** store 内部（R1+R2 白名单）——唯一写入口本体，含全部合法调用与注释提及。 */
 const STORE_FILE = "packages/subagent-core/src/execution/record-store.ts";
@@ -72,7 +72,7 @@ const ENTRY_DEFINITION_FILES = new Set([
 const EXTENSION_DOMAIN_ALLOWLIST = new Set([]);
 
 /** 收集 .ts 文件（递归，排除 __tests__/ *.test.ts *.d.ts node_modules dist）。 */
-function collectTsFiles(dir, out = []) {
+export function collectTsFiles(dir, out = []) {
   for (const entry of readdirSync(dir)) {
     const full = join(dir, entry);
     const st = statSync(full);
@@ -87,85 +87,106 @@ function collectTsFiles(dir, out = []) {
 }
 
 /** 非注释行判定（strip 后以 // 、* 、/* 开头视为注释——同 check-unsafe-stream-writes 先例）。 */
-function isCommentLine(line) {
+export function isCommentLine(line) {
   const t = line.trimStart();
   return t.startsWith("//") || t.startsWith("*") || t.startsWith("/*");
 }
 
 // ── 扫描根收集 ───────────────────────────────────────────────────────────────
 
-const scanRoots = [];
-const packagesDir = join(PROJECT_ROOT, "packages");
-for (const entry of readdirSync(packagesDir, { withFileTypes: true })) {
-  if (!entry.isDirectory() || entry.name === "node_modules") continue;
-  const src = join(packagesDir, entry.name, "src");
-  if (statSync(src, { throwIfNoEntry: false })?.isDirectory()) scanRoots.push(src);
-}
-const extensionsDir = join(PROJECT_ROOT, "extensions");
-for (const entry of readdirSync(extensionsDir, { withFileTypes: true })) {
-  if (!entry.isDirectory() || entry.name === "node_modules") continue;
-  // extensions 两级分组（taiji/universal/<pkg>/src）+ 分组直挂 src，逐级探测
-  const pkgSrc = join(extensionsDir, entry.name, "src");
-  if (statSync(pkgSrc, { throwIfNoEntry: false })?.isDirectory()) scanRoots.push(pkgSrc);
-  for (const group of readdirSync(join(extensionsDir, entry.name), { withFileTypes: true })) {
-    if (!group.isDirectory() || group.name === "src" || group.name === "node_modules") continue;
-    const nested = join(extensionsDir, entry.name, group.name, "src");
-    if (statSync(nested, { throwIfNoEntry: false })?.isDirectory()) scanRoots.push(nested);
+/** 扫描根收集（CLI 默认 roots = packages 各包 src + extensions 两级分组 src，
+ *  与改造前逐行同构；roots 收集细节见 collectScanRoots）。 */
+function collectScanRoots() {
+  const roots = [];
+  const packagesDir = join(PROJECT_ROOT, "packages");
+  for (const entry of readdirSync(packagesDir, { withFileTypes: true })) {
+    if (!entry.isDirectory() || entry.name === "node_modules") continue;
+    const src = join(packagesDir, entry.name, "src");
+    if (statSync(src, { throwIfNoEntry: false })?.isDirectory()) roots.push(src);
   }
+  const extensionsDir = join(PROJECT_ROOT, "extensions");
+  for (const entry of readdirSync(extensionsDir, { withFileTypes: true })) {
+    if (!entry.isDirectory() || entry.name === "node_modules") continue;
+    // extensions 两级分组（taiji/universal/<pkg>/src）+ 分组直挂 src，逐级探测
+    const pkgSrc = join(extensionsDir, entry.name, "src");
+    if (statSync(pkgSrc, { throwIfNoEntry: false })?.isDirectory()) roots.push(pkgSrc);
+    for (const group of readdirSync(join(extensionsDir, entry.name), { withFileTypes: true })) {
+      if (!group.isDirectory() || group.name === "src" || group.name === "node_modules") continue;
+      const nested = join(extensionsDir, entry.name, group.name, "src");
+      if (statSync(nested, { throwIfNoEntry: false })?.isDirectory()) roots.push(nested);
+    }
+  }
+  return roots;
 }
 
-const files = scanRoots.flatMap((root) => collectTsFiles(root));
-const violations = [];
+/**
+ * 扫描判定核心（MF-7 测试加载面）：对给定扫描根逐文件跑 R1/R2 规则，
+ * 返回违规文本数组（空 = 通过）。roots 注入后可对 tmpdir fixture 判定，
+ * 不依赖真实仓库状态。
+ */
+export function scanRecordWriteSurface(roots) {
+  const files = roots.flatMap((root) => collectTsFiles(root));
+  const violations = [];
 
-for (const file of files) {
-  const rel = relative(PROJECT_ROOT, file);
-  const isStore = rel === STORE_FILE;
-  const isWriterDef = WRITER_DEFINITION_FILES.has(rel);
-  const isEntryDef = ENTRY_DEFINITION_FILES.has(rel);
-  const isExtAllowed = EXTENSION_DOMAIN_ALLOWLIST.has(rel);
-  if (isStore || isExtAllowed) continue; // store 内部 / extension 登记域：全豁免
-  const lines = readFileSync(file, "utf-8").split("\n");
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i];
-    if (isCommentLine(line)) continue;
-    // R1：写函数调用。载体定义文件的「定义行」豁免（export function X( / async X(），
-    // 其余文件一律红。
-    const fnHit = WRITE_FN_RE.exec(line);
-    if (fnHit) {
-      const name = fnHit[1];
-      const isDefinition = isWriterDef && new RegExp(`\\b(?:export\\s+)?(?:async\\s+)?${name}\\s*\\(`).test(line);
-      if (!isDefinition) {
+  for (const file of files) {
+    const rel = relative(PROJECT_ROOT, file);
+    const isStore = rel === STORE_FILE;
+    const isWriterDef = WRITER_DEFINITION_FILES.has(rel);
+    const isEntryDef = ENTRY_DEFINITION_FILES.has(rel);
+    const isExtAllowed = EXTENSION_DOMAIN_ALLOWLIST.has(rel);
+    if (isStore || isExtAllowed) continue; // store 内部 / extension 登记域：全豁免
+    const lines = readFileSync(file, "utf-8").split("\n");
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i];
+      if (isCommentLine(line)) continue;
+      // R1：写函数调用。载体定义文件的「定义行」豁免（export function X( / async X(），
+      // 其余文件一律红。
+      const fnHit = WRITE_FN_RE.exec(line);
+      if (fnHit) {
+        const name = fnHit[1];
+        const isDefinition = isWriterDef && new RegExp(`\\b(?:export\\s+)?(?:async\\s+)?${name}\\s*\\(`).test(line);
+        if (!isDefinition) {
+          violations.push(
+            `${rel}:${i + 1} [R1] record 写面函数直调 \`${name}(...)\` 出现在 store 外——` +
+              `record 持久化写面的唯一入口是 RecordStore 意图原语（markFinalized/markCancelled/` +
+              `markBatchFinalized/markIdleArchived/acquireWriteLease 等）。` +
+              `Recovery: 改调 store 意图原语（写面知识归 store 内部，D7/G1）。`,
+          );
+        }
+        continue;
+      }
+      // R2：subagent-record custom entry 直写（appendEntry + customType 同行写形态）。
+      if (RECORD_ENTRY_WRITE_RE.test(line) && !isEntryDef) {
         violations.push(
-          `${rel}:${i + 1} [R1] record 写面函数直调 \`${name}(...)\` 出现在 store 外——` +
-            `record 持久化写面的唯一入口是 RecordStore 意图原语（markFinalized/markCancelled/` +
-            `markBatchFinalized/markIdleArchived/acquireWriteLease 等）。` +
-            `Recovery: 改调 store 意图原语（写面知识归 store 内部，D7/G1）。`,
+          `${rel}:${i + 1} [R2] customType "subagent-record" 的 entry 直写出现在 store 外——` +
+            `record 主记录 entry 的写面归 RecordStore（register/archive/reportRecordTransition 内置）。` +
+            `Recovery: 改调 store 公开原语或 reportSubagentRecord（appendEntry 是 pi 全局通路，` +
+            `record 域 customType 限定唯一，D7 ②）。`,
         );
       }
-      continue;
-    }
-    // R2：subagent-record custom entry 直写（appendEntry + customType 同行写形态）。
-    if (RECORD_ENTRY_WRITE_RE.test(line) && !isEntryDef) {
-      violations.push(
-        `${rel}:${i + 1} [R2] customType "subagent-record" 的 entry 直写出现在 store 外——` +
-          `record 主记录 entry 的写面归 RecordStore（register/archive/reportRecordTransition 内置）。` +
-          `Recovery: 改调 store 公开原语或 reportSubagentRecord（appendEntry 是 pi 全局通路，` +
-          `record 域 customType 限定唯一，D7 ②）。`,
-      );
     }
   }
+  return violations;
 }
 
-if (violations.length > 0) {
-  console.error(`[record-write-surface] FAIL：${violations.length} 处 store 外 record 写面命中`);
-  for (const v of violations) console.error(`  ✗ ${v}`);
-  console.error("");
-  console.error("  权威源：docs/design/subagent-record-persistence-consolidation.md §3.3 D7");
-  console.error("  一级拦截（模块边界）：eslint no-restricted-imports（subagent-core 块）");
-  process.exit(1);
+function main() {
+  const files = collectScanRoots().flatMap((root) => collectTsFiles(root));
+  const violations = scanRecordWriteSurface(collectScanRoots());
+  if (violations.length > 0) {
+    console.error(`[record-write-surface] FAIL：${violations.length} 处 store 外 record 写面命中`);
+    for (const v of violations) console.error(`  ✗ ${v}`);
+    console.error("");
+    console.error("  权威源：docs/design/subagent-record-persistence-consolidation.md §3.3 D7");
+    console.error("  一级拦截（模块边界）：eslint no-restricted-imports（subagent-core 块）");
+    return 1;
+  }
+  console.log(
+    `[record-write-surface] OK：${files.length} 个源文件（packages/*/src + extensions/**/src，tests 豁免）` +
+      ` store 外 record 写面零命中（R1 六名函数 + R2 subagent-record entry，S4）`,
+  );
+  return 0;
 }
 
-console.log(
-  `[record-write-surface] OK：${files.length} 个源文件（packages/*/src + extensions/**/src，tests 豁免）` +
-    ` store 外 record 写面零命中（R1 六名函数 + R2 subagent-record entry，S4）`,
-);
+// main()：CLI 直跑才执行（vitest import 纯函数导出时不触发扫描/exit，check-publish-surface 先例）
+const isMain = process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href;
+if (isMain) process.exit(main());

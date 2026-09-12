@@ -35,8 +35,8 @@
 //     status 判定仍走 buildRecord 四分支矩阵——`.state`（终态）优先级天然高于绑定的
 //     running 形态，二者并存无冲突（终态后绑定保留：resurrect 回边删 .state 后绑定
 //     仍在，再崩溃仍可恢复）；
-//   - GC：session-file-gc 的 sidecar 名单暂未含本扩展名（孤儿绑定在 jsonl 被 GC 后
-//     残留，量级 = 崩溃 record 数，接受；名单扩展归 GC 领地批次）。
+//   - GC：session-file-gc 的 sidecar 名单已含本扩展名（孤儿绑定随 TTL 清理；jsonl
+//     删除链同步同删——I-16 已销账，GC 领地批次落地）。
 
 import * as fs from "node:fs";
 
@@ -159,11 +159,14 @@ function writeStateMarker(sessionFile: string, marker: StateMarker): boolean {
       retrySleep(STATE_WRITE_RETRY_BASE_DELAY_MS * BACKOFF_EXPONENT_BASE ** (attempt - 1));
     }
     try {
-      // 旧名清理（存量残留）：.state 是唯一权威，残留旧文件会被兼容读路径优先让位——
-      // 但删除可避免 GC 前重复 stat。force:true 静默 ENOENT（未写过旧名的 session 正常路径）。
+      // 旧名清理放在写成功之后（S12 修复）：读侧 .state 优先，旧名残留无害（仅多一次
+      // stat 与「旧名优先级高于 .state」的兼容读序兜底），删除只是 stat 优化非正确性
+      // 依赖——若在写前删而写失败（重试耗尽），存量终态标记已被删而新标记未落，
+      // .cancelled tombstone 静默降级为无终态形态（重建回落 running，死因/时间丢失）。
+      fs.writeFileSync(`${sessionFile}${STATE_SIDECAR_EXT}`, JSON.stringify(marker), "utf-8");
+      // force:true 静默 ENOENT（未写过旧名的 session 正常路径）。
       fs.rmSync(`${sessionFile}${LEGACY_FINALIZED_EXT}`, { force: true });
       fs.rmSync(`${sessionFile}${LEGACY_CANCELLED_EXT}`, { force: true });
-      fs.writeFileSync(`${sessionFile}${STATE_SIDECAR_EXT}`, JSON.stringify(marker), "utf-8");
       return true;
     } catch (err) {
       lastError = err;

@@ -127,10 +127,16 @@ export const useSubagentStore = defineStore('subagent', () => {
    * 收紧——SubagentTab 依赖它决定是否订阅实时增量流（resumable 续轮仍有流活动）；
    * 单 record 窄口径（虚拟 session forceWorking 用）见 isStreamingSubagent。
    */
-  function hasRunning(sessionId: string): boolean {
+  function hasRunning(sessionId: string, opts?: { excludeOrigin?: SubagentRecord['origin'] }): boolean {
     // resumable（无活进程驱动的 running，residual-fixes）与轮终 result 一样不算真在跑
     return getRecordsBySession(sessionId).some(
-      (s) => s.status === 'running' && s.result === undefined && s.resumable !== true,
+      (s) =>
+        s.status === 'running' &&
+        s.result === undefined &&
+        s.resumable !== true &&
+        // origin 过滤（S1 判据单源化）：调用方（如 useBackgroundWork）需排除 workflow
+        // 派发的 record（生命周期归 workflow run 承载，不算宿主 session 的后台工作）
+        (opts?.excludeOrigin === undefined || s.origin !== opts.excludeOrigin),
     )
   }
 

@@ -328,6 +328,8 @@ export function recordToListItem(r: SubagentRecord): SubagentListItem {
     parent: r.parentRecordId,
     resumable: isResumable(r),
     outcome: projectOutcome(r),
+    origin: r.origin,
+    parentRunId: r.parentRunId,
   };
 }
 

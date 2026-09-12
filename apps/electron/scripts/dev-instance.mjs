@@ -19,6 +19,9 @@
  *   3. 透传 XYZ_DEV_BACKGROUND=1（外部设置时 window-factory 走 showInactive 不抢前台焦点，
  *      AI agent 真机验收必须带——见 browser-automation skill 对策 2）。
  *
+ * 判定逻辑（hash 派生 / env 装配 / 模板过滤 / ensureInstanceDir）在 dev-instance-lib.mjs
+ * 可测纯函数层（MF-8），本文件只保留参数解析 / 真实 fs / process 编排。
+ *
  * 用法：
  *   pnpm dev                          装配并启动（package.json dev 的入口）
  *   node scripts/dev-instance.mjs --print          只打印派生参数不启动（探测/验证）
@@ -32,46 +35,26 @@
 
 import { spawn, spawnSync, execSync } from 'node:child_process'
 import fs from 'node:fs'
-import os from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
+
+import {
+  DEV_DATA_PARENT,
+  TEMPLATE_DIR,
+  TEMPLATE_TOP_DIRS,
+  TEMPLATE_TOP_FILES,
+  buildDevEnv,
+  copyTreeFiltered,
+  deriveParams,
+  ensureInstanceDir,
+} from './dev-instance-lib.mjs'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const APP_ROOT = path.resolve(__dirname, '..') // apps/electron
 const REPO_ROOT = path.resolve(APP_ROOT, '..', '..')
 
-const DEV_DATA_PARENT = path.join(os.homedir(), '.xyz-agent-dev')
-const INSTANCES_DIR = path.join(DEV_DATA_PARENT, 'instances')
-const TEMPLATE_DIR = path.join(os.homedir(), '.xyz-agent-dev.template')
-
 const DEFAULT_MODEL_PROVIDER = 'xiaomi-token-plan-cn'
 const DEFAULT_MODEL_ID = 'mimo-v2.5-pro'
-
-// ── 模板配置面（白名单制：只复制这些顶层条目，其余一律不进模板/实例）──────────
-// agent/（pi agent 目录，PI_CODING_AGENT_DIR = <dataDir>/agent，v2 方案 B 布局）是
-// 「配置+运行时状态」混合体，整目录复制但排除运行时子目录（EXCLUDES）。npm/ 是用户
-// 安装的 pi 扩展（~30M），属配置面。
-const TEMPLATE_TOP_FILES = [
-  'config.json', 'config.toml', 'pi-presets.json', 'model-db.json',
-  'provider-catalog-overlay.json', 'proxy-config.json', 'projects.json', 'recent-workspaces.json',
-]
-const TEMPLATE_TOP_DIRS = ['agent', 'npm', 'plugins', 'skills', 'agents', 'secrets']
-// 混合目录内的运行时状态子目录（会话/记录/调度状态/日志），永不进模板
-const TEMPLATE_DIR_EXCLUDES = [
-  'subagents', 'records', 'scheduler', 'workflow-state', 'token-stats', 'cache-ratio', 'logs', 'sessions',
-]
-
-// ── 实例参数派生 ──────────────────────────────────────────────────
-
-/** FNV-1a 32bit：稳定（同输入同输出）、无依赖、分布均匀 */
-function fnv1a(str) {
-  let h = 0x811c9dc5
-  for (let i = 0; i < str.length; i++) {
-    h ^= str.charCodeAt(i)
-    h = Math.imul(h, 0x01000193) >>> 0
-  }
-  return h >>> 0
-}
 
 /** worktree 名：git toplevel 的 basename（bare repo + worktree 模式下即 worktree 目录名） */
 function resolveInstanceName(cliName) {
@@ -85,30 +68,7 @@ function resolveInstanceName(cliName) {
   }
 }
 
-function deriveParams(name) {
-  const h = fnv1a(name)
-  return {
-    name,
-    vitePort: 1420 + (h % 300),
-    cdpPort: 9222 + ((h >>> 8) % 300),
-    portOffset: 100 + ((h >>> 16) % 40) * 10,
-    dataDir: path.join(INSTANCES_DIR, name),
-  }
-}
-
 // ── 模板管理 ──────────────────────────────────────────────────────
-
-function copyTreeFiltered(src, dst) {
-  fs.cpSync(src, dst, {
-    recursive: true,
-    filter: (entry) => {
-      // entry 相对被复制根的路径（首层无前导分隔）；排除运行时状态子目录（任意深度命中名字）
-      const rel = path.relative(src, entry)
-      if (!rel) return true
-      return !TEMPLATE_DIR_EXCLUDES.includes(path.basename(rel))
-    },
-  })
-}
 
 /** 从现有 ~/.xyz-agent-dev 生成只读模板（配置面白名单 + 预置快速默认模型） */
 function initTemplate(force) {
@@ -153,43 +113,7 @@ function presetDefaultModel(settingsPath) {
   fs.writeFileSync(settingsPath, JSON.stringify(settings, null, 2) + '\n')
 }
 
-// ── 实例目录 ──────────────────────────────────────────────────────
-
-function ensureInstanceDir(p, fresh) {
-  const resolved = path.resolve(p.dataDir)
-  // 安全断言：--fresh 只允许删 instances/ 直属子目录，防误删任意路径
-  if (!resolved.startsWith(INSTANCES_DIR + path.sep)) {
-    console.error(`[dev-instance] 实例目录越界（须在 ${INSTANCES_DIR} 下）: ${resolved}`)
-    process.exit(1)
-  }
-  if (fresh && fs.existsSync(resolved)) {
-    fs.rmSync(resolved, { recursive: true, force: true })
-    console.log(`[dev-instance] --fresh 已清空实例目录: ${resolved}`)
-  }
-  if (fs.existsSync(resolved)) return
-  if (!fs.existsSync(TEMPLATE_DIR)) {
-    console.error(`[dev-instance] 模板不存在: ${TEMPLATE_DIR}\n` +
-      `先执行: node ${path.relative(process.cwd(), path.join(APP_ROOT, 'scripts/dev-instance.mjs'))} init-template`)
-    process.exit(1)
-  }
-  fs.cpSync(TEMPLATE_DIR, resolved, { recursive: true })
-  console.log(`[dev-instance] ✅ 实例目录已从模板创建: ${resolved}`)
-}
-
 // ── 装配 & 启动 ───────────────────────────────────────────────────
-
-function buildEnv(p) {
-  return {
-    ...process.env,
-    // 端口与数据目录由装配器统一决定（保证 vite/electron/runtime/loadURL 四点一致），
-    // 不尊重外部碎片注入——要定制实例名用 XYZ_DEV_INSTANCE_NAME
-    XYZ_AGENT_DATA_DIR: p.dataDir,
-    XYZ_AGENT_PORT_OFFSET: String(p.portOffset),
-    XYZ_VITE_PORT: String(p.vitePort),
-    XYZ_CDP_PORT: String(p.cdpPort),
-    XYZ_VITE_DEV_URL: `http://localhost:${p.vitePort}`,
-  }
-}
 
 function printBanner(p, env) {
   console.log(`
@@ -238,12 +162,14 @@ if (argv[0] === 'init-template') {
   initTemplate(hasFlag('--force'))
 } else {
   const p = deriveParams(resolveInstanceName(cliName))
-  const env = buildEnv(p)
+  const env = buildDevEnv(p)
   if (hasFlag('--mock')) {
     env.VITE_MOCK = 'true'
     env.XYZ_MOCK = '1'
   }
-  ensureInstanceDir(p, hasFlag('--fresh'))
+  ensureInstanceDir(p, hasFlag('--fresh'), {
+    fail: (msg) => { console.error(msg); process.exit(1) },
+  })
   printBanner(p, env)
   if (hasFlag('--print')) process.exit(0)
   launch(env)

@@ -92,7 +92,7 @@ export class RemoteEngine implements EnginePort {
       // **不实现**（消费方 model-validation.ts:62 `typeof validateModel !== "function"`
       // → 跳过校验恒放行）。实例 own property 置 undefined 遮蔽原型方法——
       // typeof engine.validateModel === "undefined"。
-      (this as unknown as { validateModel?: unknown }).validateModel = undefined;
+      (this as { validateModel?: unknown }).validateModel = undefined;
     }
   }
 

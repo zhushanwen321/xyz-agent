@@ -369,12 +369,16 @@ describe("setupSessionLifecycle — bootstrap seam（设计 §3.1）", () => {
   });
 
   it("主进程（无 PI_SUBAGENT_SELF_RECORD_ID）不写 identity custom entry", async () => {
+    // [S5] 用例隐含依赖「测试进程 env 无 PI_SUBAGENT_SELF_RECORD_ID」——在 pi subagent
+    // 进程内跑测试（该 env 已注入）必红。显式 stub 隔离，不依赖外层环境。
+    vi.stubEnv("PI_SUBAGENT_SELF_RECORD_ID", "");
     const { setupSessionLifecycle } = await import("../session-lifecycle.ts");
     const { pi, entries } = createFakePi();
 
     await setupSessionLifecycle(pi, createFakeCtx(), {});
 
     expect(entries.find((e) => e.customType === IDENTITY_CUSTOM_TYPE)).toBeUndefined();
+    vi.unstubAllEnvs();
   });
 });
 

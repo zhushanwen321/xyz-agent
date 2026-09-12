@@ -322,6 +322,77 @@ describe("ConversationContinuation — D2 打断 / abort 不终态化 / 单飞",
   });
 });
 
+describe("ConversationContinuation — 回调边缘路径（S9 补测：abandoned/reject 兼底窗作废/drain 丢弃/closed 硬拒）", () => {
+  it("onRoundAbandoned：先 clearActiveRound 后 drain（排队消息在 abandoned 收敛后聚合续派）", async () => {
+    const record = makeRecord({ sessionFile: "/tmp/s.jsonl" });
+    const { host, calls } = makeHost(record);
+    const cont = new ConversationContinuation(record, host);
+    cont.startFirstRound("round 1");
+    await vi.waitFor(() => expect(calls.dispatched.length).toBe(1));
+    cont.onMessage("queued msg");
+    expect(cont.pendingCount).toBe(1);
+
+    // acquire 被打断（无 run 产生）：不终态化、不通知，直接 drain
+    cont.onRoundAbandoned();
+
+    expect(record.status).toBe("running");
+    expect(calls.notified.length).toBe(0);
+    expect(calls.finalized.length).toBe(0);
+    // 次序证明：drain 派发发生（若 clearActiveRound 未先执行，dispatchRoundGuarded
+    // 的 activeRunId 双保险会 early-return，第二条派发不可达）
+    await vi.waitFor(() => expect(calls.dispatched.length).toBe(2));
+    expect(calls.dispatched[1]!.task).toBe("queued msg");
+    expect(cont.pendingCount).toBe(0);
+  });
+
+  it("兼底窗终态抢先作废：killStale await 窗内 close → 轮作废（零派发零簿记，队列清空）", async () => {
+    const record = makeRecord({ sessionFile: "/tmp/s.jsonl" });
+    const { host, calls } = makeHost(record);
+    const cont = new ConversationContinuation(record, host);
+    // startFirstRound 的派发在 killStale await 之后才发生 —— 同步段仅占位
+    cont.startFirstRound("doomed round");
+    record.status = "closed"; // close/cancel 在兼底窗内抢先终态化
+    record.closedReason = "user-close";
+
+    await vi.waitFor(() => expect(calls.killStale.length).toBe(1));
+    // await 窗返回后：status ≠ running → clearActiveRound + 队列清空，不派发不簿记
+    await new Promise((r) => setTimeout(r, 0));
+    expect(calls.dispatched.length).toBe(0);
+    expect(calls.roundStarts.length).toBe(0);
+    expect(cont.pendingCount).toBe(0);
+  });
+
+  it("drain 派发守卫 throw → 队列丢弃 + warn + 丢弃通知（drain-drop dedup key，A2 转错误面）", async () => {
+    // 无 sessionFile：首轮派发（firstRound=true）不触锚点守卫；drain 以 firstRound=false
+    // 派发时锚点守卫 throw → catch 转丢弃面
+    const record = makeRecord({ sessionFile: undefined });
+    const { host, calls } = makeHost(record);
+    const cont = new ConversationContinuation(record, host);
+    cont.startFirstRound("round 1");
+    await vi.waitFor(() => expect(calls.dispatched.length).toBe(1));
+    cont.onMessage("queued while anchorless");
+
+    cont.onRunSettled(makeOutcome({ content: "", error: "engine_run_failed: run aborted" }));
+
+    // 失败轮末 → drain → 守卫 throw → warn + 丢弃通知（dedup key 含 drain-drop）
+    await vi.waitFor(() => expect(loggerMock.warn).toHaveBeenCalled());
+    expect(loggerMock.warn).toHaveBeenCalledWith(expect.stringContaining("queued message dispatch rejected"));
+    expect(calls.dispatched.length).toBe(1); // 零续派
+    const drop = calls.notified.at(-1);
+    expect(drop?.dedupKey).toContain("drain-drop");
+  });
+
+  it("closed record 发 message → 硬拒 throw 文案含 Recovery 指引（D4 closed 硬拒格）", () => {
+    const record = makeRecord({ sessionFile: "/tmp/s.jsonl" });
+    record.status = "closed";
+    record.closedReason = "user-close";
+    const { host } = makeHost(record);
+    const cont = new ConversationContinuation(record, host);
+
+    expect(() => cont.onMessage("hello?")).toThrow(/Recovery: start a new subagent/);
+  });
+});
+
 describe("ConversationContinuation — 轮末分流（D7）与通知面", () => {
   it("成功轮：doFinalizeRoundToIdle(success) → notifyGate 门 → route（route 晚于簿记——order 断言）", async () => {
     const record = makeRecord({ sessionFile: "/tmp/s.jsonl" });

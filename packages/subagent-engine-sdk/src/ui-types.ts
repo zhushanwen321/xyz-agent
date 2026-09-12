@@ -81,6 +81,20 @@ export type UiResponse =
   | { cancelled: true }
   | { ack: true };
 
+/** UiResponse 载荷结构判定（四成员判别；形态对齐 reverse-channels 的
+ *  isHostStreamDeltaParams 先例）。消费方：引擎侧应答落位前守卫，防宿主畸形帧
+ *  静默流入 UI 队列（S7：askUser 应答跨界无守卫）。 */
+export function isUiResponse(value: unknown): value is UiResponse {
+  if (typeof value !== "object" || value === null) return false;
+  const v = value as Record<string, unknown>;
+  return (
+    typeof v.value === "string" ||
+    typeof v.confirmed === "boolean" ||
+    v.cancelled === true ||
+    v.ack === true
+  );
+}
+
 /** UI 请求 handler 签名（单函数，按 req.method 内部路由）。
  *  实现方负责：channel 业务路由（ask_user → AskUserComponent）+ 默认转发（ctx.ui.*）。
  *  抛错由调用方（DialogGlobalQueue / session-runner）兜底为 {cancelled:true}。 */

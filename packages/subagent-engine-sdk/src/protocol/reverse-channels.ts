@@ -97,11 +97,9 @@ export type HostPermissionResult = { approved: boolean } | { unsupported: true }
 /**
  * host/streamDelta：UI 实时通道（双通道之一；与 event 通知并行的渲染加速面）。
  *
- * [v1.x 关联键扩展——D1-A 裁定，W1 落地不再临场选择]：
- *   - run 域轮（含 run 会话形态首轮）：runId 关联（v1 现状不变，runId 由 core 在
- *     run 帧分配）；
- *   - chat 续聊轮（[H1] 原 interact 发起形态，现 = resume run）：**recordId** 关联
- *     （续聊轮 recordId 经 handle.sessionRef 送达引擎）。
+ * [H1 U6 现行语义] 关联键恒 runId（run 域轮与 chat 续聊轮已统一为 run——续聊轮
+ * 是携带 resume 锚点的新 run，runId 由 core 在 run 帧分配）。recordId 键分支是
+ * v1.x 旧引擎的兼容载荷形态（存量兼容读，现行引擎不写）。
  * 两键互斥（undefined 孪生位防双填），消费侧经 isHostStreamDeltaParams 收窄。
  */
 export type HostStreamDeltaParams =

@@ -1320,7 +1320,7 @@ async function main() {
     packages: {
       'packages/renderer': {
         status: 'FAIL', reason: '增量覆盖率 62.0% < 80%', incremental_pct: 62.0,
-        uncovered_files: ['packages/renderer/src/App.vue (3/10)'],
+        uncovered_files: ['packages/renderer/src/App.vue (7 uncovered / 10)'],
         files_without_lcov: ['packages/renderer/src/unloaded.ts'],
       },
     },
@@ -1563,7 +1563,7 @@ async function main() {
     const fixCalls = t.agentCalls.filter((c) => c.description === 'fix-coverage-1');
     assert.strictEqual(fixCalls.length, 1);
     assertIncludes(fixCalls[0].prompt, 'fix: gate coverage-1 round 1');
-    assertIncludes(fixCalls[0].prompt, 'packages/renderer/src/App.vue (3/10)'); // uncovered_files 定点
+    assertIncludes(fixCalls[0].prompt, 'packages/renderer/src/App.vue (7 uncovered / 10)'); // uncovered_files 定点（条目 = 未覆盖/总行，I-13 语义）
     assertIncludes(fixCalls[0].prompt, 'packages/renderer/src/unloaded.ts'); // files_without_lcov
     const state = readStateFile(t.root, RUN_ID_A);
     assert.strictEqual(state.steps['coverage-1'].outputs.coverageVerdict, 'pass');

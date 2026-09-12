@@ -47,7 +47,7 @@
 
 import { readFileSync, readdirSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 const PROJECT_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const EXECUTION_DIR = join(PROJECT_ROOT, "packages", "subagent-core", "src", "execution");
@@ -83,7 +83,7 @@ const SUPPORT_SHELL_EDGES = new Map([
  *  `import type { A } from "..."` / `import { default as X } from "..."` /
  *  `import * as ns from "..."` / `export { A } from "..."`（[阶段3 P3-3] re-export
  *  通道与 import 同构——聚合互相转发值符号时按值符号入各方向门）。 */
-function parseImport(line) {
+export function parseImport(line) {
   const m = line.match(/^\s*(?:import|export)\s+(type\s+)?(?:\{([^}]*)\}|\*\s+as\s+[\w$]+|\*(?!\s+as)|[\w$]+)\s*from\s*['"]([^'"]+)['"]/);
   if (!m) return null;
   const blockTypeOnly = Boolean(m[1]);
@@ -110,7 +110,7 @@ function parseImport(line) {
  *  import 同为多行）。[阶段3 R2-1] 合并条件同时覆盖 import/export 开头（多行
  *  `export {\n A \n} from` 块同漏检面）。仅合并「以 import/export 开头且本行无
  *  from」到「含 from 的行」。 */
-function* logicalImportLines(src) {
+export function* logicalImportLines(src) {
   const lines = src.split("\n");
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
@@ -131,19 +131,20 @@ function* logicalImportLines(src) {
   }
 }
 
-/** import 目标解析为 execution/service/ 内的兄弟文件名；否则返回 null。 */
-function resolveServiceTarget(fromFile, spec) {
+/** import 目标解析为 execution/service/ 内的兄弟文件名；否则返回 null。
+ *  serviceDir 可注入（MF-6 测试 fixture 用）。 */
+export function resolveServiceTarget(fromFile, spec, serviceDir = SERVICE_DIR) {
   if (!spec.startsWith(".")) return null;
   const abs = resolve(dirname(fromFile), spec);
-  const relInService = abs.startsWith(SERVICE_DIR) ? abs.slice(SERVICE_DIR.length + 1) : null;
+  const relInService = abs.startsWith(serviceDir) ? abs.slice(serviceDir.length + 1) : null;
   if (relInService && relInService.endsWith(".ts")) return relInService;
   return null;
 }
 
-/** import 目标解析是否指向壳文件。 */
-function isShellTarget(fromFile, spec) {
+/** import 目标解析是否指向壳文件。execDir 可注入（MF-6 测试 fixture 用）。 */
+export function isShellTarget(fromFile, spec, execDir = EXECUTION_DIR) {
   if (!spec.startsWith(".")) return false;
-  return resolve(dirname(fromFile), spec) === join(EXECUTION_DIR, "subagent-service.ts");
+  return resolve(dirname(fromFile), spec) === join(execDir, "subagent-service.ts");
 }
 
 /** 从壳文件提取聚合 class 名集合（`import { X, ... } from "./service/xxx.ts"`）。 */
@@ -163,7 +164,7 @@ function extractAggregateClassNames() {
 /** 提取聚合 class 的导出面（非 private 成员名集合：方法/getter/字段）。
  *  范围限定 export class 大括号体内（brace 平衡截断），避免 interface 成员与
  *  模块级对象字面量属性混入导出面造成漏报。 */
-function extractPublicSurface(source) {
+export function extractPublicSurface(source) {
   const classStart = source.search(/export\s+class\s+(\w+)/);
   if (classStart === -1) return null;
   const className = source.slice(classStart).match(/export\s+class\s+(\w+)/)[1];
@@ -193,7 +194,7 @@ function extractPublicSurface(source) {
 
 /** 提取文件内 deps 接口中返回聚合实例的 getter 映射：getterName → 聚合 class 名。
  *  形态：`readonly getFoo: () => XxxAggregate;` / `() => Promise<XxxAggregate>`。 */
-function extractAggregateGetters(source, aggregateClassNames) {
+export function extractAggregateGetters(source, aggregateClassNames) {
   const getters = new Map();
   const re = /readonly\s+(get\w+)\s*:\s*\(\s*\)\s*=>\s*(?:Promise<)?(\w+)>?\s*;/g;
   let m;
@@ -225,9 +226,11 @@ function addEdge(edges, file, sibling) {
 }
 
 /** 检查 2：聚合 → 壳（一律禁，type 也不许——壳符号面只许壳自己 re-export）。
- *  命中返回违规文本，非壳目标返回 null。 */
-function checkAggregateShellImport(file, parsed) {
-  if (!isShellTarget(join(SERVICE_DIR, file), parsed.target)) return null;
+ *  命中返回违规文本，非壳目标返回 null。dirs.{serviceDir,execDir} 可注入（MF-6 测试）。 */
+export function checkAggregateShellImport(file, parsed, dirs = {}) {
+  const serviceDir = dirs.serviceDir ?? SERVICE_DIR;
+  const execDir = dirs.execDir ?? EXECUTION_DIR;
+  if (!isShellTarget(join(serviceDir, file), parsed.target, execDir)) return null;
   const syms = parsed.symbols.map((s) => (s.name === "*" ? "(default/namespace)" : s.name)).join(", ");
   return `[聚合→壳] ${file} import subagent-service.ts（${syms}）——聚合读壳能力必须经 deps 注入（D4），禁止 import`;
 }
@@ -295,8 +298,10 @@ function checkAggregateImports(aggregateFiles, sources, edges, violations) {
 
 /** 检查 5 前半：支撑 → 壳默认红（防反向依赖，D4 同理），仅 SUPPORT_SHELL_EDGES 放行。
  *  命中返回违规文本数组（台账外每符号一条），非壳目标返回 null。 */
-function checkSupportShellImports(file, parsed) {
-  if (!isShellTarget(join(SERVICE_DIR, file), parsed.target)) return null;
+export function checkSupportShellImports(file, parsed, dirs = {}) {
+  const serviceDir = dirs.serviceDir ?? SERVICE_DIR;
+  const execDir = dirs.execDir ?? EXECUTION_DIR;
+  if (!isShellTarget(join(serviceDir, file), parsed.target, execDir)) return null;
   const violations = [];
   for (const sym of parsed.symbols) {
     const symName = sym.name === "*" ? "(default/namespace)" : sym.name;
@@ -313,17 +318,19 @@ function checkSupportShellImports(file, parsed) {
 
 /** 检查 5：单个支撑文件的 import 方向门；
  *  支撑 → 聚合/支撑：允许（提供 type/常量/工厂），入环检测图。 */
-function checkSupportFileImports(file, src, edges, violations) {
+export function checkSupportFileImports(file, src, edges, violations, dirs = {}) {
+  const serviceDir = dirs.serviceDir ?? SERVICE_DIR;
+  const execDir = dirs.execDir ?? EXECUTION_DIR;
   for (const line of logicalImportLines(src)) {
     if (line.trim().startsWith("//")) continue;
     const parsed = parseImport(line);
     if (!parsed) continue;
-    const shellViolations = checkSupportShellImports(file, parsed);
+    const shellViolations = checkSupportShellImports(file, parsed, { serviceDir, execDir });
     if (shellViolations !== null) {
       violations.push(...shellViolations);
       continue;
     }
-    const sibling = resolveServiceTarget(join(SERVICE_DIR, file), parsed.target);
+    const sibling = resolveServiceTarget(join(serviceDir, file), parsed.target, serviceDir);
     if (sibling) addEdge(edges, file, sibling);
   }
 }
@@ -362,7 +369,7 @@ function collectAggregateSurfaces(aggregateFiles, sources) {
 
 /** 检查 4：单个聚合文件内 deps getter 直调形态对照目标聚合导出面，
  *  this.deps.getFoo().method( 的 method 非 public 即红。 */
-function checkAggregateGetterCalls(file, src, surfaces, aggregateClassNames, violations) {
+export function checkAggregateGetterCalls(file, src, surfaces, aggregateClassNames, violations) {
   const getters = extractAggregateGetters(src, aggregateClassNames);
   if (getters.size === 0) return;
   // 正文调用形态：this.deps.getFoo().method( （跨行/链式前缀容忍）
@@ -435,4 +442,6 @@ function main() {
   return reportResult(violations, aggregateFiles, supportFiles, edges);
 }
 
-process.exit(main());
+// main()：CLI 直跑才执行（vitest import 纯函数导出时不触发扫描/exit，check-publish-surface 先例）
+const isMain = process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href;
+if (isMain) process.exit(main());

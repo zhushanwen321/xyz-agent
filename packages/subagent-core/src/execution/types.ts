@@ -693,6 +693,14 @@ export interface SubagentListItem {
    * 无需翻 error 字段原文（S5）。
    */
   outcome?: ProjectedOutcome;
+  /**
+   * 来源身份（H2 W1）：undefined（存量 list 形态 / record 无 origin）= "tool" 语义。
+   * includeWorkflow 打开后 list 条目与手动派发 record 靠本字段区分（排查 workflow
+   * run's subagents 场景的辨识数据）。
+   */
+  origin?: RecordOrigin;
+  /** origin="workflow" 时所属 workflow run id；tool 来源恒缺省（同 record 侧）。 */
+  parentRunId?: string;
 }
 
 /** background 启动的内层响应（挂在 SubagentToolResult.bgResponse）。 */
