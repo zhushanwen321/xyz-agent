@@ -59,7 +59,7 @@ describe('EventInterpreter session-renamed 编排（MF-3 ②，label 自动同�
     expect(onSessionRenamed).toHaveBeenCalledWith('s1', 'renamed-by-pi')
   })
 
-  it('TC-RN2: name undefined → 回调透传 undefined（组合根 ?? "" 兜底，不伪造名字）', () => {
+  it('TC-RN2: name undefined → 回调透传 undefined（组合根回落 basename 派生，session-rename-fanout 承载 D4）', () => {
     const { interp, onSessionRenamed } = makeInterpreter()
     interp.interpret([{ kind: 'session-renamed', name: undefined }])
     expect(onSessionRenamed).toHaveBeenCalledWith('s1', undefined)

@@ -1,7 +1,8 @@
 /**
  * parseSubagentDirective 单测（composer 四符号 @ 定向对话，PR #191）。
  *
- * 覆盖：SUBAGENT_DIRECTIVE_CUSTOM_TYPE SSOT 值锁定 + 防御性解析器全分支——
+ * 覆盖：SUBAGENT_DIRECTIVE_CUSTOM_TYPE / PI_RESPAWN_NOTICE_CUSTOM_TYPE 两个
+ * SSOT 值锁定 + 防御性解析器全分支——
  * 合法输入全字段 / details 缺 subagentId、slug、direction 非 'user' / details 为
  * null、undefined、数组、原始类型 / content 非 string 时 text 归空串。
  * 消费点（runtime live 广播、reload display 覆写、renderer 定向气泡）共用此
@@ -10,11 +11,43 @@
  * 运行：cd packages/shared && npx vitest run src/__tests__/message.test.ts
  */
 import { describe, it, expect } from 'vitest'
-import { SUBAGENT_DIRECTIVE_CUSTOM_TYPE, parseSubagentDirective } from '../message'
+import {
+  PI_RESPAWN_NOTICE_CUSTOM_TYPE,
+  SUBAGENT_DIRECTIVE_CUSTOM_TYPE,
+  parseRespawnNoticeVariant,
+  parseSubagentDirective,
+} from '../message'
 
 describe('SUBAGENT_DIRECTIVE_CUSTOM_TYPE SSOT', () => {
   it('常量值锁定为 subagent-directive（与 extension 端写入字符串一致，防改名漂移）', () => {
     expect(SUBAGENT_DIRECTIVE_CUSTOM_TYPE).toBe('subagent-directive')
+  })
+})
+
+describe('PI_RESPAWN_NOTICE_CUSTOM_TYPE SSOT', () => {
+  it('常量值锁定为 pi-respawn-notice（core 写入方与 ui 渲染分支共用，防字面量漂移）', () => {
+    expect(PI_RESPAWN_NOTICE_CUSTOM_TYPE).toBe('pi-respawn-notice')
+  })
+})
+
+describe('parseRespawnNoticeVariant 防御性解析', () => {
+  it('合法 details：variant 字段命中两形态之一原样返回', () => {
+    expect(parseRespawnNoticeVariant({ variant: 'restored' })).toBe('restored')
+    expect(parseRespawnNoticeVariant({ variant: 'restoreFailed' })).toBe('restoreFailed')
+  })
+
+  it('details 非对象形态（null / undefined / 数组 / 原始类型）→ null（消费侧降级不崩溃）', () => {
+    expect(parseRespawnNoticeVariant(null)).toBeNull()
+    expect(parseRespawnNoticeVariant(undefined)).toBeNull()
+    expect(parseRespawnNoticeVariant([{ variant: 'restored' }])).toBeNull()
+    expect(parseRespawnNoticeVariant('restored')).toBeNull()
+    expect(parseRespawnNoticeVariant(42)).toBeNull()
+  })
+
+  it('variant 非法值 / 缺失 → null', () => {
+    expect(parseRespawnNoticeVariant({})).toBeNull()
+    expect(parseRespawnNoticeVariant({ variant: 'unknown' })).toBeNull()
+    expect(parseRespawnNoticeVariant({ variant: null })).toBeNull()
   })
 })
 

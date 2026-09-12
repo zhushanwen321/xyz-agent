@@ -75,21 +75,21 @@ describe('SessionService.getAgentCallHistory', () => {
     // S6 迁移：getSubagentHistory 实现落位 session-records，观察点随迁到 records 实例
     //（Facade.getAgentCallHistory 一行委托 → records.getAgentCallHistory → records.getSubagentHistory）
     const { records } = service as unknown as { records: SessionRecords }
-    const spy = vi.spyOn(records, 'getSubagentHistory').mockResolvedValue(fakeMessages)
+    const spy = vi.spyOn(records, 'getSubagentHistory').mockResolvedValue({ messages: fakeMessages, truncated: false })
 
     const result = await service.getAgentCallHistory('main-sess-001', 'sa-agentcall-001')
 
     expect(spy).toHaveBeenCalledWith('main-sess-001', 'sa-agentcall-001')
-    expect(result).toEqual(fakeMessages)
+    expect(result).toEqual({ messages: fakeMessages, truncated: false })
   })
 
   it('getSubagentHistory 返回空数组时透传（找不到 record 不 throw，前端显空对话流非错误态）', async () => {
     const service = createService()
     const { records } = service as unknown as { records: SessionRecords }
-    vi.spyOn(records, 'getSubagentHistory').mockResolvedValue([])
+    vi.spyOn(records, 'getSubagentHistory').mockResolvedValue({ messages: [], truncated: false })
 
     const result = await service.getAgentCallHistory('main-sess', 'sa-missing')
 
-    expect(result).toEqual([])
+    expect(result).toEqual({ messages: [], truncated: false })
   })
 })

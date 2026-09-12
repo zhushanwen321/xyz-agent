@@ -30,10 +30,10 @@
  * （ensure/logTag），消费方无感。
  *
  * 契约：
- *   - fn 内禁止任何 I/O（sync 版）/ await（async 版）/ 再次对本文件加锁
- *     （嵌套取锁必然 ELOCKED → 重试耗尽 → fail-fast）。持锁范围应仅为
- *     「读文件 + 纯内存变更 + 原子写」，毫秒级（必须远小于 stale——无保活
- *     touch，超时持锁会被对端 stale 夺取）。
+ *   - fn 内仅做既定读改写（读目标文件 + 纯内存变更 + 原子写），禁其他 I/O 与
+ *     再次对本文件加锁（嵌套取锁必然 ELOCKED → 重试耗尽 → fail-fast），毫秒级
+ *     完成（必须远小于 stale——无保活 touch，超时持锁会被对端 stale 夺取）。
+ *     async 版 fn 允许 await，临界区时长约束同上。
  *   - 预算耗尽 fail-fast 抛错（对齐 pi 放弃保存的语义），不静默不重排队——
  *     同步 busy-wait 阻塞整个 event loop，预算必须被严格限制在 ~1s 量级。
  *
@@ -56,7 +56,8 @@ export interface SyncFileLockOptions {
 
 /**
  * 默认锁参数（导出供对照测试断言与 extension 侧 @zhushanwen/pi-file-lock
- * 的 sync 版默认值相等——两侧参数漂移会破坏「同一把锁」的互斥语义；
+ * 的 sync 版默认值相等——互斥由 lockfile 路径 + mkdir 原子协议保证，默认值
+ * 对齐锚定的是两侧夺取时机（stale）与失败速度（重试参数）行为一致；
  * test/file-lock-parity.test.ts）。
  */
 export const DEFAULT_STALE_MS = 30_000

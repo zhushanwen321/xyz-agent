@@ -81,24 +81,24 @@ describe('FG6 Overview 进入/退出 + sessionDigest', () => {
     expect(focusedSessionId.value).toBe('s1')
   }, 10_000)
 
-  it('已 hydrate 二次切入：尾读 reconcile 同步刷新 truncated 标记（load-more 可恢复）', async () => {
-    // [truncated-refresh] 对齐 core a3b54bc08：已 hydrate 分支的 reconcile 整量替换分区，
-    // 尾读返回 truncated=true 时标记须重置（load-more 按钮重显），false 时清除。
+  it('已 hydrate 二次切入：reconcile 同步刷新 truncated 标记（load-more 可恢复）', async () => {
+    // [truncated-refresh] 对齐 core a3b54bc08：已 hydrate 分支的 reconcile（[u6] 窗口响应
+    // 仅合并覆盖最近窗口），响应 truncated=true 时标记须重置（按钮重显），false 时清除。
     const historySpy = vi
       .spyOn(mockApi.chat, 'getHistory')
-      .mockResolvedValue({ messages: [], historyTruncated: true })
+      .mockResolvedValue({ messages: [], truncated: true, loadedTurns: 2, totalTurnsEstimate: 2 })
     const { selectSession } = useSidebar()
     await selectSession('s1') // 首进 hydrate
     await selectSession('s1') // 已 hydrate 切入 → else 分支 reconcile + 标记刷新
     expect(useChat().hasMoreHistory('s1')).toBe(true)
 
-    historySpy.mockResolvedValue({ messages: [], historyTruncated: false })
+    historySpy.mockResolvedValue({ messages: [], truncated: false, loadedTurns: 1, totalTurnsEstimate: 1 })
     await selectSession('s1')
     expect(useChat().hasMoreHistory('s1')).toBe(false)
 
     historySpy.mockRestore()
-    // 清模块级标记，避免污染后续用例（core useChat 的 Set 跨 pinia 实例共享）
-    useChat().setHistoryTruncated('s1', false)
+    // 清截断窗口状态，避免污染后续用例（[u4d] SSOT 在 chat store 截断窗口状态）
+    useChatStore().clearHistoryWindow('s1')
   }, 10_000)
 
   it('sessionDigest：s1 fixture 末条 assistant 摘要 + 回合计数', async () => {

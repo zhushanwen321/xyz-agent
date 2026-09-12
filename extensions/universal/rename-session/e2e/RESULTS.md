@@ -18,7 +18,7 @@
 | 英文任务 | Refactor the config loader to support env overrides | refactor-config-loader-env-overrides | PASS（小写 kebab-case 动名词链） | PASS（refactor config loader + env overrides 全要素） | PASS（英文） |
 | 跟进型 | 继续刚才的，改成支持 leading 选项 | 支持-leading-选项功能实现 | PASS（词组形态；「支持X功能实现」略冗但非句子） | PASS（leading 选项改动，跟进型缺上下文下合理） | PASS（中文为主+英文术语保留） |
 
-**人工抽查结论（2026-08-15，验收人：主 agent）**：三场景全部 PASS。对照旧风格反例（如「我帮你写了一个防抖函数」），三个标题均为 slug 词组形态，slug prompt 约束（D4）达成 G2 目标。跟进型标题质量略弱于另两个（prompt 本身无上下文），符合设计的预期差异（§11.2），不构成失败。
+**人工抽查结论（2026-08-15，验收人：主 agent）**：三场景全部 PASS。对照旧风格反例（如「我帮你写了一个防抖函数」），三个标题均为 slug 词组形态，slug prompt 约束达成词组形态目标。跟进型标题质量略弱于另两个（prompt 本身无上下文），属预期差异，不构成失败。
 
 ## 2026-08-15 04:53:40 run
 

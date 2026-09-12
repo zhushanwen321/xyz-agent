@@ -28,6 +28,10 @@
  *         <encodeCwd>/               ← pi 按 cwd 自动分子目录（默认布局）
  *
  * 注意：extensions/npm/tmp 原在旧布局 agent/ 子树下，已迁出到 dataDir 根层（与 skills/agents 对齐）。
+ *
+ * 图片缓存路径（getImageCacheRoot/getImageCacheDir）为 C-state-05 债务新增面：
+ * 纯校验+join 组合逻辑后续拆为无 node 依赖纯函数留 shared，env/homedir 腿（getDataDir 推导）
+ * 迁 runtime/main 各自实现——收编时机随 C-state-05 白名单整体治理，不在本批。
  */
 import { homedir } from 'node:os'
 import { join } from 'node:path'
@@ -51,6 +55,21 @@ export function getDataDir(env: NodeJS.ProcessEnv = process.env): string {
  */
 export function getPiAgentDir(env: NodeJS.ProcessEnv = process.env): string {
   return join(getDataDir(env), 'agent')
+}
+
+/**
+ * pi session 文件目录（方案 B 新布局 `<dataDir>/agent/sessions`，dev-0.9.17 合并对齐；
+ * 真实推导锚点 = runtime pi-paths.ts getSessionsDir：join(getPiAgentDir(), 'sessions')）。
+ * session jsonl 落在其下的 `<encodeCwd>/` 子目录（pi 按 cwd 分目录），文件名形态
+ * `<ISO时间戳>_<uuid>.jsonl`——跨进程消费方按目录递归扫描，不假设单层。
+ *
+ * main 进程不能 import runtime（包边界），孤儿判据反查等跨进程消费经本 SSOT 同构推导，
+ * 禁止各进程手拼层级（曾因手拼多套一层 pi/ 前缀致判据恒空）。
+ *
+ * @param dataDir 可选数据根目录（测试注入）；缺省读 getDataDir()
+ */
+export function getPiSessionsDir(dataDir?: string): string {
+  return join(dataDir ?? getDataDir(), 'agent', 'sessions')
 }
 
 /**
@@ -121,4 +140,70 @@ export function getAttachmentsDir(sessionId: string, dataDir?: string): string {
     throw new Error(`invalid sessionId (path traversal blocked): ${sessionId}`)
   }
   return join(dataDir ?? getDataDir(), 'attachments', sessionId)
+}
+
+/**
+ * toolResult 图片缓存根目录（`<dataDir>/cache/images`）[crash-resilience §3.3 D6-⑨]。
+ *
+ * 纯缓存语义（可随时丢弃、可幂等重建）；落盘执行方 = main 进程（IPC IMAGE_CACHE_WRITE），
+ * 级联/孤儿/软上限清理均为此目录下的文件系统级动作（runtime session 删除链同样直接
+ * fs 删该目录——main 与 runtime 共享 getDataDir 数据根）。local-file:// 协议白名单
+ * 放行整个本目录前缀（apps/electron/main/utils/local-file-prefixes.ts）。
+ *
+ * @param dataDir 可选数据根目录（测试注入）；缺省读 getDataDir()
+ */
+export function getImageCacheRoot(dataDir?: string): string {
+  return join(dataDir ?? getDataDir(), 'cache', 'images')
+}
+
+/**
+ * 单 session 的图片缓存目录（`<getImageCacheRoot()>/<sessionId>`）[crash-resilience §3.3 D6-⑨]。
+ *
+ * 路径穿越防护与 getAttachmentsDir 同款：sessionId 必须匹配 `^[A-Za-z0-9_-]+$`，
+ * 否则 throw（cache/images 内子目录名即 sessionId，孤儿扫描据此反查 pi sessions 目录）。
+ *
+ * @param sessionId 会话 id（子目录分区，必须匹配 `^[A-Za-z0-9_-]+$`）
+ * @param dataDir   可选数据根目录（测试注入）；缺省读 getDataDir()
+ * @throws Error 当 sessionId 含路径分隔符或非法字符
+ */
+export function getImageCacheDir(sessionId: string, dataDir?: string): string {
+  if (!/^[A-Za-z0-9_-]+$/.test(sessionId)) {
+    throw new Error(`invalid sessionId (path traversal blocked): ${sessionId}`)
+  }
+  return join(dataDir ?? getDataDir(), 'cache', 'images', sessionId)
+}
+
+// ── run 目录运行态（crash-forensics D1/D3）────────────────────────────────────
+// 【oe-audit C8】文件名族 SSOT：此前 'runtime-checkpoint.json' 等字面量在
+// runtime-checkpoint.ts / main.ts / export-diagnostic-bundle.ts 三处独立定义
+// （bundle 注释自认「三行常量跨文件显式对齐」）——漏改即 main 侧隔离与诊断导出
+// 静默失配。收敛单点后，三消费方（runtime writer / main 残留隔离 / 诊断清单）共享。
+
+/** run 目录名（`<dataDir>/run`）。 */
+export const RUN_DIR_NAME = 'run'
+
+/** main 存活 marker 文件名（D1 clean-exit marker：正常退出删除，残留 = unclean）。 */
+export const RUN_MARKER_FILENAME = 'main-running.marker'
+
+/** runtime checkpoint 主文件名（D3 权威路径 `<dataDir>/run/runtime-checkpoint.json`）。 */
+export const RUN_CHECKPOINT_FILENAME = 'runtime-checkpoint.json'
+
+/** checkpoint 失败现场文件名前缀（同域家族：`runtime-checkpoint-failed-<ts>.json`）。 */
+export const RUN_CHECKPOINT_FAILED_PREFIX = 'runtime-checkpoint-failed-'
+
+/** checkpoint 失败现场保留份数（D3 §5 清理声明：保留最近 3 份，新失败覆盖最旧）。 */
+export const RUN_CHECKPOINT_FAILED_RETENTION = 3
+
+/** run 目录运行态路径族（main.ts resolveRunStatePaths 的 shared 形态——诊断导出等 main 模块不能 import 入口模块）。 */
+export function getRunStatePaths(dataDir: string): {
+  runDir: string
+  markerPath: string
+  checkpointPath: string
+} {
+  const runDir = join(dataDir, RUN_DIR_NAME)
+  return {
+    runDir,
+    markerPath: join(runDir, RUN_MARKER_FILENAME),
+    checkpointPath: join(runDir, RUN_CHECKPOINT_FILENAME),
+  }
 }

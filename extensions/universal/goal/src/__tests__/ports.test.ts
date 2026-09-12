@@ -46,7 +46,7 @@ describe("buildPorts UiPort.setGuiWidget（marker 编码集成）", () => {
 		const captured = getCaptured();
 		expect(captured).toBeDefined();
 		expect(captured).toHaveLength(1);
-		// marker 前缀（host 侧 event-adapter 据此解码成 extension:widgetGui）
+		// marker 前缀（host 侧 EventAdapter 据此解码成 extension:widgetGui）
 		expect(captured![0].startsWith(GUI_WIDGET_MARKER)).toBe(true);
 		// 解码还原 GuiComponent
 		const json = captured![0].slice(GUI_WIDGET_MARKER.length);

@@ -12,21 +12,28 @@ import {
 
 // ──────────────────────── 配置 ────────────────────────
 
+/** 触发模式三值枚举（设计 rename-session-three-modes.md D1）：互斥，默认 "first-stop"（零行为迁移）。 */
+export type RenameMode = "first-prompt" | "first-stop" | "agent-tool";
+
 /**
  * rename-session 配置 schema（落盘到 `<agentDir>/config/rename-session-ext-config.json`，路径由 llm-shared 推导）。
  *
  * 收口自旧版 pure.ts 的 `RenameConfig`（switchFilePath/maxTitleLength/renameInstruction 硬编码常量）：
  * - 开关双机制：`enabled` 字段（pi CLI 用户主开关，默认 false）+ xyz-agent runtime 的
  *   auto-rename-enabled flag 文件（live 覆盖源，存在即开，见下方 [COMPAT] 契约）
- * - model 从「搭便车 ctx.model」改为独立 `ModelSelector`（仅支持 ref 精确指定）
+ * - model 从「搭便车 ctx.model」改为独立 `ModelSelector`（仅支持 ref 精确指定；空 ref 跟随会话主模型，见 llm.ts 的空 ref fallback）
  * - maxTitleLength 保留（默认 50）
  * - renameInstruction 不进配置（i18n 留未来），由代码常量 RENAME_INSTRUCTION 承载
+ * - mode（设计 rename-session-three-modes.md D1）：first-prompt 首条 user 消息触发 / first-stop 首个成功 round 末触发（默认，现状）/
+ *   agent-tool 不自动生成、注册 rename_session 工具由 agent 自主改名
  */
 export interface RenameSessionConfig {
 	/** 自动重命名开关（默认 false）。 */
 	enabled: boolean;
-	/** 标题生成用的模型 selector（仅支持 ref 精确指定；未配置时默认为空 ref，解析不到模型则跳过）。 */
+	/** 标题生成用的模型 selector（仅支持 ref 精确指定；未配置时默认为空 ref，空 ref 跟随会话主模型）。 */
 	model: ModelSelector;
+	/** 触发模式（三值互斥，默认 "first-stop"——首个成功 round 末命名，现状行为）。 */
+	mode: RenameMode;
 	/** 标题最大长度（Unicode 码点数）。 */
 	maxTitleLength: number;
 	/**
@@ -48,69 +55,17 @@ const THINKING_LEVELS: ReadonlySet<string> = new Set([
 	"max",
 ]);
 
-// ──────────────────────── 环境变量覆盖 ────────────────────────
+// ──────────────────────── 枚举校验 ────────────────────────
 
-/** 环境变量前缀（避免与其他配置冲突）。 */
-const ENV_PREFIX = "PI_RENAME_";
-
-/** "provider/model" 格式按 "/" 拆分后的合法段数（modelEnv 校验用）。 */
-const MODEL_REF_PART_COUNT = 2;
+/** 合法触发模式清单（与 RenameMode 一致；normalize 校验用）。Set 免 as 断言。 */
+const RENAME_MODES: ReadonlySet<string> = new Set(["first-prompt", "first-stop", "agent-tool"]);
 
 /**
- * 从环境变量读取配置覆盖值（live 读取，每次调用查 process.env）。
- *
- * 支持的环境变量：
- * - `PI_RENAME_ENABLED`: 自动重命名开关（"true"/"false"）
- * - `PI_RENAME_MODEL`: 模型引用（"provider/model" 格式，映射为 {type:"ref", ref:"provider/model"}）
- * - `PI_RENAME_MAX_TITLE_LENGTH`: 标题最大长度（正整数）
- * - `PI_RENAME_THINKING_LEVEL`: thinking 级别（枚举值）
- *
- * 返回 Partial<RenameSessionConfig>，仅包含有效覆盖值。无效值静默忽略（不阻断加载）。
- *
- * @example
- * // 环境变量覆盖示例
- * // PI_RENAME_ENABLED=true PI_RENAME_MODEL=deepseek/chat node app.js
+ * 类型谓词：unknown 是否为合法触发模式（normalizeRenameConfig 校验用，单点断言）。
+ * Set.has 运行时兜底 + 类型收窄，调用方无需再断言。
  */
-function getEnvOverrides(): Partial<RenameSessionConfig> {
-	const overrides: Partial<RenameSessionConfig> = {};
-
-	// enabled 覆盖
-	const enabledEnv = process.env[`${ENV_PREFIX}ENABLED`];
-	if (enabledEnv !== undefined) {
-		if (enabledEnv === "true") overrides.enabled = true;
-		else if (enabledEnv === "false") overrides.enabled = false;
-		// 其他值静默忽略（不回默认，让 config 文件或 flag 文件接管）
-	}
-
-	// model 覆盖（简化形式："provider/model" → {type:"ref", ref:"provider/model"}）
-	const modelEnv = process.env[`${ENV_PREFIX}MODEL`];
-	if (modelEnv !== undefined && typeof modelEnv === "string") {
-		// 支持 "provider/model" 格式（最常用场景）
-		const parts = modelEnv.split("/");
-		if (parts.length === MODEL_REF_PART_COUNT && parts[0] && parts[1]) {
-			overrides.model = { type: "ref", ref: modelEnv };
-		}
-		// 其他格式静默忽略（复杂 ModelSelector 请用配置文件）
-	}
-
-	// maxTitleLength 覆盖
-	const maxLengthEnv = process.env[`${ENV_PREFIX}MAX_TITLE_LENGTH`];
-	if (maxLengthEnv !== undefined) {
-		const parsed = Number(maxLengthEnv);
-		if (Number.isInteger(parsed) && parsed > 0) {
-			overrides.maxTitleLength = parsed;
-		}
-		// 非正整数静默忽略
-	}
-
-	// thinkingLevel 覆盖
-	const thinkingLevelEnv = process.env[`${ENV_PREFIX}THINKING_LEVEL`];
-	if (thinkingLevelEnv !== undefined && isThinkingLevel(thinkingLevelEnv)) {
-		overrides.thinkingLevel = thinkingLevelEnv;
-		// 非法值静默忽略
-	}
-
-	return overrides;
+function isRenameMode(raw: unknown): raw is RenameMode {
+	return typeof raw === "string" && RENAME_MODES.has(raw);
 }
 
 /**
@@ -121,10 +76,11 @@ function isThinkingLevel(raw: unknown): raw is ModelThinkingLevel {
 	return typeof raw === "string" && THINKING_LEVELS.has(raw);
 }
 
-/** 默认配置：关闭、空 ref（未精确指定模型，解析不到则跳过）、标题上限 50、不启用 thinking。 */
+/** 默认配置：关闭、空 ref（跟随会话主模型，见 llm.ts 的空 ref fallback）、first-stop 触发、标题上限 50、不启用 thinking。 */
 export const DEFAULT_RENAME_CONFIG: RenameSessionConfig = {
 	enabled: false,
 	model: { type: "ref", ref: "" },
+	mode: "first-stop",
 	maxTitleLength: 50,
 	thinkingLevel: "off",
 };
@@ -192,6 +148,9 @@ export function normalizeRenameConfig(raw: unknown): RenameSessionConfig {
 
 	const enabled = typeof obj.enabled === "boolean" ? obj.enabled : DEFAULT_RENAME_CONFIG.enabled;
 
+	// mode 逐字段校验（设计 rename-session-three-modes.md D1）：旧 config 无字段 / 非法值 → 默认 first-stop（零迁移，现状行为）
+	const mode = isRenameMode(obj.mode) ? obj.mode : DEFAULT_RENAME_CONFIG.mode;
+
 	const maxTitleLength =
 		typeof obj.maxTitleLength === "number" &&
 		Number.isInteger(obj.maxTitleLength) &&
@@ -205,7 +164,7 @@ export function normalizeRenameConfig(raw: unknown): RenameSessionConfig {
 		? obj.thinkingLevel
 		: DEFAULT_RENAME_CONFIG.thinkingLevel;
 
-	return { enabled, model, maxTitleLength, thinkingLevel };
+	return { enabled, model, mode, maxTitleLength, thinkingLevel };
 }
 
 /** 校验 ModelSelector：只支持 ref 精确指定，其余形式非法返回 null。 */
@@ -222,35 +181,24 @@ function normalizeModelSelector(raw: unknown): ModelSelector | null {
  * 加载配置（mtime+size 缓存；文件缺失/损坏返回默认，不抛错）。
  *
  * 配置值优先级（从高到低）：
- * 1. 环境变量覆盖（PI_RENAME_*，live 读取，每次调用查 process.env）
- * 2. xyz-agent runtime 开关契约（flag 文件存在 → enabled=true）
- * 3. 配置文件（<agentDir>/config/rename-session-ext-config.json）
- * 4. 默认值
+ * 1. xyz-agent runtime 开关契约（flag 文件存在 → enabled=true）
+ * 2. 配置文件（<agentDir>/config/rename-session-ext-config.json）
+ * 3. 默认值
  *
- * 环境变量覆盖适用于容器化部署、CI/CD 等场景，允许通过环境变量快速切换配置而无需修改文件。
- *
- * @example
- * // 容器化部署示例
- * // PI_RENAME_ENABLED=true PI_RENAME_MODEL=deepseek/chat node app.js
- *
- * // CI/CD 禁用重命名
- * // PI_RENAME_ENABLED=false npm test
+ * [HISTORICAL] 原 env 覆盖层（`PI_` + 包名前缀四键，最高优先级）已删（设计 rename-session-three-modes.md D6，吸收 ext-simplify-15 D1）：
+ * 全仓 0 生产 setter、4 键中 3 键从未被用过，唯一用法是 1 个历史验收场景。预置该前缀的
+ * 环境变量不再有任何效果（幽灵负面场景见设计 rename-session-three-modes.md V8，负面用例在 pure.test.ts）。
  */
 export function loadRenameConfig(): RenameSessionConfig {
 	// 1. 从配置文件加载基础配置（带 mtime+size 缓存）
 	const fileConfig = loadConfig(CONFIG_PKG, DEFAULT_RENAME_CONFIG, normalizeRenameConfig);
 
-	// 2. 环境变量覆盖（最高优先级，live 读取）
-	const envOverrides = getEnvOverrides();
-	let config: RenameSessionConfig = { ...fileConfig, ...envOverrides };
-
-	// 3. xyz-agent runtime 开关契约（flag 文件存在 → enabled 强制 true，覆盖 config）
-	// 注意：flag 文件覆盖优先级低于环境变量（环境变量是最高优先级）
-	if (existsSync(getAutoRenameFlagPath()) && !("enabled" in envOverrides)) {
-		config = { ...config, enabled: true };
+	// 2. xyz-agent runtime 开关契约（flag 文件存在 → enabled 强制 true，覆盖 config）
+	if (existsSync(getAutoRenameFlagPath())) {
+		return { ...fileConfig, enabled: true };
 	}
 
-	return config;
+	return fileConfig;
 }
 
 /** 保存配置（原子写 tmp+rename）。返回 {success, error?}。 */
@@ -260,7 +208,25 @@ export function saveRenameConfig(
 	return saveConfig(CONFIG_PKG, config);
 }
 
-// ──────────────────────── 首 turn 判定 ────────────────────────
+// ──────────────────────── 首 turn / 首 prompt 判定 ────────────────────────
+
+/**
+ * 数 session entries 中的 user message 条数（first-prompt 模式首条判定用，设计 rename-session-three-modes.md D2）。
+ *
+ * 调用时点契约：pi 的 extension handler 先于该条 message 的 entries append 执行
+ * （agent-session.js `_emitExtensionEvent` 先于 `appendMessage`，探针 P1 已实测），
+ * 故 message_end(role=user) handler 内计数 === 0 ⇔ 本条即 session 首条 user
+ * （此后任何 user message_end 到达时首条已入 entries，计数 ≥ 1，天然不重复触发）。
+ */
+export function countUserMessages(entries: ReadonlyArray<EntryLike>): number {
+	let count = 0;
+	for (const entry of entries) {
+		if (entry.type === "message" && entry.message?.role === "user") {
+			count++;
+		}
+	}
+	return count;
+}
 
 /** entry 的宽松类型（structural typing，兼容 pi 的 SessionEntry[] 但不依赖 pi 类型）。 */
 interface EntryLike {
@@ -271,7 +237,7 @@ interface EntryLike {
 /**
  * 数 session 中「成功完成」的 assistant 回复数（stopReason === "stop"），触发判定用（===1 触发 rename）。
  *
- * 只数 stop 的理由（设计 D6）：pi 的 turn_end 每个 iteration 发一次，中间 iteration 的
+ * 只数 stop 的理由：pi 的 turn_end 每个 iteration 发一次，中间 iteration 的
  * stopReason 是 toolUse；error/aborted 轮的错误上下文不该用来命名（延迟到下一个成功轮）；
  * length（输出被 max token 截断）截断文本质量无保证，与 error 同等对待。
  * 无 stopReason 字段的宽松数据不计（只认显式 stop，防误触发）。
@@ -308,7 +274,7 @@ export function cleanTitle(content: string, maxLength: number): string {
 	const normalized = trimmed.replace(/\s+/g, " ");
 
 	// 去首部引号/markdown 标记 + 尾部引号/markdown/标点（。．.，,、;；!！?？：:）。
-	// 尾部标点是 D4 slug 风格的兜底（prompt 已约束「不要句尾标点」，LLM 漏遵从时在此清除）；
+	// 尾部标点是 slug 风格约束的兜底（prompt 已约束「不要句尾标点」，LLM 漏遵从时在此清除）；
 	// 只清首尾——中间标点保留（如 version 号 'v1.2.3' 中间的点）。
 	const cleaned = normalized
 		.replace(/^["“”'`*_]+|["“”'`*_。．.，,、;；!！?？：:]+$/g, "")

@@ -8,8 +8,8 @@ import type { ThinkingLevel, ProviderId } from '@xyz-agent/shared'
 import { BASH_RPC_TIMEOUT_MS, COMPACT_RPC_TIMEOUT_MS } from '@xyz-agent/shared'
 // B3 出站契约唯一构建器（U3 收口点；实现本体在 @xyz-agent/shared，此处走 runtime 门面）
 import { buildOutboundChildEnv } from '../spawn-env.js'
-import type { IPiEngine, PiSessionStats, PiCompactionResult, PiBashResult, PiCommandInfo } from '../../services/ports/pi-engine.js'
-import { createPiSessionLog, writePiCrashLog, type PiSessionLog } from '../logger.js'
+import type { IPiEngine, PiSessionStats, PiCompactionResult, PiBashResult, PiCommandInfo, SendCommandOptions } from '../../services/ports/pi-engine.js'
+import { createPiSessionLog, writePiCrashLog, captureMemorySnapshot, type PiSessionLog, type PiCrashContext } from '../logger.js'
 
 /**
  * Generic shape of a message received from pi's JSONL stdout.
@@ -341,6 +341,13 @@ export class RpcClient implements IPiEngine {
     reject: (err: Error) => void
     /** 超时 timer；undefined = 不限时（timeout ≤ 0，D2 env 逃生门 0=不限时形态） */
     timer: ReturnType<typeof setTimeout> | undefined
+    /**
+     * 维护通道标记（idle-pi-reclamation D1 双腿闭合）：true = 本请求属维护通道
+     * （options.maintenance，如 promptReload）。出站腿在 sendCommand 不 touch，
+     * 回程腿在 handleMessage 依据本标记对其 response 帧跳过 touch——回程回声与
+     * 出站请求同频，只排除出站腿时空闲时钟仍被周期性重置。
+     */
+    maintenance: boolean
   }>()
   /**
    * 已超时的 RPC id（S6 防御迟到响应被误当 event 广播）。
@@ -404,6 +411,30 @@ export class RpcClient implements IPiEngine {
    */
   private _lastEventAt: number | undefined
 
+  // ── 崩溃取证上下文（crash-resilience §3.3 D6-④）：崩溃时刻 writeCrashLogIfNeeded
+  // 采集进 pi-crash log 头部的 runtime 侧字段。未知保持 null（显式落盘「没采到」）。
+  /** 最后一次发出的 RPC 命令类型（sendCommand 唯一写点；崩溃时即「死前最后动作」）。 */
+  private lastCommandType: string | null = null
+  /** spawn 完成（awaitStartupSettled 通过）时刻 ms；uptimeMs = 崩溃时刻 - 本值。 */
+  private spawnedAt: number | null = null
+  /**
+   * 已知 pi 历史文件绝对路径：switch_session 参数（restore/fork 路径）或 get_state
+   * 返回的 sessionFile（attach 序列恒调）任一发生过。新建 session 在 pi 首条 assistant
+   * 前文件可能不存在（仓规 #6），runtime 不探测文件系统，未知即 null。
+   */
+  private attachedSessionFile: string | null = null
+
+  /**
+   * 最近一次 pi 双向活动时刻（ms epoch，idle-pi-reclamation 设计 D1 空闲信号）。
+   *
+   * 三个写点：出站 sendCommand（maintenance 标记的维护通道除外）/ 入站 handleMessage
+   * 全帧 / touchActivity()（dispatcher 入口同步 touch，D6-1）。初值 = spawn 时刻
+   * （start() 内重置——构造到 spawn 之间的间隔不冒充空闲也不冒充活跃）。pi 空闲期
+   * 无周期 stdout（ADR-0047 ping 只在 turn 内），该值在用户态空闲下单调静止——空闲
+   * 回收判定（reaper）以 now - lastActivityAt 计空闲时长。
+   */
+  private _lastActivityAt = Date.now()
+
   constructor(private options: RpcClientOptions = {}) {}
 
   async start(): Promise<void> {
@@ -439,6 +470,11 @@ export class RpcClient implements IPiEngine {
       stdio: ['pipe', 'pipe', 'pipe'],
     })
 
+    // 空闲信号初值 = spawn 时刻（idle-pi-reclamation D1）：client 构造（进进程表前）
+    // 到真实 spawn 之间可能隔了 ensureActive 编排耗时，以进程诞生时刻起算空闲，
+    // 构造时刻仅作未 start 形态的兜底初值。
+    this._lastActivityAt = Date.now()
+
     // pi stdout JSONL 原始流落盘（架构约定 #4）。pi 卡死时（prompt 后零事件），
     // 这个文件是判断「pi 没发事件」vs「runtime 没转发」的决定性证据。
     // logger 未初始化时（如单元测试）返回 no-op 写入器，无副作用。
@@ -450,6 +486,9 @@ export class RpcClient implements IPiEngine {
     this.wireProcessHandlers(proc)
     // Wait briefly to confirm process didn't exit immediately
     await this.awaitStartupSettled(proc)
+    // D6-④：spawn 确认存活后再记 uptime 起点（立即崩溃的进程 uptimeMs 由 null 表达
+    // 「未过存活确认」，与「存活 N ms 后崩溃」区分）。
+    this.spawnedAt = Date.now()
   }
 
   /**
@@ -592,6 +631,22 @@ export class RpcClient implements IPiEngine {
   }
 
   private handleMessage(msg: PiMessage): void {
+    // 入站 touch（idle-pi-reclamation D1）：任何 stdout 帧（response / 事件 / 迟到丢弃帧）
+    // 都证明 pi 在产出，进程非空闲。放在分派前——分支结构变化不影响 touch 语义。
+    // 唯一例外（D1 双腿闭合）：解析为「maintenance pending 的 response」的帧不 touch。
+    // promptReload（{ maintenance: true }）的出站腿已在 sendCommand 排除，但其 response
+    // 回程经本入口无条件 touch 会把空闲时钟重置回去——回程回声与出站请求同频（skill
+    // 变更风暴下与 promptReload 一一配对到达），只排除出站腿时回收饿死原样保留，
+    // 故双腿同豁免。事件帧 / 非 maintenance response 的 touch 语义零变化。
+    // 边角（可接受）：迟到 maintenance response——pending 已被超时清理（60s）后到达，
+    // id 命不中 pending → 照旧 touch。超时 60s 后才回的 reload 极罕见，且该边角方向 =
+    // 多豁免不误杀（多 touch 一次只推迟回收，不会误杀活跃进程），与「宁漏不误杀」同向。
+    const maintenanceResponse = msg.type === 'response'
+      && msg.id !== undefined
+      && this.pending.get(msg.id)?.maintenance === true
+    if (!maintenanceResponse) {
+      this._lastActivityAt = Date.now()
+    }
     // W7 桥事件窗信号：事件帧到达即更新活跃戳（语义与放置理由见 _lastEventAt 字段注释）。
     if (msg.type !== 'response') this._lastEventAt = Date.now()
     // If id matches a pending request, resolve it; otherwise emit as event.
@@ -725,7 +780,7 @@ export class RpcClient implements IPiEngine {
     }
   }
 
-  sendCommand(type: string, params: Record<string, unknown> = {}, timeout = CMD_TIMEOUT_MS): Promise<PiMessage> {
+  sendCommand(type: string, params: Record<string, unknown> = {}, timeout = CMD_TIMEOUT_MS, options?: SendCommandOptions): Promise<PiMessage> {
     return new Promise((resolve, reject) => {
       if (!this.proc || this._exited) {
         return reject(new Error('pi process is not running'))
@@ -733,6 +788,18 @@ export class RpcClient implements IPiEngine {
 
       const id = this.nextId()
       const msg = JSON.stringify({ id, type, ...params }) + '\n'
+
+      // D6-④：崩溃取证「死前最后动作」。sendCommand 是全部 RPC 的唯一入口，
+      // 记录点在 pending 注册前——即使进程在写 stdin 后立刻死亡，字段已就位。
+      this.lastCommandType = type
+
+      // 出站 touch（idle-pi-reclamation D1）：sendCommand 是全部出站 RPC 的唯一咽喉。
+      // 唯一例外 = 维护通道（options.maintenance，如 promptReload 的 /__xyz_reload__——
+      // skill 目录变更会对全部活跃 session 触发，计入会让空闲时钟被周期性重置、回收
+      // 饿死且不体现为豁免命中）。touch 在状态检查后：进程已死时无空闲可言。
+      if (!options?.maintenance) {
+        this._lastActivityAt = Date.now()
+      }
 
       const timer = timeout > 0
         ? setTimeout(() => {
@@ -763,6 +830,8 @@ export class RpcClient implements IPiEngine {
         },
         reject,
         timer,
+        // D1 双腿闭合：标记随 pending 注册写入，handleMessage 据此对回程 response 跳过 touch
+        maintenance: !!options?.maintenance,
       })
 
       try {
@@ -829,12 +898,22 @@ export class RpcClient implements IPiEngine {
   private writeCrashLogIfNeeded(code: number | null): void {
     if (code === 0) return
     try {
+      // D6-④：runtime 侧上下文头（A8 交叉归因的 runtime 半边）。全字段 best-effort：
+      // 未采集到的保持 null（writePiCrashLog 内 formatPiCrashContextHeader 显式落盘），
+      // 采集本身不抛。渲染归 writePiCrashLog 单点（第三参），此处只组装数据。
+      const context: PiCrashContext = {
+        sessionId: this.options.sessionId ?? null,
+        sessionFile: this.attachedSessionFile,
+        lastRpcCommand: this.lastCommandType,
+        uptimeMs: this.spawnedAt !== null ? Date.now() - this.spawnedAt : null,
+        memory: captureMemorySnapshot(),
+      }
       const header = [
         `pi crashed with code ${code} at ${new Date().toISOString()}`,
         this.stderrTruncated ? '(stderr truncated: earliest lines dropped, crash buffer exceeded 1MB)' : '',
         '',
       ].filter(Boolean).join('\n')
-      writePiCrashLog(this.options.sessionId, `${header}${this.stderrChunks.join('\n')}`)
+      writePiCrashLog(this.options.sessionId, `${header}${this.stderrChunks.join('\n')}`, context)
     } catch (crashErr) {
       // best-effort：崩溃日志落盘失败不掩盖/干扰原始崩溃路径（exit code 已由上层消费），仅控制台留痕
       console.error('[rpc] write pi crash log failed:', crashErr)
@@ -856,6 +935,25 @@ export class RpcClient implements IPiEngine {
 
   get exited(): boolean {
     return this._exited
+  }
+
+  /**
+   * 最近一次 pi 双向活动时刻（ms epoch，idle-pi-reclamation D1 空闲信号）。
+   * 只读暴露：消费方（reaper 判定）只读，刷新统一走 RpcClient 内部 touch 点与
+   * touchActivity()——写点集中可审计，防止空闲时钟被随意重置。
+   */
+  get lastActivityAt(): number {
+    return this._lastActivityAt
+  }
+
+  /**
+   * 手动刷新空闲时钟（idle-pi-reclamation D6-1）。调用方语义 = MessageDispatcher
+   * .sendPrompt 入口同步 touch：「prompt 已发出、插件 hook / restore 执行中」窗口内
+   * occupancy 尚未置 dispatching（markSessionActive 在两个 await 之后），靠此处刚
+   * touch 过的时间戳让回收判定不满足空闲阈值，by construction 关闭误回收窗口。
+   */
+  touchActivity(): void {
+    this._lastActivityAt = Date.now()
   }
 
   /**
@@ -882,14 +980,16 @@ export class RpcClient implements IPiEngine {
    * images 为 undefined 或空数组时归一化为不传 images 键（避免 pi 收到空数组），
    * 走与改动前完全一致的路径，零回归。
    */
-  prompt(content: string, images?: Array<{ data: string; mimeType: string }>, streamingBehavior?: 'steer' | 'followUp'): Promise<PiMessage> {
+  prompt(content: string, images?: Array<{ data: string; mimeType: string }>, streamingBehavior?: 'steer' | 'followUp', options?: SendCommandOptions): Promise<PiMessage> {
     const piImages = images && images.length > 0
       ? images.map(i => ({ type: 'image' as const, data: i.data, mimeType: i.mimeType }))
       : undefined
     const params: Record<string, unknown> = { message: content }
     if (piImages) params.images = piImages
     if (streamingBehavior) params.streamingBehavior = streamingBehavior
-    return this.sendCommand('prompt', params)
+    // options 透传（idle-pi-reclamation D1）：维护通道（promptReload 的 /__xyz_reload__）
+    // 经 prompt 的语义方法形态发起，maintenance 标记直达 sendCommand touch 排除。
+    return this.sendCommand('prompt', params, CMD_TIMEOUT_MS, options)
   }
 
   abort(): Promise<PiMessage> {
@@ -1006,6 +1106,8 @@ export class RpcClient implements IPiEngine {
 
   /** 切换 pi 进程到指定 session 文件（restore / fork 用）。 */
   switchSession(sessionPath: string): Promise<void> {
+    // D6-④：崩溃取证上下文——已知历史文件路径（restore/fork 附着目标）。
+    this.attachedSessionFile = sessionPath
     // L6：switchSession 加载大 session 文件可能耗时，用 SLOW_TIMEOUT_MS（120s）避免误超时。
     // [pi 锚点] switch_session 是永久重绑读写目标——pi-mono coding-agent/src/core/
     // agent-session-runtime.ts switchSession（~:194-215，open 新 SessionManager →
@@ -1019,7 +1121,13 @@ export class RpcClient implements IPiEngine {
   /** 查询 pi session 状态（get_state），返回归一后的 state 对象（sendCommand 已归一 data ?? payload）。 */
   async getState(): Promise<Record<string, unknown> | undefined> {
     // L6：getState 是毫秒级操作，用 FAST_TIMEOUT_MS（10s）替代默认 60s
-    return (await this.sendCommand('get_state', {}, FAST_TIMEOUT_MS)).data
+    const data = (await this.sendCommand('get_state', {}, FAST_TIMEOUT_MS)).data
+    // D6-④：崩溃取证上下文——get_state 是 attach 序列恒经 RPC，响应携带生效中的
+    // sessionFile（绝对路径）。字符串形态才记录（异常响应不覆盖已有值）。
+    if (typeof data?.sessionFile === 'string' && data.sessionFile.length > 0) {
+      this.attachedSessionFile = data.sessionFile
+    }
+    return data
   }
 
   /**

@@ -25,6 +25,8 @@ const settingsMock = vi.hoisted(() => ({
   setAutoRenameEnabled: vi.fn(() => Promise.resolve({ enabled: true })),
   getRenameModel: vi.fn(() => Promise.resolve({ model: '' })),
   setRenameModel: vi.fn(() => Promise.resolve({ model: '' })),
+  getRenameMode: vi.fn(() => Promise.resolve({ mode: 'first-stop' })),
+  setRenameMode: vi.fn((mode: string) => Promise.resolve({ mode })),
   getSmartContextConfig: vi.fn(() =>
     Promise.resolve({ enabled: true, compactModel: '', reminderThresholds: [200_000, 400_000, 600_000], excludedModels: [] }),
   ),

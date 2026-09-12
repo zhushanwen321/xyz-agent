@@ -1,6 +1,7 @@
 // apps/electron/preload/preload.ts
 import { contextBridge, ipcRenderer } from 'electron'
-import type { LatestReleaseInfo, UpdateStage, UpdateSettings, UpdateErrorPayload, ProxyTestResult, LaunchResult, UpdateCheckResult, UpdateInstallResult } from '@xyz-agent/shared'
+import type { LatestReleaseInfo, UpdateStage, UpdateSettings, UpdateErrorPayload, ProxyTestResult, LaunchResult, UpdateCheckResult, UpdateInstallResult, RendererLogPayload, ImageCacheWritePayload, ImageCacheWriteResult, DebugRunLogRetentionResult, DiagnosticExportBundlePayload, DiagnosticExportBundleResult } from '@xyz-agent/shared'
+import { RENDERER_LOG, IMAGE_CACHE_WRITE, DEBUG_RUN_LOG_RETENTION, DIAGNOSTICS_EXPORT_BUNDLE } from '@xyz-agent/shared'
 
 export interface ElectronAPI {
   /** 监听 runtime 端口事件 */
@@ -184,6 +185,38 @@ export interface ElectronAPI {
    * @param kind 逻辑分类（成功/失败），用于跨平台失效时回落到对应默认；试听已知声音可不传
    */
   playSystemSound(name: string, kind?: 'success' | 'error'): Promise<{ audioData?: string; mimeType?: string }>
+  // ── renderer 错误上报（crash-resilience §3.3 D2）─────────────────
+  /**
+   * 上报 renderer 全局错误（三件套：app.config.errorHandler / window error /
+   * unhandledrejection 捕获后经此落盘 main 侧 renderer-error-<date>.log）。
+   * main 按 windowId 限流（每窗口每分钟 100 条）；windowId 由 main 从 event 权威读取，
+   * 不在 payload 内（不信任 renderer 自报）。失败时 invoke reject——调用方（error-reporter）
+   * 必须静默消化，日志通道故障不得再炸 renderer。
+   */
+  reportRendererLog(payload: RendererLogPayload): Promise<void>
+  // ── toolResult 图片落盘（crash-resilience §3.3 D6-⑨ / u7）─────────────────
+  /**
+   * 委托 main 落盘 toolResult base64 图片（renderer 无 fs）。images 数组序 = 落盘序
+   * （hydrate 批量为新→旧，live 单图为单元素）；main 幂等（sha256 命中跳过写）+ 单
+   * session 64MB size 帽（超帽即停，quota-full 由 core 编排层记账渲染占位）。
+   * 失败/畸形 payload 不 reject（main handler 零抛错，返回逐图 invalid/quota-full 结果）。
+   */
+  imageCacheWrite(payload: ImageCacheWritePayload): Promise<ImageCacheWriteResult>
+  // ── 验收调试口（crash-resilience A9②；无鉴权面，不进产品 UI）─────────────────
+  /**
+   * 手动触发 main 侧 logs/ 保留期清理扫描一次（runLogRetentionNow，与 main-logger init
+   * / 每日定时器同一函数）。**验收调试入口，仅 dev 调试用途，renderer 产品代码不得调用**。
+   * 返回本次扫描统计 {scanned, removed}；永不 reject（清理扫描自身零抛错语义）。
+   */
+  debugRunLogRetention(): Promise<DebugRunLogRetentionResult>
+  // ── 诊断包导出（crash-forensics §3.3 D6 / u3a）─────────────────
+  /**
+   * 导出诊断包：main 先弹保存对话框（用户自选保存位置；payload.defaultPath 为初始目录），
+   * 打包双台账 + 日志尾部 + 水位摘录 + 触发状态表 + summary.md 为 zip。永不 reject——
+   * 返回三态（exported 携带产物路径与摘要含知情文案 privacyNotice / canceled 用户取消
+   * / error 携带具体 errno），调用方（u3b）按 status 分支展示。
+   */
+  exportDiagnosticBundle(payload?: DiagnosticExportBundlePayload): Promise<DiagnosticExportBundleResult>
 }
 
 contextBridge.exposeInMainWorld('electronAPI', {
@@ -316,4 +349,13 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // ── 系统提示音 ──────────────────────────────────────────────
   listSystemSounds: () => ipcRenderer.invoke('sound:list'),
   playSystemSound: (name: string, kind?: 'success' | 'error') => ipcRenderer.invoke('sound:play', name, kind),
+  // ── renderer 错误上报（crash-resilience §3.3 D2；通道名经 shared SSOT 常量，禁字面量分叉）──
+  reportRendererLog: (payload: RendererLogPayload) => ipcRenderer.invoke(RENDERER_LOG, payload),
+  // ── toolResult 图片落盘（crash-resilience §3.3 D6-⑨；通道名经 shared SSOT 常量）──
+  imageCacheWrite: (payload: ImageCacheWritePayload) => ipcRenderer.invoke(IMAGE_CACHE_WRITE, payload),
+  // ── 验收调试口（crash-resilience A9②；通道名经 shared SSOT 常量，不进产品 UI）──
+  debugRunLogRetention: () => ipcRenderer.invoke(DEBUG_RUN_LOG_RETENTION),
+  // ── 诊断包导出（crash-forensics §3.3 D6；通道名经 shared SSOT 常量）──
+  exportDiagnosticBundle: (payload?: DiagnosticExportBundlePayload) =>
+    ipcRenderer.invoke(DIAGNOSTICS_EXPORT_BUNDLE, payload),
 } satisfies ElectronAPI)

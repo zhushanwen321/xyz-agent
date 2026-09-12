@@ -49,7 +49,9 @@ function makeMocks(opts: { isGenerating?: boolean; promptError?: Error } = {}) {
   const promptFn = opts.promptError
     ? vi.fn(async () => { throw opts.promptError! })
     : vi.fn(async () => ({}) as unknown as Awaited<ReturnType<IPiEngine['prompt']>>)
-  const client = { prompt: promptFn } as unknown as IPiEngine
+  // touchActivity：sendPrompt 入口同步 touch（idle-pi-reclamation D6-1）经 pm.getClient
+  // 到达 fake client——fake 须补齐该接口成员
+  const client = { prompt: promptFn, touchActivity: vi.fn() } as unknown as IPiEngine
 
   // wave:perf-w09（D1-2）：dispatcher 只依赖 publish 抽象（broker 双写腿已删），mock bus 收集发布消息
   const broadcasts: ServerMessage[] = []
@@ -65,7 +67,8 @@ function makeMocks(opts: { isGenerating?: boolean; promptError?: Error } = {}) {
     detachSession: vi.fn(),
   }
 
-  const pm = {} as unknown as IProcessManager
+  // getClient → undefined：无附着 client 形态（sendPrompt 入口 touch 的空守卫分支）
+  const pm = { getClient: vi.fn(() => undefined) } as unknown as IProcessManager
   const workspace = { record: vi.fn() } as unknown as WorkspaceService
 
   const dispatcher = new MessageDispatcher(svc, pm, workspace, bus)
@@ -124,7 +127,9 @@ describe('MessageDispatcher 错误路径', () => {
     // record 抛同步异常（模拟 cache.set OOM 等极端场景）
     const session = makeMockSession(false)
     const promptFn = vi.fn(async () => ({}) as unknown as Awaited<ReturnType<IPiEngine['prompt']>>)
-    const client = { prompt: promptFn } as unknown as IPiEngine
+    // touchActivity：sendPrompt 入口同步 touch（idle-pi-reclamation D6-1）经 pm.getClient
+    // 到达 fake client——fake 须补齐该接口成员
+    const client = { prompt: promptFn, touchActivity: vi.fn() } as unknown as IPiEngine
     const broadcasts: ServerMessage[] = []
     const bus = { publish: vi.fn((_sid: string, m: ServerMessage) => { broadcasts.push(m) }) } as unknown as IMessageBus
     const svc: IDispatcherSessionOps = {
@@ -135,7 +140,8 @@ describe('MessageDispatcher 错误路径', () => {
       removeSessionEntry: vi.fn(),
       detachSession: vi.fn(),
     }
-    const pm = {} as unknown as IProcessManager
+    // getClient → undefined：无附着 client 形态（sendPrompt 入口 touch 的空守卫分支）
+    const pm = { getClient: vi.fn(() => undefined) } as unknown as IProcessManager
     const workspace = { record: vi.fn(() => { throw new Error('cache boom') }) } as unknown as WorkspaceService
     const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
     const dispatcher = new MessageDispatcher(svc, pm, workspace, bus)

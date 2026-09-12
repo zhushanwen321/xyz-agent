@@ -5,7 +5,7 @@
 - 层级声明：当前层 = extension 能力设计 → 下一层 = 可实现的接口 / 数据模型 / 技术方案（层敏感准则全适用）
 - 状态：已评审通过（7 轮对抗式审查收敛，must-fix 归零；审查报告见 `.review/design-review-base-tool-enhance-20260825*.md`）；**已实施**——M1-M6 全部落地（feat-background-bash 分支），探针 P1-P6 全部实测关闭（无一回退路径触发），unified-hooks 已标记废弃；实施后经三路设计-代码一致性对抗审查（42 核对点），全部发现已修复闭环（registry 回落限定终态 + 跨进程 kill 拒绝 + pid 复用防御 + 文档 4 处补登记 + D18 落地 README），验收 S1-S10 场景实测记录齐全（S2/S9 为审查后补录）
 - 机制演变（2026-09-01 事故后）：孤儿收殓 reaper 已下沉 runtime——extension 侧全局扫描实现（`src/reaper.ts`）删除，现行链路见 [file-lock-unification-and-reaper-sink](file-lock-unification-and-reaper-sink.md) 与 §3.5 末「设计演变记录」；registry 契约 SSOT 迁至 `@xyz-agent/extension-protocol`
-- 关联：废弃 [unified-hooks](../../../extensions/universal/unified-hooks/)；接入 [pending-notifications](../../../extensions/universal/pending-notifications/)
+- 关联：废弃 unified-hooks（已删除，git 历史即归档）；接入 [pending-notifications](../../../extensions/universal/pending-notifications/)
 
 ## 1. 背景目标
 
@@ -172,7 +172,7 @@ override 后工具的全部行为归新包负责，「前台模式怎么实现�
 | D13 | 强制后台时的 timeout 处置 | 命中白名单强转后台时**忽略 LLM 显式 timeout**，按「配置默认 → 不限」取值并在 result 注明 | 尊重显式值：模型在 unified-hooks 时代被训练出「跑测试带 timeout」习惯，`{pnpm test, timeout:120}` 会在 120s 被杀，精确复刻 §2.2 要解决的失败模式；白名单的存在意义正是「这类命令不该被时限约束」 |
 | D14 | subagent 嵌套 | 子 agent 进程内本包**降级**：禁用强制白名单与 background 参数，保持内置同步语义；以 subagent 注入的环境标记识别（探针 P5）。降级**不关闭**前台默认超时注入——`foregroundTimeoutSeconds`「对所有前台命令生效」的 G3 语义与后台化能力正交（§3.5 timeout 优先级无 subagent 例外）。**暂时性约束**：subagent 长任务需求出现时应演进为 per-agent 显式 opt-in，而非永久继承全局白名单一刀切 | 子 agent 内后台化会破坏 workflow 结构化输出契约（预算耗尽时测试未回）；且子进程死后其 registry 目录永远不会再有 session 启动，孤儿无人 reap |
 | D15 | 用户中断与后台任务 | abort/interrupt 不传播到已提交的后台任务（execute 已立即返回，abort 仅作用于前台等待路径） | 有意为之；若联动取消，「提交后继续干别的」在中断场景全部作废，与 G1 矛盾 |
-| D16 | pending 生命周期分档 | pending-notifications 引入 `PENDING_LIFECYCLE: Record<PendingType, "session" \| "process">`（subagent/workflow=session，bash=process），register 写入 / normalize 回填 / U3 过期 / U4 跨 session / shutdown cancelled 等行为**按档判定**，不做 type 特判（见 §3.5 接入细则）。独立安装（CLI 通道）的版本耦合：本包对 pending-notifications 声明 peer 门槛——未装则通知链路缺失但 bash 后台功能完整（启动 warn 一次）；装旧版（无 `"bash"` type 与分档）则 bash 会被归一化为 workflow、session 档行为全套复活，启动时 warn 明确不支持 | 逐点豁免（初稿方案）：实际需 6 处 type 特判（TTL 写入侧、TTL 读取侧归一化回填、U4、shutdown、进程退出收尾、id 唯一语义），逐条腐蚀 D9 的通用设施原则；分档一次改动覆盖全部，scheduler 等未来 process 档类型声明即得、零额外改动 |
+| D16 | pending 生命周期分档 | pending-notifications 曾引入分档常量（`Record<PendingType, "session" \| "process">`，subagent/workflow=session，bash=process），register 写入 / normalize 回填 / U3 过期 / U4 跨 session / shutdown cancelled 等行为**按档判定**，不做 type 特判（见 §3.5 接入细则）。**该分档常量已随 ext-simplify-12 删除**——三类型恒 process 档（无 TTL、跨 session/重启续存、shutdown 不清）成为无条件代码自然状态，本行分档判定描述转为历史决策记录，后续实施以 ext-simplify-12 终态为准。独立安装（CLI 通道）的版本耦合：本包对 pending-notifications 声明 peer 门槛——未装则通知链路缺失但 bash 后台功能完整（启动 warn 一次）；装旧版（无 `"bash"` type 与分档）则 bash 会被归一化为 workflow、session 档行为全套复活，启动时 warn 明确不支持 | 逐点豁免（初稿方案）：实际需 6 处 type 特判（TTL 写入侧、TTL 读取侧归一化回填、U4、shutdown、进程退出收尾、id 唯一语义），逐条腐蚀 D9 的通用设施原则；分档一次改动覆盖全部，scheduler 等未来 process 档类型声明即得、零额外改动 |
 | D17 | exit 感知与 session 替换接管 | 任务 exit 感知用**模块级轮询器单例**（约 2s 间隔 `kill(pid,0)` 判活），不依赖 ChildProcess exit 闭包；同进程 session 替换（/fork、选择器切换、RPC session.*）后新 extension 实例 load 时刷新轮询器的「当前 pi 引用」，完成通知投递到新 session（subagent-workflow notifier 的 dispose/revive 配对是同题先例，notifier.ts:244-258） | ChildProcess exit 闭包监听：session 替换会创建全新 ResourceLoader/eventBus 并重新 load extension（pending-notifications index.ts:81-88 实装注释，锚 loader.js:338-341、agent-session-services.js:63-68），闭包里的 bus/pi 引用全部 stale——完成通知在新 session 不可达，D12 在 extension 层不成立。轮询 2s 延迟对分钟级任务无感，换取单一机制跨 session 替换免疫 |
 | D18 | sunset 条件登记 | 本包登记退役条件：pi 上游出现原生 background bash（或等价长时命令异步化）能力时评估退役；届时前台行为已收敛在 `createBashToolDefinition` 委托面，迁移成本可控 | 不登记：3 年后冗余层无人敢删（不知上游是否已覆盖），override 层与上游能力双轨漂移 |
 
@@ -188,8 +188,8 @@ override 后工具的全部行为归新包负责，「前台模式怎么实现�
 | pi 导出前台工厂函数 | dist/index.d.ts:24 `createBashToolDefinition/createLocalBashOperations` 等 |
 | 内置 timeout 单位秒、默认不限、超时 killProcessTree | bash.js:17-27、79-103 |
 | detached spawn + SIGTERM 收殓 + SIGKILL 缺口 | bash.js:60,70、rpc-mode.js:279-293、rpc-client.ts:94,743 |
-| pending TTL 硬编码 1h | state.ts:68 `PENDING_TTL_MS = 3_600_000` |
-| pending 读取侧归一化对缺失 expiresAt **回填** 1h TTL | state.ts:250 `normalizeRegisterEntry`——「写入侧省略」会被读取侧回填抵消，TTL 豁免必须两侧同改（D16 分档覆盖） |
+| pending TTL 硬编码 1h（历史事实，机制已删除） | 引入时 state.ts:68 硬编码 1h TTL 常量——该常量与全部 TTL 清理已随 ext-simplify-12 整体删除，现行无任何 TTL 清理 |
+| pending 读取侧归一化对缺失 expiresAt **回填** 1h TTL（历史行为，已删除） | 回填分支（当时 state.ts:250 `normalizeRegisterEntry`）已随 ext-simplify-12 E1 删除——写入侧恒省略 expiresAt，读取侧不消费该键（历史 entry 遗留键同此）；「两侧同改」的坑位已随机器删除消解 |
 | session 替换（dispose）重建 eventBus 并重新 load extension；模块级状态跨 reload 保留 | pending-notifications index.ts:81-88 实装注释（锚 loader.js:338-341、agent-session-services.js:63-68）；其模块级 `unsubscribers` 列表跨 reload 保留即模块级轮询器（D17）可行的活证据 |
 | sendMessage 实装签名（message 在前，options 在后） | notifier.ts:61-64：`sendMessage({customType, content, display, details?}, {triggerTurn?, deliverAs?})` |
 | sendMessage 驱动新 turn 先例 | notifier.ts:10 `deliverAs:"steer", triggerTurn:true` |
@@ -323,9 +323,9 @@ pi 被强杀/崩溃 → 任意后续 session 启动时 reaper 扫 <dataDir>/base
 pending-notifications 现有语义是 **session-entry 生命周期**（sessionId 归属判定 U4、TTL 过期 U3、shutdown 标 cancelled），与 bash 任务的**进程级生命周期**（D12）结构性冲突。分档泛化如下：
 
 1. **type 注册**：`PendingType` 增加 `"bash"`（state.ts:18）；type 归一化两处（state.ts:246、index.ts:282 的「非 `"subagent"` 一律归 `"workflow"`」）为 `"bash"` 开直通行；查询工具 description（index.ts:244）同步提及 bash 类型。
-2. **lifecycle 分档**：包内新增 `PENDING_LIFECYCLE: Record<PendingType, "session" | "process">`（subagent/workflow=session，bash=process），下列五处行为**按档判定**（非 type 特判）——未来 scheduler 等长任务类型声明 process 档即零改动获得同语义：
+2. **lifecycle 分档（历史机制，已随 ext-simplify-12 删除）**：曾包内新增分档常量（subagent/workflow=session，bash=process），下列五处行为**按档判定**（非 type 特判）——分档常量删除后，process 档语义成为无条件代码自然状态，下列明细转为历史决策记录：
    - register 写入（index.ts:150）：process 档不计算 expiresAt（entry 与 appendEntry 均省略该字段）；
-   - `normalizeRegisterEntry`（state.ts:250）：process 档**不回填** TTL——读取侧归一化对缺失 expiresAt 会回填 `registeredAt + PENDING_TTL_MS`，只改写入侧会被这里抵消，D6 豁免完全失效（二轮审查证实的坑）；
+   - `normalizeRegisterEntry`（当时 state.ts:250）：process 档**不回填** TTL——读取侧归一化当时对缺失 expiresAt 会回填 `registeredAt + 1h`，只改写入侧会被这里抵消，D6 豁免完全失效（二轮审查证实的坑；该回填分支已随 ext-simplify-12 E1 删除）；
    - U3 过期判定（state.ts:229）：expiresAt 缺失（undefined）的条目跳过；
    - U4 跨 session 判定（state.ts:224）：process 档跳过——fork/switch 后任务仍在跑（D12），不能标 expired 补 unregister（否则 goal 守卫读到差集归零误判「无活跃任务」）；
    - session_shutdown cancelled 标注（index.ts:226-237）：process 档跳过（任务跨 session 替换继续运行，D12）。
@@ -385,7 +385,7 @@ pending-notifications 现有语义是 **session-entry 生命周期**（sessionId
 ## 附：本次分析的关键事实源
 
 - pi 实装版：node_modules/@earendil-works/pi-coding-agent/dist/{core/tools/bash.js, core/extensions/types.d.ts, modes/rpc/rpc-mode.js, index.d.ts}
-- unified-hooks：extensions/universal/unified-hooks/src/hooks/{network,test}-timeout-guard.ts
+- unified-hooks：已删除（2026-09，ext-simplify-01），原 timeout-guard 源码 `git log --follow` 可查
 - pending-notifications：extensions/universal/pending-notifications/src/{index,state}.ts
 - goal continuation 守卫（差集消费方）：extensions/universal/goal/src/adapters/event-handlers/agent-end.ts
 - 通知先例：extensions/universal/subagent-workflow/src/execution/notifier.ts

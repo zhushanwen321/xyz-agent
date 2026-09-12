@@ -13,11 +13,23 @@
  * 的既有四处同属 R3 ports 依赖倒挂豁免（见 session-lifecycle.ts 头注释登记），R3
  * 阶段随 ISessionStore port 扩展一并收口。
  */
-import { readFileSync } from 'node:fs'
+import { readFileSync, statSync } from 'node:fs'
 import { homedir } from 'node:os'
 import type { IPiEngine } from '../ports/pi-engine.js'
+import type { ISessionStore, SessionJsonlLineTransform } from '../ports/session.js'
 import type { ScannedSessionMeta } from '../../infra/pi/session-file-utils.js'
+import { READ_PRECHECK_MAX_BYTES } from '@xyz-agent/shared'
 import { cleanupMigrateResidues, normalizeSessionFileInPlace, persistModelBinding } from '../../infra/pi/session-file-utils.js'
+// 逆序分块读工具（u4b 交付物，D5 共享 IO 形态）：⑤档降级形态的「尾部扫 legacy session_end」复用。
+import { forEachReversedLineChunk } from '../../utils/history-reverse-read.js'
+
+/**
+ * 流式归一化的注入依赖（C-comm-03 分层通道）：session-file-streaming 的 IO 骨架不在
+ * services 白名单，经 ISessionStore port 的 normalizeSessionFileStreaming 消费——调用方
+ * （session-lifecycle）传 this.sessionStore，测试传 infra 实现的绑定方法（构造注入，
+ * 同 seedRestoreMetaOverride 的 client 注入惯例）。
+ */
+export type StreamingNormalizer = Pick<ISessionStore, 'normalizeSessionFileStreaming'>
 
 /**
  * 匹配 `"type":"session_end"` 或 `'type':'session_end'`（容忍引号/空格差异）。
@@ -128,15 +140,43 @@ export function applyHeaderCwdFallback(jsonlContent: string, fallbackCwd: string
  * 不变，登记表 §4 ⑨ 合法形态）。判定未命中（正常文件）时零变换：不写不拷贝，
  * 调用方直附着原文件。
  *
+ * D5⑤ 预检分流（crash-resilience §3.3 D5⑤ + P-restore-skip，u4c）：附着是恢复路径
+ *（D7 自动 respawn 把它变成崩溃后 5 秒自动触发的动作），超 READ_PRECHECK_MAX_BYTES
+ * 的文件禁全量读（原实现 :140 无条件 readFileSync 是「恢复动作变内存尖峰」的恶性循环）。
+ * 超限文件走 normalizeLargeSessionFileMinimal 最小规范化：判定与变换语义与全量路径
+ * 等价（strip 全部 session_end 行 + 首行 cwd fallback），仅 IO 形态不同（尾扫判定 +
+ * 分块流式变换，驻留 = 单块 + pending 行）。≤ 阈值路径行为逐字节不变。
+ *
  * @param filePath    目标 session JSONL 绝对路径（原地归一化，路径不变）
  * @param cwdFellBack 调用方已判定的 session cwd 死路径标记（检测源 = scanner 从
  *                    header 读出的 ScannedSession.cwd）
+ * @param streaming   流式归一化 IO 依赖（ISessionStore port 切片，C-comm-03 分层通道；
+ *                    生产调用方传 this.sessionStore，测试传 infra 实现切片）
  */
-export function normalizeInactiveSessionFileIfNeeded(filePath: string, cwdFellBack: boolean): void {
+export function normalizeInactiveSessionFileIfNeeded(filePath: string, cwdFellBack: boolean, streaming: StreamingNormalizer): void {
   // 附着前清扫该文件的 .tmp-migrate-* 崩溃/失败残留（差距复审 suggestion 6；F2/F3
   // 两路都过此处——F2 判定未命中会提前 return，清扫必须在其前）。此刻无归一化在途
   //（restore 已销毁同 id 会话），同 basename 残留必然 stale，best-effort 清除。
+  // 预检分流两路也都过此处（清扫是 readdir+unlink，零内存压力，不随预检跳过）。
   cleanupMigrateResidues(filePath)
+  let size: number
+  try {
+    size = statSync(filePath).size
+  } catch (e) {
+    // ENOENT 等：与原实现 readFileSync 的抛错同语义——restoreSession 的 try/catch
+    //（safeDestroy + rethrow）承接；renameSession 调用点有 existsSync 前置守卫不经过此。
+    throw e
+  }
+  if (size > READ_PRECHECK_MAX_BYTES) {
+    // D5⑤：超阈值 → 最小规范化（不读全文）。warn 含文件大小与原因（失败要出声）。
+    console.warn(
+      `[restore-seeding] normalizeInactiveSessionFileIfNeeded: session file ${bytesToMbLabel(size)} exceeds ` +
+      `${bytesToMbLabel(READ_PRECHECK_MAX_BYTES)} read-precheck cap, streaming minimal normalization ` +
+      `(reverse tail scan for legacy session_end + first-line header cwd fix, no full read): ${filePath}`,
+    )
+    normalizeLargeSessionFileMinimal(filePath, cwdFellBack, streaming)
+    return
+  }
   const raw = readFileSync(filePath, 'utf-8')
   const needsNormalize = containsSessionEndLine(raw) || cwdFellBack
   if (!needsNormalize) return
@@ -145,6 +185,91 @@ export function normalizeInactiveSessionFileIfNeeded(filePath: string, cwdFellBa
     cleaned = applyHeaderCwdFallback(cleaned, homedir())
   }
   normalizeSessionFileInPlace(filePath, cleaned)
+}
+
+// eslint-disable-next-line no-magic-numbers -- 字节量纲换算基数（1MB = 1024×1024），命名常量自解释
+const BYTES_PER_MB = 1024 * 1024
+
+/** 字节数 → MB 展示（保留 1 位小数；warn/文案量纲统一）。 */
+function bytesToMbLabel(bytes: number): string {
+  return `${(bytes / BYTES_PER_MB).toFixed(1)} MB`
+}
+
+/**
+ * D5⑤ 超阈值文件的最小规范化（P-restore-skip 降级形态）。
+ *
+ * 为什么不走设计主形态「跳过 normalize 全流程」（P-restore-skip 双分支裁决，u4c 实施期）：
+ * 失忆半边不安全——pi 0.84.4 实装 _buildIndex（node_modules dist/core/session-manager.js
+ * :673-694）对所有非 session entry 无差别 `byId.set(entry.id); leafId = entry.id`，
+ * appendMessage 以 `parentId: this.leafId` 挂链（:768+）：尾部 legacy session_end（无 id）
+ * 未 strip 时 leafId=undefined → 新增 entry parentId=undefined → parentId 链断 →
+ * 全部旧历史不进 LLM 上下文且无任何错误信号（静默失忆）。A11 构造声明的「尾部含
+ * legacy session_end 变体」正是该场景，跳过即触发。cwd 半边（跳过 → switchSession
+ * 抛 MissingSessionCwdError 硬拒绝）虽是显式失败、安全，但两个半边须同时安全才可跳过。
+ * 故按设计降级路径改「逆序分块最小规范化」：
+ * - 判定：尾部逆序扫 session_end（findTailSessionEnd，命中即止，读 ≤ 阈值）|| cwdFellBack
+ *   （调用方已判定，零 IO）
+ * - 变换：分块流式 strip 全部 session_end 行 + 首行 header cwd fallback（语义与全量
+ *   路径 stripSessionEndEntries + applyHeaderCwdFallback 逐字节一致，见
+ *   streamNormalizeSessionFile 注释），驻留 = 单块 + pending 行
+ * 判定未命中（尾部窗口无 session_end 且 cwd 活）→ 零变换直附着（F2 幂等语义同款）。
+ */
+function normalizeLargeSessionFileMinimal(filePath: string, cwdFellBack: boolean, streaming: StreamingNormalizer): void {
+  const hasTailSessionEnd = findTailSessionEnd(filePath)
+  if (!hasTailSessionEnd && !cwdFellBack) return
+  streamNormalizeSessionFile(filePath, cwdFellBack, streaming)
+}
+
+/**
+ * 尾部逆序扫 legacy session_end（forEachReversedLineChunk，命中即止，总读取 ≤ 阈值）。
+ *
+ * 判定只看尾部窗口的依据：断链仅发生在「session_end 是文件最后一条非 session entry」
+ * 时（pi _buildIndex 顺序赋值 leafId，中部 session_end 会被后续 entry 覆盖，无害——
+ * 按行窗口外漏判不产生断链）；且 session_end 是 session 结束时最后写入的行（写入后
+ * 文件冻结，见 session-file-utils extractSessionOutcome 注释），尾部窗口必中。
+ * 行判定与 containsSessionEndLine 同源（SESSION_END_RE + 空行跳过），判定与变换不分叉。
+ */
+function findTailSessionEnd(filePath: string): boolean {
+  let found = false
+  forEachReversedLineChunk(filePath, { maxTotalBytes: READ_PRECHECK_MAX_BYTES }, (chunk) => {
+    for (let i = chunk.lines.length - 1; i >= 0; i--) {
+      const line = chunk.lines[i]
+      if (line !== '' && SESSION_END_RE.test(line)) {
+        found = true
+        return false // 命中即止
+      }
+    }
+  })
+  return found
+}
+
+/**
+ * D5⑤ 变换腿：组装 strip + cwd fallback 的行级纯变换（SessionJsonlLineTransform），
+ * 经注入的 StreamingNormalizer（ISessionStore port 切片）完成分块流式落盘——IO 全在
+ * infra 实现内（C-comm-03 分层通道），transformLine 是纯字符串变换不触 IO，不进 port。
+ *
+ * 行变换语义与全量路径（stripSessionEndEntries(全文) + cwdFellBack 时对产物首行
+ * applyHeaderCwdFallback）逐字节一致：
+ * - 空行剔除 + SESSION_END_RE 命中行剔除（判定与变换共用 SESSION_END_RE 不分叉；
+ *   空行剔除对齐 stripSessionEndEntries 的 split('\n') 空串跳过，输出统一补 \n）
+ * - cwd fallback 作用于**strip 后的首个保留行**（isFirstKeptLine 游标由流式骨架维护，
+ *   首行是 session_end 被剔除时 fallback 落到次行，两形态一致）
+ * - 驻留界由流式骨架保证（单块 + pending 行），chunkBytes 透传供测试注入小值
+ *
+ * @param sessionStore 流式归一化 IO 依赖（生产 = PiSessionStore 实例；测试 = infra
+ *                     实现切片，构造注入）
+ * @param chunkBytes   读块字节数（默认 1MB；测试注入小值以覆盖跨块/多字节边界分支）
+ */
+export function streamNormalizeSessionFile(filePath: string, cwdFellBack: boolean, sessionStore: StreamingNormalizer, chunkBytes?: number): void {
+  const transformLine: SessionJsonlLineTransform = (line, isFirstKeptLine) => {
+    if (line === '') return null
+    if (SESSION_END_RE.test(line)) return null
+    if (isFirstKeptLine && cwdFellBack) {
+      return applyHeaderCwdFallback(line, homedir())
+    }
+    return line
+  }
+  sessionStore.normalizeSessionFileStreaming(filePath, transformLine, chunkBytes)
 }
 
 /**

@@ -571,16 +571,16 @@ function resolveBashMockBranch(
 }
 
 export const chat = {
-  /** 拉 session 历史（深拷贝 fixture，避免外部突变污染） */
-  async getHistory(sessionId: string): Promise<{ messages: Message[]; historyTruncated: boolean }> {
+  /**
+   * 拉 session 历史（深拷贝 fixture，避免外部突变污染）。
+   * [u6] 窗口契约字段必填（legacy historyTruncated 退役，偏差表 D7 双轨收口）；mock 无截断
+   * （truncated=false，loadedTurns 数 fixture user 消息）。query 游标参数 mock 不模拟翻页
+   * （fixture 无窗口概念，恒返回全量——与 truncated=false 一致）。
+   */
+  async getHistory(sessionId: string, _query?: { cursor?: string; limitTurns?: number; maxBytes?: number }): Promise<{ messages: Message[]; truncated: boolean; loadedTurns: number; totalTurnsEstimate: number }> {
     await sleep(TIMING.ack)
-    return { messages: (fixtureMessages[sessionId] ?? []).map((m) => ({ ...m })), historyTruncated: false }
-  },
-
-  /** W4 H4：全量历史（mock 与 getHistory 同行为，mock 无尾读截断） */
-  async getFullHistory(sessionId: string): Promise<Message[]> {
-    await sleep(TIMING.ack)
-    return (fixtureMessages[sessionId] ?? []).map((m) => ({ ...m }))
+    const messages = (fixtureMessages[sessionId] ?? []).map((m) => ({ ...m }))
+    return { messages, truncated: false, loadedTurns: messages.filter((m) => m.role === 'user').length, totalTurnsEstimate: messages.filter((m) => m.role === 'user').length }
   },
 
   // options.clientUuid（session-occupancy D2）：mock 不模拟 send.rejected，参数仅签名对齐

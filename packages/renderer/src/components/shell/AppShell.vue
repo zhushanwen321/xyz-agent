@@ -17,6 +17,11 @@
     <AsideRegion />
     <AppNavControls />
     <MainPanel />
+    <!-- 滚动重启四态横幅 + reattach 高压延迟轻态（crash-forensics D5/D3，u7d + #27）：
+         fixed 定位挂主界面层，状态源 useRollingRestartStatus（广播加速 + status RPC 拉取，
+         重连/刷新不丢）。窗口级互斥（滚动重启优先）= 本条 z-index 覆盖 CrashRecoveredBar，
+         机理见组件头注释。restarting 全屏过渡态下 AppShell 整体不渲染，横幅随行（无残留）。 -->
+    <RollingRestartBanner />
     <!-- D-8 懒加载：v-if="settingsOpen" 门控是生效前提——defineAsyncComponent 在 AsyncComponentWrapper
          实例化时立即触发 loader（Vue runtime-core setup 内 load()），SettingsModal 内部 v-if="open"
          挡不住启动期加载；首开设置才拉取设置页树 chunk（首次触发才出现在 Network）。
@@ -35,6 +40,7 @@ import { useSidebar } from '@/composables/features/sidebar/useSidebar'
 import AppNavControls from './AppNavControls.vue'
 import AsideRegion from './AsideRegion.vue'
 import MainPanel from './MainPanel.vue'
+import RollingRestartBanner from '@/components/ui/RollingRestartBanner.vue'
 import AsyncErrorFallback, { LAZY_RETRY_KEY } from '@/components/ui/AsyncErrorFallback.vue'
 import { useSidebarStore } from '@/stores/sidebar'
 

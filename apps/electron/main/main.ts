@@ -53,12 +53,12 @@
  * 依赖方向：main.ts → context + interfaces + gateway + window-factory + 三个 Facade 实现
  */
 import path from 'node:path'
-import { existsSync } from 'node:fs'
+import { existsSync, mkdirSync, readdirSync, renameSync, rmSync, unlinkSync, writeFileSync } from 'node:fs'
 import { homedir, tmpdir } from 'node:os'
 import { app, protocol, net, BrowserWindow } from 'electron'
 import { DEV_PORT_OFFSET } from '@xyz-agent/shared'
-import type { LaunchResult } from '@xyz-agent/shared'
-import { getDataDir } from '@xyz-agent/shared/paths'
+import type { CrashJournalWriter, LaunchResult } from '@xyz-agent/shared'
+import { RUN_CHECKPOINT_FAILED_PREFIX, RUN_CHECKPOINT_FAILED_RETENTION, getRunStatePaths, getDataDir } from '@xyz-agent/shared/paths'
 import { createMainContext } from './context.js'
 import type { MainContext } from './interfaces.js'
 import { RuntimeSupervisor } from './supervisor/runtime-supervisor.js'
@@ -76,6 +76,9 @@ import { registerIpcHandlers } from './gateway/ipc-handlers.js'
 import { isPathInAllowedPrefixes } from './gateway/input-validators.js'
 import { fixPathEnv } from './supervisor/shell-env.js'
 import { flushStderrSink } from './supervisor/process-control.js'
+import { initMainLogger, closeMainLogger, mainLogger } from './logs/main-logger.js'
+import { initCrashJournal, crashJournal } from './logs/crash-journal.js'
+import { startTriggerPatrol } from './diagnostics/trigger-patrol.js'
 import { expandLocalFilePath } from './utils/path.js'
 import { computeLocalFilePrefixes } from './utils/local-file-prefixes.js'
 
@@ -140,6 +143,21 @@ if (isDev) {
   app.setPath('userData', path.join(process.env.XYZ_AGENT_DATA_DIR ?? path.join(homedir(), '.xyz-agent-dev'), 'electron'))
 }
 
+// ── main 日志落盘（crash-resilience D6-①）────────────────────────
+// initMainLogger：建 <dataDir>/logs/ + 启动保留期清理（一次 + 每日复扫定时器）+
+// 内存水位定时器（5min）。必须晚于上面 isDev 块的 XYZ_AGENT_DATA_DIR 隔离
+// （getDataDir() 动态推导，dev 实例日志须落 ~/.xyz-agent-dev 而非 prod 目录）；
+// 早于一切业务初始化（render-process-gone / 启动期异常的落盘通道先于消费者就绪）。
+// writer 未 init 时 no-op，这里失败（磁盘满/权限）不阻断 app 启动。
+initMainLogger({ isPackaged: app.isPackaged })
+
+// ── 崩溃台账 writer init（crash-forensics §3.3 D1）────────────────
+// main 写 <dataDir>/logs/crashes/main.jsonl（main 自身 + renderer 事件；runtime 侧
+// 事件也经本文件写入——main 侧事件接线单元 u1f 的挂点在 supervisor/window-factory）。
+// initMainLogger 之后（同读 getDataDir() 动态推导）+ 早于一切业务挂接；纯惰性 IO
+// 零副作用，未 init 时各挂点 append 为 no-op（writer 契约）。
+initCrashJournal()
+
 // ── 单实例锁（integrity-hardening §3.2 D2d）───────────────────────
 // 双开 = 两个实例并发 spawn runtime、并发读写同一数据目录，会命中「pi session 文件
 // EEXIST 永久卡死」历史事故区（AGENTS.md 规则 6）。锁必须晚于上面 isDev 块的
@@ -150,6 +168,40 @@ if (isDev) {
 const gotSingleInstanceLock = app.requestSingleInstanceLock()
 if (!gotSingleInstanceLock) {
   app.quit()
+}
+
+// ── run 目录运行态：marker + checkpoint 常量（D1 marker 行 / D3）──────────────
+// 常量必须在下方启动块求值之前初始化（模块级 const 无提升）；落点 `<dataDir>/run/`，
+// run 目录文件名族 SSOT = @xyz-agent/shared/paths RUN_* 常量族（【oe-audit C8】：原
+// 此处与 runtime-checkpoint.ts / export-diagnostic-bundle.ts 三处手抄字面量收敛为单点，
+// 「双胞胎显式对齐」的漂移面构造性消失）。
+/** 本进程是否已为陈旧 checkpoint 记过 reattach-skipped（D3：重复失败不重复记事件）。 */
+let staleCheckpointReported = false
+
+// ── main 存活 marker + checkpoint 冷启动判定（crash-forensics D1 marker 行 / D3）──
+// marker 语义 = 「main 存活」：启动写（本块）、正常退出清（will-quit）、下次启动发现残留
+// 即上次 unclean（补记 layer=main/event=crash/reason=unclean-exit）。同一份设施两个消费者：
+// ① main 自身崩溃自记（D1 防漏设计②）；② checkpoint 冷启动可信度判定（D3：unclean 才可信）。
+// 三步顺序不可换：消费上次残留（读旧 marker）→ 判 checkpoint 可信度 → 写本实例 marker
+// （先写后消费会把本实例的 marker 当残留消费掉）。
+// 只在获锁实例执行：第二实例（未获锁）随后经 will-quit 清 marker——若它也写，会抹掉正在
+// 运行的主实例的存活标记（marker 语义 = 主实例存活，不是「某个 main 进程启动过」）。
+const runStatePaths = resolveRunStatePaths()
+if (gotSingleInstanceLock) {
+  // ① 上次残留一次性消费：unclean = 上次 main 未走完退出链（kill -9 / 崩溃 / 断电）
+  const unclean = consumeResidualRunMarker(runStatePaths, crashJournal)
+  // ② checkpoint 可信度判定（D3 真值表）：clean exit 但 checkpoint 残留（删除被 killed
+  //    短路跳过 / 删除失败）→ 忽略 + 隔离残留（重命名进失败现场家族）+ 记 reattach-skipped，
+  //    冷启动维持 lazy（不 eager spawn，A3b 反向验收语义）。unclean → 可信，留给随后启动的
+  //    runtime 的 reattach 编排（u5）消费，本块零动作。
+  if (resolveColdStartTrust({
+    unclean,
+    checkpointExists: existsSync(runStatePaths.checkpointPath),
+  }) === 'stale-residual') {
+    isolateStaleCheckpoint(runStatePaths, crashJournal)
+  }
+  // ③ 写本实例存活 marker（覆盖式：本实例是唯一主实例，旧残留已在 ① 消费）
+  writeRunningMarker(runStatePaths)
 }
 
 // ── 全局状态容器 ─────────────────────────────────────────────────
@@ -306,11 +358,26 @@ app.whenReady().then(async () => {
   launchResultCache = await cleanupCompletedUpdate()
 
   await bootstrapMainWindow()
+
+  // u2（crash-forensics D2 出口①）：触发条件每日巡检（启动评估一次 + 24h 间隔，
+  // log-retention 同款形态）——任一条件越线 → main 日志 WARN + 台账 trigger-review 事件
+  startTriggerPatrol()
 })
+
+/**
+ * 本实例是否已在 before-quit **之外**发起过 runtime 终止（非 darwin window-all-closed 腿）。
+ *
+ * 用途 = checkpoint 删除属主的「成功段」判据之一（D3 删除实现语义钉死）：window-all-closed
+ * 先调 stop() 使 child.killed 置位，随后 before-quit 的第二次 stop() 在 `child.killed`
+ * 检查处**立即 resolve 而不等真退出**（killed 短路）——此时删 checkpoint 是在 runtime 可能
+ * 仍在写盘的窗口里动手，必须跳过（残留交下次启动「clean exit 但残留」分支隔离兜底）。
+ */
+let runtimeStopInitiatedOutsideAppExit = false
 
 app.on('window-all-closed', () => {
   // macOS 保留 runtime：activate 会复用它，避免不必要的重启
   if (process.platform !== 'darwin') {
+    runtimeStopInitiatedOutsideAppExit = true
     void ctx.runtime.stop()
     shortcuts.unregisterAll()
     app.quit()
@@ -331,6 +398,22 @@ let isQuitting = false
 app.on('before-quit', (event) => {
   if (isQuitting) return // 第二次进入（app.quit() 触发），放行
   isQuitting = true
+  // 崩溃台账 before-quit 上下文（crash-forensics D1 shutdown 行）：app 级正常退出
+  // 的 shutdown 行在此写，runtime 随后的 exit 落 supervisor stopping 早退分支零写入
+  // （stopping 被 stop() 全部调用方置位，按 stopping 写行会把正常退出记假事件——
+  // 判别式详见 classifyRuntimeExit）。markAppQuitting 无条件（退出上下文是事实）；
+  // shutdown 行仅在 runtime 子进程在场时写——mock 模式 / 已崩溃 / 第二实例等形态
+  // runtime 并未发生「关闭」，写行即假事件。
+  runtime.markAppQuitting()
+  if (runtime.isRunning) {
+    crashJournal.append({ layer: 'runtime', event: 'shutdown', reason: 'planned' })
+  }
+  // checkpoint 删除属主（D3 契约 1「删除属主双轨」的 main 侧）：**必须挂在本 handler 的
+  // 专属 await 链成功段**，不得挂 stop() 内部——stop() 被 liveness 假死强杀共用（那里删
+  // 会把该保留的恢复依据删掉）。成功段判据 = 本 handler 是 runtime 终止的唯一发起者
+  // （runtimeStopInitiatedOutsideAppExit 为假，排除 window-all-closed 的 killed 短路）
+  // 且 child 在场（isRunning，mock 模式 / 已崩死 / 第二实例形态无「关闭」可确认）。
+  const ownsRuntimeShutdown = runtime.isRunning && !runtimeStopInitiatedOutsideAppExit
   // D6：curl 子进程非 detached，退出前同步清杀防孤儿进程继续占用带宽
   // （无活跃下载时 no-op；半下载产物由 .downloading 后缀 + sha256 校验兜底）
   killActiveCurlDownloads()
@@ -338,9 +421,192 @@ app.on('before-quit', (event) => {
   // W-Proc2 + W2：runtime stop 已 end() stderrSink；此处 flush 等 'finish' 落盘后再 quit。
   // stop() 路径未触发（runtime 自然退出）时此 flush 是落盘的唯一保障。
   void ctx.runtime.stop()
+    .then(() => {
+      // 成功段第一步：stop() resolve（runtime child 已确认退出）后删 checkpoint——app 级
+      // 正常退出不留恢复依据（A3b：clean shutdown 冷启动零 eager spawn + checkpoint 不存在）。
+      // stop() reject / killed 短路（ownsRuntimeShutdown 为假）→ 跳过，残留交下次启动
+      // 「clean exit 但残留」分支隔离（不冒险在 runtime 可能仍写盘的窗口里删文件）。
+      if (!ownsRuntimeShutdown) return
+      removeRuntimeCheckpoint(runStatePaths)
+    })
     .then(() => flushStderrSink())
+    .then(() => closeMainLogger()) // flush main 日志写流（writer 缓冲尾部落盘后再 quit）
     .finally(() => {
       shortcuts.unregisterAll()
       app.quit()
     })
 })
+
+// marker 清除与 checkpoint 删除**解耦**（D3 / marker 生命周期契约）：marker 语义 = 「main
+// 存活」，清除挂 will-quit 且与 stop() 成败无关——否则非 darwin 的 killed 短路会同时跳过
+// marker 清除与 checkpoint 删除，下次启动「marker 残留」误判 unclean 走 eager 恢复
+// （违反 A3b）。清除属主 = 获锁的主实例（第二实例不写不清，防抹掉主实例标记）。
+app.on('will-quit', () => {
+  if (gotSingleInstanceLock) clearRunningMarker(runStatePaths)
+})
+
+// ─────────────────────────────────────────────────────────────────────────────
+// run 目录运行态设施：main 存活 marker + runtime checkpoint 属主（D1 marker 行 / D3）
+// ─────────────────────────────────────────────────────────────────────────────
+// 常量与状态在文件上半部（启动块求值前初始化——模块级 const/let 无提升）；
+// 此处为类型与函数（函数声明有提升，位置无关）。
+
+/** run 目录三个权威路径（注入 dataDir 供测试指定 tmp 目录）。 */
+export interface RunStatePaths {
+  runDir: string
+  markerPath: string
+  checkpointPath: string
+}
+
+/** 解析 run 目录路径组（缺省 getDataDir() 动态推导）。【oe-audit C8】委托 shared getRunStatePaths 单点。 */
+export function resolveRunStatePaths(dataDir: string = getDataDir()): RunStatePaths {
+  return getRunStatePaths(dataDir)
+}
+
+/**
+ * 写本实例的「main 存活」marker（启动序列：单实例锁判定后、旧残留消费之后）。
+ * 内容 = pid + 时刻（纯诊断辅助，判定只看存在性）。写失败 best-effort（marker 是旁路
+ * 取证设施，磁盘满/权限不得阻断 app 启动）。
+ */
+export function writeRunningMarker(paths: RunStatePaths): void {
+  try {
+    mkdirSync(paths.runDir, { recursive: true })
+    writeFileSync(paths.markerPath, `${process.pid}\n${new Date().toISOString()}\n`, 'utf8')
+  } catch (e: unknown) {
+    mainLogger.warn(`[main] running marker write failed (${paths.markerPath}): ${errorText(e)}`)
+  }
+}
+
+/** 清「main 存活」marker（will-quit 调用）。best-effort：残留由下次启动按 unclean 消费。 */
+export function clearRunningMarker(paths: RunStatePaths): void {
+  try {
+    rmSync(paths.markerPath, { force: true })
+  // eslint-disable-next-line taste/no-silent-catch -- ENOENT（force 已覆盖）之外的删除失败不阻断退出链；残留由下次启动消费
+  } catch {
+    // no-op
+  }
+}
+
+/**
+ * 一次性消费上次运行的 marker 残留（启动序列最早处调用，写本实例 marker 之前）。
+ *
+ * 残留 ⟺ 上次 main 未走完退出链（will-quit 未执行）：kill -9 / 崩溃 / 断电。命中即补记
+ * `layer=main, event=crash, reason=unclean-exit`（unclean-exit 是 reason 值不是 event 值，
+ * D1 v8 枚举裁决）并清除残留。
+ *
+ * 顺序 = 先记后删：记完崩掉最多产生重复 crash 行（可数偏多，可人工归因），删完崩掉则
+ * 该次崩溃永久无台账（归因不可恢复）——宁可多记不可丢失（D1「不知道 ≠ 没打点」同向）。
+ *
+ * @returns true = 上次 unclean（checkpoint 因此可信，D3 冷启动判定输入）
+ */
+export function consumeResidualRunMarker(paths: RunStatePaths, journal: CrashJournalWriter): boolean {
+  if (!existsSync(paths.markerPath)) return false
+  journal.append({ layer: 'main', event: 'crash', reason: 'unclean-exit' })
+  clearRunningMarker(paths)
+  return true
+}
+
+/** 冷启动可信度（D3 真值表；消费方 = 本文件启动块的 stale-residual 分支）。 */
+export type ColdStartTrust =
+  /** 无 checkpoint 残留：无需判定（clean exit 已删 / 首次启动）。 */
+  | 'no-checkpoint'
+  /** marker 残留（上次 unclean）→ checkpoint 可信，留给新 runtime 的 reattach 编排消费。 */
+  | 'trusted-unclean'
+  /** clean exit 但 checkpoint 残留 → 忽略 + 隔离 + 记 reattach-skipped（冷启动维持 lazy）。 */
+  | 'stale-residual'
+
+/**
+ * checkpoint 冷启动可信度纯函数（D3）：**只有 unclean 才可信**——clean exit 之后仍有
+ * checkpoint 残留说明删除被短路跳过或失败，其清单可能与用户已删除的 session 误配对，
+ * 必须忽略并隔离（文件存在就可能被后续真 unclean 误配对复活旧 session，D3 隔离裁决）。
+ */
+export function resolveColdStartTrust(input: { unclean: boolean; checkpointExists: boolean }): ColdStartTrust {
+  if (!input.checkpointExists) return 'no-checkpoint'
+  return input.unclean ? 'trusted-unclean' : 'stale-residual'
+}
+
+/** 残留隔离结果（与 runtime 侧同名语义：ENOENT = 已隔离；EACCES 等 = 原地残留静默）。 */
+export type CheckpointIsolationOutcome = 'isolated' | 'already-absent' | 'residual'
+
+/**
+ * 隔离陈旧 checkpoint（D3 clean-exit 残留分支）：重命名进失败现场家族（保留最近 N 份）
+ * + 记一条 `reattach-skipped`（语义 = 「本次冷启动忽略了这份残留、不恢复」——与 rename
+ * 成败无关：rename 失败原地残留同样不恢复、同样要留痕）。
+ *
+ * rename 幂等（同域失败声明）：ENOENT = 并发删除路径已处理（视为已隔离，仍补记事件
+ * 除非本进程已记过）；EACCES 等 = rename 与 unlink 同域失败，接受**原地残留**，静默
+ * 不重试不升级——收敛双通道 = 下次启动重试隔离 + 后续真 unclean 崩溃的覆写接管。
+ */
+export function isolateStaleCheckpoint(
+  paths: RunStatePaths,
+  journal: CrashJournalWriter,
+  now: number = Date.now(),
+): CheckpointIsolationOutcome {
+  const target = path.join(paths.runDir, `${RUN_CHECKPOINT_FAILED_PREFIX}${formatRunTimestamp(now)}.json`)
+  let outcome: CheckpointIsolationOutcome
+  try {
+    renameSync(paths.checkpointPath, target)
+    outcome = 'isolated'
+  } catch (e: unknown) {
+    outcome = (e as NodeJS.ErrnoException).code === 'ENOENT' ? 'already-absent' : 'residual'
+  }
+  if (outcome === 'isolated') pruneFailedCheckpoints(paths.runDir)
+  if (!staleCheckpointReported) {
+    staleCheckpointReported = true
+    journal.append({
+      layer: 'main',
+      event: 'reattach-skipped',
+      reason: 'stale-checkpoint-after-clean-exit',
+      detailDigest: `previous run exited cleanly but left a checkpoint; ignored (isolation=${outcome})`,
+      detailPath: paths.checkpointPath,
+    })
+  }
+  return outcome
+}
+
+/**
+ * 删除 checkpoint 主文件（D3 契约 1 的 main 侧属主入口）。
+ *
+ * **只在 before-quit 专属 await 链成功段调用**（stop() resolve 且 runtime child 已确认退出）。
+ * runtime 自身任何退出路径都不删（SIGINT/SIGTERM/uncaughtException 三源共用 shutdown 序、
+ * app 级退出与 liveness 强杀共用 supervisor 同一停止链 → 「app 级识别信号」不存在）。
+ *
+ * @returns true = 确实删除；false = 文件不存在或删除失败（残留交下次启动隔离兜底）
+ */
+export function removeRuntimeCheckpoint(paths: RunStatePaths): boolean {
+  try {
+    unlinkSync(paths.checkpointPath)
+    return true
+  } catch {
+    return false
+  }
+}
+
+/** 失败现场裁剪：保留最近 N 份（文件名 ts 定宽 ISO，字典序 = 时间序，从头删多余份数）。 */
+function pruneFailedCheckpoints(runDir: string): void {
+  let names: string[]
+  try {
+    names = readdirSync(runDir).filter((n) => n.startsWith(RUN_CHECKPOINT_FAILED_PREFIX))
+  } catch {
+    return // 目录不可读（权限）→ 不裁剪（隔离自身已 best-effort）
+  }
+  names.sort()
+  for (let i = 0; i < names.length - RUN_CHECKPOINT_FAILED_RETENTION; i++) {
+    try {
+      rmSync(path.join(runDir, names[i]!), { force: true })
+    // eslint-disable-next-line taste/no-silent-catch -- 裁剪是卫生动作，单份删除失败不改变隔离主结果
+    } catch {
+      // no-op
+    }
+  }
+}
+
+/** 文件名安全的时间戳（固定宽度 ISO，跨平台无 `:`/`.`；与 runtime 侧 formatTimestamp 同形）。 */
+function formatRunTimestamp(epochMs: number): string {
+  return new Date(epochMs).toISOString().replace(/[:.]/g, '-')
+}
+
+/** 错误文本归一（日志用；非 Error 抛出物不吞）。 */
+function errorText(e: unknown): string {
+  return e instanceof Error ? e.message : String(e)
+}

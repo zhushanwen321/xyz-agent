@@ -16,6 +16,8 @@ import { describe, expect, it } from "vitest";
 import { Value } from "typebox/value";
 
 import { GoalControlParams } from "../adapters/goal-control-adapter";
+import { createGoalState } from "../engine/goal";
+import { serializeState } from "../persistence";
 
 describe("GoalControlParams — 扁平 Object（OpenAI 兼容）", () => {
 	// 顶层合规：序列化形态顶层必须有 type:"object"，不得有 anyOf（否则被严格网关 400 拒绝）
@@ -50,5 +52,18 @@ describe("GoalControlParams — 扁平 Object（OpenAI 兼容）", () => {
 		["create 含额外字段（additionalProperties:false）", { action: "create", objective: "x", successCriteria: ["y"], foo: 1 }],
 	])("invalid: %s → 拒绝", (_name, params) => {
 		expect(Value.Check(GoalControlParams, params)).toBe(false);
+	});
+});
+
+// ── 持久化 schema：serializeState 输出（P-m14-2，ext-simplify-03 D2）──
+
+describe("persisted goal-state schema — serializeState 输出（P-m14-2）", () => {
+	// D2 一步删除 lastProgressTurn/objectiveUpdatedAt 后，新写入的 goal-state entry
+	// 不得再携带这两个 write-only 字段。serializeState 是浅拷贝透传（{ ...state, budget: {...} }），
+	// 字段从 GoalRuntimeState 删除后输出自动少两键——此处断言删除完整（fixture 残留即红）。
+	it("新写入 entry（serializeState(createGoalState)）不含已删两字段", () => {
+		const serialized = serializeState(createGoalState("obj"));
+		expect(serialized).not.toHaveProperty("lastProgressTurn");
+		expect(serialized).not.toHaveProperty("objectiveUpdatedAt");
 	});
 });

@@ -86,6 +86,9 @@ function mockConfigService(worktreeRootDir = '/home/user/worktrees') {
     // rename 模型 stub（worktree 测试不涉及，默认未设置）
     getRenameModel: vi.fn(() => ''),
     setRenameModel: vi.fn(),
+    // rename 触发模式 stub（worktree 测试不涉及，默认 first-stop）
+    getRenameMode: vi.fn(() => 'first-stop' as const),
+    setRenameMode: vi.fn(),
     // smart-context 配置 stub（worktree 测试不涉及，默认全量默认值）
     getSmartContextConfig: vi.fn(() => ({
       enabled: true,

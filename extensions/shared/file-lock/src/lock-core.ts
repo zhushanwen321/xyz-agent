@@ -49,8 +49,8 @@ export const DEFAULT_STALE_MS = 30_000;
 /** stale 判死下限 clamp（照抄 proper-lockfile：`Math.max(options.stale || 0, 2000)`）。 */
 const MIN_STALE_MS = 2_000;
 
-/** 锁原语选项。 */
-export interface LockCoreOptions {
+/** 锁原语选项（内部参数类型：重试/常量编排属消费方，runtime 传字面量不 import 本类型）。 */
+interface LockCoreOptions {
 	/** 锁 mtime 超过该值视为持锁者已死可夺取。下限 clamp 2000ms。默认 DEFAULT_STALE_MS。 */
 	staleMs?: number;
 	/** 诊断日志注入（stale 夺取等关键分支）。core 自身零输出。 */
@@ -228,7 +228,8 @@ function acquireOnceSync(target: string, lockfilePath: string, staleMs: number, 
 
 /**
  * 单次获取跨进程锁：成功返回 release（幂等）；锁被他人持有且未 stale 时抛
- * code:"ELOCKED" 错误（重试编排属消费方：包入口 async 退避 / sync busy-wait）。
+ * code:"ELOCKED" 错误（重试编排属消费方：extension 侧 sync busy-wait——
+ * src/file-lock.ts / runtime 侧 async 退避——packages/runtime/src/utils/file-lock.ts）。
  */
 export async function acquireLock(filePath: string, opts?: LockCoreOptions): Promise<LockRelease> {
 	const target = resolveTarget(filePath);

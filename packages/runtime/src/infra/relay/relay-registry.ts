@@ -234,6 +234,46 @@ export class RelayRegistry {
     return this.entries.size
   }
 
+  /**
+   * 按 mainSessionId 的只读存在性查询（idle pi reclamation 设计 D2 #3，u1b）。
+   *
+   * 注册表内存在以该 mainSessionId 关联且仍在册（未 cleanupEntry）的 relay 条目即真。
+   * 消费方 = 空闲 reaper 的「有在途 relay 子进程」豁免判定（u2）——主 pi 被杀后 relay
+   * 代理不会可靠连坐死亡（relay.mjs 显式忽略 stdin EOF），故豁免语义锚定注册表在册
+   * 条目而非进程探活。纯只读，不改变任何注册/清理行为；条目数 = 在途 subagent 数
+   * （量级小），线性扫描即可，不为低频豁免查询建反向索引。
+   */
+  hasByMainSessionId(mainSessionId: string): boolean {
+    for (const entry of this.entries.values()) {
+      if (entry.mainSessionId === mainSessionId) return true
+    }
+    return false
+  }
+
+  /**
+   * 按 mainSessionId 枚举在册 relay 子进程目标（idle pi reclamation D3 第 5 步尾扫，u3a）。
+   *
+   * 返回元素结构对齐 session-lifecycle.ts 的 ReclaimRelayTarget（{ kill }）——刻意不
+   * import 该类型（infra → services 反向依赖禁向），结构类型天然兼容，u3 装配接线
+   * listRelayChildrenByMainSession 时可直接赋值。kill 实现绑本文件导出的 killRelayChild
+   * （SIGCONT→SIGTERM→grace→SIGKILL，幂等：已退出 child 直接 resolve）。
+   *
+   * 「杀完走注册表清理」由既有事件链结构性保证：attachRelayChildWiring 挂载的 child
+   * 'exit' handler 收到 exit 即调 cleanupEntry（tee 销毁 + pid 文件删除 + 双 Map 注销，
+   * 幂等）——调用方 kill 后无需（也不应）手工注销注册表。
+   *
+   * 线性扫描（对齐 hasByMainSessionId 取态）：条目数 = 在途 subagent 数，量级小，
+   * 不为低频尾扫建反向索引。纯只读枚举，不改变任何注册/清理行为。
+   */
+  listTargetsByMainSessionId(mainSessionId: string): Array<{ kill(): Promise<void> }> {
+    const targets: Array<{ kill(): Promise<void> }> = []
+    for (const entry of this.entries.values()) {
+      if (entry.mainSessionId !== mainSessionId) continue
+      targets.push({ kill: () => killRelayChild(entry.child) })
+    }
+    return targets
+  }
+
   /** socket server 的 connection 入口：等待握手 → 校验 → 注册 + spawn + 字节泵。 */
   handleConnection(conn: Socket): void {
     // 连接级 error 兜底（对端 RST → ECONNRESET 等）：socket 'error' 无 listener 时
@@ -438,6 +478,17 @@ export class RelayRegistry {
     conn.once('close', () => {
       if (!this.entries.has(conn)) return // 已因 child exit 清理，no-op
       console.warn(`[relay] connection lost, killing child (kill-on-disconnect) recordId=${entry.recordId}`)
+      // 杀链决策日志（crash-resilience §3.3 D6-⑥，E2 归因缺口的直接修复）：主 session
+      // 断连（main pi 崩溃 / 代理丢失 / extension kill）连带杀受托 relay 子进程——
+      // 动作/目标（主 session、recordId、子进程 pid）/原因 字段化单行落盘，E2 型
+      // 「同秒连坐」事件可从此行反查连带关系。
+      console.warn('[relay] kill decision', {
+        action: 'kill_on_disconnect',
+        mainSessionId: entry.mainSessionId,
+        recordId: entry.recordId,
+        childPid: entry.child.pid ?? null,
+        reason: 'relay socket closed while child still alive (main pi died / proxy lost / extension kill)',
+      })
       void killRelayChild(entry.child).then(() => this.cleanupEntry(entry))
     })
   }

@@ -154,7 +154,7 @@ function handleResume(pi: ExtensionAPI, session: GoalSession, ctx: ExtensionCont
 		return;
 	}
 	if (state.status !== "active") {
-		state.status = "active";
+		state.status = transitionStatus(state.status, "active");
 		state.timeStartedAt = Date.now();
 	}
 	// W5：resume = 新激活周期——熔断计数清零。主判据总次数（continuationsSent）只经
@@ -284,7 +284,7 @@ function handleClear(pi: ExtensionAPI, session: GoalSession, ctx: ExtensionConte
 
 /**
  * FR-8.4 G-002：重塑（reset）。重置 objective/budget flags/
- * currentTurnIndex/lastProgressTurn，保留 goalId。
+ * currentTurnIndex，保留 goalId。
  * active 状态下向 AI 注入 objective-updated steering。
  */
 function handleUpdate(
@@ -313,9 +313,7 @@ function handleUpdate(
 	const oldObjective = state.objective;
 	// FR-8.4 G-002: 重塑（重置，保留 goalId）
 	state.objective = newObjective;
-	state.objectiveUpdatedAt = Date.now();
 	state.currentTurnIndex = 0;
-	state.lastProgressTurn = 0;
 	state.budgetLimitSteeringSent = false;
 	state.tokenWarning70Sent = false;
 	state.tokenWarning90Sent = false;

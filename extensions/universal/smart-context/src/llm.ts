@@ -1,7 +1,7 @@
 /**
  * same-model 模式的 LLM 调用（D12 + D13-5 cache-key 一致性）。
  *
- * 不走 llm-shared callLLM：其 tools:[] 硬编码会破坏前缀缓存对齐（call.ts:113）。
+ * 不走 llm-shared callLLM：其 tools:[] 硬编码会破坏前缀缓存对齐（llm-shared call.ts）。
  * 此处直接用 completeSimple + getApiKeyAndHeaders，并把 tools schema 与主会话对齐
  * （deepseek-harness summarizer 同款做法：system + tools + messages 全部复用做缓存对齐）。
  *
@@ -13,24 +13,17 @@
 import { completeSimple } from "@earendil-works/pi-ai/compat";
 import type { Context as LlmContext, SimpleStreamOptions } from "@earendil-works/pi-ai/compat";
 import type { Tool as LlmTool, Message, Model } from "@earendil-works/pi-ai";
-import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
-
-/** ToolInfo 的宽松形状（Pick<ToolDefinition, "name"|"description"|"parameters"> 即可投影为 pi-ai Tool）。 */
-interface ToolInfoLike {
-	name: string;
-	description: string;
-	parameters: unknown;
-}
+import type { ExtensionContext, ToolInfo } from "@earendil-works/pi-coding-agent";
 
 /**
  * ToolInfo → pi-ai Tool 投影：三字段直取。parameters 是 typebox schema（主会话同源对象，
  * 序列化后与主请求一致——缓存对齐的关键是不改造、原样透传）。
  */
-export function projectTools(toolInfos: readonly ToolInfoLike[]): LlmTool[] {
+export function projectTools(toolInfos: readonly ToolInfo[]): LlmTool[] {
 	return toolInfos.map((t) => ({
 		name: t.name,
 		description: t.description,
-		parameters: t.parameters as LlmTool["parameters"],
+		parameters: t.parameters,
 	}));
 }
 

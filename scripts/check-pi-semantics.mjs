@@ -211,7 +211,7 @@ if (missingPkgs.length > 0) {
     )
     if (stale.length > 0) {
       fail(
-        `pi 实装为 ${common}，但 ${stale.length} 条语义登记的 verifiedWith 过期: ${stale.map((e) => `${e.id}(${e.verifiedWith})`).join('、')}——恢复动作：先重跑探针族验证语义仍成立（cd packages/runtime && npx vitest run src/infra/pi/__tests__/pi-semantics），全绿后把 docs/pi-semantics.json 对应条目 verifiedWith 更新为 "${common}"；任一探针红 = pi 语义漂移，先按报错复核锚点再更新`,
+        `pi 实装为 ${common}，但 ${stale.length} 条语义登记的 verifiedWith 过期: ${stale.map((e) => `${e.id}(${e.verifiedWith})`).join('、')}——恢复动作：先重跑探针族验证语义仍成立（runtime 侧探针：cd packages/runtime && npx vitest run src/infra/pi/__tests__/pi-semantics；ext-guards 侧探针（PS-30 stale 文案）：cd extensions/shared/ext-guards && npx vitest run src/__tests__/pi-semantics-stale-ctx-wording.test.ts），全绿后把 docs/pi-semantics.json 对应条目 verifiedWith 更新为 "${common}"；任一探针红 = pi 语义漂移，先按报错复核锚点再更新`,
       )
     }
   }
@@ -240,7 +240,7 @@ try {
       .some((f) => /pi-semantics-[^/]*\.test\.ts$/.test(f) || f.endsWith('thinking-level-effective-e2e.test.ts'))
     if (!probeTouched) {
       warn(
-        `staged 的 docs/pi-semantics.json 有 ${vwChangedLines} 行 verifiedWith 变更，但无任何探针测试文件（pi-semantics-*.test.ts / thinking-level-effective-e2e.test.ts）陪跑——D6 软门禁仅提醒不拦截；恢复动作：先跑探针族确认语义仍成立（cd packages/runtime && npx vitest run src/infra/pi/__tests__/pi-semantics），全绿再更新 verifiedWith`,
+        `staged 的 docs/pi-semantics.json 有 ${vwChangedLines} 行 verifiedWith 变更，但无任何探针测试文件（pi-semantics-*.test.ts / thinking-level-effective-e2e.test.ts）陪跑——D6 软门禁仅提醒不拦截；恢复动作：先跑探针族确认语义仍成立（runtime 侧探针：cd packages/runtime && npx vitest run src/infra/pi/__tests__/pi-semantics；ext-guards 侧探针（PS-30 stale 文案）：cd extensions/shared/ext-guards && npx vitest run src/__tests__/pi-semantics-stale-ctx-wording.test.ts），全绿再更新 verifiedWith`,
       )
     }
   }

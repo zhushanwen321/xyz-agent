@@ -139,7 +139,9 @@ if (existing && existing.path !== r.path) {
 
 ### 2.6 P4：tool-error 双写（每个工具错误 2 条 entry）
 
-`extensions/universal/unified-hooks/src/hooks/tool-error-handler.ts`（tool_execution_end isError 分支）：
+> 状态：对象包 unified-hooks 已于 2026-09 删除（ext-simplify-01）；专属 entry 写入由 bte 延续（同 customType），本条剩余有效性执行时按 bte 现状重核。
+
+原 unified-hooks 包 tool-error-handler.ts（已删除，`git log --follow` 可查）（tool_execution_end isError 分支）：
 
 ```ts
 pi.appendEntry("unified-hooks:tool-error", entry);          // 专属 entry：含全量字段

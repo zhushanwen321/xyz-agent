@@ -69,7 +69,7 @@ dev-link 的 pi 模式（把源码 symlink 到 `~/.pi/agent/extensions/`）已�
 | `cw-tool` | 注册 cw 系列工具与 agent |
 | `model-switch` / `plan` / `unified-hooks` | 注册各自工具/命令 |
 
-（历史注记：设计时另有 `evolve-daily`——每日首个 session 自动跑 Python 分析写文件、副作用最重，及 `context-engineering` / `vision`，三包已从仓库删除；按 SSOT 过滤的机制防护保留，防未来再引入非 mandatory 副作用包。）
+（历史注记：设计时另有 `evolve-daily`——每日首个 session 自动跑 Python 分析写文件、副作用最重，及 `context-engineering` / `vision`，三包已从仓库删除；`unified-hooks` 已于 2026-09 删除（ext-simplify-01）。按 SSOT 过滤的机制防护保留，防未来再引入非 mandatory 副作用包。）
 
 这与 build 产物集不一致。因此 dev 扫描源码后**按 `mandatory-extensions.json` SSOT 过滤**，只保留 mandatory 包：
 

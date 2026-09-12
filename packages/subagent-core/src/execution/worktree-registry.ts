@@ -38,10 +38,12 @@ export const SPAWN_GRACE_MS = 60_000;
 const JSON_INDENT = 2;
 
 /**
- * 锁参数：逐项对齐 extensions/shared/file-lock/src/file-lock.ts 的 withFileLock
- * 包装默认值（stale 30s / retries 10）。两侧参数漂移会破坏「同一把
- * <worktrees.json>.lock」的跨进程互斥语义（协议登记 data-source-registry.md §6），
- * 与旧包装共存/替换期间尤其如此。
+ * 锁参数：对齐三方同一磁盘协议的既有默认值——runtime 侧
+ * packages/runtime/src/utils/file-lock.ts 的 withFileLockAsync、pi auth-storage
+ * 范本、本文件 proper-lockfile 调用（retry 库参数：stale 30s / retries 10 /
+ * factor 2 / 100ms~10s randomize）。互斥由 lockfile 路径（<worktrees.json>.lock）
+ * + mkdir 原子协议保证；默认值对齐锚定的是各写方夺取时机（stale）与失败速度
+ * （重试参数）行为一致（协议登记 data-source-registry.md §6）。
  */
 const LOCK_STALE_MS = 30_000;
 const LOCK_RETRIES = 10;
@@ -184,9 +186,11 @@ export class WorktreeRegistry {
 
   /**
    * proper-lockfile 直用的跨进程锁（取代已删除的共享 file-lock 包装，抽包去依赖）。
-   * 锁协议逐项对齐 extensions/shared/file-lock/src/file-lock.ts 的 withFileLock：
-   *   - lockfile 路径 = <目标文件>.lock（proper-lockfile 默认，与包装/runtime 侧
-   *     同一路径才互斥）
+   * 锁协议对齐现存三方同协议实现——runtime 侧 packages/runtime/src/utils/file-lock.ts
+   * 的 withFileLockAsync（范本 pi FileAuthStorageBackend，参数对齐 proper-lockfile
+   * 内部 retry 库）与 extension 侧 @zhushanwen/pi-file-lock：
+   *   - lockfile 路径 = <目标文件>.lock（proper-lockfile 默认，与 runtime 侧/
+   *     extension 侧同一路径才互斥）
    *   - realpath:false —— 目标文件不存在也可锁（realpath 默认 true 时 ENOENT）
    *   - stale 30s：持锁进程崩溃后锁可被夺取
    *   - async retries 指数退避：10 次 / factor 2 / 100ms~10s / randomize，耗尽抛

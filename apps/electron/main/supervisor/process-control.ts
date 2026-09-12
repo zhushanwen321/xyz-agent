@@ -39,11 +39,12 @@
  * 依赖方向：process-control → node:child_process + safe-env + windows-process + electron(app)
  */
 import { type ChildProcess, spawn, execFileSync } from 'node:child_process'
-import { createWriteStream, existsSync, mkdirSync, writeFileSync, chmodSync, type WriteStream } from 'node:fs'
+import { createWriteStream, existsSync, mkdirSync, renameSync, statSync, writeFileSync, chmodSync, type WriteStream } from 'node:fs'
 import { randomBytes } from 'node:crypto'
 import path from 'node:path'
 import { app } from 'electron'
 import { getDataDir } from '@xyz-agent/shared/paths'
+import { readMainLogMaxBytes, mainLogger } from '../logs/main-logger.js'
 import { buildSafeEnv } from './safe-env.js'
 import { terminateWindowsProcessTree } from './windows-process.js'
 
@@ -62,19 +63,133 @@ export const KILL_WAIT_MS = 200
  * stdout 高吞吐且 initLogger 已覆盖），非阻塞 append 写到 dataDir/logs/。
  *
  * dev 模式不用（dev 保留 console 转发方便终端调试）。
+ *
+ * size 轮转（crash-resilience §3.3 D6-⑦）：本文件是该固定名文件的唯一 writer，rename
+ * 轮转**同进程安全**（对齐 runtime logger rotateMain 语义）。设计 v7 定案：固定名 +
+ * writer 持有型 append fd 的文件**不做超龄清理**（unlink 后 fd 写入落孤儿 inode 静默
+ * 丢失，恰在崩溃取证时刻失效），治理唯一归 writer 侧 size 轮转——见
+ * rotateStderrSinkIfNeeded / writeStderrSink。
  */
 let stderrSink: WriteStream | null = null
+/** stderrSink 对应文件路径（轮转 rename 目标；创建成功才记录）。 */
+let stderrSinkFile: string | null = null
+/** 自本次打开以来写入 stderr 主文件的字节（size 轮转判定，对齐 runtime 字节计数法）。 */
+let stderrSinkBytes = 0
+/** 轮转进行中（end 旧流 → rename 窗口）：窗口内禁止重建 fd（rename 前新建 fd 会指向旧 inode）。 */
+let stderrRotation: Promise<void> | null = null
+/** 轮转窗口内丢弃的 chunk 计数（轮转完成后合并记一次 warn，不在热路径递归记日志）。 */
+let stderrRotationDropped = 0
+
 function getStderrSink(): WriteStream | null {
   if (!app.isPackaged) return null
+  // 轮转窗口：getStderrSink 被 writeStderrSink 之外的场景调用也不得绕过窗口禁令
+  if (stderrRotation) return null
   if (stderrSink) return stderrSink
   try {
     const logsDir = path.join(getDataDir(), 'logs')
     mkdirSync(logsDir, { recursive: true })
-    stderrSink = createWriteStream(path.join(logsDir, 'electron-runtime-stderr.log'), { flags: 'a' })
+    const file = path.join(logsDir, 'electron-runtime-stderr.log')
+    // 打开前若既有文件已超帽（上次运行崩溃未轮转 / 历史大文件），先滚动一次——进程内
+    // 字节计数不覆盖历史，此 stat 弥合跨重启的 size 上限（对齐 runtime openMainStream）。
+    if (existsSync(file) && statSync(file).size > readMainLogMaxBytes()) {
+      renameSync(file, `${file}.1`)
+    }
+    stderrSink = createWriteStream(file, { flags: 'a' })
+    stderrSinkFile = file
   } catch {
     stderrSink = null
   }
   return stderrSink
+}
+
+/** 轮转窗口等待旧流 'close' 的超时：超时强制销毁流（fd 未释放时 rename 会留孤儿 fd 写入；Windows 下 rename 直接失败）。 */
+const STDERR_ROTATE_FLUSH_TIMEOUT_MS = 1000
+
+/**
+ * end stderr sink 并等待 'close'（fd 释放、缓冲 flush 完成），超时强制销毁。
+ *
+ * 轮转顺序硬约束（对齐 runtime logger rotateMain）：必须先等 'close' 再 rename——
+ * rename 早于 flush 完成时，旧流在途写落进已改名 inode 形成孤儿写入。超时销毁丢
+ * 在途缓冲尾部（stderr 仅排查证据，可接受）；不销毁则 fd 悬挂。
+ */
+function endAndAwaitClose(stream: WriteStream): Promise<void> {
+  if (stream.closed) return Promise.resolve()
+  if (!stream.writableEnded) stream.end()
+  if (stream.closed) return Promise.resolve()
+  return new Promise<void>((resolve) => {
+    let settled = false
+    const finish = (timedOut: boolean): void => {
+      if (settled) return
+      settled = true
+      clearTimeout(timer)
+      stream.removeListener('close', onClose)
+      stream.removeListener('error', onError)
+      if (timedOut) stream.destroy()
+      resolve()
+    }
+    const onClose = (): void => finish(false)
+    const onError = (): void => finish(false)
+    const timer = setTimeout(() => finish(true), STDERR_ROTATE_FLUSH_TIMEOUT_MS)
+    stream.once('close', onClose)
+    stream.once('error', onError)
+  })
+}
+
+/**
+ * stderr sink size 轮转：suspend 写入 → end 旧流等落盘 → rename `.1` → 解除 suspend
+ * （下次写入经 getStderrSink 重建新流写**新文件**——append fd 重建发生在 rename 之后，
+ * 不会写进已改名 inode）。幂等：轮转窗口内重复触发复用同一 promise。窗口内到达的
+ * chunk 丢弃并计数（窗口 ms 级；stderr 兜底定位本就是部分丢失可接受），完成后合并 warn。
+ */
+function rotateStderrSink(): void {
+  if (stderrRotation) return
+  const old = stderrSink
+  const file = stderrSinkFile
+  if (!old || !file) return
+  stderrSink = null
+  stderrSinkBytes = 0
+  stderrRotation = (async () => {
+    try {
+      await endAndAwaitClose(old)
+      try {
+        renameSync(file, `${file}.1`)
+      // eslint-disable-next-line taste/no-silent-catch -- rename 失败（IO 错/权限）：旧文件保持原名，新流 append 续写同名文件，数据不丢仅丢滚动（对齐 runtime rotateMain）
+      } catch {
+        // no-op
+      }
+    } finally {
+      stderrRotation = null
+      if (stderrRotationDropped > 0) {
+        const dropped = stderrRotationDropped
+        stderrRotationDropped = 0
+        // best-effort 可观测性：mainLogger 未 init（测试/早于 initMainLogger）时 no-op，不构成递归
+        mainLogger.warn(`[runtime] electron-runtime-stderr.log rotated; dropped ${dropped} stderr chunk(s) in rotation window`)
+      }
+    }
+  })()
+}
+
+/**
+ * stderr 兜底写入唯一出口（spawnRuntimeProcess 的 stderr data handler 调用）。
+ *
+ * 写入前按字节计数预测超帽（对齐 runtime writeLogEntry 语义）：超帽 → 触发轮转，
+ * 当前 chunk 计入轮转窗口丢弃；轮转窗口内到达的 chunk 同样丢弃计数。非打包（sink 不
+ * 存在）no-op——调用方无须自行分流 dev/prod。
+ */
+function writeStderrSink(data: Buffer): void {
+  if (stderrRotation) {
+    stderrRotationDropped++
+    return
+  }
+  if (stderrSinkFile && stderrSinkBytes + data.length > readMainLogMaxBytes()) {
+    rotateStderrSink()
+    stderrRotationDropped++
+    return
+  }
+  const sink = getStderrSink()
+  if (!sink) return
+  sink.write(data)
+  stderrSinkBytes += data.length
 }
 
 /**
@@ -299,21 +414,18 @@ export function spawnRuntimeProcess(port: number, onExit?: (code: number | null)
       console.error(`[runtime:err] ${data.toString().trimEnd()}`)
     })
   } else {
-    const sink = getStderrSink()
-    if (sink) {
-      // W6 背压保护：累计写入字节超 1MB 后丢弃（pi 崩溃循环高频 stderr 时不撑爆磁盘）。
-      // 用累计字节计数器替代 sink.writableLength（后者只反映 WriteStream 内部 buffer，
-      // 不反映 OS 级 page cache + 已 drain 部分，保护效果有限）。stderr 仅用于排查证据，
-      // 部分丢失可接受。计数器在 spawnRuntimeProcess 函数作用域内，每次 spawn 重置。
-      // eslint-disable-next-line no-magic-numbers -- 1MB stderr 背压上限（非业务常量）
-      const WRITE_BUFFER_LIMIT = 1024 * 1024
-      let stderrBytes = 0
-      child.stderr?.on('data', (data: Buffer) => {
-        if (stderrBytes > WRITE_BUFFER_LIMIT) return
-        stderrBytes += data.length
-        sink.write(data)
-      })
-    }
+    // W6 背压保护保留在调用侧（stderrBytes 是「本次 spawn 累计」语义，与 writeStderrSink
+    // 的文件级字节计数职责不同）：累计超 1MB 后丢弃，防 pi 崩溃循环高频 stderr 撑爆磁盘。
+    // 写入统一走 writeStderrSink（惰性建流 + size 轮转 + 轮转窗口丢弃），dev/prod 分流
+    // 收敛到其内部的 app.isPackaged 判定。
+    // eslint-disable-next-line no-magic-numbers -- 1MB stderr 背压上限（非业务常量）
+    const WRITE_BUFFER_LIMIT = 1024 * 1024
+    let stderrBytes = 0
+    child.stderr?.on('data', (data: Buffer) => {
+      if (stderrBytes > WRITE_BUFFER_LIMIT) return
+      stderrBytes += data.length
+      writeStderrSink(data)
+    })
   }
   child.on('exit', (code) => {
     console.log(`[runtime] Process exited with code ${code}`)

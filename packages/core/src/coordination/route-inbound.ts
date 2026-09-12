@@ -98,6 +98,21 @@ export interface TransportPorts {
  */
 export interface InboundEffects {
   onSessionExited?(sessionId: string, payload: { code: number | null; reason: string }): void
+  /**
+   * [u8] pi 崩溃自动恢复成功（session.restored，crash-resilience D7）。
+   * renderer 实现：恢复 dead 态标记 + 对话流插入恢复提示条（T4 文案）。
+   * frame 经 ring 回放到达（恢复发生时 renderer 订阅已被 bus.clearSession 清除），
+   * 回放路径（dispatchRouted replay）同样触发本回调——session.exited 兜底同款挂法。
+   */
+  onSessionRestored?(sessionId: string, payload: { sessionId: string; attempts: number }): void
+  /**
+   * [u8] pi 崩溃自动恢复失败（session.restoreFailed）。willRetry=false（连续 2 次熔断）时
+   * renderer 把提示条切失败态（重试按钮）；willRetry=true 的中间失败仅日志，不渲染。
+   */
+  onSessionRestoreFailed?(
+    sessionId: string,
+    payload: { sessionId: string; attempts: number; willRetry: boolean; reason: string },
+  ): void
   onMessageComplete?(sessionId: string, payload: { sessionId?: string; stopReason?: string }): void
   onSubagents?(sessionId: string, subagents: SubagentRecord[]): void
   /**
@@ -286,6 +301,20 @@ export const ROUTE_TABLE: Record<string, RouteTableEntry> = {
     // 通道订阅（首次 send 前可能无订阅者 → dispatchSession no-op → 错误丢弃）。
     sessionEffect(sid, payload, effects) {
       effects.onSessionExited?.(sid, payload as { code: number | null; reason: string })
+    },
+  },
+  // [u8] pi 崩溃自动恢复结果（crash-resilience D7）：与 session.exited 同款兜底挂法——
+  // 恢复发生时 renderer 订阅已被 bus.clearSession 清除，帧主要经 ring 回放到达
+  //（dispatchRouted replay 共享 ROUTE_TABLE effects），必须有条目才能触发 effect。
+  'session.restored': {
+    // payload 锚定 protocol SSOT（runtime 改形状时此处编译报错，session.workflowUpdate 同款）。
+    sessionEffect(sid, payload, effects) {
+      effects.onSessionRestored?.(sid, payload as ServerMessageMap['session.restored'])
+    },
+  },
+  'session.restoreFailed': {
+    sessionEffect(sid, payload, effects) {
+      effects.onSessionRestoreFailed?.(sid, payload as ServerMessageMap['session.restoreFailed'])
     },
   },
   'message.complete': {

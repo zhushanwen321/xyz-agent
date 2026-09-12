@@ -71,9 +71,7 @@ export interface GoalRuntimeState {
 	timeStartedAt: number;
 	timeUsedSeconds: number;
 	budget: BudgetConfig;
-	lastProgressTurn: number;
 	budgetLimitSteeringSent: boolean;
-	objectiveUpdatedAt: number;
 	lastBlockerReason: string | null;
 	// token 维度预警 flag（time budget 已移除，仅 token 70/90 两个 flag）
 	tokenWarning70Sent: boolean;

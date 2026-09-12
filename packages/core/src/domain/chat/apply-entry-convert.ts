@@ -27,7 +27,7 @@ import {
   textToSegments,
 } from '@xyz-agent/shared'
 
-import { isLooseRecord, isPlainRecord, normalizePiToolResult } from './apply-entry-utils'
+import { isLooseRecord, isPlainRecord, normalizePiToolResult, truncateEntryToolOutput } from './apply-entry-utils'
 
 /**
  * [簇 A2] defer 队列 flush 投递确认标记正则（SSOT，submitQueuedEntry 附加的形态）。
@@ -358,10 +358,25 @@ export function computeToolCallFill(body: PiMessageBody): {
   details?: Record<string, unknown>
   /** [W5] toolResult content 的 ImageContent 块（live≡replay：此前仅实时路径可见）。 */
   images?: Array<{ data: string; mimeType: string }>
+  /** [D6-⑧] output/outputRaw 被 64KB 累积截断裁剪（ToolCall.outputTruncated 回填源）。 */
+  outputTruncated: boolean
 } {
   const { output, outputRaw, images } = normalizePiToolResult(body)
+  // [D6-⑧] 累积态条目级截断：live（applyEntryFrame）与 reload（replayEntries）共用本点，
+  // 同函数同阈值——D3 代价 C 根治（非六类工具大结果两路径形态一致）。
+  const outputT = truncateEntryToolOutput(output)
   const isError = body.isError === true
   // F1 透传 details（含 __gui__），排除数组形态（迁移前显式判定，关键规则 9 可重开恢复）。
   const details = isPlainRecord(body.details) ? body.details : undefined
-  return { output, outputRaw, isError, details, images }
+  // outputRaw 与 output 同源（stripAnsi 前/后），任一超限即双双截断（保持两字段头部对齐），
+  // truncated 标记取两者之或。
+  const outputRawT = outputRaw !== undefined ? truncateEntryToolOutput(outputRaw) : undefined
+  return {
+    output: outputT.text,
+    ...(outputRaw !== undefined && outputRawT !== undefined && { outputRaw: outputRawT.text }),
+    isError,
+    details,
+    images,
+    outputTruncated: outputT.truncated || (outputRawT?.truncated ?? false),
+  }
 }

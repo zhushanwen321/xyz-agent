@@ -10,6 +10,7 @@
  */
 
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { guardStaleCtx, toErrorMessage } from "@zhushanwen/pi-ext-guards";
 import { Type } from "typebox";
 
 import { debugLog } from "./compact-handler.js";
@@ -109,6 +110,13 @@ export function registerCompactContextTool(
 		gatingProbe?: (ctx: ExtensionContext) => { active: boolean; modelId: string };
 		usageProbe?: (ctx: ExtensionContext) => { tokens: number | null; contextWindow: number };
 		getEntries?: (ctx: ExtensionContext) => ReadonlyArray<EntryLike>;
+		/**
+		 * G1 代际检测（crash-resilience D1）：compact 是 fire-and-forget——onComplete/onError
+		 * 回调在压缩 LLM 调用期间异步触发，用户此间切换/重载 session 后回调持有的 pi 已
+		 * stale（E1 实锤崩溃点）。index.ts 注入模块级代数比对闭包，前置检查 + 错误分诊
+		 * 双保险；缺省时守卫退化为纯文案兜底分诊（PS-30 门禁守文案）。
+		 */
+		isCtxStale?: () => boolean;
 	},
 ): void {
 	const probeGating =
@@ -165,29 +173,47 @@ export function registerCompactContextTool(
 					typeof params.custom_instructions === "string" && params.custom_instructions.trim() !== ""
 						? params.custom_instructions
 						: undefined,
+				// E1 实锤崩溃点（9/3 pi-crash log）：两个回调由 compact 的内部 Promise 链异步
+				// 调用，不在 pi runner emit() 的 try/catch 内——session 替换窗口（GUI 切
+				// session/新建/重载高频触发）下 pi.sendUserMessage 命中 stale ctx 同步抛错即
+				// 杀死 pi 进程。守卫 stale 静默降级（结果不投递，用户可重试 /compact），非
+				// stale 错误原样上抛（守卫不吞真实 bug）。
 				onComplete: (r: unknown) => {
-					const result = toCompactionResultLike(r);
-					const resultMode = result.details?.mode ?? "native-fallback";
-					const fellBack = resultMode === "native-fallback";
-					if (fellBack) debugLog("compact_context: takeover fell back to native generation");
-					const cacheRead = result.usage?.cacheRead;
-					const cost = result.usage
-						? `${formatK(result.usage.input ?? 0)} input${cacheRead ? `（其中缓存命中 ${formatK(cacheRead)}）` : ""} + ${formatK(result.usage.output ?? 0)} output`
-						: "未知";
-					const showHint = compactionCount + 1 >= DEGRADATION_HINT_MIN_COMPACTIONS;
-					const lines = [
-						`[smart-context] 压缩完成。模式：${resultMode}${fellBack ? "（压缩模型不可用，已回退当前模型——请检查配置：xyz-agent 设置页或 smart-context-ext-config skill）" : ""}。`,
-						`压缩前 ${formatK(result.tokensBefore ?? 0)} tokens → 压缩后约 ${formatK(result.estimatedTokensAfter ?? 0)} tokens；摘要生成成本：${cost}。`,
-						showHint ? buildDegradationHintLine() : "",
-					].filter((l) => l !== "");
-					pi.sendUserMessage(lines.join("\n"), { deliverAs: "steer" });
+					guardStaleCtx(() => {
+						const result = toCompactionResultLike(r);
+						const resultMode = result.details?.mode ?? "native-fallback";
+						const fellBack = resultMode === "native-fallback";
+						if (fellBack) debugLog("compact_context: takeover fell back to native generation");
+						const cacheRead = result.usage?.cacheRead;
+						const cost = result.usage
+							? `${formatK(result.usage.input ?? 0)} input${cacheRead ? `（其中缓存命中 ${formatK(cacheRead)}）` : ""} + ${formatK(result.usage.output ?? 0)} output`
+							: "未知";
+						const showHint = compactionCount + 1 >= DEGRADATION_HINT_MIN_COMPACTIONS;
+						const lines = [
+							`[smart-context] 压缩完成。模式：${resultMode}${fellBack ? "（压缩模型不可用，已回退当前模型——请检查配置：xyz-agent 设置页或 smart-context-ext-config skill）" : ""}。`,
+							`压缩前 ${formatK(result.tokensBefore ?? 0)} tokens → 压缩后约 ${formatK(result.estimatedTokensAfter ?? 0)} tokens；摘要生成成本：${cost}。`,
+							showHint ? buildDegradationHintLine() : "",
+						].filter((l) => l !== "");
+						pi.sendUserMessage(lines.join("\n"), { deliverAs: "steer" });
+					}, {
+						isCtxStale: deps?.isCtxStale,
+						label: "smart-context:compact-onComplete",
+						onStale: (error) => debugLog(`compact result delivery skipped (stale ctx): ${toErrorMessage(error)}`),
+					});
 				},
 				onError: (err: Error) => {
+					// 压缩本身的失败信息先落日志（守卫体外——stale 降级时该观测保留）
 					debugLog(`compact_context error: ${err.message}`);
-					pi.sendUserMessage(
-						`[smart-context] 压缩失败：${err.message}。上下文未变化，可稍后重试（若反复失败，检查 smart-context 配置或使用 /compact）。`,
-						{ deliverAs: "steer" },
-					);
+					guardStaleCtx(() => {
+						pi.sendUserMessage(
+							`[smart-context] 压缩失败：${err.message}。上下文未变化，可稍后重试（若反复失败，检查 smart-context 配置或使用 /compact）。`,
+							{ deliverAs: "steer" },
+						);
+					}, {
+						isCtxStale: deps?.isCtxStale,
+						label: "smart-context:compact-onError",
+						onStale: (error) => debugLog(`compact failure notice delivery skipped (stale ctx): ${toErrorMessage(error)}`),
+					});
 				},
 			});
 

@@ -34,8 +34,6 @@ Electron + Vue 3 + Node.js Runtime 的 AI Agent 桌面工作台。架构分层�
 
 新增/删包时更新此列举与所在分组。校验：`pnpm extensions:typecheck` / `extensions:lint` / `extensions:test`。
 
-> 已废弃包：`unified-hooks`（源码保留在 `extensions/universal/unified-hooks/`，package.json 带 `deprecated` 标记，不在上方活跃列举中）——被 base-tool-enhance 整包取代（test guard → force-test 白名单自动后台；network guard 挂死保护 → 可配置前台默认超时弱承接；tool-error-handler 审计 → base-tool-enhance tool_error hook）。残留安装会与新包双重拦截 bash，用户须先卸载旧包。
-
 - **[MANDATORY] extension 改动优先在本地 pi CLI 实测**（不是 xyz-agent 桌面）：`pi --mode rpc --session-dir <dir> --model xiaomi-token-plan-cn/mimo-v2.5-pro --approve --extension <path>` + stdin JSONL 发 prompt；`XYZ_AGENT_DEBUG=1` 看 `~/.pi/agent/logs/` 扩展日志。xyz-agent 的 builtin 打包/数据隔离/runtime 中转层会掩盖版本差异
 - **structured-output 方案 A [HISTORICAL]**：workflow 模式 `PI_WORKFLOW_SCHEMA` 注入的权威 schema 是唯一校验权威，LLM 自报 schema 不参与校验（曾因校验自报 schema 致修复静默丢失）
 - 本地开发调试（live edit ↔ npm 版切换）：`.agents/skills/dev-link/`
@@ -92,6 +90,7 @@ bash scripts/validate-runtime-bundle.sh    # runtime bundle 深度验证
 18. **子进程 env 出站契约（C-proc-09）**：进程创建点的子 env 必须经 `buildOutboundChildEnv` 构建（deny 清单剥 `XYZ_AGENT_PACKAGED` / `XYZ_RUNTIME_TOKEN`），与 `ENV_WHITELIST_PREFIXES` 入站准入正交——入站管准入、出站管外泄；守卫 `.githooks/check_spawn_env_boundary.py`，设计依据 [docs/design/env-propagation-boundary.md](docs/design/env-propagation-boundary.md)
 19. **超时默认原则（任务级默认无超时，量级按对象粒度校准）**：subagent turn / workflow `agent()` / 引擎 run 等**任务执行正常路径禁止自带墙钟超时**——用户显式指定（`timeoutMs` / `budgetTimeMs` / watchdog env）才生效，调用方未传就是不限时。必须设防挂死兜底时，量级必须按**被保护对象的粒度**校准：任务级（subagent / workflow run）= 小时级或「无进展检测」（idle / ping，ADR-0047：静默 ≠ 卡死，活跃产出不得判死）；控制面单请求（RPC 帧 / 探针 / 握手）= 秒级；禁止跨粒级挪用（单 turn 分钟级预算 ≠ 整任务总预算）。回收层（dispose / kill / idle timer）防挂死兜底允许默认有界（opt-out）——权威裁决见 [subagent-core-unbounded-wait-audit.md](docs/design/subagent-core-unbounded-wait-audit.md)「正常路径逐点根修 + 回收层统一有界兜底」。[HISTORICAL] 反例：zcode appserver `turnTimeoutMs` 固定 300s 墙钟（`ZCODE_APPSERVER_TURN_DEFAULT_TIMEOUT_MS`，2026-09 实测 21% 任务误杀——343s/541s 正常完成的任务被 300s 判死，死后 app-server 继续烧 token；且流式 delta 不刷新计时）。
 20. **pnpm store 布局双向翻转（沙箱 HOME × pnpm store）**：zsw 引擎 worker 等沙箱执行体覆写 HOME，其 pre-commit 内 verify-*.sh 自含 `pnpm install` 会把沙箱侧 store 写进 `node_modules/.modules.yaml` 的 storeDir；本地（正常 HOME）后续 install 判布局过期 → `ERR_PNPM_ABORTED_REMOVE_MODULES_DIR_NO_TTY` 硬崩（pre-commit 随机红，`CI=true` 治标会复发）。护栏 `.githooks/check_pnpm_store_layout.sh`（pre-commit 第 0 段 + validate-runtime-bundle Gate 0）翻转即红并给 [FIX]；恢复：`CI=true ELECTRON_SKIP_BINARY_DOWNLOAD=1 pnpm install`（约 6-7s）。根因/排障见 [docs/troubleshooting.md](docs/troubleshooting.md)；引擎侧修复落地后护栏应恒绿，红 = HOME 覆盖回退的验收信号
+21. **看门狗/滚动重启默认不武装（Gate W 数据门，C-proc-19）**：`XYZ_RUNTIME_WATCHDOG_ARMED` 缺失时 runtime watchdog 纯观测（采样进环，无 relief / 无滚动重启 / 无通知）——armed 动作必须显式 env 开启，且武装前置 = V6 soak 水位数据 + 评估器 watermark-daily 趋势复审通过（阈值校准 + 重启循环风险排除），禁未经数据复审先武装（兜底先行掩盖问题）；滚动重启走专用退出码 86 + supervisor 零退避零计数，推迟上限 30min（`XYZ_ROLLING_RESTART_DEFER_LIMIT_MS`）。设计依据 [docs/design/crash-forensics-and-watchdog.md](docs/design/crash-forensics-and-watchdog.md) §3.2 方案 B / D5
 
 ## 测试
 

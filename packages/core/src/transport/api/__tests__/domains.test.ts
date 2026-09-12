@@ -57,18 +57,26 @@ beforeEach(() => {
 
 // ── chat 域 ────────────────────────────────────────────────────────────────
 describe('chat 域 RPC 封装', () => {
-  it('getHistory 解包 messages + historyTruncated', async () => {
-    mockCommand.mockResolvedValue({ messages: [{ id: 'm1' }], historyTruncated: true })
+  it('getHistory 解包 messages + [u4d] 窗口契约字段透传（[u6] legacy historyTruncated 退役）', async () => {
+    mockCommand.mockResolvedValue({
+      messages: [{ id: 'm1' }],
+      truncated: true,
+      loadedTurns: 20,
+      totalTurnsEstimate: 42,
+    })
     const r = await chat.getHistory('s1')
     expect(mockCommand).toHaveBeenCalledWith('session.history', { sessionId: 's1' }, RPC_BACKSTOP_TIMEOUT_MS)
-    expect(r).toEqual({ messages: [{ id: 'm1' }], historyTruncated: true })
+    expect(r).toEqual({ messages: [{ id: 'm1' }], truncated: true, loadedTurns: 20, totalTurnsEstimate: 42 })
   })
 
-  it('getFullHistory 解包 messages', async () => {
-    mockCommand.mockResolvedValue({ messages: [{ id: 'm2' }] })
-    const r = await chat.getFullHistory('s1')
-    expect(mockCommand).toHaveBeenCalledWith('session.getFullHistory', { sessionId: 's1' }, RPC_BACKSTOP_TIMEOUT_MS)
-    expect(r).toEqual([{ id: 'm2' }])
+  it('[u6] getHistory 游标翻页：query 透传（cursor/limitTurns/maxBytes，缺省键不带）', async () => {
+    mockCommand.mockResolvedValue({ messages: [], truncated: false, loadedTurns: 0, totalTurnsEstimate: 0 })
+    await chat.getHistory('s1', { cursor: 'entry-9' })
+    expect(mockCommand).toHaveBeenLastCalledWith('session.history', { sessionId: 's1', cursor: 'entry-9' }, RPC_BACKSTOP_TIMEOUT_MS)
+    await chat.getHistory('s1', { cursor: 'entry-9', limitTurns: 5, maxBytes: 1024 })
+    expect(mockCommand).toHaveBeenLastCalledWith('session.history', { sessionId: 's1', cursor: 'entry-9', limitTurns: 5, maxBytes: 1024 }, RPC_BACKSTOP_TIMEOUT_MS)
+    await chat.getHistory('s1')
+    expect(mockCommand).toHaveBeenLastCalledWith('session.history', { sessionId: 's1' }, RPC_BACKSTOP_TIMEOUT_MS)
   })
 
   it('send 无 images 时 payload 不带 images 键', async () => {
@@ -622,7 +630,7 @@ describe('settings 域', () => {
     expect(mockCommand.mock.calls[7][0]).toBe('config.getTimeout')
   })
 
-  it('行为配置：streamingIdleTimeout / defaultBaseBranch / autoRename / renameModel', async () => {
+  it('行为配置：streamingIdleTimeout / defaultBaseBranch / autoRename / renameModel / renameMode', async () => {
     mockCommand.mockResolvedValue({ timeout: 1800 })
     await settings.setStreamingIdleTimeout(1800)
     expect(mockCommand.mock.calls[0].slice(0, 2)).toEqual(['config.setStreamingIdleTimeout', { timeout: 1800 }])
@@ -643,6 +651,11 @@ describe('settings 域', () => {
     expect(mockCommand.mock.calls[6].slice(0, 2)).toEqual(['config.setRenameModel', { model: 'p/m' }])
     await settings.getRenameModel()
     expect(mockCommand.mock.calls[7][0]).toBe('config.getRenameModel')
+
+    await settings.setRenameMode('first-prompt')
+    expect(mockCommand.mock.calls[8].slice(0, 2)).toEqual(['config.setRenameMode', { mode: 'first-prompt' }])
+    await settings.getRenameMode()
+    expect(mockCommand.mock.calls[9][0]).toBe('config.getRenameMode')
   })
 
   it('smart-context 配置组', async () => {

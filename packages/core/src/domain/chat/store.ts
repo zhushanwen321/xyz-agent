@@ -29,6 +29,7 @@ import { findLastAssistantIndex } from './chunk-processor'
 import { markBashError, clearExecutingBash } from './bash-effects'
 import { createChangeSetController } from './changeset'
 import { createHandoffController } from './handoff'
+import { createTruncatedWindowController, type HistoryWindow } from './truncated-window'
 import type {
   Message,
   PiEntry,
@@ -41,7 +42,8 @@ import type {
   SubagentDirectiveData,
   ToolCall,
 } from '@xyz-agent/shared'
-import { normalizeContent, segmentsToText, SUBAGENT_DIRECTIVE_CUSTOM_TYPE } from '@xyz-agent/shared'
+import { normalizeContent, segmentsToText, SUBAGENT_DIRECTIVE_CUSTOM_TYPE, PI_RESPAWN_NOTICE_CUSTOM_TYPE } from '@xyz-agent/shared'
+import type { PiRespawnNoticeVariant } from '@xyz-agent/shared'
 import type { RetryState, QueueState, FinalizeReason } from './store-types'
 import { isDevMode } from '../../platform/dev-mode'
 
@@ -148,6 +150,14 @@ function attachRunningToolCall(prev: Message[], form: PiToolCallEntryForm): Mess
  * 已知边界（设计 D3，可接受）：跨 turn 重发相同文本时数量对齐可能误剔新 overlay——
  * 表现为该消息暂以基线旧版本显示（位置在历史区），不丢消息不重复，新 entry 落盘后
  * 下一轮 reconcile 自然收敛。
+ *
+ * 步骤③ [crash-resilience D7 reconcile 修复] respawn 提示条拣回：appendRespawnNotice 的
+ * liveOnly system 提示条（u8，T4 崩溃恢复横幅）无 piEntryId、也不满足尾部保护段条件
+ * （system 非 streaming/user）——不拣回则任何切入 reconcile 都会清掉已插入的提示条，
+ * 重显只能依赖 ring 回放重触发 session.restored（时序未声明）。合并结果产出后从旧分区
+ * 拣回**未过期**（TTL 5 分钟）提示条重插（restoreRespawnNotices），范围严格收窄
+ * customType=PI_RESPAWN_NOTICE_CUSTOM_TYPE（stream_warn 等其他 liveOnly 消息保持
+ * 一次性语义不受影响）。
  */
 /**
  * user 消息文本投影（mergeBaselineWithLive 文本多重集判据用）：基线（pi 文本经
@@ -246,7 +256,54 @@ function mergeBaselineWithLive(baseline: Message[], partition: Message[]): Messa
   const a = Math.min(protectedUserIdx.length, k)
   const alignedIdx = new Set(protectedUserIdx.slice(0, a))
   const keptTail = protectedSeg.filter((_, i) => !alignedIdx.has(i))
-  return [...baseline.map((m) => ({ ...m })), ...keptTail]
+  // 步骤③：respawn 提示条拣回重插（见函数头注释与 restoreRespawnNotices——不拣回则
+  // 任何切入 reconcile 都会清掉 liveOnly 提示条）
+  return restoreRespawnNotices(partition, [...baseline.map((m) => ({ ...m })), ...keptTail])
+}
+
+/**
+ * respawn 提示条的 reconcile 保留窗口（5 分钟，crash-resilience D7 修复）。
+ *
+ * 带 TTL 而非永不过期：liveOnly 语义是一次性通知（pi 无 entry、重开 session 不出现），
+ * 无限期的内存保留会让恢复横幅在长寿运行期持续驻留成噪音；过期后随下一次 reconcile
+ * 自然消退（用户层面 5 分钟足够读完横幅/点重试）。
+ */
+const RESPAWN_NOTICE_RETENTION_MS = 300_000
+
+/** respawn 提示条判定（appendRespawnNotice u8 唯一写入点的消息形态）。 */
+function isRespawnNotice(m: Message): boolean {
+  return m.role === 'system' && m.liveOnly === true && m.customType === PI_RESPAWN_NOTICE_CUSTOM_TYPE
+}
+
+/**
+ * 从旧分区拣回未过期的 respawn 提示条重插进合并结果（mergeBaselineWithLive 尾段调用）。
+ *
+ * 位置锚定：提示条在分区中的前驱消息文件侧身份（piEntryId ?? id）——基线克隆保留
+ * piEntryId，跨 reconcile 锚位稳定；前驱不存在（提示条是分区首条）或锚未命中合并结果
+ * （前驱是已被基线去重/窗口截掉的 live overlay）→ 退化为尾部追加（提示条是横幅，
+ * 时序精度次要于可见性）。连续提示条（restored 后紧跟 restoreFailed）按分区序依次
+ * 插入，前一条插入后即成为后一条的可命中锚。
+ *
+ * 幂等：提示条恒不在基线（无 pi entry）、也恒不进尾部保护段（步骤① walk 在 system
+ * complete 处 break），重插不会产生副本。
+ */
+function restoreRespawnNotices(partition: Message[], merged: Message[]): Message[] {
+  let result = merged
+  const mergedIds = new Set(result.map((m) => m.piEntryId ?? m.id))
+  for (let i = 0; i < partition.length; i++) {
+    const notice = partition[i]!
+    if (!isRespawnNotice(notice)) continue
+    if (Date.now() - notice.timestamp > RESPAWN_NOTICE_RETENTION_MS) continue
+    if (mergedIds.has(notice.id)) continue
+    const anchor = i > 0 ? partition[i - 1] : undefined
+    const anchorId = anchor !== undefined ? (anchor.piEntryId ?? anchor.id) : undefined
+    const aIdx = anchorId !== undefined ? result.findIndex((m) => (m.piEntryId ?? m.id) === anchorId) : -1
+    result = aIdx >= 0
+      ? [...result.slice(0, aIdx + 1), notice, ...result.slice(aIdx + 1)]
+      : [...result, notice]
+    mergedIds.add(notice.id)
+  }
+  return result
 }
 
 /**
@@ -285,6 +342,23 @@ export function createChatStore() {
    *  session.compacted 清除 / 断连收口随 occupancy 分区一并清（reason 只在 isCompacting 时被读，
    *  孤立残留无害）。 */
   const compactingReasons = ref<Map<string, string>>(new Map())
+  /**
+   * [crash-resilience T4 回流修复] pi 意外退出后的「引擎恢复中」过渡态分区（session id Set）。
+   *
+   * 背景：pi 意外死亡 → runtime 5s 自动 respawn（D7）。此前 renderer 收到 session.exited
+   * 即 markDead → panel 进终态错误页（composer 卸载），恢复成功也无法自动解除——
+   * session.restored 帧两条通路都不可达（根因与修法见 useMessageEffects.handleSessionExited
+   * 注释），用户只能手动「重新打开」。
+   *
+   * 本分区是过渡态的单一数据源：exited（非用户强制）时写入 → panel 派生用 isRespawnPending
+   * 抑制 dead 终态页（derivePanelView isSessionRespawning 输入），对话流 + composer 保持可用
+   * （恢复窗口发消息经 runtime ensureActive join 等恢复完成后送达，T4 语义）；restored /
+   * restoreFailed 熔断 / 恢复超时任一到达即清除。会话 store 的 status 仍置 dead（侧栏置灰
+   * 准确反映进程已死），仅 panel 主区渲染被本分区接管。
+   *
+   * Set 形态（布尔语义无载荷）对齐 failedHistory/hydrated；disposeSession 同点清理。
+   */
+  const respawnPending = ref<Set<string>>(new Set())
   /** handingOff 瞬时态子域控制器（对称 compactingSessions），委托 chat-handoff.ts。设计见 ./README.md + chat-handoff.ts。 */
   const handoff = createHandoffController()
   const { handingOffSessions, isHandingOff, setHandingOff, clearHandingOffTimer } = handoff
@@ -346,26 +420,22 @@ export function createChatStore() {
    * broadcast≡get_state 对账与后续 ref 收敛消费。disposeSession / LRU 驱逐同点清理。
    */
   const entryStates = new Map<string, ChatViewState>()
-  /**
-   * [W5 D5] per-session hydrate 尾窗锚（Map 分区，与 messages 同区生命周期）。
-   *
-   * 取值规则（写死）：hydrate 注入的尾窗首条消息的 `piEntryId ?? id`——user/assistant
-   * 消息带 piEntryId（entry 派生 uuidv7）；system 族消息（bashExecution/compactionSummary/
-   * custom/branchSummary）无 piEntryId 字段但 id 即 entry 派生 uuidv7（reducer
-   * deriveBaseId：entry.id 优先），两侧取值对称。load-more（useChat.loadMoreHistory）
-   * 据此在全量历史中定位切分点，只前插锚之前的段（见 mutations.splitHistoryBeforeAnchor）。
-   *
-   * // @data-owner #7 —— 权威源 = session 文件 entries（pi append-only，compaction 不改
-   * entry id）；锚非缓存（无失效/无回写：唯一写方 = hydrate 一次性写入、重 hydrate 覆盖，
-   * 唯一读方 = loadMoreHistory）。disposeSession / LRU 驱逐同点清理（随 hydrated 标记
-   * 同生共死——驱逐重进后由重 hydrate 重建）。
-   */
-  const hydrateAnchors = new Map<string, string>()
   /** FileChanges 子域控制器（W10，ADR-0024 D5），委托 chat-changeset.ts。messages 由本 store 注入，设计见 ./README.md + chat-changeset.ts。 */
   const changeset = createChangeSetController(messages)
   const { changeSetStatuses, getChangeSetStatus, setChangeSetStatus, applyFileChanges, markChangeSetsSuperseded } = changeset
   /** getHistory 加载失败的 session（#2 AC-2.6：landing 重试出口，不永久卡住） */
   const failedHistory = ref<Set<string>>(new Set())
+  /**
+   * [u4d-truncated-ui] per-session 历史预算截断窗口状态（crash-resilience §3.3 D4）。
+   *
+   * // @data-owner #7 —— 权威源 = u4b session.history 响应（truncated/loadedTurns/totalTurnsEstimate，
+   * shared protocol SSOT）。唯一写方 = hydrate / reconcileHistory（随响应整体覆盖）+
+   * setHistoryWindow（loadMoreHistory 全量通路收敛 truncated 位）；唯一读方 = hasMoreHistory
+   * 派生（useChat）与 MessageStream 顶部条（getHistoryWindow）。disposeSession / LRU 驱逐
+   * 同点清理（随 hydrated 标记同生共死——驱逐重进后由重 hydrate 重建）。设计叙事见
+   * ./truncated-window.ts。
+   */
+  const { historyWindows, setHistoryWindow, getHistoryWindow, clearHistoryWindow } = createTruncatedWindowController()
 
   // ── 超时兜底 timer（[idle-refresh] 阈值可变配置源 + D-007 真收口）──
 
@@ -513,8 +583,8 @@ export function createChatStore() {
     (sid) => {
       deleteChangeSetStatusesFor(sid)
       entryStates.delete(sid)
-      // [W5 D5] 锚随 hydrated 标记同点清理（驱逐重进后重 hydrate 覆盖重建，防陈旧锚）
-      hydrateAnchors.delete(sid)
+      // [u4d] 截断窗口状态同点清理（重建型，驱逐重进后重 hydrate 重建）
+      clearHistoryWindow(sid)
     },
   )
   /** W3 H3：LRU 驱逐（阈值触发）/ 显式驱逐（带虚拟 key）/ [M7] 单虚拟 key 删除 */
@@ -574,26 +644,23 @@ export function createChatStore() {
    * 气泡（F2 的首入窗口，G4）。与 reconcileHistory 走同一合并函数（设计 U3：
    * live ≡ reload，两条历史刷新入口语义同源）。分区为空时合并结果 = 基线本身，
    * 与旧的整量替换行为逐字等价。
+   *
+   * [u4d] window（u4b session.history 窗口契约，可选）随注入写入截断窗口状态：
+   * hydrate 路径是窗口状态的唯一写点之一（reconcileHistory 对称），缺省不写——消费方
+   * 按「无截断」处理。
+   *
+   * [u6] hydrate 尾窗锚（hydrateAnchors，W5 D5）已退役：「加载更早」改走游标翻页，
+   * 游标取分区当前最旧消息的文件侧身份（useChat.loadMoreHistory），不再依赖 hydrate
+   * 一次性写入的静态锚。
    */
-  function hydrate(sessionId: string, history: Message[]): void {
+  function hydrate(sessionId: string, history: Message[], window?: HistoryWindow): void {
     if (hydrated.value.has(sessionId)) return
     const cur = messages.value.get(sessionId)?.value ?? []
     commitMessages(messages, sessionId, truncateToolOutputBatch(mergeBaselineWithLive(history, cur)))
-    // [W5 D5] hydrate 尾窗锚：hydrate 守卫保证每 session 只在此写一次；
-    // disposeSession / LRU 驱逐清 hydrated 后重 hydrate 到这里 → set 覆盖旧锚。
-    // 空 history（新 session）不记锚——此时无 load-more（truncated=false），锚缺失走兜底。
-    // [steer-bubble u3] 锚取**基线**首条（非 merged 首条）：合并追加的尾部保护段是
-    // live 实体（客户端 id，非文件侧身份），锚是 load-more 对全量历史的切分依据，
-    // 必须锚定在文件侧消息上。
-    const anchorMsg = history[0]
-    if (anchorMsg) hydrateAnchors.set(sessionId, anchorMsg.piEntryId ?? anchorMsg.id)
+    // [u4d] 窗口状态随 hydrate 写入（每次 hydrate 都是 fresh getHistory 响应，覆盖语义正确）
+    if (window) setHistoryWindow(sessionId, window)
     hydrated.value = new Set(hydrated.value).add(sessionId)
     lruTouch(sessionId) // W3: LRU recency
-  }
-
-  /** [W5 D5] 读 hydrate 尾窗锚（loadMoreHistory 唯一读方；未 hydrate / 空历史 → undefined）。 */
-  function getHydrateAnchor(sessionId: string): string | undefined {
-    return hydrateAnchors.get(sessionId)
   }
 
   /**
@@ -606,20 +673,50 @@ export function createChatStore() {
    * 守卫丢弃 → 流永久停滞。合并方向（登记表 #7 切入 reconcile 规则）：
    * **entry 历史为基线，分区尾部 streaming 实体追加其后**（live 真相优先于 entry 快照）。
    *
-   * - 未 hydrate → 等价 hydrate（原语义：合并注入 + 锚 + 标记）
-   * - 已 hydrate → 基线替换 + 保留尾部保护段（streaming assistant + 未确认 user，
-   *   [steer-bubble u3/D3] 两步合并：尾部保护段收集 + user 正序-尾窗对齐去重，见
-   *   mergeBaselineWithLive——快照滞后窗口不丢已投递气泡、不双计；turn 已结束（无
-   *   保护段）则纯刷新到最新 entries
+   * - 未 hydrate → 等价 hydrate（原语义：合并注入 + 标记 + [u4d] 窗口状态）
+   * - 已 hydrate + window.truncated=false（全量响应）→ 基线替换 + 保留尾部保护段
+   *   （streaming assistant + 未确认 user，[steer-bubble u3/D3] 两步合并，见
+   *   mergeBaselineWithLive——快照滞后窗口不丢已投递气泡、不双计）
+   * - 已 hydrate + window.truncated=true（[u6] 窗口响应，crash-resilience §3.3 D4 合并
+   *   语义改造）：**仅合并覆盖最近窗口，已加载的更早历史保留，禁止整体替换**（否则
+   *   「加载更早」翻到的历史会在下次切入时被静默清掉——设计 A5b 负面场景）。切分锚 =
+   *   窗口首条消息的文件侧身份（piEntryId ?? id）在分区中的位置：锚之前的段原样保留，
+   *   锚及之后走 mergeBaselineWithLive（尾部保护段语义不丢）；锚未命中（窗口首条不在
+   *   分区——分区无更早历史 / 异常改写）→ 退化为整体合并（现状语义，窗口覆盖全部分区）。
+   *
+   * [u4d] window（可选）随切入刷新覆盖窗口状态（窗口响应 truncated=true 时顶部条保持
+   * 「加载更早」入口；全量响应 false 时消失）。
    */
-  function reconcileHistory(sessionId: string, history: Message[]): void {
+  function reconcileHistory(sessionId: string, history: Message[], window?: HistoryWindow): void {
     if (!hydrated.value.has(sessionId)) {
-      hydrate(sessionId, history)
+      hydrate(sessionId, history, window)
       return
     }
     const cur = messages.value.get(sessionId)?.value ?? []
+    // [u6] 窗口合并切分：windowFirstId 是窗口基线的文件侧首条，分区中它之前的消息
+    // 属「已加载的更早历史」——保留不动，仅窗口段被响应刷新。
+    let keptEarlier: Message[] | undefined
+    let tailFromIdx = 0
+    if (window?.truncated && history.length > 0) {
+      const windowFirstId = history[0]!.piEntryId ?? history[0]!.id
+      const splitIdx = cur.findIndex((m) => (m.piEntryId ?? m.id) === windowFirstId)
+      if (splitIdx > 0) {
+        keptEarlier = cur.slice(0, splitIdx)
+        tailFromIdx = splitIdx
+      }
+      // splitIdx === 0（分区无更早历史）或 -1（窗口首条不在分区）→ 走整体合并：
+      // 窗口已覆盖分区全部文件侧内容，无更早历史可保留
+    }
+    if (keptEarlier) {
+      const merged = mergeBaselineWithLive(history, cur.slice(tailFromIdx))
+      commitMessages(messages, sessionId, [...keptEarlier, ...truncateToolOutputBatch(merged)])
+      if (window) setHistoryWindow(sessionId, window)
+      lruTouch(sessionId)
+      return
+    }
     const merged = mergeBaselineWithLive(history, cur)
     commitMessages(messages, sessionId, truncateToolOutputBatch(merged))
+    if (window) setHistoryWindow(sessionId, window)
     lruTouch(sessionId) // W3: LRU recency（切入刷新视同活跃访问）
   }
 
@@ -1097,6 +1194,50 @@ export function createChatStore() {
   }
 
   /**
+   * [u8] 追加 pi 崩溃恢复提示条（crash-resilience D7，session.restored / session.restoreFailed
+   * 消费写入点）。customType = PI_RESPAWN_NOTICE_CUSTOM_TYPE（ui SystemNotice 按形态分支渲染；
+   * restored = T4 恢复文案，restoreFailed = 失败态 + 重试按钮），variant 入 details（渲染方
+   * 经 parseRespawnNoticeVariant 解析），liveOnly:true——runtime 生成的一次性通知，pi session
+   * JSONL 无对应 entry，重开 session 后不出现（与 stream_warn 同语义类）。
+   * content = 降级兜底文本（customType 分支渲染失败时按普通 system 行显示，不静默丢失）。
+   */
+  const appendRespawnNotice = (sessionId: string, variant: PiRespawnNoticeVariant, fallbackText: string): void => {
+    const prev = messages.value.get(sessionId)?.value ?? []
+    commitMessages(messages, sessionId, [
+      ...prev,
+      {
+        id: `sys-${crypto.randomUUID()}`,
+        role: 'system',
+        customType: PI_RESPAWN_NOTICE_CUSTOM_TYPE,
+        content: fallbackText,
+        details: { variant },
+        display: true,
+        liveOnly: true,
+        status: 'complete',
+        timestamp: Date.now(),
+      },
+    ])
+  }
+
+  /**
+   * [crash-resilience T4 回流修复] 进入/退出「引擎恢复中」过渡态（respawnPending 分区唯一写口）。
+   * mark 幂等（已 pending 不重复写——恢复窗口单语义，重复 exited 不重置任何计时）；
+   * clear 对未 pending session no-op。读写口分离：写归 ops 面（effects 编排），
+   * 读（isRespawnPending）归 readers 面（usePanelView 派生收集）。
+   */
+  const markRespawnPending = (sessionId: string): void => {
+    if (respawnPending.value.has(sessionId)) return
+    respawnPending.value = new Set(respawnPending.value).add(sessionId)
+  }
+  const clearRespawnPending = (sessionId: string): void => {
+    if (!respawnPending.value.has(sessionId)) return
+    const next = new Set(respawnPending.value)
+    next.delete(sessionId)
+    respawnPending.value = next
+  }
+  const isRespawnPending = (sessionId: string): boolean => respawnPending.value.has(sessionId)
+
+  /**
    * 追加 subagent 定向消息气泡（`@` 定向对话 live 链路，composer-symbol-system §3.3.3a）。
    *
    * 消息形态与 reload 链路逐字段对齐（live ≡ reload，关键规则 9）：reload 侧由
@@ -1141,8 +1282,8 @@ export function createChatStore() {
     // 避免 TS 将不同 Map 元素推断为具体联合类型导致 new Map(ref.value) 不兼容。
     // inflightCounts（[steer-bubble D4]）：disposeSession 同步清 inflight——确认基线随分区
     // 销毁作废（与 LRU 驱逐的刻意豁免不同，见 lruEvictDeps 处声明注释）。
-    const mapRefs: { value: Map<string, unknown> }[] = [messages, retryStates, queueStates, pendingBuffer, inflightCounts, compactingReasons, occupancies]
-    const setRefs: { value: Set<string> }[] = [hydrated, pendingSend, handingOffSessions, failedHistory]
+    const mapRefs: { value: Map<string, unknown> }[] = [messages, retryStates, queueStates, pendingBuffer, inflightCounts, compactingReasons, occupancies, historyWindows]
+    const setRefs: { value: Set<string> }[] = [hydrated, pendingSend, handingOffSessions, failedHistory, respawnPending]
     for (const ref of mapRefs) {
       if (ref.value.has(sessionId)) {
         const next = new Map(ref.value)
@@ -1163,8 +1304,6 @@ export function createChatStore() {
     deleteChangeSetStatusesFor(sessionId)
     // [W21] reducer 累积态分区同点清理（与 LRU 驱逐的 deleteMessageKey 内联清理同语义）
     entryStates.delete(sessionId)
-    // [W5 D5] hydrate 尾窗锚同点清理（唯一写方 hydrate 已随 hydrated 守卫失效，锚无独立存活意义）
-    hydrateAnchors.delete(sessionId)
     // [D3 closure] executingBash ephemeral 分区同点清理（bash-effects 模块级 Map 挂接本
     // 编排——session 删除无残留；形态定案理由见 bash-effects.ts 文件头注释）
     clearExecutingBash(sessionId)
@@ -1194,7 +1333,8 @@ export function createChatStore() {
     markChangeSetsSuperseded,
     isHydrated, markHistoryFailed, clearHistoryError,
     hydrate, setMessages, reconcileHistory,
-    getHydrateAnchor,
+    // [u4d] 历史预算截断窗口状态（ref + 读/写/清，SSOT 见 truncated-window.ts）
+    historyWindows, getHistoryWindow, setHistoryWindow, clearHistoryWindow,
     prependHistory,
     applySubagentStreamDelta: (virtualId: string, lines: string[]) => streamingStateMachine.applySubagentStreamDelta(virtualId, lines),
     finalizeSubagentStream: (virtualId: string) => streamingStateMachine.finalizeSubagentStream(virtualId),
@@ -1238,6 +1378,10 @@ export function createChatStore() {
     isHandingOff,
     setHandingOff,
     appendSystemNotice,
+    appendRespawnNotice,
+    markRespawnPending,
+    clearRespawnPending,
+    isRespawnPending,
     appendSubagentDirective,
     truncateFrom,
     applyFileChanges,
@@ -1296,11 +1440,14 @@ export type ChatStoreReaders = Pick<
   | 'retryStates' | 'queueStates' | 'pendingBuffer' | 'changeSetStatuses'
   | 'failedHistory' | 'hydrated' | 'inflightCounts'
   | 'occupancies'
+  | 'historyWindows'
   | 'getMessages' | 'getRetryState' | 'getQueueState' | 'getChangeSetStatus'
-  | 'isHydrated' | 'getHydrateAnchor' | 'isGenerating' | 'isActive'
+  | 'isHydrated' | 'isGenerating' | 'isActive'
   | 'isCompacting' | 'getCompactingReason' | 'isHandingOff'
   | 'getOccupancy' | 'sessionPhase' | 'isPendingSend'
+  | 'isRespawnPending'
   | 'getInflight'
+  | 'getHistoryWindow'
 >
 
 
@@ -1320,11 +1467,13 @@ export type ChatStoreOps = Pick<
   | 'finalizeAllStreaming' | 'resetTransientStates' | 'addPendingSend'
   | 'clearPendingSend' | 'markSessionError' | 'setHandingOff'
   | 'setOccupancy' | 'clearOccupancy' | 'setCompactingReason'
-  | 'appendSystemNotice' | 'appendSubagentDirective' | 'truncateFrom'
+  | 'appendSystemNotice' | 'appendRespawnNotice' | 'appendSubagentDirective' | 'truncateFrom'
+  | 'markRespawnPending' | 'clearRespawnPending'
   | 'applyFileChanges' | 'disposeSession' | 'markStreamingBashError'
   | 'refreshStreamingTimer' | 'setStreamingIdleTimeoutMs'
   | 'touchLru' | 'evictIfNeeded' | 'evictSessionWithVirtual' | 'evictVirtualKey'
   | 'incrementInflight' | 'decrementInflight' | 'clearInflight'
+  | 'setHistoryWindow' | 'clearHistoryWindow'
   | 'clearQueueState'
   | 'testInternals'
 >

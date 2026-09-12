@@ -147,8 +147,9 @@ W20/W21 解决了「**内容**从哪来」（entry reducer 单源），没解决
 - 被否「placement 字段」：每条 system 创建点都要写 placement，N 个写点的字段就是 N 个潜在第二真相；派生规则集中在分组 SSOT 一处，与「投影一次」（治理原则 3）一致。
 - 影响的目标：G4。
 
-**D5：load-more 锚定切分（选择）vs 统一 id 空间（被否）vs 活跃 session 禁 load-more（被否）**
+**D5：load-more 锚定切分（选择）vs 统一 id 空间（被否）vs 活跃 session 禁 load-more（被否）——已被 u6 游标翻页取代（2026-09-12 标注）**
 - 选择：hydrate 时记录**尾窗锚**（尾窗首条 entry 的 `piEntryId`——RPC `get_entries` 返回的 entry 自带 pi uuidv7，W20 hydrate 已消费 entries，锚随手可得）；load-more 经 `getFullHistory` 取全量 entries 后**按锚切分，只前插锚之前的段**，`prependHistory` 的 id 去重退化为兜底断言（命中即 console.warn 报异常）。锚存 per-session（chat store Map，与 messages 同区）。
+- **取代标注（crash-resilience §3.3 D4 u6，2026-09-12 回写）**：本决策的锚切分机制已退役——「加载更早」改**游标翻页**：游标 = store 分区**最旧消息的文件侧身份**（`piEntryId ?? id`，useChat.loadMoreHistory 现行实现），经 `session.history` RPC `cursor` 参数由 runtime 返回锚前最近窗口（活跃/离线两路径共用语义），prependHistory 前插 + 窗口状态更新；cursor 未命中（消息已被清理/超扫描域）→ 空页 + truncated=false（翻页到头，不报错）；原 W4 H4 getFullHistory 全量通路退役。本条保留作演进追溯，查现行实现以 useChat.ts loadMoreHistory 与 C-data-14 为准。
 - 被否「统一 id 空间」：live 事件重构的 entry 无 id（pi 在 emit 之后才分配 uuidv7，实测），live 侧永远拿不到将与文件一致的 id——该路线物理不可行。被否「禁 load-more」：UX 倒退（活跃长会话翻旧历史是真实需求）。
 - 兜底：锚 entry 已被 compaction 重写移除时（探针 ③），降级为「按锚内容指纹（role + 首段文本 + 时间戳）定位切分点」，再失败走现状 id 去重 + warn（不崩溃）。**降级可靠性边界预评估（r1 审查补）**：指纹歧义（多条同 role + 同首段文本）时取**最后一个匹配位**（最接近尾窗，与 hydrate 尾窗语义一致）；零匹配即走现状去重并 console.warn——降级路径只影响「多前插/少前插一段旧历史」的边界精度，不产生重复（id 去重兜底仍在），最坏表现 = 回退到现状水平而非更差。探针 ③ 实施期若证实「compaction 不保留尾窗 entry id」，需同时实测指纹命中率并回填本条边界数据。
 - 多源核查：锚的唯一写方 = hydrate（一次性），唯一读方 = load-more；不构成缓存（无失效/回写问题）。按登记表演进规约补 `@data-owner #7` 注解。
@@ -175,7 +176,8 @@ W20/W21 解决了「**内容**从哪来」（entry reducer 单源），没解决
 [渲染]         渲染项层才做 display 过滤（隐藏项不渲染但已参与分组）
 [Reload]       get_entries / 文件 entries（同一 entry 序列）→ replayEntries → 同一 reducer
                → 同一分组规则 → 同一渲染                  ← live≡reload 全类型构造性成立
-[Load-more]    hydrate 记锚（尾窗首 entry id）→ getFullHistory 按锚切分 → 前插锚前段
+[Load-more]    游标翻页（u6，取代 D5 锚切分）：游标 = 分区最旧消息 piEntryId ?? id → RPC cursor
+               参数返回锚前最近窗口 → prependHistory 前插；cursor 未命中 → 空页 + truncated=false
 ```
 
 ### 3.5 探针清单（准则 7）

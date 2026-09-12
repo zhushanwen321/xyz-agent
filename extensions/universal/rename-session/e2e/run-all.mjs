@@ -1,10 +1,10 @@
 #!/usr/bin/env node
 /**
- * rename-session E2E 总结 runner：顺序跑 A1-A5，单场景失败不阻断后续，
+ * rename-session E2E 总结 runner：顺序跑 A1-A7，单场景失败不阻断后续，
  * 最后汇总表 + 总 exit code（任一失败——含 KEBAB_NON_COMPLIANT——→ 1）。
  *
  * 两种模式：
- * - 默认（无 env）：全量 A1-A5（真实 pi + 真实模型，约 2-15 分钟）——人工验收用。
+ * - 默认（无 env）：全量 A1-A7（真实 pi + 真实模型，约 2-15 分钟）——人工验收用。
  * - E2E_QUICK=1：只跑 harness 断言工具单测（vitest，秒级）——cw test gate 用。
  *   cw 的 testRunner 硬编码 120s 命令超时，真实模型的 E2E 全量必超；E2E 场景的
  *   正式验收证据是 RESULTS.md + 各场景独立跑记录（见 README），gate 跑快速集
@@ -23,6 +23,8 @@ import { runA2 } from "./run-a2.mjs";
 import { runA3 } from "./run-a3.mjs";
 import { runA4 } from "./run-a4.mjs";
 import { runA5 } from "./run-a5.mjs";
+import { runA6 } from "./run-a6.mjs";
+import { runA7 } from "./run-a7.mjs";
 
 if (process.env.E2E_QUICK === "1") {
 	// 快速集：harness 断言工具单测（vitest 输出原生含统计行，gate 正则直接消费）
@@ -40,6 +42,8 @@ const SCENARIOS = [
 	{ name: "A3", run: runA3 },
 	{ name: "A4", run: runA4 },
 	{ name: "A5", run: runA5 },
+	{ name: "A6", run: runA6 },
+	{ name: "A7", run: runA7 },
 ];
 
 const t0 = Date.now();

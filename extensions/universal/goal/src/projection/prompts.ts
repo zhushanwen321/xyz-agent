@@ -1,7 +1,7 @@
 /**
  * Steering prompt 模板（projection 层）
  *
- * 类型 import 自 engine/types.ts。FR-3.4：formatBudget 单一出口。
+ * 类型 import 自 engine/types.ts。
  *
  * 设计原则（来自 Codex 调研）：
  * - Completion audit: 逐项证据验证，intent/partial progress 不是 evidence
@@ -42,31 +42,10 @@ function successCriteriaBlock(state: GoalRuntimeState): string {
 	return `<successCriteria>\n${items}\n</successCriteria>\n`;
 }
 
-// ── FR-3.4：唯一 budget 格式化收敛出口 ─────────────────
+// ── budget 片段格式化 ────────────────────────────────
 
-export type BudgetFormatStyle = "percent" | "line";
-
-/**
- * FR-3.4 唯一 budget 格式化收敛出口。
- *
- * 2 种输出样式：
- * - "percent"  → ` (Token: N%)`（contextInjectionPrompt 用）
- * - "line"     → ` | Tokens: remaining/total`（continuationPrompt 用）
- *
- * @param state runtime state（读 budget / tokensUsed）
- * @param style 输出形式
- */
-export function formatBudget(
-	state: GoalRuntimeState,
-	style: BudgetFormatStyle,
-): string {
-	if (style === "percent") {
-		return formatBudgetPercent(state);
-	}
-	return formatBudgetLine(state);
-}
-
-function formatBudgetPercent(state: GoalRuntimeState): string {
+/** ` (Token: N%)`（contextInjectionPrompt 用）。无预算返回空串。 */
+export function formatBudgetPercent(state: GoalRuntimeState): string {
 	if (state.budget.tokenBudget) {
 		const pct = Math.round((state.tokensUsed / state.budget.tokenBudget) * PERCENT_FACTOR);
 		return ` (Token: ${pct}%)`;
@@ -74,7 +53,8 @@ function formatBudgetPercent(state: GoalRuntimeState): string {
 	return "";
 }
 
-function formatBudgetLine(state: GoalRuntimeState): string {
+/** ` | Tokens: remaining/total`（continuationPrompt 用）。无预算返回空串。 */
+export function formatBudgetLine(state: GoalRuntimeState): string {
 	if (state.budget.tokenBudget) {
 		const remaining = Math.max(state.budget.tokenBudget - state.tokensUsed, 0);
 		return ` | Tokens: ${remaining}/${state.budget.tokenBudget}`;
@@ -86,7 +66,7 @@ function formatBudgetLine(state: GoalRuntimeState): string {
 
 export function continuationPrompt(state: GoalRuntimeState): string {
 	const objective = escapeXmlText(state.objective);
-	const budgetLine = formatBudget(state, "line");
+	const budgetLine = formatBudgetLine(state);
 	const criteria = successCriteriaBlock(state);
 
 	return (
@@ -190,7 +170,7 @@ export function objectiveUpdatedPrompt(
  */
 export function contextInjectionPrompt(state: GoalRuntimeState): string {
 	const objective = escapeXmlText(state.objective);
-	const budgetInfo = formatBudget(state, "percent");
+	const budgetInfo = formatBudgetPercent(state);
 	const criteria = successCriteriaBlock(state);
 
 	return (

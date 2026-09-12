@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * A5 场景：超时兜底（hang provider，设计 §8.3 A5）。
+ * A5 场景：超时兜底（hang provider）。
  *
  * 本地 node 起 accept 后不响应的 stub socket（startHangServer），标题 provider 指向它：
  * - models.json 新增独立 customProvider stub-hang（不动主 provider）

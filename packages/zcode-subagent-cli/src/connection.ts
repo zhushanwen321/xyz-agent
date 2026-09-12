@@ -240,6 +240,11 @@ export class AppServerConnection {
   private reqSeq = 0;
   /** stderr 滚动缓冲（代级：崩溃诊断用）。 */
   private stderrTail = "";
+  /**
+   * stderr tee 落盘流（D6-⑦；merge 裁决：旋转走 logs/stderr-rotation 的路径式
+   * rotateStderrLogIfNeeded——W5 边界禁 import subagent-core 的 SizeRotatedAppendStream，
+   * 常驻流改裸 WriteStream + 按次轮转检查，帽语义等价）。
+   */
   private stderrStream: fs.WriteStream | null = null;
   private stderrStreamFailed = false;
   /**

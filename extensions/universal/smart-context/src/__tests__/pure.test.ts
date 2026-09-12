@@ -5,6 +5,7 @@ import {
 	buildReinjectSection,
 	checkToolThresholdGuard,
 	computeFileListsLike,
+	estimateShadowedTokens,
 	estimateTextTokens,
 	findCrossedThresholds,
 	formatFileOperationsLike,
@@ -133,6 +134,42 @@ describe("摘要后处理纯函数（D11/D13）", () => {
 		const section = buildReinjectSection([{ path: "a", content: long }]);
 		expect(section).toContain("### a");
 		expect(section).toContain("[... truncated]");
+	});
+});
+
+describe("estimateShadowedTokens 口径契约（D2：与 pi estimateTokens 同源）", () => {
+	// 合法 AssistantMessage 形状的 fixture（block 数组 content，禁止 as 硬塞 string content——
+	// estimateTokens 对 string content 计 0，口径用例会静默失去判别力；设计 §8.3）。
+	// 不 import 名义类型：const 泛型保留 block 字面量形状，由 estimateShadowedTokens
+	// 参数类型（Parameters<typeof estimateTokens>[0]）在调用点结构校验。
+	function makeAssistantMessage<const C extends readonly unknown[]>(content: C) {
+		return {
+			role: "assistant" as const,
+			content,
+			api: "openai-completions",
+			provider: "zai",
+			model: "glm",
+			usage: {
+				input: 1, output: 1, cacheRead: 0, cacheWrite: 0, totalTokens: 2,
+				cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+			},
+			stopReason: "stop" as const,
+			timestamp: 0,
+		};
+	}
+
+	it("仅含 toolCall 块（arguments 大 JSON）→ > 0（旧 chars/4 口径漏计为 0）", () => {
+		const tokens = estimateShadowedTokens([
+			makeAssistantMessage([{ type: "toolCall", id: "c1", name: "edit", arguments: { content: "x".repeat(2_400) } }]),
+		]);
+		expect(tokens).toBeGreaterThan(0);
+	});
+
+	it("仅含 thinking 块 → > 0（旧 chars/4 口径漏计为 0）", () => {
+		const tokens = estimateShadowedTokens([
+			makeAssistantMessage([{ type: "thinking", thinking: "t".repeat(1_600) }]),
+		]);
+		expect(tokens).toBeGreaterThan(0);
 	});
 });
 

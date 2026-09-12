@@ -144,6 +144,8 @@ export class SettingsMessageHandler {
     'config.getAutoRenameEnabled': (msg, ws) => this.handleConfigGetAutoRenameEnabled(msg, ws),
     'config.setRenameModel': (msg, ws) => this.handleConfigSetRenameModel(msg, ws),
     'config.getRenameModel': (msg, ws) => this.handleConfigGetRenameModel(msg, ws),
+    'config.setRenameMode': (msg, ws) => this.handleConfigSetRenameMode(msg, ws),
+    'config.getRenameMode': (msg, ws) => this.handleConfigGetRenameMode(msg, ws),
     'config.getSmartContextConfig': (msg, ws) => this.handleConfigGetSmartContextConfig(msg, ws),
     'config.setSmartContextEnabled': (msg, ws) => this.handleConfigSetSmartContextEnabled(msg, ws),
     'config.setSmartContextCompactModel': (msg, ws) => this.handleConfigSetSmartContextCompactModel(msg, ws),
@@ -632,6 +634,18 @@ export class SettingsMessageHandler {
 
   private handleConfigGetRenameModel(msg: Extract<ClientMessage, { type: 'config.getRenameModel' }>, ws: WsType): boolean {
     this.ctx.reply(ws, msg.id, 'config.renameModel', { model: this.ctx.configService.getRenameModel() })
+    return true
+  }
+
+  // mode 非法值归一在 helper 层（与 setRenameModel 的归一纪律一致），reply 读回生效值。
+  private handleConfigSetRenameMode(msg: Extract<ClientMessage, { type: 'config.setRenameMode' }>, ws: WsType): boolean {
+    this.ctx.configService.setRenameMode(msg.payload.mode)
+    this.ctx.reply(ws, msg.id, 'config.renameMode', { mode: this.ctx.configService.getRenameMode() })
+    return true
+  }
+
+  private handleConfigGetRenameMode(msg: Extract<ClientMessage, { type: 'config.getRenameMode' }>, ws: WsType): boolean {
+    this.ctx.reply(ws, msg.id, 'config.renameMode', { mode: this.ctx.configService.getRenameMode() })
     return true
   }
 

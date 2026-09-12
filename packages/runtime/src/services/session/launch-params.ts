@@ -10,7 +10,7 @@
  * presetService），故为模块级纯函数而非类。
  */
 import { existsSync } from 'node:fs'
-import { isAbsolute, resolve } from 'node:path'
+import { isAbsolute, resolve, sep } from 'node:path'
 import { expandHome } from '../../utils/path-utils.js'
 import type { ThinkingLevel } from '@xyz-agent/shared'
 import { BUILTIN_PRESET_IDS, PI_THINKING_LEVELS } from '@xyz-agent/shared'
@@ -83,6 +83,28 @@ export async function resolveExtensionPaths(extensionService: IExtensionService,
 /** 当前生效的替换系统提示词（委托 ConfigService.getReplaceSystemPrompt；未注入时 undefined，pi 走默认系统提示词）。 */
 export function resolveReplaceSystemPrompt(configService: IConfigService | null | undefined): string | undefined {
   return configService?.getReplaceSystemPrompt()
+}
+
+/**
+ * 单条 extension 路径是否指向 subagent-workflow（in-flight 上报方，D5 ① per-session
+ * 可用性判定的谓词）。
+ *
+ * 匹配口径 = 既有判定先例（session-records.readDeclaredEnginesFallback 定位安装目录）：
+ * 后缀或完整路径段匹配，覆盖 npm 名 `pi-subagent-workflow`（staged / live env 布局）
+ * 与 dev 源码目录 `extensions/universal/subagent-workflow` 两种路径形态。
+ */
+export function isSubagentWorkflowExtensionPath(p: string): boolean {
+  return p.endsWith('subagent-workflow') || p.includes(`${sep}subagent-workflow`)
+}
+
+/**
+ * spawn 注入列表是否含 subagent-workflow（crash-forensics §3.3 D5 ①：injected 的判定
+ * 谓词——「该 session 实际注入了 subagent-workflow」）。输入 = spawn 时刻的
+ * getExtensionPaths / preset 解析结果，**不做**全局配置快照重查（mid-session 禁用窗口
+ * 语义，见 inflight-mirror.ts 文件头）。
+ */
+export function hasSubagentWorkflowExtension(paths: readonly string[]): boolean {
+  return paths.some(isSubagentWorkflowExtensionPath)
 }
 
 /**

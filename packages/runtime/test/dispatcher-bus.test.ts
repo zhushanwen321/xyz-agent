@@ -89,6 +89,9 @@ function makeMocks(opts: {
     steer: steerFn,
     followUp: followUpFn,
     compact: compactFn,
+    // touchActivity：sendPrompt 入口同步 touch（idle-pi-reclamation D6-1）经 pm.getClient
+    // 到达 fake client——fake 须补齐该接口成员
+    touchActivity: vi.fn(),
   } as unknown as IPiEngine
 
   // S2 ISP 化：结构性满足 dispatcher 窄接口（6 方法 = 实际消费面），无强转；
@@ -311,7 +314,8 @@ describe('message-dispatcher bus integration', () => {
       removeSessionEntry: vi.fn(),
       detachSession: vi.fn(),
     }
-    const pm = {} as unknown as IProcessManager
+    // getClient → undefined：无附着 client 形态（sendPrompt 入口 touch 的空守卫分支）
+    const pm = { getClient: vi.fn(() => undefined) } as unknown as IProcessManager
     const workspace = { record: vi.fn() } as unknown as WorkspaceService
     const dispatcher = new MessageDispatcher(svc, pm, workspace)
     // Should not throw

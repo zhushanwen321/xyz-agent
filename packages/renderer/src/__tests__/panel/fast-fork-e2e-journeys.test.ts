@@ -81,7 +81,6 @@ vi.mock('@/composables/features/chat/useChat', () => ({
     editAndResend: vi.fn(),
     disposeSession: vi.fn(),
     hydrateHistory: vi.fn(),
-    setHistoryTruncated: vi.fn(),
   }),
   ensureStreamSubscription: vi.fn(),
 }))

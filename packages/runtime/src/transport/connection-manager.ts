@@ -28,6 +28,13 @@ const HTTP_OK = 200
 const HTTP_NOT_FOUND = 404
 const MAX_WS_CLOSE_CODE = 4000
 const HEARTBEAT_TIMEOUT_MS = 45_000
+/** WS 1001 Going Away（RFC 6455）——服务端计划内关停时发给全部存量连接的 close 码。 */
+const WS_CLOSE_GOING_AWAY = 1001
+/**
+ * stop 等待存量连接优雅退出的有界上界：本机回环 close 握手毫秒级，2s = 20 倍极端余量，
+ * 正常路径不触发；超时后 closeAllConnections 强制断开属回收层兜底（非正常路径依赖）。
+ */
+const STOP_LINGER_GRACE_MS = 2_000
 /** auth 握手超时：连接建立后未在此时限内通过认证即断开（spec §3.3 D4 定 10s）。 */
 const AUTH_TIMEOUT_MS = 10_000
 /** WS policy violation 关闭码（RFC 6455）——auth 失败 / fail-closed 拒绝统一用它。 */
@@ -239,8 +246,25 @@ export class ConnectionManager {
     if (timer) { clearTimeout(timer); this.heartbeatTimers.delete(ws) }
   }
 
-  /** 关闭：清理全部计时器 + 关闭 WS / HTTP。 */
+  /**
+   * 关闭：清理全部计时器 + 优雅关闭全部存量 WS 连接 + 关闭 WS / HTTP。
+   *
+   * [A4 挂死根修]（2026-09-12，crash-forensics Gate B A4 复验）：旧实现直接
+   * `httpServer.close(callback)` 等回调——Node 语义是回调在**全部存量连接结束**后才触发，
+   * 而本服务 ws 库 8.21 以 external-server 模式（`{ server }` 注入）创建，其 `close()`
+   * 对存量连接只摘 upgrade 监听、不主动关闭（websocket-server.js 的 noServer||server
+   * 分支仅 _removeListeners + _shouldEmitClose）。于是存量连接的关闭全靠对端自觉：
+   * 滚动重启是唯一「main + renderer 都存活、仅 runtime 退出」的路径，renderer 的 WS
+   * 连接保持、无人发 close 帧 → close 回调永不触发 → shutdown 序列停在 conn.stop →
+   * runtime 不退出（退出码 86 不可达）→ LivenessMonitor 3 连败判死强杀，计划内零退避
+   * 路径退化成崩溃退避。SIGTERM 全 app 退出路径 renderer 进程先亡、连接随之断开，缺陷
+   * 因此从未暴露。根修 = 服务端主动逐连接发 close 帧（滚动重启后 renderer 重连新 runtime
+   * 正是设计预期恢复路径，ws-client 对任意 close 码统一走 scheduleReconnect）。
+   */
   async stop(): Promise<void> {
+    // 握手中（未 auth）连接先取出——下方清 authTimers 后不可达；它们同样占用 httpServer
+    // 连接计数，close 帧必须覆盖。
+    const pendingAuthConnections = [...this.authTimers.keys()]
     for (const timer of this.heartbeatTimers.values()) {
       clearTimeout(timer)
     }
@@ -249,8 +273,28 @@ export class ConnectionManager {
       clearTimeout(timer)
     }
     this.authTimers.clear()
+    // 1001 Going Away（RFC 6455）：计划内服务端关停语义。ws 库 close 对已关闭/握手中
+    // 连接均为安全 no-op，不抛错。
+    for (const ws of this.authedConnections) ws.close(WS_CLOSE_GOING_AWAY, 'Server shutting down')
+    for (const ws of pendingAuthConnections) ws.close(WS_CLOSE_GOING_AWAY, 'Server shutting down')
+    // 摘 wss upgrade 监听 + httpServer 停止接受新连接。
     this.wss.close()
-    return new Promise((resolve) => { this.httpServer.close(() => resolve()) })
+    // /health 探针的 keep-alive 空闲连接不经 WS close 帧路径，显式清（探针已验证：本方法
+    // 只清无活跃请求的连接，不触碰 upgrade 后的 WS socket）。
+    this.httpServer.closeIdleConnections()
+    // 等待全部连接结束。正常路径 close 握手在本机回环毫秒级完成；STOP_LINGER_GRACE_MS 是
+    // 回收层有界兜底（ADR-0047 口径）：对不回 close 帧的异常对端强制断开，保证 stop 必然
+    // resolve、runtime 必然走到 process.exit(86)。
+    return new Promise((resolve) => {
+      const forceTimer = setTimeout(() => {
+        console.warn('[runtime] stop: connections lingering after grace period — force closing')
+        this.httpServer.closeAllConnections()
+      }, STOP_LINGER_GRACE_MS)
+      this.httpServer.close(() => {
+        clearTimeout(forceTimer)
+        resolve()
+      })
+    })
   }
 }
 

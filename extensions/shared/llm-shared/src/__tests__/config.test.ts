@@ -21,7 +21,7 @@ vi.mock("@zhushanwen/pi-extension-logger", () => ({
 // 用 vi.mock 包装 readFileSync/renameSync/statSync/unlinkSync（默认走 actual，
 // 个别 test override），其他 fs 操作（writeFileSync/existsSync/mkdirSync...）原样
 // 透传 actual。statSync/unlinkSync 供 U4 logger.warn 留痕用例 override。
-// 注意：proper-lockfile（withFileLockSync 内部）走 graceful-fs，不受本 mock 影响。
+// 注意：withFileLockSync 内部为自实现 mkdir-lock（lock-core.ts，零依赖直用 node:fs，非 proper-lockfile）；本 mock 默认透传 actual，锁行为不受影响。
 vi.mock("node:fs", async (importOriginal) => {
 	const actual = await importOriginal() as typeof import("node:fs");
 	return {

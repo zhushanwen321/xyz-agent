@@ -1101,7 +1101,7 @@ describe('R4 补口：类型 Select / quota 事件接线 / compat providerApi', 
     triggerEl.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }))
     triggerEl.click()
     await flushPromises()
-    const target = Array.from(document.body.querySelectorAll('[role="option"]'))
+    const target = Array.from(document.body.querySelectorAll<HTMLDivElement>('[role="option"]'))
       .find((el) => (el.textContent ?? '').includes(label))
     expect(target).toBeTruthy()
     target!.dispatchEvent(new PointerEvent('pointerup', { bubbles: true }))

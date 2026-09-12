@@ -2,9 +2,9 @@
  * 双侧锁实现对照测试（integrity-hardening 实施审查 SUGGESTION #6）。
  *
  * runtime 侧 utils/file-lock.ts 与 extension 侧 @zhushanwen/pi-file-lock 的 sync 版
- * 是同一锁协议的两份孪生实现——「同一把锁」的互斥语义依赖两侧默认参数一致
- * （stale 决定夺取窗口、retry 间隔/预算决定等待形态）与 lockfile 路径推导一致
- * （<目标文件>.lock）。两份实现分属不同包，纯靠头注释互指的纪律同步会漂移：
+ * 是同一锁协议的两份孪生实现——「同一把锁」的互斥由 lockfile 路径推导一致
+ * （<目标文件>.lock）+ mkdir 原子协议保证；两侧默认参数一致锚定的是夺取时机
+ * （stale）与等待形态（retry 间隔/预算）行为一致。两份实现分属不同包，纯靠头注释互指的纪律同步会漂移：
  * ① 常量对照断言两侧导出的默认参数相等；② 行为对照断言两侧对同一目标文件
  * 真互斥（一侧持锁时另一侧按预算 fail-fast，释放后可获取）——后者同时守护
  * lockfile 路径推导不漂移。

@@ -2,8 +2,8 @@
  * Widget 渲染逻辑（projection 层）— 状态栏和侧边栏面板
  *
  * 设计要点：
- * - 不 import Pi 类型（ThemeColor → ThemeLike，fg 接收 string）
- * - 类型 import 自 engine/types.ts
+ * - 不 import Pi 类型（theme 能力经 ports.ts 的 ThemeLike 抽象，fg 接收 string）
+ * - 类型 import 自 engine/types.ts 与 ports.ts（ThemeLike 上移至接口层）
  * - 工具函数 import 自 engine/budget.ts
  * - 时间计算基于 state.timeUsedSeconds（不含 Date.now() 副作用段）
  * - updateWidget(session, uiPort) 含 FR-6.6 hasUI 守卫
@@ -26,18 +26,9 @@ import {
 import { getBudgetColor, getTokenUsagePercent } from "../engine/budget";
 import { isTerminalStatus } from "../engine/goal";
 import type { GoalRuntimeState } from "../engine/types";
-import type { UiPort } from "../ports";
+import type { ThemeLike, UiPort } from "../ports";
 import type { GoalSession } from "../session";
 import { buildGoalGui } from "./gui";
-
-/**
- * projection 层的 Theme 抽象。不 import Pi 的 ThemeColor。
- * adapter 层负责把 Pi 的 theme（fg 接收 ThemeColor）适配到此签名（fg 接收 string）。
- */
-export interface ThemeLike {
-	fg: (color: string, text: string) => string;
-	bold: (text: string) => string;
-}
 
 /**
  * 将多行文本压缩为单行，用于 widget 渲染。
@@ -196,29 +187,6 @@ export function renderWidgetLines(state: GoalRuntimeState, th: ThemeLike): strin
 // ── updateWidget（FR-6.6 hasUI 守卫）──
 
 /**
- * 从 UiPort 取出 ThemeLike。
- *
- * ports.ts 的 UiPort 故意不暴露 theme（保持抽象最小）。adapter 层在
- * 构造 UiPort 实现时，把 Pi 的 ctx.ui.theme 的 fg/bold 方法挂到对象上，
- * 使该实现同时满足 UiPort 与 ThemeLike 形状。projection 层通过此单步断言取出。
- */
-function asTheme(uiPort: UiPort): ThemeLike {
-	// UiPort 刻意不声明 fg/bold（D-22：只声明机器可检查的能力边界），与 ThemeLike 无类型重叠，
-	// 必须 unknown 中转——这是架构契约断言：ports.ts 构造 UiPort 实现时已把 ctx.ui.theme 的
-	// fg/bold 挂到对象上（buildPorts 的 uiPort 对象含全部字段），运行时必然存在。
-	// eslint-disable-next-line taste/no-unsafe-cast
-	return uiPort as unknown as ThemeLike;
-}
-
-/**
- * 导出 asTheme：单一 theme 提取断言点（TS-1）。
- *
- * adapter 层（event-adapter handleTerminalStateBeforeAgent）复用本函数，
- * 避免重复 `ctx.ui.theme as unknown as ThemeLike` 断言。
- */
-export { asTheme };
-
-/**
  * 刷新 widget + status bar。
  *
  * FR-6.6：`uiPort.hasUI === false`（headless）时直接 return。
@@ -243,7 +211,7 @@ export function updateWidget(session: GoalSession, uiPort: UiPort): void {
 
 	// 终态折叠为单行 status bar
 	if (isTerminalStatus(session.state.status)) {
-		const statusText = renderTerminalStatusLine(session.state, asTheme(uiPort));
+		const statusText = renderTerminalStatusLine(session.state, uiPort.theme);
 		if (statusText) {
 			uiPort.setStatus("goal", statusText);
 		}
@@ -252,11 +220,11 @@ export function updateWidget(session: GoalSession, uiPort: UiPort): void {
 		return;
 	}
 
-	uiPort.setStatus("goal", renderStatusLine(session.state, asTheme(uiPort)));
+	uiPort.setStatus("goal", renderStatusLine(session.state, uiPort.theme));
 	if (isGui) {
 	// 复用 projection/gui.ts 的 buildGoalGui（整个 GuiRenderResult：component + meta 宿主元数据）
 		uiPort.setGuiWidget("goal", buildGoalGui(session.state));
 	} else {
-		uiPort.setWidget("goal", renderWidgetLines(session.state, asTheme(uiPort)));
+		uiPort.setWidget("goal", renderWidgetLines(session.state, uiPort.theme));
 	}
 }

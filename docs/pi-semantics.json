@@ -602,6 +602,29 @@
   "verifiedWith": "0.84.4"
  },
  {
+  "id": "PS-30",
+  "claim": "extension stale ctx 错误文案契约：session 替换（newSession/fork/switchSession/reload）后 runner.invalidate() 把默认 message（含 'stale after session replacement'）写入 staleMessage，此后 pi API（loader.js 的 sendMessage/sendUserMessage/appendEntry 等）与 ctx 全部方法（runner.js createContext 的 compact/abort/shutdown/getContextUsage/isIdle 等）经 assertActive() 同步 throw new Error(this.staleMessage)——跨 session 存活的异步回调触碰捕获 pi/ctx 即同步抛错，无人接即 pi 进程崩溃（E1）。该文案是 ext-guards guardStaleCtx 的兜底分诊词（代际检测为主判，文案覆盖 reload 产生全新模块环境后旧闭包代数冻结的盲区）；文案变更时守卫退化为全部上抛（回到现状崩溃链路，不更危险），门禁报红提示同步 STALE_CTX_MARKER",
+  "piAnchor": [
+   {
+    "pkg": "pi-coding-agent",
+    "distPath": "dist/core/extensions/runner.js",
+    "symbol": "invalidate / assertActive / createContext",
+    "note": "invalidate :396 默认 message 含 'stale after session replacement'（staleMessage 唯一写入点）；assertActive :402-406 throw new Error(this.staleMessage)；createContext :503 起 ctx 方法（compact/abort/shutdown/getContextUsage 等）逐个 this.assertActive() 前置；agent-session.js:595 session 替换时调用 invalidate"
+   },
+   {
+    "pkg": "pi-coding-agent",
+    "distPath": "dist/core/extensions/loader.js",
+    "symbol": "pi API 绑定段（bindCore 消费侧）",
+    "note": ":291-321 起——sendMessage/sendUserMessage/appendEntry/setSessionName 等每个方法 assertActive() 前置后转发共享 runtime（E1 崩溃堆栈帧 assertActive → sendUserMessage 的实装位置）"
+   }
+  ],
+  "guard": {
+   "type": "probe",
+   "test": "extensions/shared/ext-guards/src/__tests__/pi-semantics-stale-ctx-wording.test.ts"
+  },
+  "verifiedWith": "0.84.4"
+ },
+ {
   "id": "PS-29",
   "claim": "appendCustomEntry 落盘形态含 customType/data/timestamp：ExtensionAPI 的 core 绑定 appendEntry(customType, data) 直接委托 sessionManager.appendCustomEntry（同参数序、零中间变换），后者 entry 字面量固定 {type:\"custom\", customType, data, id, parentId, timestamp}——data 原样引用入参（无克隆/无字段白名单），经 _appendEntry 落盘并 emit entry_appended。rename-session 计量落账（usage-page-fixes §3.3 ③④）依赖该形态（U5 已本地 CLI 实测 P-appendEntry ✅：落盘行恰为该六字段，见实施计划状态表 U5 证据）；pi 升级若改字段名/裁剪 data/timestamp 改形，scanner ④ 分类静默失效（rename 账整桶消失，不报错），由本探针拦截",
   "piAnchor": [
@@ -625,7 +648,7 @@
   "verifiedWith": "0.84.4"
  },
  {
-  "id": "PS-30",
+  "id": "PS-36",
   "claim": "ENV_SESSION_DIR 变量名 = PI_CODING_AGENT_SESSION_DIR：实装为模板拼接 \"${APP_NAME.toUpperCase()}_CODING_AGENT_SESSION_DIR\"，默认发行形态 APP_NAME=\"pi\" 展开即得该名（piConfig.name 品牌化定制时变量名随 APP_NAME 漂移）——session-reader 的 [env] 根信号与 xyz-agent 注入面（U4 退路）依赖此精确变量名",
   "piAnchor": [
    {
@@ -747,6 +770,23 @@
   "guard": {
    "type": "observe",
    "note": "消费面：方案 B（xyz-agent 数据布局与 pi 同构）成立前提之一——托管数据目录内 settings.json 的 sessionDir 恒空，pi 才走默认派生（PS-34）；迁移脚本（scripts/migrate-pi-layout-v2.mjs）步骤 5 校验清除该字段。pi 升级时重验：getSessionDir 是否仍直读 settings.sessionDir 且无副作用、是否新增 sessionDir 写入路径"
+  },
+  "verifiedWith": "0.84.4"
+ },
+ {
+  "id": "PS-37",
+  "claim": "pi agent-session turn 收尾序列：message_end 事件 handler 先于本条 entry 落盘 append（agent-session.js _handleAgentEvent 内 :384 await this._emitExtensionEvent(event)（注释 Emit to extensions first）→ :398 this.sessionManager.appendMessage(event.message)）——message_end(role=user) handler 内 getEntries() 计数不含本条，探针 P1 已实测（rename-session-three-modes.md §3.4，2026-09-12 u1 实测 dcc189dc4：entries 不含本条）",
+  "piAnchor": [
+   {
+    "pkg": "pi-coding-agent",
+    "distPath": "dist/core/agent-session.js",
+    "symbol": "_handleAgentEvent turn 收尾序列（Emit to extensions first）",
+    "note": ":384 await this._emitExtensionEvent(event) → :386 this._emit(...) 监听器 → :388 if (event.type === \"message_end\") → :398 this.sessionManager.appendMessage(event.message)（user/assistant/toolResult 落盘为 SessionMessageEntry）——handler 先于本条 append"
+   }
+  ],
+  "guard": {
+   "type": "observe",
+   "note": "消费面：rename-session first-prompt 谓词（pure.ts countUserMessages，设计 rename-session-three-modes.md D2）——message_end(user) handler 内 entries 计数 === 0 ⇔ 本条即 session 首条 user；顺序反转则首 turn 标题生成停触发（首条被判非首条）。单测 TC-M1/M3（index.test.ts）以 entries 空/含 user 编码该契约（mock 不验证 pi 侧真实顺序）。pi 升级时重验：_emitExtensionEvent 与 appendMessage 的相对顺序"
   },
   "verifiedWith": "0.84.4"
  }

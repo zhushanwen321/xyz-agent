@@ -43,7 +43,7 @@ import {
   type RequestFrame,
 } from "@zhushanwen/subagent-engine-sdk";
 
-import { SpawnedChildrenMirror } from "./mirror.ts";
+import { SpawnedChildrenMirror, type MirrorChangeEvent } from "./mirror.ts";
 import {
   removePidfile,
   registerEnginePidfile,
@@ -56,8 +56,34 @@ import {
   type EngineClientOptions,
 } from "./client-options.ts";
 import { killProcessTree, waitForChildExit } from "./reaper.ts";
+// [u7a 生产补挂] 反向通道镜像 → core 侧镜像桥接：in-flight 计数与生命周期谓词读 core
+// 全局镜像（recordId 键），而引擎侧子进程上报只落 EngineClient 镜像——本桥接实现
+// spawned-children.ts 头注「数据源①：反向通道上报落本镜像」的既登记契约（W3 协议化
+// 后 ctx.onChildSpawned 不被调用，该数据面悬空致计数恒 0），见 crash-forensics §7 v7。
+import { coreSpawnedChildrenMirror } from "../host/spawned-children.ts";
+import { notifyInFlightChanged } from "../inflight-snapshot.ts";
 
 const logger = getLogger("subagents");
+
+/**
+ * 单条镜像事件 → core 镜像投影 + 在途推送（u7a 数据面桥接）：置死/退出 → markKilled，
+ * running → register（同 recordId 重 spawn 覆盖，与引擎侧 Map 同语义）。投影后必推送
+ * ——镜像事件本身就是在途迁移点（子进程注册/移除），首轮无任何 arm/disarm 推送，
+ * 不在此推则首轮在途窗口对 D5 不可见；notify 同步 fire-and-forget，异常不外溢。
+ * killedAll 空表单发（无 pid）与迟到事件（条目已清）为 no-op。
+ */
+function bridgeMirrorEventToCoreMirror(event: MirrorChangeEvent, mirror: SpawnedChildrenMirror): void {
+  if (event.recordId === undefined || event.pid === undefined) return;
+  const entry = mirror.getEntry(event.pid);
+  if (entry === undefined) return;
+  const core = coreSpawnedChildrenMirror();
+  if (entry.killed) {
+    core.markKilled(event.recordId);
+  } else {
+    core.register(event.recordId, { pid: entry.pid, killed: false });
+  }
+  notifyInFlightChanged();
+}
 
 /** dispose 帧等待上界（设计 §3.6：dispose 上界 3s，超时即杀）。 */
 const DISPOSE_GRACE_MS = 3_000;
@@ -171,6 +197,9 @@ export class EngineClient {
     };
     this.mirror.onChange((event) => {
       opts.onMirrorChanged?.(event);
+      // [u7a 生产补挂] 反向通道镜像事件同步投影进 core 侧镜像 + 推送在途计数
+      //（数据面桥接，见 bridgeMirrorEventToCoreMirror 与文件头 u7a 注释）。
+      bridgeMirrorEventToCoreMirror(event, this.mirror);
     });
   }
 

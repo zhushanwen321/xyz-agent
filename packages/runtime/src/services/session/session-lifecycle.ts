@@ -20,16 +20,22 @@
  * registerDeps(注册装配依赖)。
  */
 import { basename } from 'node:path'
-import { existsSync, unlinkSync } from 'node:fs'
+import { existsSync, rmSync, unlinkSync } from 'node:fs'
 import { unlink } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import type { SessionSummary, BatchDeleteResult, ServerMessage } from '@xyz-agent/shared'
 import { BUILTIN_PRESET_IDS } from '@xyz-agent/shared'
+// [D6-⑨ u7] 图片缓存目录推导（shared SSOT，含 sessionId 穿越校验——cache 级联删除用）
+import { getImageCacheDir } from '@xyz-agent/shared/paths'
 import type { IProcessManager, IPiEngine } from '../ports/pi-engine.js'
 import type { ILifecycleSessionOps, ISessionRegistry, ISessionRegisterDeps, IManagedSessionRecord } from './session-internal.js'
 import type { IManagedSessionView, ScannedSession } from './types.js'
-import { buildPresetClientOptions, warnLaunchEffectiveMismatch } from './launch-params.js'
+import { buildPresetClientOptions, hasSubagentWorkflowExtension, warnLaunchEffectiveMismatch } from './launch-params.js'
 import type { PresetClientOptions } from './launch-params.js'
+// D5 在途镜像（crash-forensics §3.3 D5 ①）：registerSession 汇聚点按本次 spawn 注入列表
+// 写 injected（presetZero 订阅在 session-service，本处只写注入态——两写方字段互不触碰，
+// 见 inflight-mirror.ts 文件头装配顺序说明）。
+import { inflightMirror } from './inflight-mirror.js'
 import type { PresetResolution } from '../preset-service.js'
 import type { IConfigStore } from '../ports/config.js'
 import type { ISessionStore } from '../ports/session.js'
@@ -56,6 +62,9 @@ import { normalizeInactiveSessionFileIfNeeded, readEffectiveModelFromState, seed
 // 统一回填入口（sidecar-binding-sync 设计文档拍板接线在此），同样随 R3 收口。新写
 // services 代码不得再效仿此处直引 infra。
 import { getSessionsDir } from '../../infra/pi/pi-paths.js'
+// 空闲回收占座原语与编排依赖类型（idle-pi-reclamation D6-2/D3，u2）。ReclaimSeat 是
+// reaper 判定循环与 reclaimManagedSession 共享的互斥状态（同实例注入，u3 装配）。
+import type { ReclaimSeat } from './idle-pi-reaper.js'
 // persistModelBinding 锚定本模块路径是 mock 链刚需：restore 播种测试以硬编码 factory
 // 替换本模块并经 importActual 取 re-export 的真身委托落盘（勿改为直引
 // session-model-sidecar.js，否则真身链断、写点③⑤ 断言红）。
@@ -145,6 +154,22 @@ function resolveCreateCwd(cwd: string | undefined): string {
 }
 
 /**
+ * [D6-⑨ u7] session 文件路径 → sessionId。真实文件名形态 `<ISO时间戳>_<uuid>.jsonl`
+ *（sidecar `<同前缀>.jsonl.<suffix>`；形态实测锚点 `2026-09-02T14-40-39-107Z_01a06290-
+ * 9ac3-7d46-90f6-39a86248025e.jsonl`），sessionId = 末段 `_` 后的 uuid 段（=== 首行
+ * header id，与 scanSessionMeta / external-scan 按内容解析的 sessionId 同值；renderer
+ * 写 cache 目录用的正是该纯 uuid）。与 main 侧 image-cache.ts 的 sessionIdFromSessionFilePath
+ * 同语义——runtime 进程无法跨包 import main 模块，内联副本（cache 级联删除的目录名派生
+ * 用）。曾按「剥 `.jsonl` 后全名」派生出 `<ts>_<uuid>`，与 cache 目录名（纯 uuid）永不
+ * 相等致级联删除 rmSync no-op（U3 修正）。
+ */
+function sessionIdFromSessionFilePath(filePath: string): string {
+  const main = basename(filePath).replace(/\.jsonl.*$/, '')
+  const underscore = main.lastIndexOf('_')
+  return underscore === -1 ? main : main.slice(underscore + 1)
+}
+
+/**
  * 空串/非 string 归一 undefined（D6 源生效值读取用）：restore 播种在源不可知时写 '' 占位，
  * '' 属 nullish 检查不拦截的 falsy 值——直传 `override ?? preset` 链会以 '' 短路吞掉后续档。
  */
@@ -169,6 +194,39 @@ function resolveCreateEffectiveThinkingLevel(
 ): string | undefined {
   return createMetaOverride?.thinkingLevel
     ?? (typeof presetClientOptions.thinkingLevel === 'string' ? presetClientOptions.thinkingLevel : undefined)
+}
+
+/**
+ * relay 尾扫目标（窄接口，idle-pi-reclamation D3 第 5 步）。u3 装配把 RelayRegistry 内
+ * 该 mainSessionId 的注册条目 child 包装为 { kill }——kill 实现绑 relay-registry 导出的
+ * killRelayChild：杀注册表在册 child 后，attachRelayChildWiring 挂载的 child 'exit'
+ * handler 会自动走 cleanupEntry（tee 销毁 + pid 文件删除 + 双 Map 注销），即「杀完走
+ * 注册表清理」由既有事件链结构性保证，本模块无需（也无法，领地外）手工清理注册表。
+ */
+export interface ReclaimRelayTarget {
+  kill(): Promise<void>
+}
+
+/**
+ * reclaimManagedSession 的编排依赖（D3 七步；全部窄接口注入——不 import relay-registry /
+ * background-task-reaper 等具体服务，测试全 fake，生产由 u3 组合根装配）。
+ */
+export interface ReclaimSessionDeps {
+  /** 与 reaper 判定循环共享的占座实例（D6-2 全链占座，同实例互斥）。 */
+  seat: ReclaimSeat
+  /**
+   * relay 尾扫快照枚举（同步）——按 mainSessionId 返回当前在册的 relay 子进程目标。
+   * [u3 装配清单] RelayRegistry 现无按 mainSessionId 枚举条目的公开 API（仅 u1b 的
+   * hasByMainSessionId 存在性查询），u3 需补只读枚举访问器后接线。
+   */
+  listRelayChildrenByMainSession?(sessionId: string): ReclaimRelayTarget[]
+  /**
+   * 定向后台任务收殓（D3 第 5 步②）——u3 装配绑 reapSessionBackgroundTasks(getPiAgentDir(), sid)
+   * （复用 background-task-reaper 单 session 入口，与 removeSessionEntry 汇聚点同款触发面）。
+   */
+  reapBackgroundTasks?(sessionId: string): Promise<void>
+  /** pendingReload 定向清（D3 第 6 步）——u3 装配绑 ReloadOrchestrator.clearPending。 */
+  clearPendingReload?(sessionId: string): void
 }
 
 export class SessionLifecycle implements ISessionRegistry {
@@ -242,12 +300,19 @@ export class SessionLifecycle implements ISessionRegistry {
    * （Staging Mode ADR-0056）；不传时 fallback configStore.getDefaultModel()。
    * 注意 pi 进程的模型在 createSession 时已由 pi client options 的 model 字段设定，
    * 此参数只补齐 session 元数据层的缺口。
+   *
+   * spawnExtensionPaths：本次 spawn 实际注入 pi 的 extension 路径列表（getExtensionPaths
+   * / preset 解析结果，D5 ① per-session 可用性判定的输入）。缺省 = 未注入（测试/历史
+   * 注册点）。五 spawn 形态（新 session / respawn / reattach / lazy restore / fork）全部
+   * 经本汇聚点，injected 随之天然覆盖。
    */
   async registerSession(
     id: string, client: IPiEngine, cwd: string, label: string, sessionFilePath?: string, hidden?: boolean,
     parentSession?: string, forkEntryId?: string, modelOverride?: string,
     /** U2: restore/create get_state 读回的生效值播种，优先级高于 modelOverride/全局默认。 */
     metaOverride?: { modelId?: string; thinkingLevel?: string },
+    /** D5 ①：本次 spawn 的 extension 注入列表（见方法 docstring）。 */
+    spawnExtensionPaths?: readonly string[],
   ): Promise<IManagedSessionRecord> {
     const send = (msg: ServerMessage) => {
       // wave:perf-w09（02 文档 D1-2）：session 级消息单通道——payload 带 sessionId 的消息
@@ -320,6 +385,23 @@ export class SessionLifecycle implements ISessionRegistry {
     //    restore 场景旧订阅集合已随 onSessionExit 的 bus.clearSession 清除——两腿实际都只
     //    落快照，由重订阅回放消费，时序上 subscribe 必然晚于本 publish（postLoadSession 在
     //    restore RPC resolve 之后），无竞态。
+    // [合并修正 2026-09] 删除此处我方 crash-resilience 的裸 publish 残留——对方
+    // session-dead-structural-fixes D2 已将其收编为下方 applySessionOccupancyTransition
+    // ('announce-idle') 原语行（state-topic 通路双腿：实时广播 + 快照回放），两份并存
+    // 会双发同一宣告帧（occupancy-runtime registerSession 用例的 publish 次数哨兵拦截）。
+    // D5 ① injected 接线（crash-forensics §3.3 D5）：injected = 该 session 装有会上报
+    // in-flight 的 extension（subagent-workflow），errsShape 的 absent-report 形态以此
+    // 为先决——未注入 ⇒ 无 pi 引擎 subagent 能力 ⇒ 判「无在途」（正确语义而非 errs）。
+    // 按本次 spawn 列表整值覆写（跨 epoch 不继承 stale-true）；与 presetZero 顺序无关
+    //（presetZero 不触碰 injected，见 inflight-mirror.ts 文件头）。独立 try 隔离：
+    // mirror 是 errs 判别的旁路设施，判定异常绝不外抛——外抛会打断 registerSession
+    // 主链，把旁路故障放大成创建/恢复失败（与 session-service 侧 presetZero 挂点同型）。
+    try {
+      inflightMirror.setInjected(id, hasSubagentWorkflowExtension(spawnExtensionPaths ?? []))
+    } catch (e: unknown) {
+      // best-effort 降级：injected 写失败仅退化为 errsShape 判「无在途」（errs-safe 方向），不打断注册主链。
+      console.error(`[session-lifecycle] mirror setInjected failed (sessionId=${id}):`, e)
+    }
     applySessionOccupancyTransition(session, this.registerDeps.getMessageBus(), 'announce-idle')
     // 注册事件同步直发（sessions.set 之后——订阅者可经 Registry 读到条目）：S3 期订阅者
     // = Facade（组装根接线），按迁移前体内顺序执行 registerReplicatedStates →
@@ -421,7 +503,7 @@ export class SessionLifecycle implements ISessionRegistry {
     }
 
     const session = await this.registerCreateSession(
-      id, client, sessionCwd, label, sessionFilePath, options, presetClientOptions, createMetaOverride,
+      id, client, sessionCwd, label, sessionFilePath, options, presetClientOptions, createMetaOverride, allExtPaths,
     )
 
     // W1 → A'：仅语义性命名（options.persistLabel=true：handoff/agent-managed）持久化；
@@ -550,6 +632,7 @@ export class SessionLifecycle implements ISessionRegistry {
     options: CreateOptions | undefined,
     presetClientOptions: PresetClientOptions,
     createMetaOverride: EffectiveMetaOverride | undefined,
+    spawnExtensionPaths: readonly string[],
   ): Promise<IManagedSessionView> {
     try {
       // Staging Mode（ADR-0056）：透传 effectiveModel（presetClientOptions.model，已含 C-RL-6 优先级解析）
@@ -557,7 +640,7 @@ export class SessionLifecycle implements ISessionRegistry {
       // U2: metaOverride（get_state 读回值）优先级高于 presetClientOptions.model。
       return await this.registerSession(
         id, client, sessionCwd, label ?? basename(sessionCwd), sessionFilePath, options?.hidden,
-        undefined, undefined, presetClientOptions.model, createMetaOverride,
+        undefined, undefined, presetClientOptions.model, createMetaOverride, spawnExtensionPaths,
       )
     } catch (initErr) {
       await this.safeDestroy(id)
@@ -713,7 +796,7 @@ export class SessionLifecycle implements ISessionRegistry {
       // withEphemeralPi 内 switchSession（pi 报错，见其 docstring 的 @param 语义），
       // 预读 ENOENT 会短路该分工。restoreSession 无此守卫（既有行为保持，不动）。
       if (existsSync(target.filePath)) {
-        normalizeInactiveSessionFileIfNeeded(target.filePath, cwdFellBack)
+        normalizeInactiveSessionFileIfNeeded(target.filePath, cwdFellBack, this.sessionStore)
       }
       await this.pm.withEphemeralPi(target.filePath, (c) => c.setSessionName(newName))
     }
@@ -764,6 +847,12 @@ export class SessionLifecycle implements ISessionRegistry {
     try { unlinkSync(filePath + '.model.json') } catch { void 0 }
     // 清理归一化残留 .tmp-migrate-*.jsonl（差距复审 suggestion 6，与 sidecar 同点 best-effort）
     cleanupMigrateResidues(filePath)
+    // [D6-⑨ u7-memory-governance] toolResult 图片缓存级联（cache/images 是 session 文件
+    // 之外的第四类关联产物，delete 是唯一清理点补齐——纯缓存语义下删除级联是三条清理
+    // 通道之一；main 侧生命周期 SSOT 在 apps/electron/main/images/image-cache.ts 的
+    // deleteSessionImageCache，runtime 进程无法跨包 import，此处按同语义内联最小接线：
+    // 同一 shared paths 推导（getImageCacheDir 含 sessionId 穿越校验）+ force 幂等删）。
+    try { rmSync(getImageCacheDir(sessionIdFromSessionFilePath(filePath)), { recursive: true, force: true }) } catch { void 0 }
     // W-Runtime4：清理 session 文件头解析缓存（infra session-file-utils 的 filePath 键
     // 派生缓存，非已删的 label 影子缓存）中的 stale 条目（避免无界增长）
     this.sessionStore.invalidateMetaCache(filePath)
@@ -844,6 +933,7 @@ export class SessionLifecycle implements ISessionRegistry {
 
   /** 从持久化文件恢复 session。 */
   async restoreSession(sessionId: string): Promise<SessionSummary> {
+    const restoreStartedAt = Date.now()
     // D5②（session-dead-structural-fixes）：幂等短路复用——client 已活跃且未退出时直接
     // 返回现有 summary（等价 ensureActive 的既有短路分支），不再无条件清场重开。
     //
@@ -862,7 +952,7 @@ export class SessionLifecycle implements ISessionRegistry {
     const target = this.resolveRestoreTarget(sessionId)
     await this.clearExistingSessionForRestore(sessionId)
     const { sessionCwd, cwdFellBack } = this.resolveRestoreCwd(target)
-    const { client, presetId } = await this.spawnRestoreClient(target, sessionId, sessionCwd)
+    const { client, presetId, allExtPaths } = await this.spawnRestoreClient(target, sessionId, sessionCwd)
     await this.attachRestoreFile(client, target, sessionId, cwdFellBack)
 
     // U2: get_state 读回 pi 生效 model + thinkingLevel（D2 设计）。
@@ -877,7 +967,7 @@ export class SessionLifecycle implements ISessionRegistry {
     const restoreMetaOverride = await seedRestoreMetaOverride(client, sessionId, target)
 
     // M3: registerSession 失败时清理 pi 进程（与 create 同模式，收口在 registerRestoredSession）
-    const session = await this.registerRestoredSession(sessionId, client, sessionCwd, target, restoreMetaOverride)
+    const session = await this.registerRestoredSession(sessionId, client, sessionCwd, target, restoreMetaOverride, allExtPaths)
     // 恢复后兜底广播一次上下文用量（pi 从历史估算 contextUsage）。
     // 注意：此广播可能早于前端订阅新 sessionId 通道（时序竞争，见架构约定 #7），
     // 前端 useContextUsage composable 的恢复腿（每次切入视图拉 session.getContext）保证到达。
@@ -904,6 +994,8 @@ export class SessionLifecycle implements ISessionRegistry {
     }
     // S3-W2：创建入口收敛点（restoreSession 路径）——session 复活进 Map，插件 didCreate 投递。
     this.svc.notifySessionCreated(restoredSummary)
+    // D5：恢复耗时一行日志（典型 ~600ms；大 session 数秒——P8 观测数据源）。
+    console.log(`[session-lifecycle] restore ${sessionId} elapsed=${Date.now() - restoreStartedAt}ms`)
     return restoredSummary
   }
 
@@ -994,7 +1086,7 @@ export class SessionLifecycle implements ISessionRegistry {
     target: ScannedSession,
     sessionId: string,
     sessionCwd: string,
-  ): Promise<{ client: IPiEngine; presetId: string }> {
+  ): Promise<{ client: IPiEngine; presetId: string; allExtPaths: string[] }> {
     const presetId = target.launchPresetId ?? BUILTIN_PRESET_IDS.FULL
     const resolution = await this.svc.getLaunchPresetOptions(presetId, sessionCwd)
     const allExtPaths = resolution?.extensionPaths ?? await this.svc.getExtensionPaths(sessionCwd)
@@ -1016,7 +1108,7 @@ export class SessionLifecycle implements ISessionRegistry {
       model: undefined,
       inheritSessionModel: true,
     })
-    return { client, presetId }
+    return { client, presetId, allExtPaths }
   }
 
   /**
@@ -1046,7 +1138,7 @@ export class SessionLifecycle implements ISessionRegistry {
     cwdFellBack: boolean,
   ): Promise<void> {
     try {
-      normalizeInactiveSessionFileIfNeeded(target.filePath, cwdFellBack)
+      normalizeInactiveSessionFileIfNeeded(target.filePath, cwdFellBack, this.sessionStore)
       await client.switchSession(target.filePath)
       await assertPiSessionFile(client, target.filePath, `restoreSession(${sessionId})`)
       try { unlinkSync(target.filePath + '.meta.json') } catch { void 0 }
@@ -1064,15 +1156,94 @@ export class SessionLifecycle implements ISessionRegistry {
   private async registerRestoredSession(
     sessionId: string, client: IPiEngine, sessionCwd: string, target: ScannedSession,
     restoreMetaOverride: { modelId: string; thinkingLevel: string },
+    spawnExtensionPaths: readonly string[],
   ): Promise<IManagedSessionRecord> {
     try {
       return await this.registerSession(
         sessionId, client, sessionCwd, target.name ?? basename(sessionCwd), target.filePath,
-        undefined, undefined, undefined, undefined, restoreMetaOverride,
+        undefined, undefined, undefined, undefined, restoreMetaOverride, spawnExtensionPaths,
       )
     } catch (initErr) {
       await this.safeDestroy(sessionId)
       throw initErr
+    }
+  }
+
+  /**
+   * 空闲回收的最小摘除编排（idle-pi-reclamation D3 七步，u2）。
+   *
+   * 与死亡清理汇聚点 removeSessionEntry（九步销毁）刻意不同：回收**不是销毁**——bus 分区
+   * （订阅/seq 连续，P3 广播流不断）、历史缓存（P7 条件增量收益）、PTY、插件 didDestroy
+   * 投递、终态写等全部跳过（D3 被跳过步骤归属表）。**禁止**为图省事改调 removeSessionEntry
+   * ——被否谱系第 1 条：PTY 连杀 / 广播断流 / 插件 destroy 污染三重冲突（除非三重冲突
+   * 全有独立解法，当前没有）。
+   *
+   * 返回 true = 回收完成（进程已杀 + Map 已摘）；false = 未回收（占座被占 / 最终豁免拦截 /
+   * 代际校验取消）——调用方（reaper）据此决定合并广播与分布计数。
+   *
+   * 广播责任在 reaper 合并层（一拍 N 个回收只广播一次），本函数不广播——静默先例 =
+   * restoreSession 清场与 lifecycle.delete。
+   */
+  async reclaimManagedSession(sessionId: string, deps: ReclaimSessionDeps): Promise<boolean> {
+    // ① seat 占座（D6-2）：false = 已有回收在途（并发 reaper 拍 / 等待方视角），直接跳过。
+    if (!deps.seat.tryAcquire(sessionId)) return false
+    try {
+      // ② 最终豁免检查（同步块零 await——本块与第 ④ 步 kill 的首个 await 之间无任何
+      // await 窗口，是 D6-1 原子性的根基：reaper 判定通过后到 detach/kill 之间没有
+      // 异步间隙让 occupancy 翻转而未被察觉）。
+      const session = this.get(sessionId)
+      if (!session) return false
+      const occ = session.occupancy
+      if (occ && (occ.turn !== 'idle' || occ.compacting || occ.bash)) return false
+      // ③ adapter.detach（停事件流）：pi 事件订阅经 EventAdapter 唯一持有，detach 即收口
+      // ——先于 kill，避免 kill 等待窗口内 pi 的尾流事件被翻译成消息广播。
+      this.detachSession(sessionId)
+      // ④ pm.destroySession（既有语义：先删 pm 双 Map 再 kill——exit 回调按 clientToId
+      // 无条目守卫静默跳过，_killing 语义零 crash log 零 exitCallbacks 多播，即「计划内
+      // 杀」在既有语义里就不产生崩溃记录与死亡广播，D3 引用 §1.1 事实 2）。
+      await this.pm.destroySession(sessionId)
+      // ⑤② 定向后台任务收殓（fire-and-forget，D3：正常情况豁免 #2 已保证无 running 任务，
+      // 此步兜「任务在检查与 kill 间的毫秒窗口退出/registry 写半截」的边角）。内部自带
+      // setImmediate 延后，不阻塞占座释放。
+      void deps.reapBackgroundTasks?.(sessionId)?.catch((e: unknown) => {
+        console.warn(`[session-lifecycle] reclaim background-task reap failed (sessionId=${sessionId}):`, e)
+      })
+      // ⑥a 代际校验（D6-3，摘除前）：占座期间若发生并发重建（未来绕过 ensureActive 的
+      // 恢复入口——restore/create 注册必产生新条目对象 + 新 pm client），引用比对即检出。
+      // 检出不摘除：新条目/新进程是无辜的，杀/摘它们 = 误杀并发重建的 session。
+      if (this.get(sessionId) !== session || this.pm.hasClient(sessionId)) {
+        console.warn(`[session-lifecycle] reclaim ${sessionId} cancelled: session was re-created concurrently (generation check, D6-3)`)
+        return false
+      }
+      // ⑥b 最小摘除：lifecycle sessions Map 删条目 + pendingReload 定向清（防御性 no-op：
+      // pendingReload 有条目 ⇒ session busy ⇒ 恒非回收候选，真发生的窗口极窄）。
+      this.removeEntry(sessionId)
+      deps.clearPendingReload?.(sessionId)
+      // ⑤① relay 尾扫（D3 第 5 步①，fire-and-forget）。**单段快照语义**：快照枚举与
+      // kill 目标列表在此同步段一次完成，setImmediate 异步执行阶段只用快照闭包、禁止再查
+      // 再杀——两段式（异步 kill 后二次复查再杀）可能误杀 restore 后新 session 经 relay
+      // 合法 spawn 的子进程（P6 尾扫项）。快照采集点放在代际校验通过之后：校验失败（并发
+      // 重建）路径不采集不杀，新 session 的 relay 条目天然不在任何快照里（fail-safe 方向）。
+      // setImmediate 先例同后台任务收殓：kill 链（SIGCONT→SIGTERM→3s grace→SIGKILL，
+      // relay-registry killRelayChild 同款语义）移出占座区间，
+      // 不可杀的 D 状态子进程等极端阻塞不拖累占座释放。
+      const relayTargets = deps.listRelayChildrenByMainSession?.(sessionId) ?? []
+      if (relayTargets.length > 0) {
+        console.log(`[session-lifecycle] reclaim ${sessionId}: relay tail-sweep snapshot captured ${relayTargets.length} child(ren)`)
+        setImmediate(() => {
+          for (const target of relayTargets) {
+            void target.kill().catch((e: unknown) => {
+              console.warn(`[session-lifecycle] reclaim relay tail-sweep kill failed (sessionId=${sessionId}):`, e)
+            })
+          }
+        })
+      }
+      return true
+    } finally {
+      // ⑦ try/finally 释放占座：占座只持有第 1-6 步的有界步骤（判定 sync / detach sync /
+      // kill 硬上限 2s / 摘除 sync），任一步抛异常 finally 兜底释放——等待中的 ensureActive
+      // 不会因占座泄漏永久挂起（D6-2「等待方永不抢跑」以释放确定性为前提）。
+      deps.seat.release(sessionId)
     }
   }
 
@@ -1230,7 +1401,7 @@ export class SessionLifecycle implements ISessionRegistry {
     // toSummary 输出到 SessionSummary，前端据此渲染 fork 父子关系。
     // （registerSession 失败的孤儿清理见 registerForkedSession。）
     const session = await this.registerForkedSession(
-      forkedId, client, sessionCwd, label, forkedFilePath, sourceActive, srcSessionId, resolvedEntryId, presetClientOptions,
+      forkedId, client, sessionCwd, label, forkedFilePath, sourceActive, srcSessionId, resolvedEntryId, presetClientOptions, allExtPaths,
     )
 
     // W1 → A'：fork 显式 label（用户显式命名，语义性）持久化；当前前端恒不传 label
@@ -1443,6 +1614,7 @@ export class SessionLifecycle implements ISessionRegistry {
     srcSessionId: string,
     resolvedEntryId: string,
     presetClientOptions: PresetClientOptions,
+    spawnExtensionPaths: readonly string[],
   ): Promise<IManagedSessionView> {
     const parentSessionKey = sourceActive?.sessionFilePath ?? srcSessionId
     try {
@@ -1450,7 +1622,7 @@ export class SessionLifecycle implements ISessionRegistry {
       // 元数据 modelId 反映实际启动模型（override > 源 preset.modelOverride）。
       return await this.registerSession(
         forkedId, client, sessionCwd, label ?? basename(sessionCwd), forkedFilePath,
-        undefined, parentSessionKey, resolvedEntryId, presetClientOptions.model,
+        undefined, parentSessionKey, resolvedEntryId, presetClientOptions.model, undefined, spawnExtensionPaths,
       )
     } catch (initErr) {
       // L5: registerSession 失败时清理孤儿 fork 文件（已写出但 session 未进 Map）

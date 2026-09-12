@@ -11,7 +11,7 @@
 import { createHash } from "node:crypto";
 
 /** 指纹 hash 长度（hex 字符数）。 */
-export const HASH_LEN = 16;
+const HASH_LEN = 16;
 
 /** entry schema 版本（v2：短 hash + 增量 entry）。 */
 export const SCHEMA_VERSION = 2;
@@ -46,7 +46,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 /** 递归 sort keys 的稳定序列化（undefined 归一为 null，防 key 顺序抖动产生假变化）。 */
-export function stableStringify(value: unknown): string {
+function stableStringify(value: unknown): string {
 	if (value === undefined) return "null";
 	if (value === null || typeof value !== "object") return JSON.stringify(value);
 	if (Array.isArray(value)) return "[" + value.map(stableStringify).join(",") + "]";
@@ -89,7 +89,7 @@ export function sentToolsOf(payload: unknown): unknown[] | null {
 	return Array.isArray(tools) ? tools : null;
 }
 
-export function diffFingerprints(cur: Fingerprints, last: Fingerprints | null): FingerprintKey[] {
+function diffFingerprints(cur: Fingerprints, last: Fingerprints | null): FingerprintKey[] {
 	if (last === null) return [];
 	return (Object.keys(cur) as FingerprintKey[]).filter((k) => last[k] !== cur[k]);
 }

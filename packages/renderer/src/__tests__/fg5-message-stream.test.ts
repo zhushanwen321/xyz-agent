@@ -517,10 +517,10 @@ describe('FG5 chat store 块类型扩展', () => {
     expect(typeof msg.branchSummary?.timestamp).toBe('number')
   })
 
-  it('mock getHistory 返回 fixture 全字段（G2-006 契约）', async () => {
+  it('mock getHistory 返回 fixture 全字段（G2-006 契约；[u6] 窗口契约三字段）', async () => {
     const s1 = await mockApi.chat.getHistory('s1')
-    // N1 修复：getHistory 返回 { messages, historyTruncated }
-    expect(s1.historyTruncated).toBe(false)
+    // N1 修复：getHistory 返回窗口契约（[u6] legacy historyTruncated 退役，truncated 唯一标志）
+    expect(s1.truncated).toBe(false)
     expect(s1.messages.length).toBeGreaterThanOrEqual(2)
     // 含 user / assistant text / tool_call / 失败 tool
     const roles = s1.messages.map((m) => m.role)
@@ -532,7 +532,7 @@ describe('FG5 chat store 块类型扩展', () => {
 
   it('mock getHistory 空会话返回空数组', async () => {
     const s3 = await mockApi.chat.getHistory('s3')
-    expect(s3.historyTruncated).toBe(false)
+    expect(s3.truncated).toBe(false)
     expect(s3.messages).toEqual([])
   })
 

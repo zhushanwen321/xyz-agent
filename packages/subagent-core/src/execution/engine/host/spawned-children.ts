@@ -71,7 +71,7 @@ class CoreSpawnedChildrenMirror {
   }
 
   /** 快照（诊断/测试）。 */
-  snapshot(): SpawnedChildMirrorEntry[] {
+  snapshot(): Array<SpawnedChildMirrorEntry & { recordId: string }> {
     return [...this.entries.entries()].map(([recordId, entry]) => ({ recordId, ...entry }));
   }
 

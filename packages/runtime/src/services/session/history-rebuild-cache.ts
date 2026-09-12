@@ -1,7 +1,7 @@
 /**
  * history 域完整模块（S6 迁出，缓存 + 读编排同居）：HistoryRebuildCache（纯缓存类，
- * wave:perf-w20 D6）+ SessionHistoryReader（读编排：getHistory 三分支重建 / getFullHistory
- * 文件直读，原 Facade 方法逐字随迁）。
+ * wave:perf-w20 D6）+ SessionHistoryReader（读编排：getHistory 三分支重建 + [u6] 游标
+ * 翻页，原 Facade 方法逐字随迁；[u6] getFullHistory 文件直读已随全量通路退役）。
  *
  * 设计依据：.xyz-harness/2026-08-15-perf/04-history-incremental.md §3.3 D6-1/D6-3。
  *
@@ -25,12 +25,13 @@ import { existsSync } from 'node:fs'
 import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import type { Message, SegmentsMetadataFile } from '@xyz-agent/shared'
+import { HISTORY_BUDGET } from '@xyz-agent/shared'
 // paths.ts 是 Node-only 模块，刻意不从 shared barrel 导出（见 shared/src/index.ts L32 注释），
 // Node 端从子路径 import
 import { getAttachmentsDir } from '@xyz-agent/shared/paths'
 import type { IProcessManager } from '../ports/pi-engine.js'
 import type { ISessionStore } from '../ports/session.js'
-import { getHistoryFromFilePath, getHistoryTailFromFile } from '../session-history.js'
+import { getHistoryTailFromFile, type HistoryWindowQuery, type HistoryWindowResult } from '../session-history.js'
 import { applyOrphanToolResults } from '../../infra/pi/message-converter.js'
 import { isEntryNotFoundError } from './trace-sync.js'
 import { toErrorMessage } from '../../utils/errors.js'
@@ -96,6 +97,17 @@ export class HistoryRebuildCache {
     this.entries.delete(sessionId)
   }
 
+  /**
+   * 清空全部条目，返回清除条目数（u7c：memory-relief 可回收物 ①——crash-forensics
+   * D4 降级代价清单：清后该 session 下次 getHistory 走全量重建（纯派生数据，丢弃
+   * 无一致性风险，见文件头生命周期注释）；watchdog onRelief 接线在组合根 index.ts）。
+   */
+  clearAll(): number {
+    const cleared = this.entries.size
+    this.entries.clear()
+    return cleared
+  }
+
   /** 当前缓存条目数（测试用）。 */
   get size(): number {
     return this.entries.size
@@ -139,6 +151,139 @@ export function mergeIncrementalMessages(cached: Message[], incremental: Message
 }
 
 /**
+ * turn 边界索引（正序）：role==='user' 是 turn 起点（D11 语义在重建后 Message[] 上的等价物）。
+ */
+function collectTurnStarts(messages: Message[]): number[] {
+  const turnStarts: number[] = []
+  for (let i = 0; i < messages.length; i++) {
+    if (messages[i].role === 'user') turnStarts.push(i)
+  }
+  return turnStarts
+}
+
+/**
+ * 从新到旧选 turn 入窗（applyHistoryBudgetWindow 的窗口选择段）：首个 turn 豁免字节
+ * 条件（单 turn 超预算完整放行，D4）；窗口扩到最老 turn 时带上其前的前导段（病态
+ * 孤儿 entry，如增量合并边界的孤儿 toolResult）——多给不少给，避免预算内误报
+ * truncated / 丢配对。
+ *
+ * @returns startIdx = 窗口起点下标（>0 即窗口外有更早历史）；accBytes = 入窗字节合计
+ *（可能超 maxBytes——单 turn 豁免所致，由调用方 warn 如实暴露）
+ */
+function selectTurnWindowStart(
+  messages: Message[],
+  turnStarts: number[],
+  limitTurns: number,
+  maxBytes: number,
+): { startIdx: number; loadedTurns: number; accBytes: number } {
+  const total = messages.length
+  let accBytes = 0
+  let loadedTurns = 0
+  let startIdx = total
+  for (let t = turnStarts.length - 1; t >= 0; t--) {
+    if (loadedTurns >= limitTurns) break
+    const turnStart = turnStarts[t]
+    const turnEnd = t + 1 < turnStarts.length ? turnStarts[t + 1] : total
+    let turnBytes = 0
+    for (let i = turnStart; i < turnEnd; i++) {
+      turnBytes += Buffer.byteLength(JSON.stringify(messages[i]), 'utf-8')
+    }
+    if (loadedTurns > 0 && accBytes + turnBytes > maxBytes) break
+    accBytes += turnBytes
+    loadedTurns++
+    startIdx = t === 0 ? 0 : turnStart
+  }
+  return { startIdx, loadedTurns, accBytes }
+}
+
+/**
+ * session 历史加载双预算窗口（crash-resilience §3.3 D4 / 实施计划 u4b-history-budget）。
+ *
+ * 按双条件从**最新** turn 向前截取：最近 limitTurns（默认 HISTORY_BUDGET.RECENT_TURNS=20）
+ * turns 且总字节 ≤ maxBytes（默认 HISTORY_BUDGET.MAX_BYTES=640KB）。字节估算 = 逐条
+ * Buffer.byteLength(JSON.stringify(message))（近 wire reply 实际体积，images base64
+ * 等大字段如实计入）。切分点在重建后的 Message[] 上做，不依赖 pi 行为。
+ *
+ * 切分粒度（D4 契约）：
+ * - **预算作用于 turn 选择**：窗口起点恒落在 turn 边界（role==='user' 的消息）上；
+ * - **单 turn 内 entry 不切分**（entry 原子性——切 entry 会破坏 reducer 幂等与
+ *   parentId 链）：窗口内消息按整 turn 进出；
+ * - **最近一个 turn 自身超预算仍完整放行**（保证对话可见性连续），字节超出经
+ *   warn 日志如实暴露（响应本身无字节字段；极端 turn 由 D3 帧守卫与 U7 截断兜底）。
+ *
+ * truncated 判定 = 窗口起点之前仍有消息（有更早历史未返回）。预算内（全部 turn
+ * 入窗且字节未超）→ truncated=false，行为与预算化前一致（A6 回归基线）。
+ *
+ * 缓存关系：缓存基线始终存**全量**重建结果（增量合并的正确性依赖），本函数只作用
+ * 于返回值——三分支（空增量/增量合并/全量重建）统一在返回前调用。
+ *
+ * totalTurnsEstimate：入参 Message[] 上的精确 turn 总数（user 消息计数）。[u6] 游标翻页
+ * 时入参是「锚点之前」的前缀，此值即前缀内精确总量（读到锚点为精确值）。
+ *
+ * [u6] opts（crash-resilience §3.3 D4 中期分页协议）：session.history 请求的
+ * limitTurns/maxBytes 覆盖默认预算；缺省回落 shared HISTORY_BUDGET（u4b 现状不变）。
+ * cursor 切前缀不在此函数（sliceMessagesBeforeCursor），两路径先切前缀再进本函数。
+ */
+export function applyHistoryBudgetWindow(
+  messages: Message[],
+  opts?: { limitTurns?: number; maxBytes?: number },
+): HistoryWindowResult {
+  const total = messages.length
+  if (total === 0) return { messages: [], truncated: false, loadedTurns: 0, totalTurnsEstimate: 0 }
+
+  const limitTurns = opts?.limitTurns ?? HISTORY_BUDGET.RECENT_TURNS
+  const maxBytes = opts?.maxBytes ?? HISTORY_BUDGET.MAX_BYTES
+
+  const turnStarts = collectTurnStarts(messages)
+  // 病态兜底：无 user 消息（纯 custom/compaction 窗口）→ 整段视为一个 turn 完整放行
+  //（单 turn 豁免语义同款：切它必然破坏原子性）
+  if (turnStarts.length === 0) {
+    return { messages: messages.slice(), truncated: false, loadedTurns: 1, totalTurnsEstimate: 1 }
+  }
+
+  const { startIdx, loadedTurns, accBytes } = selectTurnWindowStart(messages, turnStarts, limitTurns, maxBytes)
+  if (accBytes > maxBytes) {
+    console.warn(
+      `[history-rebuild-cache] history budget exceeded by the most recent turn(s): ${accBytes} bytes > ${maxBytes}, released in full per entry atomicity`,
+    )
+  }
+  return {
+    messages: messages.slice(startIdx),
+    truncated: startIdx > 0,
+    loadedTurns,
+    totalTurnsEstimate: turnStarts.length,
+  }
+}
+
+/**
+ * [u6] 游标切前缀（crash-resilience §3.3 D4 中期分页协议）：返回 turn 边界锚点 entryId
+ * 所在 turn **之前**的全部消息（前缀），供 applyHistoryBudgetWindow 取「锚点之前最近 N turns」。
+ *
+ * 身份匹配 `piEntryId ?? id`（与 renderer 侧 cursor 取值、splitHistoryBeforeAnchor 的
+ * exact 判据同构——user/assistant 带 piEntryId；system 族 id 即 entry 派生 uuidv7）。
+ * 前缀终点 = cursor 消息所在 turn 的起点（cursor 落在 turn 中间时该 turn 不返回——
+ * renderer 传的 cursor 恒为窗口起点，天然对齐 turn 边界；中间形态是防御语义）。
+ *
+ * @returns null = cursor 未命中任何消息（已被清理 / 超出扫描域）——调用方按「翻页到头」
+ * 返回空页 + truncated=false（D4 空游标边界：不报错）。
+ */
+export function sliceMessagesBeforeCursor(messages: Message[], cursor: string): Message[] | null {
+  const identity = (m: Message): string => m.piEntryId ?? m.id
+  const cursorIdx = messages.findIndex((m) => identity(m) === cursor)
+  if (cursorIdx < 0) return null
+  // cursor 所在 turn 起点：≤ cursorIdx 的最近 user 边界；cursor 之前无 user 边界
+  //（cursor 在前导孤儿段内）→ turnStart 保持 0，前缀为空（无更早 turn 可返回）
+  let turnStart = 0
+  for (let i = cursorIdx; i >= 0; i--) {
+    if (messages[i].role === 'user') {
+      turnStart = i
+      break
+    }
+  }
+  return messages.slice(0, turnStart)
+}
+
+/**
  * SessionHistoryReader 装配依赖（窄注入，S5/D2 风格；原 Facade 字段直读的逐字等价面）。
  */
 export interface SessionHistoryReaderDeps {
@@ -150,8 +295,8 @@ export interface SessionHistoryReaderDeps {
 
 /**
  * session 历史读编排（S6 迁出，原 Facade 方法逐字随迁）：getHistory 三分支重建 +
- * getFullHistory 文件直读。Facade 保留两方法一行委托（ISessionService 契约不变）；
- * 销毁清理经 onSessionDisposed 由 Facade removeSessionEntry 第 ⑤ 步直调
+ * [u6] 游标翻页（crash-resilience §3.3 D4 中期；getFullHistory 文件直读已随全量通路
+ * 退役）。销毁清理经 onSessionDisposed 由 Facade removeSessionEntry 第 ⑤ 步直调
  * （与 traceSync/projection/records 并列）。
  */
 export class SessionHistoryReader {
@@ -166,7 +311,7 @@ export class SessionHistoryReader {
    * promise（GitStateService inflightSnapshot 同款模式），消除「后完成者的旧 delta 与
    * 先完成者的新缓存交错写回」竞态。finally 清理，无泄漏。
    */
-  private readonly inflightGetHistory = new Map<string, Promise<{ messages: Message[]; truncated: boolean }>>()
+  private readonly inflightGetHistory = new Map<string, Promise<HistoryWindowResult>>()
 
   constructor(private readonly deps: SessionHistoryReaderDeps) {}
 
@@ -200,55 +345,162 @@ export class SessionHistoryReader {
    * 的权威视图（内存 fileEntries，restore 时从文件加载），空就是空；尾读会给出与 RPC
    * 视图不一致的文件尾部（最多 20 turn），两次 getHistory 结果闪变。
    *
-   * 返回 { messages, truncated }——truncated=true 仅出现在尾读降级路径（N1）。
+   * 返回 HistoryWindowResult（u4b 起双预算窗口：truncated / loadedTurns /
+   * totalTurnsEstimate）——缓存基线始终存全量重建结果，**预算窗口只作用于返回值**
+   * （D4：最近 20 turns 且总字节 ≤ 640KB，单 turn 超预算完整放行，entry 原子性），
+   * 三分支在返回前统一经 applyHistoryBudgetWindow 切窗。
    *
    * 返回值契约（终审 minor）：messages 是缓存/重建结果的**浅拷贝**（数组级隔离，调用方可
    * 安全就地变更）；Message 元素引用与缓存共享，仍受只读契约约束（深层拷贝在数百条消息
    * 量级下成本不可接受，元素级污染面仅限「调用方 mutate message 对象自身」）。
+   *
+   * [u6] 游标翻页（crash-resilience §3.3 D4 中期）：query.cursor（turn 边界锚点 entryId）
+   * 存在时返回锚点之前的最近窗口——活跃/离线两路径共用同一参数语义：
+   * - 活跃：跳过增量分支（增量是「最新窗口」语义），优先在缓存全量基线上切前缀
+   *   （sliceMessagesBeforeCursor——锚前内容 append-only，缓存基线对锚前翻页恒新鲜）；
+   *   无缓存走 getEntries() 全量重建写缓存后切前缀；RPC 失败降级文件读游标窗口。
+   * - 离线：getHistoryTailFromFile 的 cursorId 定位（collectRecentTurnEntriesFromTail 扩展）。
+   * - cursor 未命中任何消息（已被清理/超扫描域）→ 空页 + truncated=false（翻页到头，不报错）。
+   * limitTurns/maxBytes 缺省回落 shared HISTORY_BUDGET（u4b 预算不变）。
    */
-  async getHistory(sessionId: string): Promise<{ messages: Message[]; truncated: boolean }> {
+  async getHistory(sessionId: string, query?: HistoryWindowQuery): Promise<HistoryWindowResult> {
     // W20 review Fix-5：并发 getHistory 复用同一 inflight promise（同 session 共享一次
     // RPC + 重建 + 缓存写回），消除「后完成者的旧 delta 写回旧基线 / 覆盖先完成者结果」竞态。
-    const inflight = this.inflightGetHistory.get(sessionId)
+    // [u6] inflight key 含 cursor（同 session 并发翻页不同游标不得共享同一 promise——
+    // 不同请求页不同；无 cursor 请求共享现状行为）。
+    const inflightKey = query?.cursor ? `${sessionId}::cursor:${query.cursor}` : sessionId
+    const inflight = this.inflightGetHistory.get(inflightKey)
     if (inflight) return inflight
-    const promise = this.doGetHistory(sessionId).finally(() => this.inflightGetHistory.delete(sessionId))
-    this.inflightGetHistory.set(sessionId, promise)
+    const promise = this.doGetHistory(sessionId, query).finally(() => this.inflightGetHistory.delete(inflightKey))
+    this.inflightGetHistory.set(inflightKey, promise)
     return promise
   }
 
-  private async doGetHistory(sessionId: string): Promise<{ messages: Message[]; truncated: boolean }> {
+  private async doGetHistory(sessionId: string, query?: HistoryWindowQuery): Promise<HistoryWindowResult> {
     const client = this.deps.pm.getClient(sessionId)
-    if (client) {
-      // ── 分支 1/2：缓存命中 → since 增量 ──
-      const cached = this.historyCache.get(sessionId)
-      if (cached && cached.leafId !== null) {
-        const incremental = await this.getIncrementalHistory(sessionId, client, cached)
-        if (incremental) return incremental
-      }
-      // ── 分支 3：全量重建（无缓存 / D6-4 fallback / Fix-2 parentId 不变量 violation 丢缓存后）──
-      try {
-        const result = await client.getEntries() as GetEntriesResult
-        const entries = result.data?.entries ?? []
-        if (entries.length > 0) {
-          // 读 segments.json sidecar（runtime 直接读文件，不经 IPC——IPC 是 renderer→main，runtime 是独立进程）。
-          // 文件缺失/损坏 → null（rebuildHistoryFromEntries 全降级为占位文本，非硬错误）。
-          const segmentsMetadata = await readSegmentsMetadataFile(sessionId)
-          const rebuilt = this.deps.sessionStore.rebuildHistoryFromEntries(entries, segmentsMetadata)
-          // leafId 是 session 当前叶子 entry id，记录为下次增量拉取的 since 基准（D6-1）。
-          this.historyCache.set(sessionId, { leafId: result.data?.leafId ?? null, messages: rebuilt.messages, truncated: false })
-          // entry 树重建返回全量历史（get_entries 不截断），truncated=false。
-          // rebuilt.messages 已写入缓存，返回浅拷贝与缓存本体分离（终审 minor，同上防御）
-          return { messages: rebuilt.messages.slice(), truncated: false }
-        }
-        // R-12：entries 空 → 短路返回空列表（pi RPC 是活跃 session 的权威视图，不走尾读）。
-        return { messages: [], truncated: false }
-      } catch (e) {
-        console.warn(`[session-service] getHistory via getEntries failed: ${toErrorMessage(e)}, falling back to tail read`)
-        return await getHistoryTailFromFile(sessionId, this.deps.sessionStore)
-      }
+    if (query?.cursor !== undefined) {
+      // ── [u6] 游标翻页（活跃路径）：缓存全量基线优先，无缓存走全量重建 ──
+      return await this.getCursorWindow(sessionId, query, client)
     }
-    // 无 RPC client（离线 session）：走尾读，避免大文件全量读（不读不写缓存——文件路径无 leafId 概念）
-    return await getHistoryTailFromFile(sessionId, this.deps.sessionStore)
+    if (client) {
+      return await this.getLatestWindow(sessionId, query, client)
+    }
+    // 无 RPC client（离线 session）：走尾读（分块扩窗预算窗口，D5②），
+    // 避免大文件全量读（不读不写缓存——文件路径无 leafId 概念）。
+    return await this.tailReadOffline(sessionId, query)
+  }
+
+  /**
+   * [u6] 游标翻页分支（doGetHistory 活跃路径）：缓存全量基线优先切前缀（锚前内容
+   * append-only，缓存基线对锚前翻页恒新鲜，零 RPC）；无缓存走全量重建写缓存；
+   * 离线 session 走文件读游标窗口（与离线尾读同链，cursorId 定位）。
+   */
+  private async getCursorWindow(
+    sessionId: string,
+    query: HistoryWindowQuery,
+    client: ReturnType<IProcessManager['getClient']>,
+  ): Promise<HistoryWindowResult> {
+    const emptyPage: HistoryWindowResult = { messages: [], truncated: false, loadedTurns: 0, totalTurnsEstimate: 0 }
+    const windowOpts = { limitTurns: query.limitTurns, maxBytes: query.maxBytes }
+    // cursor 非空由 doGetHistory 分派保证（交叉断言与原实现一致）
+    const cursorPrefix = (full: Message[]): HistoryWindowResult => {
+      const prefix = sliceMessagesBeforeCursor(full, query.cursor!)
+      // cursor 未命中（已被清理 / 文件改写）→ 空页（翻页到头语义，不报错）
+      if (prefix === null) return emptyPage
+      return applyHistoryBudgetWindow(prefix, windowOpts)
+    }
+    const cached = this.historyCache.get(sessionId)
+    if (cached) {
+      // 缓存基线存全量重建结果，且锚前内容 append-only（pi append-only，compaction 不删
+      // entry）——锚前翻页对基线新鲜度不敏感，直接切前缀，零 RPC。
+      return cursorPrefix(cached.messages)
+    }
+    if (!client) {
+      // 离线 session 游标翻页：文件读游标窗口（与离线尾读同链，cursorId 定位）
+      return await this.tailReadOffline(sessionId, query)
+    }
+    try {
+      const messages = await this.rebuildFullHistoryAndCache(sessionId, client)
+      // entries 空（R-12 同款空语义）：RPC 是活跃 session 权威空视图 → 空页，不走文件读
+      if (messages === null) return emptyPage
+      return cursorPrefix(messages)
+    } catch (e) {
+      console.warn(`[session-service] cursor getHistory via getEntries failed: ${toErrorMessage(e)}, falling back to file cursor read`)
+      return await this.tailReadOffline(sessionId, query)
+    }
+  }
+
+  /**
+   * 最新窗口分支（doGetHistory 分支 1/2/3）：缓存命中走 getEntries(since=leafId) 增量
+   *（增量丢失缓存时 fall-through 全量重建）；无缓存 / fallback 走全量重建写缓存后
+   * 按双预算切窗返回。
+   */
+  private async getLatestWindow(
+    sessionId: string,
+    query: HistoryWindowQuery | undefined,
+    client: NonNullable<ReturnType<IProcessManager['getClient']>>,
+  ): Promise<HistoryWindowResult> {
+    const windowOpts = { limitTurns: query?.limitTurns, maxBytes: query?.maxBytes }
+    // ── 分支 1/2：缓存命中 → since 增量 ──
+    const cached = this.historyCache.get(sessionId)
+    if (cached && cached.leafId !== null) {
+      const incremental = await this.getIncrementalHistory(sessionId, client, cached, windowOpts)
+      if (incremental) return incremental
+    }
+    // ── 分支 3：全量重建（无缓存 / D6-4 fallback / Fix-2 parentId 不变量 violation 丢缓存后）──
+    try {
+      const messages = await this.rebuildFullHistoryAndCache(sessionId, client)
+      // R-12：entries 空 → 短路返回空列表（pi RPC 是活跃 session 的权威视图，不走尾读）。
+      if (messages === null) return { messages: [], truncated: false, loadedTurns: 0, totalTurnsEstimate: 0 }
+      // entry 树重建返回全量历史（get_entries 不截断），窗口截断在重建后的 Message[] 上做
+      return applyHistoryBudgetWindow(messages, windowOpts)
+    } catch (e) {
+      console.warn(`[session-service] getHistory via getEntries failed: ${toErrorMessage(e)}, falling back to tail read`)
+      // 字节预算缺省与游标分支同源（D4 同一预算逻辑）：原样透传 query 时 maxBytes=
+      // undefined → 尾读仅按 turn 数截取，20 个大 turn 的 reply 超 32MB 被
+      // payload_too_large 拒绝且 truncated 未置位（「加载更早」入口不存在）——历史打不开。
+      return await this.tailReadOffline(sessionId, query)
+    }
+  }
+
+  /**
+   * get_entries 全量拉取 → entry 树重建 → 写缓存（游标翻页无缓存路径与分支 3 的共用
+   * 核心）。读 segments.json sidecar 的注释见 readSegmentsMetadataFile。
+   *
+   * @returns 重建的全量消息；null = pi RPC 成功但 entries 为空（R-12：活跃 session 的
+   * 权威空视图）。RPC/重建失败原样上抛，由调用方按各自链路降级（日志文案与离线
+   * fallback 的游标形态两分支不同，不在此吞）。
+   */
+  private async rebuildFullHistoryAndCache(
+    sessionId: string,
+    client: NonNullable<ReturnType<IProcessManager['getClient']>>,
+  ): Promise<Message[] | null> {
+    const result = await client.getEntries() as GetEntriesResult
+    const entries = result.data?.entries ?? []
+    if (entries.length === 0) return null
+    // 读 segments.json sidecar（runtime 直接读文件，不经 IPC——IPC 是 renderer→main，runtime 是独立进程）。
+    // 文件缺失/损坏 → null（rebuildHistoryFromEntries 全降级为占位文本，非硬错误）。
+    const segmentsMetadata = await readSegmentsMetadataFile(sessionId)
+    const rebuilt = this.deps.sessionStore.rebuildHistoryFromEntries(entries, segmentsMetadata)
+    // leafId 是 session 当前叶子 entry id，记录为下次增量拉取的 since 基准（D6-1）。
+    // 缓存存全量基线（增量合并正确性依赖）；返回值按双预算切窗（D4）。
+    this.historyCache.set(sessionId, { leafId: result.data?.leafId ?? null, messages: rebuilt.messages, truncated: false })
+    return rebuilt.messages
+  }
+
+  /**
+   * 离线尾读 fallback（getHistoryTailFromFile 包装，D5② 分块扩窗预算窗口）：字节预算
+   * 缺省同源 HISTORY_BUDGET.MAX_BYTES（D4 同一预算逻辑——仅 turn 数截取挡不住 20 个
+   * 大 turn 的超限 reply）；query.cursor 存在时随行透传（离线游标翻页走 cursorId 定位，
+   * 缺省路径 cursor 恒 undefined，读侧 query?.cursor 与缺键等价）。
+   */
+  private async tailReadOffline(sessionId: string, query?: HistoryWindowQuery): Promise<HistoryWindowResult> {
+    return await getHistoryTailFromFile(
+      sessionId,
+      this.deps.sessionStore,
+      query?.limitTurns ?? HISTORY_BUDGET.RECENT_TURNS,
+      { cursor: query?.cursor, maxBytes: query?.maxBytes ?? HISTORY_BUDGET.MAX_BYTES },
+    )
   }
 
   /**
@@ -261,7 +513,8 @@ export class SessionHistoryReader {
     sessionId: string,
     client: NonNullable<ReturnType<IProcessManager['getClient']>>,
     cached: HistoryRebuildCacheEntry,
-  ): Promise<{ messages: Message[]; truncated: boolean } | undefined> {
+    windowOpts?: { limitTurns?: number; maxBytes?: number },
+  ): Promise<HistoryWindowResult | undefined> {
     // leafId null 收敛（r1-S18）：调用方已保证非 null，此处守卫消 as 断言——防御性
     // undefined 使外层 fall-through 全量重建，行为等价
     if (cached.leafId === null) return undefined
@@ -273,8 +526,8 @@ export class SessionHistoryReader {
         console.log(`[session-service] getHistory cache fresh (empty delta) for ${sessionId}, returning ${cached.messages.length} cached messages`)
         // 终审 minor：返回浅拷贝而非缓存引用——调用方就地 sort/splice/push 会打穿缓存
         // 基底（增量合并的正确性依赖缓存未被污染）。元素级引用仍共享（只读契约，
-        // 与 scanPiSessions 浅拷贝注释同边界）。
-        return { messages: cached.messages.slice(), truncated: cached.truncated }
+        // 与 scanPiSessions 浅拷贝注释同边界）。u4b：缓存全量基线上按双预算切窗返回。
+        return applyHistoryBudgetWindow(cached.messages, windowOpts)
       }
       // W20 review Fix-2：parentId 不变量检测。pi append-only 下 delta 首条 entry 的
       // parentId 恒等于缓存基线 leafId（上次响应的叶子即本次增量的父）；branch
@@ -303,8 +556,8 @@ export class SessionHistoryReader {
       const newLeafId = inc.data?.leafId ?? null
       this.historyCache.set(sessionId, { leafId: newLeafId, messages: merged, truncated: false })
       console.log(`[session-service] getHistory incremental for ${sessionId}: ${incEntries.length} delta entries, merged ${cached.messages.length} -> ${merged.length} messages`)
-      // merged 已写入缓存，返回浅拷贝与缓存本体分离（终审 minor，同上防御）
-      return { messages: merged.slice(), truncated: false }
+      // merged 已写入缓存（全量基线），返回值按双预算切窗（D4，与缓存本体分离）
+      return applyHistoryBudgetWindow(merged, windowOpts)
     } catch (e) {
       if (isEntryNotFoundError(e)) {
         // D6-4 fallback：since 失效（缓存基线不在 pi 当前 entry 集合）→ 丢缓存 → 全量重拉
@@ -312,34 +565,35 @@ export class SessionHistoryReader {
         this.historyCache.delete(sessionId)
         return undefined
       }
-      // 其他错误：现有降级链（尾读），缓存不动（下次重试仍走 since）
+      // 其他错误：现有降级链（尾读），缓存不动（下次重试仍走 since）。
+      // 字节预算缺省同源 HISTORY_BUDGET.MAX_BYTES（D4 同一预算逻辑，防 20 大 turn 超限 reply）。
       console.warn(`[session-service] getHistory via getEntries(since) failed: ${toErrorMessage(e)}, falling back to tail read`)
-      return await getHistoryTailFromFile(sessionId, this.deps.sessionStore)
+      return await this.tailReadOffline(sessionId, windowOpts)
     }
   }
 
   /**
-   * W4 H4：全量读取 session 历史（加载更多 fallback）。
+   * [u6] getFullHistory 已退役（crash-resilience §3.3 D4 中期：「加载更早」改走
+   * session.history 游标翻页，全量通路删除——游标翻页完全替代）。
    *
-   * 与 getHistory 的区别：getHistory 优先走 RPC（pi client.getEntries entry 树重建），文件路径
-   * fallback 走尾读（W1 tailReadHistory，只加载最近 20 turn）。本方法显式走全量
-   * 文件读取（getHistoryFromFilePath），供前端「加载更多历史」按钮调用（FR-4）。
-   */
-  async getFullHistory(sessionId: string): Promise<Message[]> {
-    // wave:perf-w26（D9-1 消费方分层，plan M-3）：路径解析消费方 force 旁路 TTL——
-    // 刚落盘 session 的「加载更多」在 TTL 窗口内也不静默返回空。
-    const target = this.deps.sessionStore.scanSessions({ force: true }).find((s) => s.id === sessionId)
-    if (!target) return []
-    return getHistoryFromFilePath(target.filePath, this.deps.sessionStore)
-  }
-
-  /**
    * 销毁清理（Facade removeSessionEntry 第 ⑤ 步直调，与 traceSync/projection/records
-   * 的 onSessionDisposed 并列）：清历史重建缓存 + lastLeafId。pi 进程退出后缓存基线
-   * （lastLeafId）不再与新进程的 entry 集合对应，保留只会走 "Entry not found" fallback。
+   * 的 onSessionDisposed 并列）：清历史重建缓存 + lastLeafId——真删除后缓存必须清，
+   * 行为本身正确。但「缓存基线（lastLeafId）跨进程必失效、保留只会走 "Entry not found"
+   * fallback」的旧因果断言已被实测推翻：空闲回收（reclaimManagedSession）刻意不走
+   * removeSessionEntry、保留缓存，P7 真机实测回收→恢复后 leafId 命中空增量短路零重建
+   *（PASS incremental，2026-09-11，证据：packages/runtime/src/__tests__/services/
+   * idle-pi-reclaim-integration.test.ts 阶段 4）。
    */
   onSessionDisposed(sessionId: string): void {
     this.historyCache.delete(sessionId)
+  }
+
+  /**
+   * 清空全部历史重建缓存（u7c：memory-relief 可回收物 ① 的 reader 出口——组合根
+   * watchdog onRelief 接线经 SessionService 透传至此）。返回清除条目数（观测面）。
+   */
+  clearHistoryCache(): number {
+    return this.historyCache.clearAll()
   }
 }
 

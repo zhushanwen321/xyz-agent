@@ -100,7 +100,7 @@ describe('TC1 文件路径换 mapper 后含 compaction/branch/custom_message', (
       msgEntry('e5', 'assistant', '回答'),
     ])
 
-    const messages = await getHistoryFromFilePath(filePath, realStore)
+    const { messages } = await getHistoryFromFilePath(filePath, realStore)
 
     // user + system(compaction) + system(branch) + system(custom) + assistant
     expect(messages).toHaveLength(5)
@@ -192,7 +192,7 @@ describe('TC3 删 __entryId 后 fork 定位', () => {
       msgEntry('fork-e3', 'assistant', '回复'),
     ])
 
-    const messages = await getHistoryFromFilePath(filePath, realStore)
+    const { messages } = await getHistoryFromFilePath(filePath, realStore)
 
     // user + system(compaction) + assistant
     expect(messages.map((m) => m.role)).toEqual(['user', 'system', 'assistant'])
@@ -224,7 +224,7 @@ describe('TC3 删 __entryId 后 fork 定位', () => {
 
 describe('边界用例', () => {
   it('getHistoryFromFilePath: 文件不存在返回空数组（规则 #6 pi 延迟写入）', async () => {
-    const messages = await getHistoryFromFilePath(join(tmpDir, 'nonexistent.jsonl'), realStore)
+    const { messages } = await getHistoryFromFilePath(join(tmpDir, 'nonexistent.jsonl'), realStore)
     expect(messages).toEqual([])
   })
 
@@ -239,7 +239,7 @@ describe('边界用例', () => {
     ]
     writeFileSync(filePath, lines.join('\n'), 'utf-8')
 
-    const messages = await getHistoryFromFilePath(filePath, realStore)
+    const { messages } = await getHistoryFromFilePath(filePath, realStore)
     // 非 object 被 filterObjectEntries 过滤，只处理 2 个 message entry
     expect(messages).toHaveLength(2)
     expect(messages.map((m) => m.role)).toEqual(['user', 'assistant'])

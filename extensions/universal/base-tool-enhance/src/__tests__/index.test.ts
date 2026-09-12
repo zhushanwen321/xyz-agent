@@ -121,7 +121,7 @@ describe("session_start chain: reconcile (M3, reap sunk into runtime by u-bte-re
 					status: "cancelled",
 				}),
 			);
-			// 对账之外尽力补一次 emit（listener 内存视图同步，失败无害）
+			// 对账之外尽力补一次 emit（幂等兜底，纯日志性质；失败无害）
 			expect(pi.events.emit).toHaveBeenCalledWith("pending:unregister", {
 				id: "bt-1700000000-idx001",
 				reason: "cancelled",

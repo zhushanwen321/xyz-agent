@@ -45,8 +45,10 @@ vi.mock('../supervisor/port-file.js', () => ({
   writePortFile: vi.fn(),
 }))
 
-// LivenessMonitor stub：真实类会 setInterval(30s)，fake timers 推进时会误触探针路径
+// LivenessMonitor stub：真实类会 setInterval(30s)，fake timers 推进时会误触探针路径。
+// LIVENESS_FAIL_THRESHOLD 是决策日志 reason 引用的真实常量，需随 mock 导出。
 vi.mock('../supervisor/liveness-probe.js', () => ({
+  LIVENESS_FAIL_THRESHOLD: 3,
   LivenessMonitor: class {
     start(): void {}
     stop(): void {}
@@ -56,7 +58,34 @@ vi.mock('../supervisor/liveness-probe.js', () => ({
 import { RuntimeSupervisor } from '../supervisor/runtime-supervisor.js'
 import { spawnRuntimeProcess } from '../supervisor/process-control.js'
 
+// 杀链决策日志断言面（crash-resilience D6-⑥ 第三处「supervisor 重启决策」）：
+// mock main-logger 捕获 supervisor 写出的结构化决策行（真实现经 initMainLogger 落盘
+// main-<date>.log；本测试只断言字段化决策行为，不触文件 IO）。
+const mainLoggerMocks = vi.hoisted(() => ({
+  info: vi.fn(),
+  warn: vi.fn(),
+  error: vi.fn(),
+  debug: vi.fn(),
+}))
+vi.mock('../logs/main-logger.js', () => ({
+  mainLogger: mainLoggerMocks,
+  readMainLogMaxBytes: vi.fn(() => 50 * 1024 * 1024),
+  initMainLogger: vi.fn(),
+  closeMainLogger: vi.fn(async () => undefined),
+  startMemoryWatermarkTimer: vi.fn(() => () => {}),
+}))
+
 const spawnMock = vi.mocked(spawnRuntimeProcess)
+
+/** 取最近一条指定 action 的决策日志 meta（无则抛错，附已记录的全部行便于定位）。 */
+function decisionMeta(action: string): Record<string, unknown> {
+  const all = [...mainLoggerMocks.info.mock.calls, ...mainLoggerMocks.warn.mock.calls]
+  const hit = all.find((c) => (c[1] as Record<string, unknown>)?.action === action)
+  if (!hit) {
+    throw new Error(`no decision log for action=${action}; logged: ${JSON.stringify(all)}`)
+  }
+  return hit[1] as Record<string, unknown>
+}
 
 /** 取第 n 次 spawn 时传入的 onExit 回调（模拟子进程退出事件） */
 function onExitOf(callIndex: number): (code: number | null) => void {
@@ -106,5 +135,81 @@ describe('RuntimeSupervisor 崩溃自动重启（stopping 残留修复）', () =
     exit(0)
     await vi.advanceTimersByTimeAsync(60_000)
     expect(spawnMock).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe('杀链决策日志（crash-resilience D6-⑥：谁触发/杀谁/为什么，u5b 同形态）', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+  })
+
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  it('process_exit：重启决策行含 action/trigger/attempt/delayMs/target.pid/exitCode/reason', async () => {
+    const sup = new RuntimeSupervisor()
+    await sup.start()
+
+    vi.useFakeTimers()
+    onExitOf(0)(137)
+    const meta = decisionMeta('supervisor_restart')
+    expect(meta.action).toBe('supervisor_restart')
+    expect(meta.trigger).toBe('process_exit')
+    expect(meta.attempt).toBe(1)
+    expect(meta.delayMs).toBe(1_000)
+    expect(meta.target).toEqual({ pid: 12345 })
+    expect(meta.exitCode).toBe(137)
+    expect(String(meta.reason)).toContain('backoff')
+  })
+
+  it('liveness 判死：kill decision（force_kill_halfalive）+ restart decision（liveness trigger）双行', async () => {
+    const sup = new RuntimeSupervisor()
+    await sup.start()
+
+    vi.useFakeTimers()
+    await sup.forceRestartForLiveness()
+    await vi.advanceTimersByTimeAsync(1_000)
+
+    const kill = decisionMeta('supervisor_force_kill_halfalive')
+    expect(kill.trigger).toBe('liveness_unhealthy')
+    expect(kill.target).toEqual({ pid: 12345 })
+    expect(String(kill.reason)).toContain('liveness')
+    const restart = decisionMeta('supervisor_restart')
+    expect(restart.trigger).toBe('liveness_unhealthy')
+    expect(spawnMock).toHaveBeenCalledTimes(2)
+  })
+
+  it('重启用尽：abandon 决策行（attempts=MAX_RESTARTS，reason 指向手动重试）', async () => {
+    // 构造约束（策略语义决定，不能固定 16s/轮）：每轮重启成功即 recordSuccess，
+    // 成功间隔 >STABLE_MS(10s) 会清零计数（16s 退避本身超过稳定窗口）——按真实
+    // delay 序列（1/2/4/8s，累计 <10s 不清零）推进 4 轮把计数推到 4，第 5 轮
+    // 让 start 失败（waitForHealth reject → handleRestartFailure，不经 recordSuccess）
+    // 使计数触顶 5 → abandon 分支。
+    const { waitForHealth } = await import('../supervisor/health-checker.js')
+    // 精确让 attempt5 的 waitForHealth 失败：计数含初始 start（第 1 次）+ attempt1..4
+    // （第 2-5 次），第 6 次调用 = attempt5。计数基准从 start 前开始（Once 队列会被
+    // attempt1 消费，无法精确定位第 6 次）。
+    let healthCalls = 0
+    vi.mocked(waitForHealth).mockImplementation(async () => {
+      healthCalls++
+      if (healthCalls === 6) throw new Error('health timeout')
+    })
+    const sup = new RuntimeSupervisor()
+    await sup.start()
+
+    vi.useFakeTimers()
+    const roundDelays = [1_000, 2_000, 4_000, 8_000]
+    for (let i = 0; i < roundDelays.length; i++) {
+      onExitOf(i)(137)
+      await vi.advanceTimersByTimeAsync(roundDelays[i])
+    }
+    // 第 5 次 exit：attempt5 delay 16s → start 失败 → restart_failure 递归 → 耗尽 abandon
+    onExitOf(4)(137)
+    await vi.advanceTimersByTimeAsync(16_000)
+    const abandon = decisionMeta('supervisor_restart_abandon')
+    expect(abandon.trigger).toBe('restart_failure')
+    expect(abandon.attempts).toBe(5)
+    expect(String(abandon.reason)).toContain('manual retry')
   })
 })

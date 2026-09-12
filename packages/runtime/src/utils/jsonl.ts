@@ -81,7 +81,9 @@ export function readTailEntries(filePath: string): unknown[] | null {
  * 尾读指定字节数的 JSONL 并解析 entry（W1 H4 尾读优化）。
  *
  * readTailEntries 的参数化版本：readTailEntries 固定读 READ_TAIL_BYTES(32KB)，
- * 本函数允许调用方指定字节数（tailReadHistory 需要更大窗口覆盖 20 turn）。
+ * 本函数允许调用方指定字节数。[HISTORICAL] 参数化的原始动机（tailReadHistory 需要
+ * 更大窗口覆盖 20 turn）已随 u4b 逆序分块读（utils/history-reverse-read.ts
+ * 的 forEachReversedLineChunk）退役——现无更大窗口消费方，参数化作为零成本通用形态保留。
  *
  * 同样遵守 INVAR-tail-3/4/5：
  * - offset>0 时首行视为残行丢弃

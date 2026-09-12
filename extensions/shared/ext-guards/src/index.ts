@@ -82,3 +82,163 @@ export function oncePerProcess<T>(key: string, fn: () => T): T {
 export function toErrorMessage(e: unknown): string {
 	return e instanceof Error ? e.message : String(e);
 }
+
+// ── stale ctx 守卫（guardStaleCtx，崩溃韧性 D1）────────────────────────
+//
+// 背景（docs/design/crash-resilience.md §3.3 D1 / §2.2 事件 E1）：pi 的 extension API
+// 对象（pi / ctx）在 session 替换（newSession/fork/switchSession/reload）后被 runner
+// 标记 stale，再调用其方法会**同步抛错**（loader.js/runner.js 的 assertActive，错误文案
+// 含 STALE_CTX_MARKER）。跨 session 生命周期存活的异步回调（compact 的 onComplete/onError、
+// timer tick、延迟回调）在该窗口触碰 pi/ctx = pi 进程被无人接的同步 throw 炸死（9/3 E1
+// 实锤：smart-context compact onError → sendUserMessage → assertActive → exit 1）。
+// GUI 的每次切 session/新建/重载都在制造失效窗口——这是「pi 单独用不崩、套 GUI 就崩」
+// 的核心机制差异。本守卫把 scheduler 已验证的防御范式（G1 代际前置检查 + F2 catch 文案
+// 分诊）泛化成共享原语，接入方不再各自内联。
+
+/**
+ * pi ExtensionRunner 在 session 替换后标记 stale ctx 的错误文案片段。
+ *
+ * pi 语义断言（0.84.4 实装：runner.js `invalidate()` 默认 message + `assertActive()`
+ * `throw new Error(this.staleMessage)`），登记于 docs/pi-semantics.json PS-30
+ * （探针：extensions/shared/ext-guards/src/__tests__/pi-semantics-stale-ctx-wording.test.ts），
+ * 随 C-proc-08 pi 版本门禁自动重验。文案变更时守卫退化为「全部上抛」（回到现状崩溃链路，
+ * 有 pi-crash log 取证，不更危险），门禁报红提示更新分诊词。
+ */
+export const STALE_CTX_MARKER = "stale after session replacement";
+
+/** guardStaleCtx 的可选项。全部可选——最简接入 = 只传 fn（纯文案兜底分诊）。 */
+export interface GuardStaleCtxOptions {
+	/** 观测标签（默认降级日志的前缀，建议 "包名:场景" 形态）。 */
+	label?: string;
+	/**
+	 * 前置代际检查（G1 形态，主判）：返回 true 表示本回调所属的 session 已被替换，
+	 * 守卫完全不执行 fn、直接走 stale 降级。调用方注入，同 scheduler 的模块级代数
+	 * 计数器模式（session_start 递增模块级代数，旧代闭包捕获值 < 模块值即 stale）。
+	 * 缺省（不注入）恒视为非 stale——前置检查关闭，完全依赖错误文案兜底分诊
+	 * （D1 降级语义声明：无代际计数器的接入方合法形态，文案由 PS-30 门禁守卫）。
+	 */
+	isCtxStale?: () => boolean;
+	/**
+	 * stale 降级通知（静默降级的观测点）：前置检查命中时无参调用；fn 抛错被分诊为
+	 * stale 时以捕获的错误为参调用。缺省 = 仅 XYZ_AGENT_DEBUG=1 时写一行 stderr
+	 * debug（本包零依赖、无 pi handle，不能走 extension-logger；需要落盘日志的
+	 * 接入方传入自己的 debugLog/logger.warn）。
+	 */
+	onStale?: (error?: unknown) => void;
+}
+
+/** PromiseLike 判定（in 收窄，无 cast）：守卫据此为 async fn 的 rejection 挂同一分诊。 */
+function isPromiseLike(value: unknown): value is PromiseLike<unknown> {
+	return (
+		typeof value === "object" &&
+		value !== null &&
+		"then" in value &&
+		typeof value.then === "function"
+	);
+}
+
+/** 缺省降级通知：XYZ_AGENT_DEBUG=1 时 stderr 一行（对齐 extensions 包 XYZ_AGENT_DEBUG 惯例）。 */
+function defaultOnStale(label: string, error?: unknown): void {
+	if (process.env.XYZ_AGENT_DEBUG !== "1") return;
+	const detail =
+		error === undefined
+			? "generation check (isCtxStale)"
+			: error instanceof Error
+				? error.message
+				: String(error);
+	const prefix = label === "" ? "" : ` (${label})`;
+	process.stderr.write(`[ext-guards] stale ctx degraded${prefix}: ${detail}\n`);
+}
+
+/**
+ * 包裹「跨 session 生命周期存活的异步回调」：stale ctx 错误静默降级，非 stale 错误
+ * 原样上抛（守卫不吞真实 bug）。消灭 E1 型崩溃源（crash-resilience D1）。
+ *
+ * 语义三段（与 scheduler 范式逐条对应，scheduler/runtime.ts startScheduler 是迁移先例）：
+ *
+ * 1. **前置代际检查（G1 形态，主判）**：`opts.isCtxStale?.()` 为 true → 不执行 fn
+ *    （完全不触碰捕获的 stale pi/ctx）、调 `opts.onStale?.()`（无参）、返回 undefined。
+ * 2. **fn 同步执行 + 同步抛错分诊（F2 形态的同步面）**：错误文案含
+ *    `STALE_CTX_MARKER`（或抛错后 isCtxStale 翻转）→ 调 `opts.onStale?.(error)`、
+ *    返回 undefined；**非 stale 类错误原样上抛**——守卫不吞真实 bug（上抛的崩溃链路
+ *    与 E1 相同，有 pi-crash log 取证 + 错误规格表走 T4 恢复链路）。
+ * 3. **Promise 透传分诊（F2 形态的异步面）**：fn 返回 Promise 时守卫对 rejection
+ *    挂同一分诊——stale → resolve 为 undefined，非 stale → 原样 reject 给调用方的
+ *    `.catch`。返回的是新 Promise 实例（原实例的 rejection 已被守卫接管，调用方不得
+ *    再对原实例挂 then/catch，否则非 stale 错误会走原实例 rejection）。
+ *
+ * 分诊谓词 = `isCtxStale?.() || message.includes(STALE_CTX_MARKER)`，与 scheduler
+ * 迁移前字面一致：代际为主判（不依赖 pi 文案），文案为兜底（覆盖 reload 产生全新
+ * 模块环境后旧闭包代数冻结、isCtxStale 恒 false 的盲区）。
+ *
+ * @param fn 无参回调（闭包捕获业务所需的 pi/ctx——被捕获的是注册时的引用，这正是
+ *   stale 风险的来源，也是守卫存在的理由）
+ * @returns fn 的返回值；stale 降级路径返回 undefined（前置检查命中时 fn 未执行、无
+ *   Promise 可言，故 async 重载的返回类型是 `Promise<R | undefined> | undefined`——
+ *   前置命中即 undefined）。fire-and-forget 调用方直接 `void`；需要接非 stale 错误的
+ *   调用方（scheduler tick 形态）用 `?.catch`——前置命中返回 undefined 时无 rejection
+ *   可接（retireStaleTimer 已由 onStale 执行），非 stale rejection 才会流到 `.catch`。
+ *
+ * @example fire-and-forget 回调（smart-context compact onError）
+ * ```ts
+ * onError: (err) => guardStaleCtx(() => pi.sendUserMessage(...), { label: "smart-context:compact" })
+ * ```
+ * @example timer tick（scheduler 迁移形态：非 stale 错误外层 warn 不终止调度）
+ * ```ts
+ * void guardStaleCtx(() => this.tickScheduler(), { isCtxStale, onStale: () => this.retireStaleTimer() })
+ *   ?.catch((err) => logger.warn("tick error", { error: toErrorMessage(err) }));
+ * ```
+ */
+export function guardStaleCtx<R>(
+	fn: () => Promise<R>,
+	opts?: GuardStaleCtxOptions,
+): Promise<R | undefined> | undefined;
+export function guardStaleCtx<R>(fn: () => R, opts?: GuardStaleCtxOptions): R | undefined;
+export function guardStaleCtx(fn: () => unknown, opts?: GuardStaleCtxOptions): unknown {
+	const label = opts?.label ?? "";
+	const isCtxStale = opts?.isCtxStale;
+	const onStale = opts?.onStale;
+	const isStale = (): boolean => isCtxStale?.() ?? false;
+	// 与 scheduler 迁移前字面一致的分诊谓词：代际主判 || 文案兜底
+	const triage = (error: unknown): boolean =>
+		isStale() || toErrorMessage(error).includes(STALE_CTX_MARKER);
+	const reportStale = (error?: unknown): void => {
+		if (onStale !== undefined) {
+			// 前置命中（无捕获错误）无参调用；文案分诊命中携带错误——保持 JSDoc 契约
+			if (error === undefined) onStale();
+			else onStale(error);
+		} else {
+			defaultOnStale(label, error);
+		}
+	};
+
+	// 1. 前置代际检查：stale 则完全不触碰捕获的 pi/ctx（P-guard-holds 的守卫第一道）
+	if (isStale()) {
+		reportStale();
+		return undefined;
+	}
+
+	// 2. fn 同步执行 + 同步抛错分诊
+	let result: unknown;
+	try {
+		result = fn();
+	} catch (error) {
+		if (triage(error)) {
+			reportStale(error);
+			return undefined;
+		}
+		throw error;
+	}
+
+	// 3. async fn：rejection 走同一分诊（stale → resolve undefined；非 stale → 原样 reject）
+	if (isPromiseLike(result)) {
+		return result.then(undefined, (error: unknown) => {
+			if (triage(error)) {
+				reportStale(error);
+				return undefined;
+			}
+			throw error;
+		});
+	}
+	return result;
+}

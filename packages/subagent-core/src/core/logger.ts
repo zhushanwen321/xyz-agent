@@ -13,7 +13,7 @@
 
 import { getHostServices } from "./host-services.ts";
 
-/** 日志级别。对齐 @zhushanwen/pi-extension-logger 的 LogLevel（三值，无 info）。 */
+/** 日志级别。级别集合对齐 pi-extension-logger（其 LogLevel 为包内部类型、含 info 四值；实例 API 仅 debug/warn/error 三方法，core facade 据此收窄为三值）。 */
 export type LogLevel = "debug" | "warn" | "error";
 
 /** core logger 接口。与 pi-extension-logger 的 ExtensionLogger 结构兼容——

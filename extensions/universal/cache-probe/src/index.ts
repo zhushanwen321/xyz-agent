@@ -13,8 +13,8 @@
  *    toolsSent（tools 数组），与 pending 合并对比，变化/基线时 appendEntry
  *  - agent_end：turn 内无 provider 请求则丢弃 pending（无请求即无归因价值）
  *
- * seq = 进程内 before_agent_start 触发计数（无论是否写 entry 都递增），
- * 脚本靠 seq 跳跃区分「无变化 turn」与「漏记」。
+ * seq = 进程内 before_agent_start 触发计数，随 entry 落盘供人工排序诊断；
+ * 当前无自动消费方（analyze.py 不读 seq）。
  *
  * Fail-safe：handler 全程捕获，异常时写 error entry（缺口可见非静默）并重置为
  * 需基线状态；appendEntry 自身失败仅 stderr 诊断，绝不阻塞请求。

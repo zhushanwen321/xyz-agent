@@ -57,6 +57,37 @@ describe('logger', () => {
     }
   }
 
+  /**
+   * 等待**精确文件名**的文件内容包含 substr（写流 flush 是异步的，固定 sleep 满载下不可靠）。
+   *
+   * 与 waitForLogContent 的区别：prefix startsWith 匹配在「主文件 + .1 滚动」并存时无法
+   * 区分两者（`runtime-<date>.log` 前缀同时命中 `.log.1`，且 readdir 顺序稳定时 find 恒
+   * 返回同一文件，内容不匹配会死等到超时），size 轮转断言需要锁定主文件本体。
+   * 文件尚未创建视为未就绪继续轮询；deadline 默认 5s、间隔 25ms。
+   */
+  async function waitForNamedFileContent(
+    dir: string,
+    fileName: string,
+    substr: string,
+    deadlineMs = 5000,
+  ): Promise<string> {
+    const deadline = Date.now() + deadlineMs
+    let lastContent = ''
+    for (;;) {
+      try {
+        lastContent = readFileSync(join(dir, fileName), 'utf-8')
+        if (lastContent.includes(substr)) return lastContent
+      } catch { /* 文件尚未创建（如轮转 rename 后 reopen 前），继续轮询 */ }
+      if (Date.now() >= deadline) {
+        throw new Error(
+          `waitForNamedFileContent timeout (${deadlineMs}ms): ${fileName} in ${dir} lacks ${JSON.stringify(substr)}; `
+          + `actual content: ${JSON.stringify(lastContent)}`,
+        )
+      }
+      await new Promise((r) => setTimeout(r, 25))
+    }
+  }
+
   beforeEach(async () => {
     // 动态 import logger（每次 fresh），但 logger 是模块级单例，需 reset。
     // 用 vi.resetModules 让每个测试拿到干净的模块状态。
@@ -197,7 +228,7 @@ describe('logger', () => {
     // ENOTEMPTY 竞争（对齐 src/__tests__/logger-rotation.test.ts 的 closeLogger 屏障先例）。
     await closeLogger()
     const files = readdirSync(logsDir).filter((f) => f.startsWith(`runtime-${today}`))
-    // 应该有主文件 + .1 滚动文件
+    // 应该有主文件 + .1 滚动文件（多轮轮转 ≥1 次 rename 已随上方等待完成）
     expect(files.some((f) => f.endsWith('.log.1'))).toBe(true)
     expect(files.some((f) => f.endsWith('.log') && !f.endsWith('.1'))).toBe(true)
     // 主文件（未滚动段）严格小于总写入量：轮转把早期数据切进了 .1（.1 段 ≥ 阈值，非空）。

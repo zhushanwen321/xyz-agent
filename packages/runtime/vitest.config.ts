@@ -35,6 +35,9 @@ const REAL_PI_TESTS = [
   // u6（composer-multi-skill-injection）：PS-22 动态探针——真实 pi RPC /skill: 展开 vs
   // skill-injector golden diff（探针族首个真实进程成员，import spawnPiFixture 被守卫强制登记）
   'src/infra/pi/__tests__/pi-semantics-skill-expansion-golden.test.ts',
+  // u4（idle-pi-reclamation）：端到端真进程集成——真 pm spawn pi + 真 reaper 回收 + restore +
+  // P7 收益门 + P3 广播流连续（真 pi RPC 轮次，skip 口径同 equivalence；漏加会落回 main 满并行组）
+  'src/__tests__/services/idle-pi-reclaim-integration.test.ts',
 ] as const
 
 export default defineConfig({

@@ -9,9 +9,10 @@
  * [HISTORICAL] persistSessionName / patchSessionCwd 转发已随 W11 删除（绝对写规则：
  * xyz 对 pi session JSONL 的直写归零，分别迁 pi RPC 与 restore tmp 管线）。
  */
-import type { ISessionStore, ScannedSessionMeta, SessionOutcome, SessionHeader, SessionEndSidecarMeta, RebuiltHistory, ScanSessionsOptions } from '../../services/ports/session.js'
+import type { ISessionStore, ScannedSessionMeta, SessionOutcome, SessionHeader, SessionEndSidecarMeta, RebuiltHistory, ScanSessionsOptions, SessionJsonlOversizeMark, SessionJsonlLineTransform } from '../../services/ports/session.js'
 import type { Message, SegmentsMetadataFile } from '@xyz-agent/shared'
-import { readFileSync } from 'node:fs'
+import { READ_PRECHECK_MAX_BYTES } from '@xyz-agent/shared'
+import { readFileSync, statSync } from 'node:fs'
 import type { PiSessionEntry } from './pi-protocol.js'
 import {
   scanPiSessions,
@@ -27,6 +28,7 @@ import {
   readSessionEndMeta as readSessionEndMetaInfra,
   persistHandoffSidecar,
 } from './session-file-utils.js'
+import { normalizeSessionFileStreamingInPlace } from './session-file-streaming.js'
 import { refreshAll } from './pi-provider-store.js'
 import { convertPiHistory } from './message-converter.js'
 import { rebuildHistoryFromEntries } from './entry-tree-builder.js'
@@ -89,13 +91,30 @@ export class PiSessionStore implements ISessionStore {
     return readFirstJsonlLine(filePath)
   }
 
-  readSessionJsonlText(filePath: string): string | null {
+  readSessionJsonlText(filePath: string): string | SessionJsonlOversizeMark | null {
+    let size: number
     try {
-      return readFileSync(filePath, 'utf-8')
+      size = statSync(filePath).size
     } catch {
       // 规则 6：pi 延迟写入窗口内文件不存在是常态（非错误），空态判定归调用方
       return null
     }
+    // D5④（crash-resilience §3.3）：超读取预检阈值不读全文——返回明确 oversize 标记，
+    // 不返回 null（「文件过大」≠「文件缺失」，混淆会把超大 Trace 误显示为未落盘空态）。
+    if (size > READ_PRECHECK_MAX_BYTES) {
+      return { oversize: true, bytes: size, maxBytes: READ_PRECHECK_MAX_BYTES }
+    }
+    try {
+      return readFileSync(filePath, 'utf-8')
+    } catch {
+      return null
+    }
+  }
+
+  normalizeSessionFileStreaming(filePath: string, transformLine: SessionJsonlLineTransform, chunkBytes?: number): void {
+    // D5⑤ 变换腿的 IO 骨架委托（infra 同层；transformLine 是 services 层注入的纯回调，
+    // IO 全在本实现内——C-comm-03 分层通道）
+    normalizeSessionFileStreamingInPlace(filePath, transformLine, chunkBytes)
   }
 
   readSessionEndMeta(filePath: string): SessionEndSidecarMeta | null {

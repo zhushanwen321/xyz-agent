@@ -11,7 +11,8 @@
  * 业务逻辑在 services，经 handler 调用；本类不含领域计算，只做路由与编排。
  */
 import type { WebSocket as WsType } from 'ws'
-import type { ClientMessage, ClientMessageType, ServerMessage, SkillCacheScope } from '@xyz-agent/shared'
+import type { ClientMessage, ClientMessageType, RollingRestartStatusPayload, ServerMessage, SkillCacheScope } from '@xyz-agent/shared'
+import { OUTBOUND_FRAME_WARN_BYTES, OUTBOUND_FRAME_TRUNCATE_BYTES } from '@xyz-agent/shared'
 import type { SessionManagerAction } from '@xyz-agent/extension-protocol'
 import type { ISessionService, IConfigService, IModelService, IMessageBroker, IExtensionService, IPluginService, IAuthService } from '../interfaces.js'
 
@@ -102,6 +103,12 @@ export interface RuntimeServerOptionalServices {
   importService?: ImportService
   /** 生成指标服务（composer-gen-stats D4）：session.getGenStats 恢复腿路由依赖。可选：未注入时该 case 报 unsupported。 */
   genStats?: GenStatsService
+  /**
+   * reply 通路出站守卫的 session 文件路径解析器（u8 与 push 通路对称接线：push 经
+   * MessageBus 构造注入，reply 经 broker 构造注入，组合根两处共用同一 resolver 实例）。
+   * 可选：未注入时 reply 超限占位文案退化为「（见 runtime 日志）」，阈值仍用默认常量。
+   */
+  replyGuardResolver?: (sessionId: string) => string | null | undefined
 }
 
 export class RuntimeServer implements IMessageBroker {
@@ -153,6 +160,12 @@ export class RuntimeServer implements IMessageBroker {
   private sessionManagerHandler!: SessionManagerHandler
 
   /**
+   * u7c（crash-forensics D5）：滚动重启状态只读查询 provider（组合根 setRollingRestartStatusProvider
+   * 注入；未注入时路由回 idle 形态——renderer 拉到 idle 即「横幅不重现」，协议注释同源）。
+   */
+  private rollingRestartStatusProvider?: () => RollingRestartStatusPayload
+
+  /**
    * D1: 中央分发表。此前是 55 行 switch，每个 case 纯转发、零逻辑。
    * 改成 Map<ClientMessageType, (msg,ws)=>Promise<unknown>> 后：
    * - 加新消息类型只改一个 handler 的 handles 清单，不碰路由（开闭原则）。
@@ -192,9 +205,18 @@ export class RuntimeServer implements IMessageBroker {
    */
   setServices(session: ISessionService, config: IConfigService, model: IModelService, optional: RuntimeServerOptionalServices = {}): void {
     this.assignServices(session, config, model, optional)
-    this.createBroker(optional.appInfo)
+    this.createBroker(optional.appInfo, optional.replyGuardResolver)
     this.assembleHandlers(optional)
     this.routes = this.buildRoutes()
+  }
+
+  /**
+   * u7c（crash-forensics D5）：注入滚动重启状态只读查询 provider（rollingRestart.status
+   * 路由消费；u7b 已钉协议类型，transport 路由面由本 setter 补挂——只读 RPC 供 renderer
+   * 重连/刷新后拉取恢复横幅，「broadcast 时序竞争」教训）。
+   */
+  setRollingRestartStatusProvider(provider: () => RollingRestartStatusPayload): void {
+    this.rollingRestartStatusProvider = provider
   }
 
   /** 阶段 1：核心 service 字段装配（含 D6a onSessionDestroyed 汇聚清理注册）。 */
@@ -231,7 +253,10 @@ export class RuntimeServer implements IMessageBroker {
   }
 
   /** 阶段 2：broker 构造（依赖 services + 连接池，appInfo 缺省 unknown 占位）。 */
-  private createBroker(appInfo: RuntimeServerOptionalServices['appInfo']): void {
+  private createBroker(
+    appInfo: RuntimeServerOptionalServices['appInfo'],
+    replyGuardResolver?: RuntimeServerOptionalServices['replyGuardResolver'],
+  ): void {
     this.broker = new ServerMessageBroker(this.conn, {
       sessionService: this.sessionService,
       configService: this.configService,
@@ -240,7 +265,13 @@ export class RuntimeServer implements IMessageBroker {
       extensionService: this.extensionService,
       projectRoot: this.projectRoot,
       appInfo: appInfo ?? { appVersion: 'unknown', piVersion: 'unknown' },
-    })
+    // u8 对称接线：resolver 存在时传第三参（阈值仍用默认常量）；缺省时不传（broker 构造
+    // 默认值——阈值同为默认常量、resolver 为 undefined），测试默认行为不变。
+    }, replyGuardResolver !== undefined ? {
+      warnBytes: OUTBOUND_FRAME_WARN_BYTES,
+      truncateBytes: OUTBOUND_FRAME_TRUNCATE_BYTES,
+      resolveSessionFilePath: replyGuardResolver,
+    } : undefined)
   }
 
   /** 阶段 3：handler 组装——messaging 共享实现 + 核心/可选/SessionManager 三批，构造顺序不变。 */
@@ -461,6 +492,10 @@ export class RuntimeServer implements IMessageBroker {
     const presetHandler = this.presetMessageHandler
     return new Map([
       ['ping', (msg, ws) => this.broker.reply(ws, msg.id, 'pong', {})],
+      // u7c（crash-forensics D5）：滚动重启状态只读查询（与 request 同名 reply；provider
+      // 缺席回 idle 形态——renderer 拉到 idle 即「横幅不重现」，见 RollingRestartStatusPayload）。
+      ['rollingRestart.status', (msg, ws) => this.broker.reply(ws, msg.id, 'rollingRestart.status',
+        this.rollingRestartStatusProvider?.() ?? { state: 'idle', inflight: { inFlight: null } })],
       ['session.compact', (msg, ws) => this.sessionHandler.handleSessionCompact(msg as Extract<ClientMessage, { type: 'session.compact' }>, ws)],
       ...this.sessionHandler.handles.map(t => [t, (msg: ClientMessage, ws: WsType) => this.sessionHandler.handleSessionMessage(msg, ws)] as const),
       ...this.extensionHandler.handles.map(t => [t, (msg: ClientMessage, ws: WsType) => this.extensionHandler.handleExtensionMessage(msg, ws)] as const),

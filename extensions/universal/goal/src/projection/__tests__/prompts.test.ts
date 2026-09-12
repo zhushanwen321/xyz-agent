@@ -1,8 +1,8 @@
 /**
- * projection/prompts.ts 测试 — prompt 生成函数 + formatBudget 2 样式
+ * projection/prompts.test.ts 测试 — prompt 生成函数 + budget 片段格式化
  *
  * 覆盖：
- * - formatBudget 2 种 style（percent/line）
+ * - formatBudgetPercent / formatBudgetLine
  * - escapeXmlText（XML 注入防护）
  * - continuationPrompt / budgetLimitPrompt / objectiveUpdatedPrompt / contextInjectionPrompt
  *
@@ -19,7 +19,8 @@ import {
 	contextInjectionPrompt,
 	continuationPrompt,
 	escapeXmlText,
-	formatBudget,
+	formatBudgetLine,
+	formatBudgetPercent,
 	objectiveUpdatedPrompt,
 } from "../prompts";
 
@@ -32,30 +33,37 @@ function makeState(overrides?: Partial<GoalRuntimeState>): GoalRuntimeState {
 	};
 }
 
-// ── formatBudget 2 样式（FR-3.4 唯一收敛出口）────────
+// ── budget 片段格式化 ────────────────────────────────
 
-describe("formatBudget — 2 styles (FR-3.4)", () => {
-	it("percent: Token 百分比", () => {
+describe("formatBudgetPercent", () => {
+	it("有预算 → Token 百分比", () => {
 		const state = makeState({
 			budget: { tokenBudget: 1000 },
 			tokensUsed: 500,
 		});
-		const out = formatBudget(state, "percent");
+		const out = formatBudgetPercent(state);
 		expect(out).toContain("Token: 50%");
 	});
 
-	it("percent: 无预算 → 空字符串", () => {
+	it("无预算 → 空字符串", () => {
 		const state = makeState();
-		expect(formatBudget(state, "percent")).toBe("");
+		expect(formatBudgetPercent(state)).toBe("");
 	});
+});
 
-	it("line: 剩余/总量格式", () => {
+describe("formatBudgetLine", () => {
+	it("有预算 → 剩余/总量格式", () => {
 		const state = makeState({
 			budget: { tokenBudget: 1000 },
 			tokensUsed: 300,
 		});
-		const out = formatBudget(state, "line");
+		const out = formatBudgetLine(state);
 		expect(out).toContain("Tokens: 700/1000");
+	});
+
+	it("无预算 → 空字符串", () => {
+		const state = makeState();
+		expect(formatBudgetLine(state)).toBe("");
 	});
 });
 

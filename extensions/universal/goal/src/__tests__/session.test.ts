@@ -31,8 +31,6 @@ function makeFakeSessionPort(entries: SessionEntryLike[]): SessionPort {
 	return {
 		// 模拟 Pi SDK filter-copy 语义：返回新数组，避免测试掩盖 splice GC 失效
 		getEntries: () => entries.slice(),
-		getContextUsage: () => null,
-		signal: undefined,
 	};
 }
 

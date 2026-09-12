@@ -1,110 +1,150 @@
 /**
  * derivePanelView 全输入组合表测试（设计 D1 / 验收 V5）。
  *
- * 组合空间：sessionId×2 × hasMessages×2 × isSessionDead×2 × isTraceView×2 ×
- * hasAskUserRequest×2 × isFlowActive×2 = 64 组合，嵌套循环逐一断言。
+ * 组合空间：sessionId×2 × hasMessages×2 × isSessionDead×2 × isSessionRespawning×2 ×
+ * isTraceView×2 × hasAskUserRequest×2 × isFlowActive×2 = 128 组合，嵌套循环逐一断言。
  *
  * 期望值来自独立手推的字面量表（EXPECTED），与实现零共享逻辑——防止「用被测函数
  * 自身推期望」的同义反复。hasMessages 不影响 kind（见 panel-view.ts 模块头注释），
- * 不进期望 key，同一 key 在两个 hasMessages 值下各断言一次（恰 64 次）。
+ * 不进期望 key，同一 key 在两个 hasMessages 值下各断言一次（恰 128 次）。
  *
  * 期望表推导依据（D1 规则，非实现）：
- * - sessionId 非空：dead > trace > conversation；isFlowActive 不参与（landing 要求无 session）。
- *   dead=1 → dead（吞掉 trace/ask-user/flow，W6「dead 不应答」）；
- *   dead=0,trace=1 → trace（保留输入面，session-trace 契约「composer 保留，不打断对话
- *   能力」，D5），input 按 hasAskUserRequest 互斥；
- *   dead=0,trace=0 → conversation，input 按 hasAskUserRequest 互斥。
- * - sessionId 空：dead/trace 前置约束不成立、conversation 不可达、ask-user 无处挂靠；
- *   isFlowActive=1 → landing，否则 empty{sessionId:null}。
+ * - sessionId 非空：dead（respawning 抑制）> trace > conversation；isFlowActive 不参与
+ *   （landing 要求无 session）。
+ *   dead=1,respawning=0 → dead（吞掉 trace/ask-user/flow，W6「dead 不应答」）；
+ *   dead=1,respawning=1 → respawning 抑制 dead（crash-resilience T4：自动恢复窗口
+ *   对话保持可用形态），后续按 dead=0 规则：trace=1 → trace（保留输入面，session-trace
+ *   契约「composer 保留，不打断对话能力」，D5）；trace=0 → conversation；input 按
+ *   hasAskUserRequest 互斥；
+ *   dead=0 → respawning 无死可抑制（no-op），同上 trace/conversation 规则。
+ * - sessionId 空：dead/respawning/trace 前置约束不成立、conversation 不可达、ask-user
+ *   无处挂靠；isFlowActive=1 → landing，否则 empty{sessionId:null}。
  */
 import { describe, it, expect } from 'vitest'
 import { derivePanelView } from '../panel-view'
 import type { PanelView } from '../panel-view'
 
-/** 期望 key：`${sessionId ?? 'null'}|${dead}${trace}${ask}${flow}`（1/0 编码） */
+/** 期望 key：`${sessionId ?? 'null'}|${dead}${respawning}${trace}${ask}${flow}`（1/0 编码） */
 const EXPECTED: Record<string, PanelView> = {
-  // ── sessionId='s1'：dead 优先吞掉 trace / ask-user / flow（2^3 = 8 格）──
-  's1|1000': { kind: 'dead', sessionId: 's1' },
-  's1|1001': { kind: 'dead', sessionId: 's1' },
-  's1|1010': { kind: 'dead', sessionId: 's1' },
-  's1|1011': { kind: 'dead', sessionId: 's1' },
-  's1|1100': { kind: 'dead', sessionId: 's1' },
-  's1|1101': { kind: 'dead', sessionId: 's1' },
-  's1|1110': { kind: 'dead', sessionId: 's1' },
-  's1|1111': { kind: 'dead', sessionId: 's1' },
-  // ── trace 次优先（吞掉 flow；input 同 conversation 规则按 hasAskUserRequest 互斥，
-  //    trace 保留输入面 = session-trace 契约「composer 保留，不打断对话能力」，2^2 = 4 格）──
-  's1|0100': { kind: 'trace', sessionId: 's1', input: 'composer' },
-  's1|0101': { kind: 'trace', sessionId: 's1', input: 'composer' },
-  's1|0110': { kind: 'trace', sessionId: 's1', input: 'ask-user' },
-  's1|0111': { kind: 'trace', sessionId: 's1', input: 'ask-user' },
+  // ── sessionId='s1'，dead=1 respawning=0：dead 优先吞掉 trace / ask-user / flow（2^3 = 8 格）──
+  's1|10000': { kind: 'dead', sessionId: 's1' },
+  's1|10001': { kind: 'dead', sessionId: 's1' },
+  's1|10010': { kind: 'dead', sessionId: 's1' },
+  's1|10011': { kind: 'dead', sessionId: 's1' },
+  's1|10100': { kind: 'dead', sessionId: 's1' },
+  's1|10101': { kind: 'dead', sessionId: 's1' },
+  's1|10110': { kind: 'dead', sessionId: 's1' },
+  's1|10111': { kind: 'dead', sessionId: 's1' },
+  // ── sessionId='s1'，dead=1 respawning=1：respawning 抑制 dead（T4），按 trace > conversation 规则（8 格）──
+  's1|11000': { kind: 'conversation', sessionId: 's1', input: 'composer' },
+  's1|11001': { kind: 'conversation', sessionId: 's1', input: 'composer' },
+  's1|11010': { kind: 'conversation', sessionId: 's1', input: 'ask-user' },
+  's1|11011': { kind: 'conversation', sessionId: 's1', input: 'ask-user' },
+  's1|11100': { kind: 'trace', sessionId: 's1', input: 'composer' },
+  's1|11101': { kind: 'trace', sessionId: 's1', input: 'composer' },
+  's1|11110': { kind: 'trace', sessionId: 's1', input: 'ask-user' },
+  's1|11111': { kind: 'trace', sessionId: 's1', input: 'ask-user' },
+  // ── sessionId='s1'，dead=0 respawning=0：trace 次优先（吞掉 flow；input 按 hasAskUserRequest
+  //    互斥，trace 保留输入面 = session-trace 契约「composer 保留，不打断对话能力」，2^2 = 4 格）──
+  's1|00100': { kind: 'trace', sessionId: 's1', input: 'composer' },
+  's1|00101': { kind: 'trace', sessionId: 's1', input: 'composer' },
+  's1|00110': { kind: 'trace', sessionId: 's1', input: 'ask-user' },
+  's1|00111': { kind: 'trace', sessionId: 's1', input: 'ask-user' },
   // ── conversation：sessionId 非空即成立，input 由 hasAskUserRequest 互斥决定（2^2 = 4 格）──
-  's1|0000': { kind: 'conversation', sessionId: 's1', input: 'composer' },
-  's1|0001': { kind: 'conversation', sessionId: 's1', input: 'composer' },
-  's1|0010': { kind: 'conversation', sessionId: 's1', input: 'ask-user' },
-  's1|0011': { kind: 'conversation', sessionId: 's1', input: 'ask-user' },
-  // ── sessionId=null：dead/trace/ask 前置约束不成立，仅 isFlowActive 分流（2^3 = 8 格 × 2 = 16）──
-  'null|0000': { kind: 'empty', sessionId: null },
-  'null|0001': { kind: 'landing' },
-  'null|0010': { kind: 'empty', sessionId: null },
-  'null|0011': { kind: 'landing' },
-  'null|0100': { kind: 'empty', sessionId: null },
-  'null|0101': { kind: 'landing' },
-  'null|0110': { kind: 'empty', sessionId: null },
-  'null|0111': { kind: 'landing' },
-  'null|1000': { kind: 'empty', sessionId: null },
-  'null|1001': { kind: 'landing' },
-  'null|1010': { kind: 'empty', sessionId: null },
-  'null|1011': { kind: 'landing' },
-  'null|1100': { kind: 'empty', sessionId: null },
-  'null|1101': { kind: 'landing' },
-  'null|1110': { kind: 'empty', sessionId: null },
-  'null|1111': { kind: 'landing' },
+  's1|00000': { kind: 'conversation', sessionId: 's1', input: 'composer' },
+  's1|00001': { kind: 'conversation', sessionId: 's1', input: 'composer' },
+  's1|00010': { kind: 'conversation', sessionId: 's1', input: 'ask-user' },
+  's1|00011': { kind: 'conversation', sessionId: 's1', input: 'ask-user' },
+  // ── sessionId='s1'，dead=0 respawning=1：respawning 无死可抑制（no-op），结果同上 8 格 ──
+  's1|01100': { kind: 'trace', sessionId: 's1', input: 'composer' },
+  's1|01101': { kind: 'trace', sessionId: 's1', input: 'composer' },
+  's1|01110': { kind: 'trace', sessionId: 's1', input: 'ask-user' },
+  's1|01111': { kind: 'trace', sessionId: 's1', input: 'ask-user' },
+  's1|01000': { kind: 'conversation', sessionId: 's1', input: 'composer' },
+  's1|01001': { kind: 'conversation', sessionId: 's1', input: 'composer' },
+  's1|01010': { kind: 'conversation', sessionId: 's1', input: 'ask-user' },
+  's1|01011': { kind: 'conversation', sessionId: 's1', input: 'ask-user' },
+  // ── sessionId=null：dead/respawning/trace/ask 前置约束不成立，仅 isFlowActive 分流（2^4 = 16 格）──
+  'null|00000': { kind: 'empty', sessionId: null },
+  'null|00001': { kind: 'landing' },
+  'null|00010': { kind: 'empty', sessionId: null },
+  'null|00011': { kind: 'landing' },
+  'null|00100': { kind: 'empty', sessionId: null },
+  'null|00101': { kind: 'landing' },
+  'null|00110': { kind: 'empty', sessionId: null },
+  'null|00111': { kind: 'landing' },
+  'null|01000': { kind: 'empty', sessionId: null },
+  'null|01001': { kind: 'landing' },
+  'null|01010': { kind: 'empty', sessionId: null },
+  'null|01011': { kind: 'landing' },
+  'null|01100': { kind: 'empty', sessionId: null },
+  'null|01101': { kind: 'landing' },
+  'null|01110': { kind: 'empty', sessionId: null },
+  'null|01111': { kind: 'landing' },
+  'null|10000': { kind: 'empty', sessionId: null },
+  'null|10001': { kind: 'landing' },
+  'null|10010': { kind: 'empty', sessionId: null },
+  'null|10011': { kind: 'landing' },
+  'null|10100': { kind: 'empty', sessionId: null },
+  'null|10101': { kind: 'landing' },
+  'null|10110': { kind: 'empty', sessionId: null },
+  'null|10111': { kind: 'landing' },
+  'null|11000': { kind: 'empty', sessionId: null },
+  'null|11001': { kind: 'landing' },
+  'null|11010': { kind: 'empty', sessionId: null },
+  'null|11011': { kind: 'landing' },
+  'null|11100': { kind: 'empty', sessionId: null },
+  'null|11101': { kind: 'landing' },
+  'null|11110': { kind: 'empty', sessionId: null },
+  'null|11111': { kind: 'landing' },
 }
 
 const SESSION_IDS: readonly (string | null)[] = ['s1', null]
 const BOOLS: readonly boolean[] = [true, false]
 
-describe('derivePanelView 全组合表（2^6 = 64）', () => {
-  it('期望表恰 32 条目（5 个有效维度；hasMessages 不进 key，防表缺项/多项）', () => {
-    expect(Object.keys(EXPECTED)).toHaveLength(32)
+describe('derivePanelView 全组合表（2^7 = 128）', () => {
+  it('期望表恰 64 条目（6 个有效维度 2^6；hasMessages 不进 key，防表缺项/多项）', () => {
+    expect(Object.keys(EXPECTED)).toHaveLength(64)
   })
 
-  it('64 组合逐一断言（同 key 在两个 hasMessages 值下各断言一次）', () => {
+  it('128 组合逐一断言（同 key 在两个 hasMessages 值下各断言一次）', () => {
     let count = 0
     for (const sessionId of SESSION_IDS) {
       for (const hasMessages of BOOLS) {
         for (const isSessionDead of BOOLS) {
-          for (const isTraceView of BOOLS) {
-            for (const hasAskUserRequest of BOOLS) {
-              for (const isFlowActive of BOOLS) {
-                const key = `${sessionId ?? 'null'}|${isSessionDead ? '1' : '0'}${isTraceView ? '1' : '0'}${hasAskUserRequest ? '1' : '0'}${isFlowActive ? '1' : '0'}`
-                const expected = EXPECTED[key]
-                expect(expected, `期望表缺项: key=${key}`).toBeDefined()
-                const actual = derivePanelView({
-                  sessionId,
-                  hasMessages,
-                  isSessionDead,
-                  isTraceView,
-                  hasAskUserRequest,
-                  isFlowActive,
-                })
-                expect(
-                  actual,
-                  `组合 key=${key} hasMessages=${hasMessages} 派生不符`,
-                ).toEqual(expected)
-                count++
+          for (const isSessionRespawning of BOOLS) {
+            for (const isTraceView of BOOLS) {
+              for (const hasAskUserRequest of BOOLS) {
+                for (const isFlowActive of BOOLS) {
+                  const key = `${sessionId ?? 'null'}|${isSessionDead ? '1' : '0'}${isSessionRespawning ? '1' : '0'}${isTraceView ? '1' : '0'}${hasAskUserRequest ? '1' : '0'}${isFlowActive ? '1' : '0'}`
+                  const expected = EXPECTED[key]
+                  expect(expected, `期望表缺项: key=${key}`).toBeDefined()
+                  const actual = derivePanelView({
+                    sessionId,
+                    hasMessages,
+                    isSessionDead,
+                    isSessionRespawning,
+                    isTraceView,
+                    hasAskUserRequest,
+                    isFlowActive,
+                  })
+                  expect(
+                    actual,
+                    `组合 key=${key} hasMessages=${hasMessages} 派生不符`,
+                  ).toEqual(expected)
+                  count++
+                }
               }
             }
           }
         }
       }
     }
-    expect(count, '迭代数必须恰为 64（循环维度写错在此暴露）').toBe(64)
+    expect(count, '迭代数必须恰为 128（循环维度写错在此暴露）').toBe(128)
   })
 })
 
-describe('回归用例（V5 指定三项 + trace 输入面专项）', () => {
+describe('回归用例（V5 指定三项 + trace 输入面专项 + T4 respawning 抑制）', () => {
   it('① 有消息 + isFlowActive → conversation（landing 不可表达，§2.2 根因症状核心回归）', () => {
     // 为什么：现行判据 isLandingView = !sessionId || flow.state==='landing'——flow 单例卡
     // landing 时，有消息会话的 landing 判据仍成立，turn 结束瞬间（isSessionActive 翻 false）
@@ -114,6 +154,7 @@ describe('回归用例（V5 指定三项 + trace 输入面专项）', () => {
       sessionId: 's1',
       hasMessages: true,
       isSessionDead: false,
+      isSessionRespawning: false,
       isTraceView: false,
       hasAskUserRequest: false,
       isFlowActive: true,
@@ -129,6 +170,7 @@ describe('回归用例（V5 指定三项 + trace 输入面专项）', () => {
       sessionId: 's1',
       hasMessages: true,
       isSessionDead: true,
+      isSessionRespawning: false,
       isTraceView: false,
       hasAskUserRequest: true,
       isFlowActive: false,
@@ -145,6 +187,7 @@ describe('回归用例（V5 指定三项 + trace 输入面专项）', () => {
       sessionId: 's1',
       hasMessages: false,
       isSessionDead: false,
+      isSessionRespawning: false,
       isTraceView: false,
       hasAskUserRequest: false,
       isFlowActive: false,
@@ -155,6 +198,7 @@ describe('回归用例（V5 指定三项 + trace 输入面专项）', () => {
       sessionId: 's1',
       hasMessages: false,
       isSessionDead: false,
+      isSessionRespawning: false,
       isTraceView: false,
       hasAskUserRequest: true,
       isFlowActive: false,
@@ -171,10 +215,28 @@ describe('回归用例（V5 指定三项 + trace 输入面专项）', () => {
       sessionId: 's1',
       hasMessages: true,
       isSessionDead: false,
+      isSessionRespawning: false,
       isTraceView: true,
       hasAskUserRequest: true,
       isFlowActive: false,
     })
     expect(view).toEqual({ kind: 'trace', sessionId: 's1', input: 'ask-user' })
+  })
+
+  it('⑤ dead + respawning → conversation（T4：自动恢复窗口不进终态页，composer 保持）', () => {
+    // 为什么：pi 意外退出后 runtime 5s 自动 respawn（crash-resilience D7），恢复窗口内
+    // UI 进 dead 终态页会让 composer 卸载 + 恢复提示条永不呈现（Gate B 实测缺陷）。
+    // respawning 输入抑制 dead → conversation 形态（对话流 + composer 保持，恢复窗口
+    // 发消息经 runtime join 送达）。若此处返回 dead，即终态页提前接管回归。
+    const view = derivePanelView({
+      sessionId: 's1',
+      hasMessages: true,
+      isSessionDead: true,
+      isSessionRespawning: true,
+      isTraceView: false,
+      hasAskUserRequest: false,
+      isFlowActive: false,
+    })
+    expect(view).toEqual({ kind: 'conversation', sessionId: 's1', input: 'composer' })
   })
 })
