@@ -264,32 +264,42 @@ describe('mimoFetcher — A2-1 错误通道', () => {
 
   it('HTTP 401 → reason=unauthorized', async () => {
     mockFetch.mockResolvedValue(jsonResponse({}, 401))
-    const outcome = await mimoFetcher.fetchQuota('cookie-val', 'cookie')
+    const outcome = await mimoFetcher.fetchQuota('session=abc', 'cookie')
     expect(outcome).toEqual({ ok: false, reason: 'unauthorized' })
   })
 
   it('fetch 网络异常（reject）→ reason=network', async () => {
     mockFetch.mockRejectedValue(new TypeError('fetch failed'))
-    const outcome = await mimoFetcher.fetchQuota('cookie-val', 'cookie')
+    const outcome = await mimoFetcher.fetchQuota('session=abc', 'cookie')
     expect(outcome).toEqual({ ok: false, reason: 'network' })
   })
 
   it('200 但响应体非法 JSON → reason=parse', async () => {
     mockFetch.mockResolvedValue(new Response('gateway', { status: 200 }))
-    const outcome = await mimoFetcher.fetchQuota('cookie-val', 'cookie')
+    const outcome = await mimoFetcher.fetchQuota('session=abc', 'cookie')
     expect(outcome).toEqual({ ok: false, reason: 'parse' })
   })
 
   it('200 响应决策字段形态漂移（code 为 string 而非 number）→ reason=parse（shape guard）', async () => {
     mockFetch.mockResolvedValue(jsonResponse({ code: '401', message: 'unauthorized' }))
-    const outcome = await mimoFetcher.fetchQuota('cookie-val', 'cookie')
+    const outcome = await mimoFetcher.fetchQuota('session=abc', 'cookie')
     expect(outcome).toEqual({ ok: false, reason: 'parse' })
   })
 
   it('code 非 0（响应可解析但无订阅数据）→ reason=no-subscription', async () => {
-    mockFetch.mockResolvedValue(jsonResponse({ code: 401, message: 'unauthorized' }))
-    const outcome = await mimoFetcher.fetchQuota('cookie-val', 'cookie')
+    mockFetch.mockResolvedValue(jsonResponse({ code: 1, message: 'no subscription' }))
+    const outcome = await mimoFetcher.fetchQuota('session=abc', 'cookie')
     expect(outcome).toEqual({ ok: false, reason: 'no-subscription' })
+  })
+
+  it('code 401/403（在体凭证过期）→ reason=unauthorized，不被归为 no-subscription', async () => {
+    mockFetch.mockResolvedValue(jsonResponse({ code: 401, message: 'unauthorized' }))
+    const outcome401 = await mimoFetcher.fetchQuota('session=abc', 'cookie')
+    expect(outcome401).toEqual({ ok: false, reason: 'unauthorized' })
+
+    mockFetch.mockResolvedValue(jsonResponse({ code: 403, message: 'forbidden' }))
+    const outcome403 = await mimoFetcher.fetchQuota('session=abc', 'cookie')
+    expect(outcome403).toEqual({ ok: false, reason: 'unauthorized' })
   })
 
   it('成功：percent 0~1 → 0~100，请求带 cookie 头', async () => {
