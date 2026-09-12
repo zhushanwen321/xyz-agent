@@ -18,6 +18,7 @@
  */
 
 import type { ProviderQuotaFetcher, QuotaAuthKind, QuotaFetchOutcome, QuotaWindow } from './types.js'
+import type { QuotaFetchFailureReason } from './types.js'
 import { INFINITE_WIN, fetchQuotaJson, isRecord, normalizeCookieHeader } from './types.js'
 
 const FETCH_TIMEOUT_MS = 5000
@@ -37,7 +38,11 @@ const BROWSER_UA =
 const MIMO_CODE_UNAUTHORIZED = 401
 const MIMO_CODE_FORBIDDEN = 403
 /** fetchQuotaJson 契约外逃逸异常（Promise.allSettled rejected）的兜底失败态。 */
-const FAILED_NETWORK: QuotaFetchOutcome = { ok: false, reason: 'network' }
+const FAILED_NETWORK: MimoEndpointResult = { ok: false, reason: 'network' }
+
+/** 单端点原始结果形态：fetchQuotaJson<MimoApiResponse> 的返回（QuotaFetchOutcome 的
+ * ok 分支 data 是 NormalizedQuotaRow，不适用于端点级中间态）。 */
+type MimoEndpointResult = { ok: true; data: MimoApiResponse } | { ok: false; reason: QuotaFetchFailureReason }
 
 function buildHeaders(cookie: string): Record<string, string> {
   return {
@@ -100,6 +105,55 @@ function extractPeriodResetSec(resp: unknown): number | null {
   return sec > 0 ? sec : null
 }
 
+/** 单端点请求形态：usage 与 detail 信封同构（同一 guard + headers + timeout + manual redirect），仅 logTag 与 path 不同。 */
+function fetchTokenPlanEndpoint(label: string, path: string, cookie: string): Promise<MimoEndpointResult> {
+  return fetchQuotaJson(
+    label,
+    () =>
+      fetch(`${MIMO_API_BASE}${path}`, {
+        headers: buildHeaders(cookie),
+        signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+        redirect: 'manual',
+      }),
+    isMimoResponse,
+  )
+}
+
+/** allSettled 结果提取：fetchQuotaJson 契约不 throw，rejected 属逃逸异常兜底 → network。 */
+function settleEndpoint(settled: PromiseSettledResult<MimoEndpointResult>): MimoEndpointResult {
+  return settled.status === 'fulfilled' ? settled.value : FAILED_NETWORK
+}
+
+/** 响应可解析但 code 非 0 的归并：在体 401/403（Mimo-Usage proxy 判 code===401 触发刷新、
+ * CodexBar 判 401/403 为登录态失效）→ unauthorized，cookie 失效不应被引导去检查订阅；
+ * 其余 = 无订阅数据 → no-subscription。 */
+function mapNonZeroCodeOutcome(code: number): QuotaFetchOutcome {
+  if (code === MIMO_CODE_UNAUTHORIZED || code === MIMO_CODE_FORBIDDEN) {
+    return { ok: false, reason: 'unauthorized' }
+  }
+  return { ok: false, reason: 'no-subscription' }
+}
+
+/** month 窗口构建：percent 主数据 + detail 端点重置时间（detail 失败降级 resetSec=null，
+ * 不影响用量主数据）。 */
+function buildMonthWindow(usageData: MimoApiResponse['data'], detailResult: MimoEndpointResult): QuotaWindow {
+  const monthResetSec = detailResult.ok ? extractPeriodResetSec(detailResult.data) : null
+  const monthWin: QuotaWindow = {
+    pct: (usageData.monthUsage?.percent ?? 0) * PERCENT_SCALE,
+    resetSec: monthResetSec,
+  }
+  // token 绝对量：取 monthUsage.items[0]（CodexBar/Mimo-Usage 同款取法），used/limit
+  // 为 token 数（CodexBar parseTokenPlanUsage 与 Mimo-Usage formatTokens 展示双重印证；
+  // 原 A2-3「字段语义未实测不编造」据此解除）。limit≤0 视为无效数据不输出绝对量。
+  const item = usageData.monthUsage?.items?.[0]
+  if (item && typeof item.used === 'number' && typeof item.limit === 'number' && item.limit > 0) {
+    monthWin.used = item.used
+    monthWin.limit = item.limit
+    monthWin.unit = 'tokens'
+  }
+  return monthWin
+}
+
 export const mimoFetcher: ProviderQuotaFetcher = {
   id: 'mimo',
   auth: ['cookie'],
@@ -113,60 +167,20 @@ export const mimoFetcher: ProviderQuotaFetcher = {
     // API 302 到登录流，自动跟随会拿到登录 HTML 被 guard 归 parse 误报，
     // manual + statusToReason 归 unauthorized。
     const [usageSettled, detailSettled] = await Promise.allSettled([
-      fetchQuotaJson(
-        'quota:mimo',
-        () =>
-          fetch(`${MIMO_API_BASE}/usage`, {
-            headers: buildHeaders(cookie),
-            signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
-            redirect: 'manual',
-          }),
-        isMimoResponse,
-      ),
-      fetchQuotaJson(
-        'quota:mimo:detail',
-        () =>
-          fetch(`${MIMO_API_BASE}/detail`, {
-            headers: buildHeaders(cookie),
-            signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
-            redirect: 'manual',
-          }),
-        isMimoResponse,
-      ),
+      fetchTokenPlanEndpoint('quota:mimo', '/usage', cookie),
+      fetchTokenPlanEndpoint('quota:mimo:detail', '/detail', cookie),
     ])
-    // fetchQuotaJson 契约不 throw，rejected 属逃逸异常兜底 → network
-    const usageResult = usageSettled.status === 'fulfilled' ? usageSettled.value : FAILED_NETWORK
-    const detailResult = detailSettled.status === 'fulfilled' ? detailSettled.value : FAILED_NETWORK
+    const usageResult = settleEndpoint(usageSettled)
+    const detailResult = settleEndpoint(detailSettled)
     if (!usageResult.ok) return usageResult
-    const data = usageResult.data
-    // code 非 0 = 响应可解析但无订阅数据，归 no-subscription。例外：在体 401/403
-    // （Mimo-Usage proxy 判 code===401 触发刷新、CodexBar 判 401/403 为登录态失效）
-    // → unauthorized，cookie 失效不应被引导去检查订阅。
-    if (data.code !== 0) {
-      const unauthorized = data.code === MIMO_CODE_UNAUTHORIZED || data.code === MIMO_CODE_FORBIDDEN
-      return unauthorized ? { ok: false, reason: 'unauthorized' } : { ok: false, reason: 'no-subscription' }
-    }
-
-    const monthResetSec = detailResult.ok ? extractPeriodResetSec(detailResult.data) : null
-    const monthWin: QuotaWindow = {
-      pct: (data.data?.monthUsage?.percent ?? 0) * PERCENT_SCALE,
-      resetSec: monthResetSec,
-    }
-    // token 绝对量：取 monthUsage.items[0]（CodexBar/Mimo-Usage 同款取法），used/limit
-    // 为 token 数（CodexBar parseTokenPlanUsage 与 Mimo-Usage formatTokens 展示双重印证；
-    // 原 A2-3「字段语义未实测不编造」据此解除）。limit≤0 视为无效数据不输出绝对量。
-    const item = data.data?.monthUsage?.items?.[0]
-    if (item && typeof item.used === 'number' && typeof item.limit === 'number' && item.limit > 0) {
-      monthWin.used = item.used
-      monthWin.limit = item.limit
-      monthWin.unit = 'tokens'
-    }
+    // code 非 0 = 响应可解析但无订阅数据（在体凭证过期例外，见 mapNonZeroCodeOutcome）。
+    if (usageResult.data.code !== 0) return mapNonZeroCodeOutcome(usageResult.data.code)
 
     return {
       ok: true,
       data: {
         label: 'MiMo Coding',
-        wins: [INFINITE_WIN, INFINITE_WIN, monthWin],
+        wins: [INFINITE_WIN, INFINITE_WIN, buildMonthWindow(usageResult.data.data, detailResult)],
       },
     }
   },

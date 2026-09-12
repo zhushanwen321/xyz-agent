@@ -256,20 +256,49 @@ function buildRunParams(
   cwd: string,
 ): SpawnRunParams {
   const resumeParams = ctx.resume;
-  const resumeFile = resumeParams === undefined ? undefined : refString(resumeParams.resume?.sessionRef ?? {}, "sessionFile");
+  const resumeFile = resolveResumeSessionFile(resumeParams);
   return {
-    recordId: resumeParams?.recordId ?? ctx.taskId,
     task: task.prompt,
-    agentName: task.description ?? task.agent ?? (resumeParams !== undefined ? "chat-agent" : "workflow-agent"),
-    model: ctx.ctxModel !== undefined
-      ? `${(ctx.ctxModel as EngineCtxModel).provider}/${(ctx.ctxModel as EngineCtxModel).id}`
-      : task.model,
-    ...(task.thinkingLevel !== undefined ? { thinkingLevel: task.thinkingLevel } : {}),
+    ...buildRunIdentityParams(task, ctx, resumeParams !== undefined),
+    ...buildRunOptionalFlags(task, ctx),
     // [Option C 协议化] session 目录：宿主注入 ctx.sessionDir 权威优先（宿主
     // getSubagentSessionDir 推导）；缺省走 [LEGACY] fallback（独立运行/测试形态，
     // 旧推导与宿主布局不等价——见 resolveSessionDir 注释）。
     sessionDir: ctx.sessionDir ?? resolveSessionDir(dataDir, cwd),
     cwd,
+    ...buildRunResumeFlags(resumeParams, resumeFile),
+  };
+}
+
+/** resume 锚点提取：ctx.resume.resume.sessionRef.sessionFile → spawn-args `--session`
+ * 续写原文件（首轮无锚点 = 新建）。string 之外的类型经 refString guard 丢弃。 */
+function resolveResumeSessionFile(resumeParams: RunContext["resume"]): string | undefined {
+  return resumeParams === undefined
+    ? undefined
+    : refString(resumeParams.resume?.sessionRef ?? {}, "sessionFile");
+}
+
+/** 身份域：record 锚（续聊轮 = ctx.resume.recordId（childSpawned 帧的关联键），
+ * 一次性 run = runId）+ agent 名 + canonical model。hasResume 决定 agent 兜底名
+ * （会话形态轮 chat-agent / 一次性 workflow-agent）。 */
+function buildRunIdentityParams(
+  task: AgentCallOpts,
+  ctx: RunContext,
+  hasResume: boolean,
+): Pick<SpawnRunParams, "recordId" | "agentName" | "model"> {
+  return {
+    recordId: ctx.resume?.recordId ?? ctx.taskId,
+    agentName: task.description ?? task.agent ?? (hasResume ? "chat-agent" : "workflow-agent"),
+    model: ctx.ctxModel !== undefined
+      ? `${(ctx.ctxModel as EngineCtxModel).provider}/${(ctx.ctxModel as EngineCtxModel).id}`
+      : task.model,
+  };
+}
+
+/** 可选透传 flags：协议 task/ctx 的条件字段逐项展开（undefined 不挂键）。 */
+function buildRunOptionalFlags(task: AgentCallOpts, ctx: RunContext): Partial<SpawnRunParams> {
+  return {
+    ...(task.thinkingLevel !== undefined ? { thinkingLevel: task.thinkingLevel } : {}),
     ...(task.schemaEnv !== undefined ? { schemaEnv: task.schemaEnv } : {}),
     ...(task.maxTurns !== undefined ? { maxTurns: task.maxTurns } : {}),
     ...(task.graceTurns !== undefined ? { graceTurns: task.graceTurns } : {}),
@@ -281,6 +310,17 @@ function buildRunParams(
     ...(task.forkSource !== undefined ? { forkSource: task.forkSource } : {}),
     // [F6] 根 session id 透传（relay 归属键 SESSION_ID 权威源；undefined 不挂键）。
     ...(ctx.sessionRootId !== undefined ? { sessionRootId: ctx.sessionRootId } : {}),
+  };
+}
+
+/** 会话形态轮 flags（chat-run 统一 [H1 U3/U6]，resume 键为唯一会话形态键，设计 §3.3 D6/D7）：
+ * chatMode（agent_settled resolve + 收割，D7）仅在会话形态轮置位；resume 锚点
+ * resumeSessionFile 续写原文件。 */
+function buildRunResumeFlags(
+  resumeParams: RunContext["resume"],
+  resumeFile: string | undefined,
+): Partial<SpawnRunParams> {
+  return {
     ...(resumeParams !== undefined ? { chatMode: true } : {}),
     ...(resumeFile !== undefined ? { resumeSessionFile: resumeFile } : {}),
   };
