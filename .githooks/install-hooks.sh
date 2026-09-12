@@ -1328,6 +1328,36 @@ if echo "$SUBAGENT_CORE_STAGED" | grep -qE "^packages/subagent-core/|^scripts/ch
 fi
 
 # ============================================================================
+# subagent-service 聚合边界守卫（H3/R5，subagent-service-decomposition S3 依赖单向）
+#   staged 命中六聚合（packages/subagent-core/src/execution/service/）或壳
+#   （subagent-service.ts）或守卫脚本自身时触发：
+#   scripts/check-subagent-service-boundary.mjs —— 三方向检查（聚合→聚合 import
+#   台账门 + 环检测 / 聚合→壳 import 禁则 / 跨聚合私有访问 grep 门）。
+#   合法边台账（ALLOWED_EDGES）以符号级精确登记在守卫脚本内（现状三条：
+#   ENV_SELF_RECORD_ID 常量单向 + ResolvedIdentity type-only ×2，依据 D-R3-2 / D-R4-8）。
+#   触发面并入本路径范围的 staged 删除（pathspec 清单天然含 D）：单独 staged 删除
+#   守卫脚本也必须触发——下方 [ ! -f ] 存在性检查正是删除场景的防线。
+#   注：不设独立 SKIP_* 开关（R1 后惯例，总闸 SKIP_ALL_CHECKS 兜底）。
+# ============================================================================
+
+SUBAGENT_SVC_BOUNDARY_STAGED=$(git diff --cached --name-only -- packages/subagent-core/src/execution/service/ packages/subagent-core/src/execution/subagent-service.ts scripts/check-subagent-service-boundary.mjs)
+if echo "$SUBAGENT_SVC_BOUNDARY_STAGED" | grep -qE "^packages/subagent-core/src/execution/service/|^packages/subagent-core/src/execution/subagent-service\.ts$|^scripts/check-subagent-service-boundary\.mjs$"; then
+    print_section "[subagent-service 聚合边界守卫]"
+    if [ ! -f "scripts/check-subagent-service-boundary.mjs" ]; then
+        echo -e "${RED}[ERROR] 找不到 scripts/check-subagent-service-boundary.mjs（H3/R5 守卫交付物缺失）${NC}"
+        exit 1
+    fi
+    if ! node scripts/check-subagent-service-boundary.mjs; then
+        echo -e "${RED}[ERROR] subagent-service 聚合边界守卫未通过——聚合间协作走壳 deps 注入或显式接口，聚合读壳能力经注入函数非 import（设计 D4）${NC}"
+        echo -e "${RED}[原则] 无论是否本次改动引入的问题，都必须正面修复解决，不允许跳过。${NC}"
+        exit 1
+    fi
+    echo -e "${GREEN}[OK] subagent-service 聚合边界守卫通过${NC}"
+else
+    echo -e "${GREEN}[OK] 无 service 聚合/壳变更，跳过 subagent-service 聚合边界守卫${NC}"
+fi
+
+# ============================================================================
 # 文档-代码符号漂移守卫（C-proc-10）
 #   staged 命中映射设计文档（docs/design/）或 update 源码模块或守卫脚本自身时触发：
 #   scripts/check-doc-symbol-drift.mjs —— TypeScript AST 提取源码符号表 × 设计文档
@@ -1492,6 +1522,7 @@ echo -e "  ${GREEN}[+]${NC} i18n CJK 残留检测（.vue 模板不得含硬编�
 echo -e "  ${GREEN}[+]${NC} i18n locale 双侧 key 对齐检查（zh-CN === en-US）"
 echo -e "  ${GREEN}[+]${NC} pi 边界可靠性护栏（G1 语义登记守卫 / G3 档位差分探针 / G4 subagent 通道禁则）"
 echo -e "  ${GREEN}[+]${NC} subagent-core 依赖闭包守卫（D9-① 闭包 + 检查点 5 worker 零宿主服务）"
+echo -e "  ${GREEN}[+]${NC} subagent-service 聚合边界守卫（H3/R5：聚合间 import 台账 + 聚合→壳禁则 + 私有互调门）"
 echo -e "  ${GREEN}[+]${NC} 文档-代码符号漂移守卫（C-proc-10：设计文档引用已删除/改名符号即拦截）"
 echo -e "  ${GREEN}[+]${NC} 消息流滚动跟随链路守卫（C-state-11：滚动到底唯一原语 + 禁 findItemIndex(scrollSize) 模式）"
 echo -e "  ${GREEN}[+]${NC} 测试 flake 卫生检查（F5 scripts.test --no-bail + F3 recursive 删除 maxRetries）"
