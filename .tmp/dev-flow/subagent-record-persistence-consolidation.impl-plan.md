@@ -238,3 +238,5 @@ graph TD
 - 2026-09-12 计划创建（dev-flow 阶段 1）；设计 v8（72906ff7b）五轮双审 + 外部审查加固就绪
 - 2026-09-12 U1 committed（1da5fcc82）后被外部 --amend 链（fadd8b8b4→fd2614c27，用户 docs 清理工作流）卷出历史——工作区改动完好且与原 commit 逐字一致，前进式重新提交（5a4ac3f7a，不动外部 commit）；已桌面通知用户。核验策略修正：并行批内单单元核验 = 领地测试单绿（全量工作区是混合中间态，34+6 失败均属 U2a/U2b 迁移半途区域），全量绿留各单元串行点 + Gate A
 - 2026-09-12 U4b committed（transparent-resume 回归收账）
+- 2026-09-12 阶段 3 审查三分类处置完毕：4 条 unreasonable 按领地分 3 组并行修复（组 A 7ae3db0bb markResurrected 补删 `.cancelled` + pre-L4 tombstone 考古 fixture 用例与负向验证；组 B 713a805c7 断言强度 toHaveBeenCalledTimes(1) + 三处过时注释；组 C 8ed179aaa 守卫触发面扩 `:(glob)extensions/**/src/**` 458 文件 + CI invariants 接线 + 守卫头注同步）；doc_errors 4 条主 agent 亲为（设计 §3.4/§5/D3c/D4② + constraints C-data-19 + troubleshooting §13），均已 commit
+- 2026-09-12 阶段 4 收口：定向复审（只审三修复组 diff，不做全文重审）三组全 pass，overall=converged——组 A 根因链/删除位置/fixture 逐字段核实；组 B 注入链独立核实（setPendingUnregister→emitPendingUnregister→pi.events.emit 唯一发射点 markRoundIdle）+ 三处注释与实现逐点一致；组 C 触发矩阵实测（现有三组 + 假想新分组全命中、零泄漏、docs 不触发）+ 守卫违规注入实测 FAIL exit 1 / 恢复后基线 OK。2 条 info 级备注均属已声明的设计取舍（全局计数强断言「仅此一笔」；packages 侧本地触发面 subagent-core 单包、其余靠 CI 全量兜底）。**阶段 3+4 收敛，转入阶段 5 双级验收**
