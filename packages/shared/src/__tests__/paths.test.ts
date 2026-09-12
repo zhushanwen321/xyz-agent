@@ -12,7 +12,7 @@
 import { describe, it, expect, vi, afterEach } from 'vitest'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
-import { getPiSessionsDir } from '../paths'
+import { getPiSessionsDir, getImageCacheRoot, getImageCacheDir } from '../paths'
 
 afterEach(() => {
   vi.unstubAllEnvs()
@@ -33,5 +33,34 @@ describe('getPiSessionsDir', () => {
   it('缺省且 env 未设：homedir() 兜底 ~/.xyz-agent（纯字符串推导，不触 fs）', () => {
     vi.stubEnv('XYZ_AGENT_DATA_DIR', undefined)
     expect(getPiSessionsDir()).toBe(join(homedir(), '.xyz-agent', 'agent', 'sessions'))
+  })
+})
+
+describe('getImageCacheRoot', () => {
+  it('注入 dataDir：join(dataDir, cache, images)', () => {
+    expect(getImageCacheRoot('/tmp/xyz-shared-test-data')).toBe(
+      join('/tmp/xyz-shared-test-data', 'cache', 'images'),
+    )
+  })
+
+  it('缺省形态：读 XYZ_AGENT_DATA_DIR env（vi.stubEnv 桩，不触 fs）', () => {
+    vi.stubEnv('XYZ_AGENT_DATA_DIR', '/tmp/xyz-shared-test-data')
+    expect(getImageCacheRoot()).toBe(join('/tmp/xyz-shared-test-data', 'cache', 'images'))
+  })
+})
+
+describe('getImageCacheDir', () => {
+  it('合法 sessionId：join(root, sessionId)（字母数字下划线连字符）', () => {
+    expect(getImageCacheDir('sess-AB_01', '/tmp/xyz-shared-test-data')).toBe(
+      join('/tmp/xyz-shared-test-data', 'cache', 'images', 'sess-AB_01'),
+    )
+  })
+
+  it('路径穿越形态 sessionId：throw（路径遍历防护守卫）', () => {
+    for (const bad of ['../evil', 'a/b', 'a\\b', '..' , 'a b']) {
+      expect(() => getImageCacheDir(bad, '/tmp/xyz-shared-test-data')).toThrow(
+        /invalid sessionId \(path traversal blocked\)/,
+      )
+    }
   })
 })

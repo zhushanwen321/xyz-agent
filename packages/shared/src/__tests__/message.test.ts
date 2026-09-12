@@ -14,6 +14,7 @@ import { describe, it, expect } from 'vitest'
 import {
   PI_RESPAWN_NOTICE_CUSTOM_TYPE,
   SUBAGENT_DIRECTIVE_CUSTOM_TYPE,
+  parseRespawnNoticeVariant,
   parseSubagentDirective,
 } from '../message'
 
@@ -26,6 +27,27 @@ describe('SUBAGENT_DIRECTIVE_CUSTOM_TYPE SSOT', () => {
 describe('PI_RESPAWN_NOTICE_CUSTOM_TYPE SSOT', () => {
   it('常量值锁定为 pi-respawn-notice（core 写入方与 ui 渲染分支共用，防字面量漂移）', () => {
     expect(PI_RESPAWN_NOTICE_CUSTOM_TYPE).toBe('pi-respawn-notice')
+  })
+})
+
+describe('parseRespawnNoticeVariant 防御性解析', () => {
+  it('合法 details：variant 字段命中两形态之一原样返回', () => {
+    expect(parseRespawnNoticeVariant({ variant: 'restored' })).toBe('restored')
+    expect(parseRespawnNoticeVariant({ variant: 'restoreFailed' })).toBe('restoreFailed')
+  })
+
+  it('details 非对象形态（null / undefined / 数组 / 原始类型）→ null（消费侧降级不崩溃）', () => {
+    expect(parseRespawnNoticeVariant(null)).toBeNull()
+    expect(parseRespawnNoticeVariant(undefined)).toBeNull()
+    expect(parseRespawnNoticeVariant([{ variant: 'restored' }])).toBeNull()
+    expect(parseRespawnNoticeVariant('restored')).toBeNull()
+    expect(parseRespawnNoticeVariant(42)).toBeNull()
+  })
+
+  it('variant 非法值 / 缺失 → null', () => {
+    expect(parseRespawnNoticeVariant({})).toBeNull()
+    expect(parseRespawnNoticeVariant({ variant: 'unknown' })).toBeNull()
+    expect(parseRespawnNoticeVariant({ variant: null })).toBeNull()
   })
 })
 
