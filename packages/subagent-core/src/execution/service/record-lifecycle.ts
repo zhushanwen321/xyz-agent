@@ -166,8 +166,8 @@ export class RecordLifecycle {
       killRecordChildWithEscalation(record.id, `disposeAllRecords (${reason})`);
       disarmIdleTimer(record.id);
       disarmSettledWatchdog(record.id);
-      // tryTransition 只对 running 生效；idle 需要直接 completeRecord（无 CAS 保护）。
-      // 与 closeChatIdle 对称：idle 无在途 AgentResult，构造合成 result。
+      // closed 抢先的 record 由 continue 跳过（ExecutionStatus 两态后无第三态）。
+      // 与 closeChatIdle 对称：record 无在途 AgentResult，构造合成 result。
       if (record.status === "running") {
         if (!tryTransition(record, "closed", reason)) continue;
       }
@@ -186,8 +186,9 @@ export class RecordLifecycle {
       // [B3/D8] 终态化归口 markFinalized：原「不写 .state 不删 .alive + manifest
       // fire-and-forget」升级为完整终态原语（.state writeSync 权威 + manifest + .alive
       // 删，D8 v7 写序）——D8 行为变化矩阵五行生效点（chat×fork-new 硬拒收紧 /
-      // one-shot×shutdown 放宽可续 / 纳管态降级手动 resurrect，均已接受）。manifestDir
-      // 未接线（U3）时 manifest 降级异步（双轨期现行语义），其余面不变。
+      // one-shot×shutdown 放宽可续 / 纳管态降级手动 resurrect，均已接受）。生产路径
+      // 恒 manifestDir 接线（subagent-service 构造点）；缺省异步分支仅纯内存测试形态，
+      // 其余面不变。
       const persisted = this.deps.getStore().markFinalized(record, reason);
       if (!persisted) {
         // [§3.4] .state 重试耗尽：响亮 entry 上报（record 磁盘留 running，boot 孤儿
@@ -481,7 +482,8 @@ export class RecordLifecycle {
 
   /**
    * D-017 时序收尾：委托 doFinalizeRecord（提取到 finalize-record.ts，降低本文件行数）。
-   * [Critical #1] cleanup 全部在 manifest 写之前，manifest best-effort 不阻断（详见 finalize-record.ts）。 */
+   * [Critical #1] cleanup 不因写失败被跳过（写失败在 Step 2 已响亮上报，cleanup 继续；
+   * 详见 finalize-record.ts）。 */
   async finalizeRecord(
     record: ExecutionRecord,
     result: AgentResult,

@@ -7,6 +7,8 @@
 //   - M1 自愈段：SIGKILL 打进 shutdown 窗口吞掉 fire-and-forget manifest 写时，
 //     initSession 的可重连 entry（closed + closedReason ∈ RECONNECTABLE_FINAL_REASONS）
 //     重物化 manifest。
+//   - [D8 v7] writeSync 接线后 fire-and-forget 停机窗构造性消灭（头两段描述为
+//     历史形态）；自愈段保留为防御纵深。
 //   - M1 负向：user-close/cancelled/gc 末条 entry 不被孤儿恢复/重物化（主动终态语义不放大）。
 //   - M2：manifest 源快照 closedReason 投影 → endedMessageGuard 三分流正确
 //     （user-close/cancelled → 主动关闭专属文案；parent-shutdown → reconnectable 文案）。
@@ -14,7 +16,8 @@
 //     reconnectable/fork-from」分支；cancel（无 sessionFile 形态）则完全不可见报原始 not-found。
 //
 // mock 形态：真实 SubagentService + 真实 ManifestStore（tmp agentDir），重启 =
-// 同 agentDir 二次构造 Service + initSession。fire-and-forget manifest 写用 vi.waitFor 等待。
+// 同 agentDir 二次构造 Service + initSession。残余异步写（防御纵深分支/afterEach 拆
+// 目录前）用 flushAsyncWrites 数轮 tick 等待。
 
 import * as fs from "node:fs";
 import * as os from "node:os";

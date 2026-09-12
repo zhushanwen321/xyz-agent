@@ -17,16 +17,16 @@
 //
 // | 意图原语 | 语义 | 内部写面 |
 // |---------|------|---------|
-// | register(record) | 创建入册（既有方法，意图语义补齐） | entry（best-effort）+ 索引失效 |
+// | register(record) | 创建入册（既有方法，意图语义补齐） | entry（best-effort）+ 缓存一致性（stat 戳自校验承接） |
 // | appendEvent(id, event) | 事件追加（过程；turns 归约） | entry 变迁（best-effort） |
 // | markRoundStarted(id) | 轮始重置（status=running + result/resumable 清除） | entry（best-effort） |
 // | markRoundIdle(id, outcome) | 轮末收口（保持 running-resumable，非置 idle；簿记全集①-⑨见方法注释；簿记⑦ `.alive` 保留——写权声明跨轮延续，D3a） | entry + 注销发射点② |
-// | markFinalized(record, reason) | 正常终态（含 disposeAllRecords 编排性关闭，D8 矩阵；副作用编排 abort/kill/disarm/CAS/promote 留调用方） | `.state` writeSync 先 → entry/archive → manifest writeSync → `.alive` 删（D8 v7 写序） |
+// | markFinalized(record, reason) | 正常终态（含 disposeAllRecords 编排性关闭，D8 矩阵；副作用编排 abort/kill/disarm/CAS/promote 留调用方） | `.state` writeSync 先 → binding（updateRecordBinding）→ entry/archive → manifest writeSync → `.alive` 删（D8 v7 写序） |
 // | markCancelled(record) | 取消终态（tombstone endedAt） | 同 markFinalized 写序（writeCancelledState） |
 // | markBatchFinalized(records) | sync 批终态（barrier：manifest 落盘完成先于批通知写账——「通知可达 ⇒ 索引就位」构造性保证） | barrier + 批 entry + manifest |
 // | adoptEngineDeath(id, {error}) | 引擎死亡收养（error/result/resumable 三写；监督器接管编排留调用方） | entry（best-effort） |
 // | markResurrected(record, wasClosed) | 磁盘终态位翻回活态（acquire-first 三件套 + 内存翻回 + register，单 try 域原子收敛，任一步失败响亮抛错，D3c） | `.alive` 写（writeSync）先 → `.state`/`.finalized`/`.cancelled` 删 + 内存翻回 + register |
-// | markIdleArchived(record) | idle-GC 归档（30 天 TTL 内存回收，非终态化——磁盘仍 running 可接管） | store.archive 先 → `.alive` release 后（archive 抛错则整体失败 marker 必未删） |
+// | markIdleArchived(record) | idle-GC 归档（30 天 TTL 内存回收，非终态化——磁盘仍 running 可接管） | store.archive 先 → manifest（running 投影）→ `.alive` release 后（archive 抛错则整体失败 marker 必未删） |
 // | acquireWriteLease(sessionFile, id) | store 内部 acquire 动作（writeAliveMarker 唯一包装；spawn 侧 sessionFile 回填挂钩用，D3a 时机①，U2b 消费） | `.alive` 写（失败响亮抛错） |
 //
 // ── 字段级写点全集 → 操作映射（设计 §3.1 v4 十字段逐一归口）──
@@ -573,8 +573,7 @@ export class RecordStore {
    * manifestStore.dir 私有，本类不经反射访问）。提供时终态原语（markFinalized /
    * markCancelled / markBatchFinalized）走 writeAtomicFileSync 同步落盘——停机窗
    * fire-and-forget 竞态构造性消灭（disposeAllRecords 同步链全链同步段内完成）；
-   * 缺省降级为异步 writeManifest fire-and-forget（双轨期现行语义，D7）。接线归
-   * U2a/U3（subagent-service 构造点，本单元只建能力）。
+   * 已接线（subagent-service.ts 构造点 recordsDir）；缺省分支仅纯内存测试形态。
    */
   private readonly manifestDir: string | undefined;
 
@@ -824,8 +823,8 @@ export class RecordStore {
    * 意图原语：sync 批终态（统一写点）。内部写序显式复刻 barrier：manifest 落盘
    * **完成**先于批通知写账（batchFinalized 落标 entry）——「通知可达 ⇒ 索引就位」
    * 构造性保证（session-reader 指针行反查依赖；缓存降级下 barrier 不可删，D4②/D5）。
-   * manifestDir 提供时为同步写（写完即返回）；缺省降级 allSettled 异步屏障（现行
-   * writeSyncBatchManifestBarrier 语义，双轨期）。
+   * manifestDir 提供时为同步写（写完即返回）；缺省降级 allSettled 异步屏障（原
+   * writeSyncBatchManifestBarrier，已随 U3 归口删除）。
    */
   async markBatchFinalized(records: readonly SubagentRecord[]): Promise<void> {
     if (this.manifestDir !== undefined) {
@@ -933,7 +932,7 @@ export class RecordStore {
       throw new Error(
         `markResurrected(${id}): write-lease acquire/terminal-position flip failed for ${sessionFile} ` +
           `(${err instanceof Error ? err.message : String(err)}). Recovery: inspect disk (permissions/full) and retry message; ` +
-          `the terminal position was left untouched, the record stays resurrectable.`,
+          `terminal state remains closed (possibly via legacy filename), the record stays resurrectable.`,
         { cause: err },
       );
     }
@@ -999,9 +998,9 @@ export class RecordStore {
     };
   }
 
-  /** 批成员 manifest 投影（markBatchFinalized 用；对齐 writeBatchMemberManifest 现状
-   *  投影——status 如实投影[成功成员此刻 running+resumable]，后续 upgrade 终态时
-   *  原子覆盖）。[U4c / G2] executionStatus/closedReason 双写同 terminal 投影。 */
+  /** 批成员 manifest 投影（markBatchFinalized 用；原 writeBatchMemberManifest，
+   *  已随 U3 归口删除——status 如实投影[成功成员此刻 running+resumable]，后续
+   *  upgrade 终态时原子覆盖）。[U4c / G2] executionStatus/closedReason 双写同 terminal 投影。 */
   private static batchManifestRecord(rec: SubagentRecord): ManifestRecord {
     return {
       id: rec.id,
@@ -1050,8 +1049,8 @@ export class RecordStore {
   /**
    * [D8 v7] manifest 落盘统一通道：manifestDir 提供时 writeAtomicFileSync 同步写
    * （停机竞态构造性消灭；与 ManifestStore.writeManifest 字节形态一致——2 空格缩进
-   * JSON，读侧/外部 session-reader 不感知差异）；缺省 fire-and-forget 异步写（双轨
-   * 期现行语义）。写失败响亮（error 日志 + 用户可见 entry，对齐 writeManifestBestEffort）。
+   * JSON，读侧/外部 session-reader 不感知差异）；缺省 fire-and-forget 异步写（仅纯
+   * 内存测试形态）。写失败响亮（error 日志 + 用户可见 entry，对齐 writeManifestBestEffort）。
    */
   private writeManifestPersisted(id: string, manifest: ManifestRecord): void {
     if (this.manifestDir !== undefined) {
@@ -1134,7 +1133,8 @@ export class RecordStore {
         return false;
       }
     }
-    // 双轨降级形态（manifestDir 缺省、manifestStore 在）：异步写，失败同样静默降级。
+    // 缺省降级形态（manifestDir 缺省、manifestStore 在，纯内存测试形态外的测试分支）：
+    // 异步写，失败同样静默降级。
     void this.manifestStore!.writeManifest(RecordStore.derivedManifestRecord(rec)).catch((err: unknown) => {
       logger.debug("[subagents] rebuildIndexes: manifest rebuild skipped (write failed)", {
         detail: { id: rec.id, error: err instanceof Error ? err.message : String(err) },

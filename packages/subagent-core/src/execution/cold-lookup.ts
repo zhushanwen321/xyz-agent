@@ -27,8 +27,9 @@ export interface ColdLookupDeps {
   /** store 的磁盘全扫（内存未命中 / 索引未热时兜底）。rootFilter 恒 undefined
    *  （冷查不做 root 过滤——归属校验在候选定位之后，见 coldLookupForAction）。 */
   collectRecords: (limit: number, statusFilter: StatusFilter, rootFilter: undefined) => SubagentRecord[];
-  /** 重建 record 注册进内存 store。（[U2a/B4] register 已收编进 markResurrected——
-   *  字段保留供编排层显式性与测试断言，resurrect 回边不再直接调用。） */
+  /** 重建 record 注册进内存 store。（[U2a/B4] register 已收编进 markResurrected
+   *  ——生产链不调用（resurrect 回边经 markResurrected 幂等再注册）；保留供编排层
+   *  显式性与测试断言。） */
   register: (record: ExecutionRecord) => void;
   /** 重建后的 transition entry 上报（live ≡ reload 等价性——纯投递副作用，留编排层）。 */
   reportRecordTransition: (record: ExecutionRecord) => void;

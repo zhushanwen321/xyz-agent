@@ -289,7 +289,8 @@ export interface AgentResult {
 // Object.freeze 守卫不可变」的语义注释见消费方 worktree-manager / worktree-git-ops）。
 export type { WorktreeHandle } from "@zhushanwen/subagent-engine-sdk";
 
-/** alive marker：子进程存活标记，用于心跳检测和 crash 推断。 */
+/** alive marker：跨进程写权声明载体（写者 = 宿主进程；acquire/release 见
+ *  alive-store 模块头；startedAt 仅载体字段，判活不消费——pid 单判据）。 */
 export interface AliveMarker {
   readonly pid: number;
   readonly id: string;

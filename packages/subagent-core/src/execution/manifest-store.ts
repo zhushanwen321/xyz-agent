@@ -117,7 +117,8 @@ export class ManifestStore {
    * 不阻塞 event loop）。
    *
    * 失败时原语尽力清理残留 tmp（debug 记录，不掩盖原错误）并原样上抛——
-   * 调用方（finalizeRecord）决定降级策略。
+   * 调用方（RecordStore 写面：writeManifestPersisted 缺省异步分支 / 批写 barrier）
+   * 决定降级策略。
    */
   async writeManifest(record: ManifestRecord): Promise<void> {
     const filePath = path.join(this.dir, `${record.id}.json`);

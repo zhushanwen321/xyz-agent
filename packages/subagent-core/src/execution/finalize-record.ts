@@ -8,10 +8,10 @@
 // §3.1 副作用归属边界）。文件布局知识（写哪个文件、什么顺序）不再散落此处：D8 v7 写序
 //（.state writeSync 先 → manifest writeSync 后 → .alive 删）由 store 内部单点保证。
 //
-// [Critical #1 / PR #85 精神保持] manifest 写失败（store 内部 best-effort 吞错）与终态
-// 原语返回 false 均不得跳过 worktree cleanup——磁盘满/权限错时 worktree 泄漏比索引缺失
-// 严重；终态写失败时 record 留 running 形态（磁盘无终态位），下次 boot 孤儿恢复终态化
-// 承接（§3.4）。
+// [Critical #1 / PR #85 精神保持] manifest 写失败响亮上报不阻断（logger.error +
+// subagent:manifest-write-failed entry，§3.4 manifest 面）与终态原语返回 false 均不
+// 得跳过 worktree cleanup——磁盘满/权限错时 worktree 泄漏比索引缺失严重；终态写失
+// 败时 record 留 running 形态（磁盘无终态位），下次 boot 孤儿恢复终态化承接（§3.4）。
 //
 // B9 兜底：completeRecord/终态原语抛错→后续 cleanup 仍执行。
 
@@ -180,8 +180,8 @@ export async function doFinalizeRecord(
   // ── Step 2: 终态持久化四件套归口（B1 迁移点）──
   // cancelled 走 markCancelled（.state 载荷 status:"cancelled" + 精确 endedAt），其余
   // markFinalized。两原语内部写序 = .state writeSync 先 → binding/archive/manifest →
-  // .alive 删（release 出口①，D8 v7）；manifestDir 未接线时 manifest 降级异步
-  // fire-and-forget（双轨期现行语义，U3 接线）。
+  // .alive 删（release 出口①，D8 v7）。生产路径恒 manifestDir 接线（subagent-service
+  // 构造点）；缺省异步分支仅纯内存测试形态。
   let persisted = false;
   try {
     persisted =
@@ -212,8 +212,9 @@ export async function doFinalizeRecord(
 
   // pending-notifications：终态注销（只记 registry 状态，通知由 BgNotifier 发）
   // [W4 发射点枚举归属①] 注销合法发射点枚举（设计 D2）第 ① 处：subagent record
-  // 终态化（finalizeRecord 路径，含监督器放弃）。其余合法发射点：② chatMode 轮末
-  // idle（doFinalizeRoundToIdle，本文件下方）；③ workflow run 终态迁移
+  // 终态化（finalizeRecord 路径，含监督器放弃）。其余合法发射点：② = store
+  // .markRoundIdle 簿记⑧（U5 收口后编排层无直发；setPendingUnregister →
+  // emitPendingUnregister 唯一发射）；③ workflow run 终态迁移
   //（transition("done") 路径）；④ 监督器显式放弃（走本路径，终态化+注销同批）；
   // ⑤ 注册对账 sweep 补发（round-supervisor/reconcile-sweep.ts）。进程退出本身
   // 永远不是注销理由（subagent-service disposeAllRecords 的 emit 属①——其同批
