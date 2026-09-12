@@ -42,19 +42,19 @@ afterAll(() => {
 })
 
 describe('runtime 组合根初始化台账单例（u-init）', () => {
-  it('index.ts import 并在 main() 内调用 initCrashJournal(getDataDir())（对齐 initLogger 时序）', () => {
+  it('index.ts import 并在 main() 内调用 initCrashJournal(getDataDir(), logger)（对齐 initLogger 时序 + 留痕出口注入）', () => {
     const source = readFileSync(new URL('../index.ts', import.meta.url), 'utf8')
 
     // 接线存在性：import 单例 init + 在组合根调用（唯一生产调用点；main 侧另有双胞胎）。
     // import 行随 #31 扩为多导出（closeCrashJournal 进 shutdown 序）——断言改为对 init
     // 符号的 import 存在性（防字面量与导出清单耦合），close 接线由 shutdown 序测试守卫。
     expect(source).toMatch(/import\s*\{[^}]*initCrashJournal[^}]*\}\s*from\s*'\.\/infra\/crash-journal\.js'/)
-    expect(source).toContain('initCrashJournal(getDataDir())')
+    expect(source).toContain('initCrashJournal(getDataDir(), logger)')
 
     // 时序：initLogger 之后（initLogger 已验证 getDataDir() 可用）、token 解析 / service
     // 构造之前（任何一个 service 都可能 append 台账，晚于其构造 = 早期事件静默丢）
     const initLoggerIdx = source.indexOf('initLogger(getDataDir())')
-    const initJournalIdx = source.indexOf('initCrashJournal(getDataDir())')
+    const initJournalIdx = source.indexOf('initCrashJournal(getDataDir(), logger)')
     const tokenIdx = source.indexOf('const runtimeToken = resolveRuntimeToken()')
     const serviceIdx = source.indexOf('const pm = new ProcessManager(')
     expect(initLoggerIdx).toBeGreaterThan(-1)

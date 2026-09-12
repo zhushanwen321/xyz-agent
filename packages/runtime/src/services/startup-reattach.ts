@@ -212,28 +212,65 @@ function broadcastDeferredSafely(
 }
 
 /**
- * 执行 reattach 编排（一次性；组合根 listen 后 fire-and-forget 调用）。
- * 本函数不抛（内部逐步容错），返回编排报告供日志与测试断言。
+ * reattach 编排上下文：options/依赖的解析结果（缺省值解析集中于此，主函数只剩编排序）。
  */
-export async function runStartupReattach(
-  deps: StartupReattachDeps,
-  options: StartupReattachOptions = {},
-): Promise<ReattachReport> {
-  const checkpoint = options.checkpoint ?? getRuntimeCheckpointStore()
-  const journal = options.journal ?? getCrashJournal()
-  const now = options.now ?? Date.now
-  const idleWindowMs = options.idleWindowMs ?? DEFAULT_PI_RECLAIM_IDLE_MS
-  const viewedWindowMs = options.viewedWindowMs ?? DEFAULT_PI_RECLAIM_VIEWED_WINDOW_MS
-  const concurrency = Math.max(1, options.restoreConcurrency ?? DEFAULT_REATTACH_CONCURRENCY)
-  const harvestWaitBoundMs = options.harvestWaitBoundMs ?? DEFAULT_HARVEST_WAIT_BOUND_MS
-  const highWaterPollMs = options.highWaterPollMs ?? DEFAULT_HIGH_WATER_POLL_MS
-  const fileExists = options.fileExists ?? ((path: string) => existsSync(path))
-  const delay = options.delay ?? defaultDelay
-  const onDeferredBroadcast = deps.onDeferredBroadcast
-  const thresholds: MemPressureThresholds = { ...DEFAULT_MEM_PRESSURE_THRESHOLDS, ...options.memPressureThresholds }
-  const queryPressure = options.queryMemPressure ?? (() => queryMemPressure())
+interface ReattachContext {
+  deps: StartupReattachDeps
+  checkpoint: RuntimeCheckpointStore
+  journal: CrashJournalWriter
+  now: () => number
+  idleWindowMs: number
+  viewedWindowMs: number
+  concurrency: number
+  harvestWaitBoundMs: number
+  highWaterPollMs: number
+  fileExists: (path: string) => boolean
+  delay: (ms: number) => Promise<void>
+  onDeferredBroadcast: ReattachDeferredBroadcast | undefined
+  thresholds: MemPressureThresholds
+  queryPressure: () => Promise<MemPressureSample>
+}
 
-  const report: ReattachReport = {
+/** 时序/阈值类旋钮解析结果（缺省值 = reaper 既有 shared SSOT 与 D3 常量）。 */
+interface ResolvedReattachOptions {
+  idleWindowMs: number
+  viewedWindowMs: number
+  concurrency: number
+  harvestWaitBoundMs: number
+  highWaterPollMs: number
+}
+
+/**
+ * 解析时序/阈值旋钮（独立成函数控制决策密度；缺省见各常量声明处）。
+ */
+function resolveReattachOptions(options: StartupReattachOptions): ResolvedReattachOptions {
+  return {
+    idleWindowMs: options.idleWindowMs ?? DEFAULT_PI_RECLAIM_IDLE_MS,
+    viewedWindowMs: options.viewedWindowMs ?? DEFAULT_PI_RECLAIM_VIEWED_WINDOW_MS,
+    concurrency: Math.max(1, options.restoreConcurrency ?? DEFAULT_REATTACH_CONCURRENCY),
+    harvestWaitBoundMs: options.harvestWaitBoundMs ?? DEFAULT_HARVEST_WAIT_BOUND_MS,
+    highWaterPollMs: options.highWaterPollMs ?? DEFAULT_HIGH_WATER_POLL_MS,
+  }
+}
+
+/** 解析 options 缺省值与依赖引用（窗口常量缺省 = reaper 既有 shared SSOT）。 */
+function createReattachContext(deps: StartupReattachDeps, options: StartupReattachOptions): ReattachContext {
+  return {
+    deps,
+    ...resolveReattachOptions(options),
+    checkpoint: options.checkpoint ?? getRuntimeCheckpointStore(),
+    journal: options.journal ?? getCrashJournal(),
+    now: options.now ?? Date.now,
+    fileExists: options.fileExists ?? ((path: string) => existsSync(path)),
+    delay: options.delay ?? defaultDelay,
+    onDeferredBroadcast: deps.onDeferredBroadcast,
+    thresholds: { ...DEFAULT_MEM_PRESSURE_THRESHOLDS, ...options.memPressureThresholds },
+    queryPressure: options.queryMemPressure ?? (() => queryMemPressure()),
+  }
+}
+
+function emptyReattachReport(): ReattachReport {
+  return {
     checkpointFound: false,
     candidates: [],
     excluded: [],
@@ -242,37 +279,87 @@ export async function runStartupReattach(
     highWaterWaits: 0,
     checkpointDeleted: false,
   }
+}
+
+/**
+ * 执行 reattach 编排（一次性；组合根 listen 后 fire-and-forget 调用）。
+ * 本函数不抛（内部逐步容错），返回编排报告供日志与测试断言。阶段实现拆分至下方
+ * 阶段函数（partitionSnapshot / waitForOrphanReap / waitForMemPressureClear /
+ * restoreCandidates），本函数只保留 D3 时序编排序。
+ */
+export async function runStartupReattach(
+  deps: StartupReattachDeps,
+  options: StartupReattachOptions = {},
+): Promise<ReattachReport> {
+  const ctx = createReattachContext(deps, options)
+  const report = emptyReattachReport()
 
   // ① 读 checkpoint（staleness 第 0 步）：undefined = 无快照（clean exit 已删 / 首次启动，
   //    常态）或损坏已隔离退 lazy（u4 read() 契约）——零动作，冷启动维持 lazy（A3b）。
-  const snapshot = checkpoint.read()
+  const snapshot = ctx.checkpoint.read()
   if (!snapshot) return report
   report.checkpointFound = true
 
   // ② 真补集过滤（纯 CPU，无 IO；过滤排除不记台账，见文件头）。
-  const nowMs = now()
+  const entryById = partitionSnapshotEntries(ctx, snapshot, report)
+
+  // ③ 零候选 = 零尝试：直接删 checkpoint（A6「全跳过也删」的零尝试形态）。
+  if (report.candidates.length === 0) {
+    report.checkpointDeleted = deleteCheckpointFile(ctx.checkpoint)
+    return report
+  }
+
+  // ④ 等孤儿收割完成（有界 race）；超界时函数内部完成「全部候选跳过 + 删 checkpoint」
+  //    的终态处理，返回 false 告知调用方直接收束。
+  if (!(await waitForOrphanReap(ctx, report))) return report
+
+  // ⑤ 高水位延迟（D3：即时系统级查询，无采样环历史依赖；高压持续则轮询等待至缓解）。
+  await waitForMemPressureClear(ctx, report)
+
+  // ⑥ 分批 restore（并发上限；Promise.allSettled 结构性保证单 session 失败不阻断批次，
+  //    逐 session 容错在 restoreOne 内部收敛——allSettled 是第二道结构防线）。
+  await restoreCandidates(ctx, entryById, report)
+
+  // ⑦ 全部尝试完删除 checkpoint（D3 契约 1 第二轨——无条件删，含全跳过/全失败形态）。
+  report.checkpointDeleted = deleteCheckpointFile(ctx.checkpoint)
+  console.log(`[reattach] done: restored=${report.restored.length} skipped=${report.skipped.length} excluded=${report.excluded.length} checkpointDeleted=${report.checkpointDeleted}`)
+  return report
+}
+
+/**
+ * ② 真补集过滤：逐 entry 判定恢复候选（candidates）与排除（excluded），返回
+ * sessionId → entry 映射（⑥ restoreOne 的 staleness guard 消费）。
+ */
+function partitionSnapshotEntries(
+  ctx: ReattachContext,
+  snapshot: { sessions: RuntimeCheckpointEntry[] },
+  report: ReattachReport,
+): Map<string, RuntimeCheckpointEntry> {
   const entryById = new Map<string, RuntimeCheckpointEntry>()
+  const nowMs = ctx.now()
   for (const entry of snapshot.sessions) {
     entryById.set(entry.piSessionId, entry)
-    if (shouldReattachEntry(entry, { nowMs, idleWindowMs, viewedWindowMs })) {
+    if (shouldReattachEntry(entry, { nowMs, idleWindowMs: ctx.idleWindowMs, viewedWindowMs: ctx.viewedWindowMs })) {
       report.candidates.push(entry.piSessionId)
     } else {
       report.excluded.push(entry.piSessionId)
     }
   }
+  return entryById
+}
 
-  // ③ 零候选 = 零尝试：直接删 checkpoint（A6「全跳过也删」的零尝试形态）。
-  if (report.candidates.length === 0) {
-    report.checkpointDeleted = deleteCheckpointFile(checkpoint)
-    return report
-  }
-
-  // ④ 等孤儿收割完成（有界 race；收割链含 5s 调度宽限——live 孤儿未收割完不 spawn）。
+/**
+ * ④ 等待孤儿收割完成（收割链含 5s 调度宽限——live 孤儿未收割完不 spawn）。
+ *
+ * 超界（false 返回）时本函数完成全部候选的终态处理：逐候选记 reattach-skipped
+ * （reason=reap-wait-timeout）+ 删 checkpoint（A6「超界跳过 = 本实例内全部尝试已终态」）。
+ */
+async function waitForOrphanReap(ctx: ReattachContext, report: ReattachReport): Promise<boolean> {
   let harvested = true
   try {
     harvested = await Promise.race([
-      deps.waitForOrphanReap().then(() => true),
-      delay(harvestWaitBoundMs).then(() => false),
+      ctx.deps.waitForOrphanReap().then(() => true),
+      ctx.delay(ctx.harvestWaitBoundMs).then(() => false),
     ])
   } catch (e: unknown) {
     // 收割 promise 契约永不 reject；防御性 reject 按「未收割」处理（宁 lazy 不双持）。
@@ -281,24 +368,28 @@ export async function runStartupReattach(
   }
   if (!harvested) {
     for (const sessionId of report.candidates) {
-      appendSkip(journal, sessionId, REATTACH_SKIP_REAP_TIMEOUT,
-        `orphan reap did not settle within ${harvestWaitBoundMs}ms; all candidates fall back to lazy (never double-spawn)`)
+      appendSkip(ctx.journal, sessionId, REATTACH_SKIP_REAP_TIMEOUT,
+        `orphan reap did not settle within ${ctx.harvestWaitBoundMs}ms; all candidates fall back to lazy (never double-spawn)`)
       report.skipped.push({ sessionId, reason: REATTACH_SKIP_REAP_TIMEOUT })
     }
     // 超界跳过 = 本实例内全部尝试已终态：删 checkpoint（A6 语义）。
-    report.checkpointDeleted = deleteCheckpointFile(checkpoint)
-    return report
+    report.checkpointDeleted = deleteCheckpointFile(ctx.checkpoint)
   }
+  return harvested
+}
 
-  // ⑤ 高水位延迟（D3：即时系统级查询，无采样环历史依赖；高压持续则轮询等待至缓解）。
-  // 偏差 #27：进入延迟 / 缓解退出各广播一次 reattach:deferred（形态选择见
-  // ReattachDeferredBroadcast 注释）；best-effort——广播故障不破坏编排链。
+/**
+ * ⑤ 高水位延迟（D3）：即时系统级查询，高压持续则轮询等待至缓解（无总上限——手动 lazy
+ * 恒可用）。偏差 #27：进入延迟 / 缓解退出各广播一次 reattach:deferred（形态选择见
+ * ReattachDeferredBroadcast 注释）；best-effort——广播故障不破坏编排链。
+ */
+async function waitForMemPressureClear(ctx: ReattachContext, report: ReattachReport): Promise<void> {
   let deferredAnnounced = false
   for (;;) {
     let high = false
     try {
-      const sample = await queryPressure()
-      high = isMemPressureHigh(sample, thresholds)
+      const sample = await ctx.queryPressure()
+      high = isMemPressureHigh(sample, ctx.thresholds)
     } catch (e: unknown) {
       // 查询契约永不 reject；防御兜底按「可恢复」处理（不因旁路设施故障阻塞恢复）。
       console.warn('[reattach] mem pressure query failed unexpectedly, resuming:', e)
@@ -306,39 +397,39 @@ export async function runStartupReattach(
     if (!high) break
     report.highWaterWaits++
     if (report.highWaterWaits === 1) {
-      console.warn(`[reattach] system memory pressure high — deferring reattach spawn (re-check every ${highWaterPollMs}ms; manual lazy restore unaffected)`)
+      console.warn(`[reattach] system memory pressure high — deferring reattach spawn (re-check every ${ctx.highWaterPollMs}ms; manual lazy restore unaffected)`)
       deferredAnnounced = true
-      broadcastDeferredSafely(onDeferredBroadcast, { active: true, reason: 'high-memory', pollMs: highWaterPollMs })
+      broadcastDeferredSafely(ctx.onDeferredBroadcast, { active: true, reason: 'high-memory', pollMs: ctx.highWaterPollMs })
     }
-    await delay(highWaterPollMs)
+    await ctx.delay(ctx.highWaterPollMs)
   }
   if (report.highWaterWaits > 0) {
     console.log(`[reattach] memory pressure cleared after ${report.highWaterWaits} poll(s), resuming reattach`)
     if (deferredAnnounced) {
       // 进入拍广播过才发退出帧（零延迟常态不产生任何帧）；查询抛错按「可恢复」break 的
       // 防御形态同样收到缓解帧——与「进入帧已发出」配对，不留无退出信号的悬挂态。
-      broadcastDeferredSafely(onDeferredBroadcast, { active: false, reason: 'high-memory', pollMs: highWaterPollMs })
+      broadcastDeferredSafely(ctx.onDeferredBroadcast, { active: false, reason: 'high-memory', pollMs: ctx.highWaterPollMs })
     }
   }
+}
 
-  // ⑥ 分批 restore（并发上限；Promise.allSettled 结构性保证单 session 失败不阻断批次，
-  //    逐 session 容错在 restoreOne 内部收敛——allSettled 是第二道结构防线）。
-  for (let i = 0; i < report.candidates.length; i += concurrency) {
-    const batch = report.candidates.slice(i, i + concurrency)
+/** ⑥ 分批 restore（并发上限 = ctx.concurrency，缺省 2；逐批 allSettled）。 */
+async function restoreCandidates(
+  ctx: ReattachContext,
+  entryById: Map<string, RuntimeCheckpointEntry>,
+  report: ReattachReport,
+): Promise<void> {
+  for (let i = 0; i < report.candidates.length; i += ctx.concurrency) {
+    const batch = report.candidates.slice(i, i + ctx.concurrency)
     await Promise.allSettled(batch.map((sessionId) => restoreOne({
       sessionId,
       entry: entryById.get(sessionId),
-      deps,
-      journal,
-      fileExists,
+      deps: ctx.deps,
+      journal: ctx.journal,
+      fileExists: ctx.fileExists,
       report,
     })))
   }
-
-  // ⑦ 全部尝试完删除 checkpoint（D3 契约 1 第二轨——无条件删，含全跳过/全失败形态）。
-  report.checkpointDeleted = deleteCheckpointFile(checkpoint)
-  console.log(`[reattach] done: restored=${report.restored.length} skipped=${report.skipped.length} excluded=${report.excluded.length} checkpointDeleted=${report.checkpointDeleted}`)
-  return report
 }
 
 /** 单 session 恢复（staleness guard → restore；失败记事件，不向上抛）。 */

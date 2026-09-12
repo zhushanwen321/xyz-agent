@@ -25,6 +25,12 @@
  * 后静默（对齐 logger.ts attachStreamErrorHandler 的 once 形态）。close() 供 shutdown
  * 链与测试取确定性 flush 点（end 后 append 为 no-op）。
  *
+ * 留痕出口经注入（C-comm-01 循环依赖零容忍）：本模块**不 import logger**——write 失败 /
+ * endAndAwait 超时的 warn/error 出口由组合根 initCrashJournal(dataDir, logger) 注入
+ * （logger → crash-journal 单向保留，crash-journal → logger 的反向边删除）。注入的是
+ * logger 稳定对象引用，运行期函数体内调用，initLogger 先后皆可；未注入 = no-op
+ * （测试直接 createCrashJournalWriter 构造零副作用，对齐 logger 未初始化 no-op 契约）。
+ *
  * 单例风格对齐 logger.ts：initCrashJournal(dataDir) 组合根调一次；未初始化时
  * getCrashJournal() 返回 no-op writer（单元测试零副作用）。
  */
@@ -36,7 +42,6 @@ import {
   type CrashJournalWriterOptions,
 } from '@xyz-agent/shared'
 import { getDataDir } from '@xyz-agent/shared/paths'
-import { logger } from './logger.js'
 // endAndAwait 单一实现（偏差 #32①：原模块私有复刻与 logger.ts 同构，收敛共享原语；
 // 超时留痕出口 reportEndAwaitTimeout 保持本模块注入）
 import { END_AWAIT_TIMEOUT_MS, endAndAwaitStream } from './stream-end-await.js'
@@ -202,7 +207,7 @@ class CrashJournalFileWriterImpl implements CrashJournalFileWriter {
       if (this.pendingDroppedCount > 0) {
         const dropped = this.pendingDroppedCount
         this.pendingDroppedCount = 0
-        logger.warn(`[crash-journal] dropped ${dropped} events (pending queue overflow during rotation): ${this.baseFile}`)
+        journalLogSink.warn(`[crash-journal] dropped ${dropped} events (pending queue overflow during rotation): ${this.baseFile}`)
       }
     })()
     return this.rotationInFlight
@@ -290,8 +295,15 @@ const NOOP_CRASH_JOURNAL: CrashJournalWriter = { append: () => {} }
  * 初始化 runtime 台账单例（组合根 index.ts 最早处调一次，幂等）。
  *
  * @param dataDir 数据根目录；缺省 getDataDir() 动态推导（XYZ_AGENT_DATA_DIR 可覆盖）
+ * @param logSink 留痕出口（write 失败 / endAndAwait 超时的 warn/error）；生产 = 组合根
+ *   注入 logger 单例（循环依赖零容忍：本模块不 import logger，反向边已删）。缺省维持
+ *   当前 sink（未注入过则为 no-op）——测试直接构造、main 侧双胞胎零副作用。
  */
-export function initCrashJournal(dataDir: string = getDataDir()): CrashJournalWriter {
+export function initCrashJournal(
+  dataDir: string = getDataDir(),
+  logSink?: CrashJournalLogSink,
+): CrashJournalWriter {
+  if (logSink) journalLogSink = logSink
   runtimeSingleton ??= createCrashJournalWriter({ role: 'runtime', dataDir })
   return runtimeSingleton
 }
@@ -312,6 +324,23 @@ export async function closeCrashJournal(): Promise<void> {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// 留痕出口（循环依赖破除：logger → crash-journal 单向化，本模块不 import logger）
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * 台账留痕出口契约（生产 = logger 单例的 warn/error 子集；组合根 initCrashJournal 注入）。
+ */
+export interface CrashJournalLogSink {
+  warn(message: string): void
+  error(message: string): void
+}
+
+/** 未注入时的 no-op sink（测试 / 直接构造零副作用，对齐 logger 未初始化 no-op 契约）。 */
+const NOOP_LOG_SINK: CrashJournalLogSink = { warn: () => {}, error: () => {} }
+
+let journalLogSink: CrashJournalLogSink = NOOP_LOG_SINK
+
+// ─────────────────────────────────────────────────────────────────────────────
 // 工具
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -324,7 +353,7 @@ function statSizeSafe(file: string): number {
 }
 
 /**
- * 台账写入失败的唯一出口：记 runtime 主日志一条 warn（logger 显式对象直写文件、不经
+ * 台账写入失败的唯一出口：记 runtime 主日志一条 warn（经注入的 sink 直写文件、不经
  * console patch，与 crash-journal 写失败互不触发递归）。logger 自身写失败由其内部容错。
  * 模块级 once：实例级 once（reportWriteFailure）在其上聚合，防多实例失败风暴刷屏。
  */
@@ -332,7 +361,7 @@ let failureReported = false
 function reportWriteFailureOnce(message: string): void {
   if (failureReported) return
   failureReported = true
-  logger.warn(`[crash-journal] ${message}`)
+  journalLogSink.warn(`[crash-journal] ${message}`)
 }
 
 /**
@@ -340,5 +369,5 @@ function reportWriteFailureOnce(message: string): void {
  * 降级」原则——记 error 级日志，超时销毁丢弃的在途缓冲尾部行有人知道）。
  */
 function reportEndAwaitTimeout(label: string): void {
-  logger.error(`[crash-journal] endAndAwait timeout after ${END_AWAIT_TIMEOUT_MS}ms (${label}); stream force-destroyed`)
+  journalLogSink.error(`[crash-journal] endAndAwait timeout after ${END_AWAIT_TIMEOUT_MS}ms (${label}); stream force-destroyed`)
 }

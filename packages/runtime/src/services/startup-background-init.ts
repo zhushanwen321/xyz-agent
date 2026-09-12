@@ -119,86 +119,15 @@ export async function runStartupBackgroundInit(deps: StartupBackgroundDeps): Pro
   const { configStore, authStorage, credentialWriter, extensionService, pm, appInfo, broadcastAppInfo, skillRegistry, pluginService } = deps
   const tBg = performance.now()
 
-  // ⑨ 孤儿 pi 收殓（integrity-hardening §3.4 D4a）：上一代 runtime 被 SIGKILL/OOM 后
-  // 残留的 pi 进程（持有 API key、可能继续烧 token）由新 runtime 兜底回收。
-  // 调度点刻意放在序列最前：宽限 5s 从启动起计，而非从串行链链尾起计——③ autoUpgrade
-  // 等网络步骤耗时不可控，链尾再计会把实际宽限拉长到数十秒，违背 G4「秒级回收」。
-  // 收殓只读进程表 + 处置非子进程，与本序列其余步骤无共享状态；reapOrphanPiProcesses
-  // 内部全 catch 不抛，外层再兜一层 catch，异常不可能外溢影响其他启动步。
-  // 5s 为初值（设计 D4a ⛔实施期门：宽限值待 S6 真机实测调整）——给 pi 的 stdin-EOF
-  // 自杀链留优雅退出时间。
-  //
-  // ⑨b 后台任务收殓触发面 B（file-lock-unification D2，设计 §2.3）：同一 5s 定时器内
-  // **链式 await** 孤儿 pi 收殓完成后执行全量 registry 扫描（reapAllSessionsBackgroundTasks）。
-  // 硬序理由（设计 §2.3 时序论证）：若扫描先行，扫描时遗留 pi 尚活、其 detached 后台
-  // 任务被三分支①（属主活）跳过；+5s 孤儿 pi 被杀后这些任务才真正孤儿化，且此后无任何
-  // 销毁事件可触达（不在本次运行的 SessionService Map 内）——漏收一个 app 周期。
-  // 实现形态在「链式 await 其结果」与「并入同一定时器」中选前者：孤儿收殓已有独立
-  // 定时器 + unref 语义，链式追加改动面最小且时序由 Promise 链构造性保证。
-  // pi 收殓失败（catch 兜底后）仍继续扫描——B 处置 registry 遗留，与 pi 收殓成败解耦，
-  // 硬序只约束先后不约束成败传递。整体 fire-and-forget：不阻塞本启动序列。
-  //
-  // u5（crash-forensics D3）：收殓链由纯 fire-and-forget 升级为「fire-and-forget + 完成
-  // promise 交付」——链尾 settle 后 resolve（全部 catch 已兜底，resolve 无竞态）；调度后
-  // 同步交付给 onOrphanReapChainScheduled（reattach 编排 await 该 promise = 含 5s 宽限的
-  // 收割完成信号）。未传回调时零行为变化。
-  let settleReapChain: () => void = () => {}
-  const reapChainDone = new Promise<void>((resolve) => {
-    settleReapChain = resolve
-  })
-  const reapTimer = setTimeout(() => {
-    // u17 判据 v2（设计 §6.12）：孤儿判据消费 spawn 清单，读取函数由组合根经 deps 注入
-    // （清单文件 io 在 infra/spawn-markers.ts 读写两侧 SSOT；D6c services 层不 import infra）。
-    void reapOrphanPiProcesses({
-      dataDir: getDataDir(),
-      ownPid: process.pid,
-      readSpawnMarkers: deps.readSpawnMarkers,
-    })
-      .catch((e) => {
-        console.warn('[runtime] orphan pi reap failed unexpectedly:', e)
-      })
-      .then(() => reapAllSessionsBackgroundTasks(getPiAgentDir()))
-      .catch((e) => {
-        console.warn('[runtime] background task reap-all failed unexpectedly:', e)
-      })
-      .then(() => {
-        settleReapChain()
-      })
-  }, ORPHAN_REAP_DELAY_MS)
-  // unref：不让收殓定时器独自挂住进程生命周期（正常场景 runtime 长活，仅测试/工具受益）。
-  reapTimer.unref()
-  deps.onOrphanReapChainScheduled?.(reapChainDone)
+  // ⑨ 孤儿 pi 收殓链调度（孤儿收殓 + 后台任务收殓链式硬序 + 完成 promise 交付；
+  // 时序论证与 u5 交付语义见 scheduleOrphanReapChain 函数头注释）。fire-and-forget 不阻塞本序列。
+  scheduleOrphanReapChain(deps)
 
   // ① provider 迁移 → migrationReady gate（D8-3）：session spawn（create/restore/fork）
-  // 在迁移完成前等待该 promise。gate 显式 .then(onFulfilled, onRejected) 双处理——
-  // 迁移失败也 resolve（best-effort：warn + 下次重试，不阻塞任何功能）。
+  // 在迁移完成前等待该 promise（日志块与 best-effort 容错见 startProviderMigration）。
   // 必须先于 setMigrationGate 启动（同步前缀立即执行），gate 在任何 WS 消息（macrotask）
   // 被处理前已就位——listen 后首个 session RPC 必然等到 gate。
-  const migrationReady = migrateProviderConfig(configStore, authStorage, credentialWriter).then(
-    (migrationReport) => {
-      const { catalog, enabled } = migrationReport
-      if (catalog.migrated.length > 0 || catalog.errors.length > 0 || enabled.migratedEnabled || enabled.fullDisabledWarn) {
-        console.log('[runtime] provider config migration:', JSON.stringify({
-          catalogMigrated: catalog.migrated.length,
-          catalogKept: catalog.kept.length,
-          catalogSkipped: catalog.skipped.length,
-          catalogFailed: catalog.failed.length,
-          enabledMigrated: enabled.migratedEnabled,
-          fullDisabledWarn: enabled.fullDisabledWarn ?? false,
-        }))
-        if (catalog.errors.length > 0) {
-          console.warn('[runtime] legacy provider migration errors:', catalog.errors)
-        }
-        if (enabled.fullDisabledWarn) {
-          console.warn('[runtime] all providers were disabled (enabled===false); pi does not support fully-disabled state. After migration all providers are available — please manually remove unwanted providers.')
-        }
-      }
-    },
-    (e) => {
-      // best-effort 降级：provider config migration 失败不阻塞启动（旧配置保留，用户可在 Settings 手动修正）。
-      console.warn('[runtime] provider config migration failed:', e)
-    },
-  )
+  const migrationReady = startProviderMigration(configStore, authStorage, credentialWriter)
   setMigrationGate(migrationReady)
   await migrationReady
   const tMigA = performance.now()
@@ -271,19 +200,8 @@ export async function runStartupBackgroundInit(deps: StartupBackgroundDeps): Pro
     console.warn('[runtime] auto-rename default initialization failed:', e)
   }
 
-  // ⑦b extension 声明的启动配置统一 ensure（startup-config 机制）：各 extension 在
-  // package.json `xyz-agent.startupConfig` 声明「启动即就绪」的配置文件，此处统一
-  // 首建（已存在一律跳过，绝不覆盖用户配置）。详见 extension-startup-config.ts 文件头。
-  try {
-    const extPaths = await extensionService.getExtensionPaths()
-    const report = ensureDeclaredStartupConfigs(extPaths, getPiAgentDir())
-    const line = `[runtime] extension startup config ensured=${report.ensured} skipped=${report.skipped} failed=${report.failed}`
-    if (report.failed > 0) console.warn(line)
-    else if (report.ensured > 0) console.log(line)
-  } catch (e) {
-    // best-effort：声明读失败不阻塞启动（各 extension 惰性 ensure 仍在，功能不受损）
-    console.warn('[runtime] extension startup config ensure failed:', e)
-  }
+  // ⑦b extension 声明的启动配置统一 ensure（机制与容错见 ensureStartupConfigs 注释）。
+  await ensureStartupConfigs(extensionService)
 
   // ⑧ sessions 目录 `.tmp-migrate-*.jsonl` / `.tmp-import-*.jsonl` 标记家族崩溃残留清扫
   // （W3 残留清理 + import-session D1 扩展）：目录级兜底，补 cleanupMigrateResidues 只在
@@ -317,4 +235,97 @@ export async function runStartupBackgroundInit(deps: StartupBackgroundDeps): Pro
 
   // 后台初始化耗时分解探针（06 §5 m-7）：listen 后各段（改造前这些段全部堆在 listen 前）。
   console.log(`[runtime] background init breakdown: migrationA=${(tMigA - tBg).toFixed(1)}ms migrateBuiltin=${(tMigB - tMigA).toFixed(1)}ms autoUpgrade=${(tAutoUpgrade - tMigB).toFixed(1)}ms piVersion=${(tPiVersion - tAutoUpgrade).toFixed(1)}ms skillInit=${(tSkillInit - tPiVersion).toFixed(1)}ms plugins=${(tPlugins - tSkillInit).toFixed(1)}ms total=${(tPlugins - tBg).toFixed(1)}ms`)
+}
+
+/**
+ * ⑨ 孤儿 pi 收殓链调度（integrity-hardening §3.4 D4a + ⑨b file-lock-unification D2）：
+ * 主序列最前调度的 5s 宽限定时器——孤儿 pi 收殓 → 后台任务收殓链式硬序 → 完成
+ * promise 交付（onOrphanReapChainScheduled → reattach 编排消费）。fire-and-forget，
+ * 不阻塞启动序列。时序论证（调度点最前 / 链式 await 硬序 / u5 完成 promise 交付
+ * 语义）见设计文档 integrity-hardening §3.4 D4a、file-lock-unification §2.3、
+ * crash-forensics-and-watchdog D3。
+ */
+function scheduleOrphanReapChain(deps: StartupBackgroundDeps): void {
+  let settleReapChain: () => void = () => {}
+  const reapChainDone = new Promise<void>((resolve) => {
+    settleReapChain = resolve
+  })
+  const reapTimer = setTimeout(() => {
+    // u17 判据 v2（设计 §6.12）：孤儿判据消费 spawn 清单，读取函数由组合根经 deps 注入
+    // （清单文件 io 在 infra/spawn-markers.ts 读写两侧 SSOT；D6c services 层不 import infra）。
+    void reapOrphanPiProcesses({
+      dataDir: getDataDir(),
+      ownPid: process.pid,
+      readSpawnMarkers: deps.readSpawnMarkers,
+    })
+      .catch((e) => {
+        console.warn('[runtime] orphan pi reap failed unexpectedly:', e)
+      })
+      .then(() => reapAllSessionsBackgroundTasks(getPiAgentDir()))
+      .catch((e) => {
+        console.warn('[runtime] background task reap-all failed unexpectedly:', e)
+      })
+      .then(() => {
+        settleReapChain()
+      })
+  }, ORPHAN_REAP_DELAY_MS)
+  // unref：不让收殓定时器独自挂住进程生命周期（正常场景 runtime 长活，仅测试/工具受益）。
+  reapTimer.unref()
+  deps.onOrphanReapChainScheduled?.(reapChainDone)
+}
+
+/**
+ * ① provider 迁移（D8-3）→ 返回 migrationReady promise（调用方 setMigrationGate 挂载）。
+ *
+ * gate 显式 .then(onFulfilled, onRejected) 双处理——迁移失败也 resolve（best-effort：
+ * warn + 下次重试，不阻塞任何功能）。日志块与容错语义与拆分前逐字一致。
+ */
+function startProviderMigration(
+  configStore: PiConfigStore,
+  authStorage: AuthStorage,
+  credentialWriter: CredentialWriter,
+): Promise<void> {
+  return migrateProviderConfig(configStore, authStorage, credentialWriter).then(
+    (migrationReport) => {
+      const { catalog, enabled } = migrationReport
+      if (catalog.migrated.length > 0 || catalog.errors.length > 0 || enabled.migratedEnabled || enabled.fullDisabledWarn) {
+        console.log('[runtime] provider config migration:', JSON.stringify({
+          catalogMigrated: catalog.migrated.length,
+          catalogKept: catalog.kept.length,
+          catalogSkipped: catalog.skipped.length,
+          catalogFailed: catalog.failed.length,
+          enabledMigrated: enabled.migratedEnabled,
+          fullDisabledWarn: enabled.fullDisabledWarn ?? false,
+        }))
+        if (catalog.errors.length > 0) {
+          console.warn('[runtime] legacy provider migration errors:', catalog.errors)
+        }
+        if (enabled.fullDisabledWarn) {
+          console.warn('[runtime] all providers were disabled (enabled===false); pi does not support fully-disabled state. After migration all providers are available — please manually remove unwanted providers.')
+        }
+      }
+    },
+    (e) => {
+      // best-effort 降级：provider config migration 失败不阻塞启动（旧配置保留，用户可在 Settings 手动修正）。
+      console.warn('[runtime] provider config migration failed:', e)
+    },
+  )
+}
+
+/**
+ * ⑦b extension 声明的启动配置统一 ensure（startup-config 机制）：各 extension 在
+ * package.json `xyz-agent.startupConfig` 声明「启动即就绪」的配置文件，此处统一
+ * 首建（已存在一律跳过，绝不覆盖用户配置）。详见 extension-startup-config.ts 文件头。
+ */
+async function ensureStartupConfigs(extensionService: ExtensionService): Promise<void> {
+  try {
+    const extPaths = await extensionService.getExtensionPaths()
+    const report = ensureDeclaredStartupConfigs(extPaths, getPiAgentDir())
+    const line = `[runtime] extension startup config ensured=${report.ensured} skipped=${report.skipped} failed=${report.failed}`
+    if (report.failed > 0) console.warn(line)
+    else if (report.ensured > 0) console.log(line)
+  } catch (e) {
+    // best-effort：声明读失败不阻塞启动（各 extension 惰性 ensure 仍在，功能不受损）
+    console.warn('[runtime] extension startup config ensure failed:', e)
+  }
 }

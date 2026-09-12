@@ -618,9 +618,10 @@ export const MEMORY_WATERMARK_INTERVAL_MS = WATERMARK_INTERVAL_MINUTES * SECONDS
 // 一次（唯一生产消费点）——聚合钩子挂该函数即「既有 5min 水位定时器处」，采样链迁移
 // 时钩子必须随迁。**日内重启处置（D1 原文）**：聚合态在本模块内存、重启即清零——重启
 // 后从进程内首个样本起算当日剩余窗口，coverage 戳随条目落盘；当日未完结不写（只写
-// 完整窗口）。**循环依赖说明**：本模块 import crash-journal（getCrashJournal）、反向被
-// 其 import（logger 单例）——两模块顶层均只做定义、互访全在运行期函数体内（ESM live
-// binding 下安全）；台账单例未初始化时 getCrashJournal 返回 no-op（crash-journal 契约）。
+// 完整窗口）。**依赖方向（循环依赖破除后单向）**：本模块 import crash-journal
+// （getCrashJournal），crash-journal 不反向 import logger——其留痕出口经组合根
+// initCrashJournal(dataDir, logger) 注入；台账单例未初始化时 getCrashJournal 返回
+// no-op（crash-journal 契约）。
 
 /** 单个自然日窗口的水位聚合态（模块内存态，重启清零——D1 日内重启处置）。 */
 interface WatermarkDailyAccumulator {

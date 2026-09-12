@@ -286,8 +286,10 @@ async function main(): Promise<void> {
   // 必须在任何 service 可能 append 之前——pi-respawn 的 auto-respawn 四态、message-bus
   // 守卫的 frame-truncated/registry-miss、session 生命周期事件全部经 getCrashJournal()
   // 单例落 `<dataDir>/logs/crashes/runtime.jsonl`。幂等；目录创建失败降级 no-op
-  // （旁路设施故障不放大为调用链故障，见 crash-journal.ts 契约）。
-  initCrashJournal(getDataDir())
+  // （旁路设施故障不放大为调用链故障，见 crash-journal.ts 契约）。第二参注入 logger
+  // 单例作留痕出口（write 失败 / endAndAwait 超时 warn/error）——crash-journal 不
+  // import logger，logger → crash-journal 单向（循环依赖零容忍，C-comm-01）。
+  initCrashJournal(getDataDir(), logger)
 
   // S1-W1：token 解析在 initLogger 之后（fail-closed warning 落盘）、server 构造之前。
   const runtimeToken = resolveRuntimeToken()
