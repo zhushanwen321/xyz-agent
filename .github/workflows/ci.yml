@@ -243,7 +243,7 @@ jobs:
       # 逐文件列举刻意维持（禁改目录级 vitest run scripts/__tests__/——builtin-ext-bundle.test.mjs
       # 依赖上方 prepare 步骤的 staged 产物，目录级会把所有未登记测试一并拉进本 step）。
       - name: Test - scripts guards
-        run: pnpm exec vitest run scripts/__tests__/check-unsafe-stream-writes.test.mjs scripts/__tests__/check-core-dist-gate.test.mjs scripts/__tests__/gitcode-release-sync.test.mjs scripts/__tests__/check-publish-surface.test.mjs scripts/__tests__/check-layout-literals.test.mjs scripts/__tests__/check-provider-credential-reads.test.mjs scripts/__tests__/migrate-pi-layout-v2.test.mjs scripts/__tests__/vue-rules-split-justified.test.mjs
+        run: pnpm exec vitest run scripts/__tests__/check-unsafe-stream-writes.test.mjs scripts/__tests__/check-core-dist-gate.test.mjs scripts/__tests__/gitcode-release-sync.test.mjs scripts/__tests__/check-publish-surface.test.mjs scripts/__tests__/check-layout-literals.test.mjs scripts/__tests__/check-provider-credential-reads.test.mjs scripts/__tests__/migrate-pi-layout-v2.test.mjs scripts/__tests__/vue-rules-split-justified.test.mjs scripts/__tests__/check-subagent-service-boundary.test.mjs scripts/__tests__/check-record-write-surface.test.mjs
 
   # E2E 视觉回归（mock 轨 visual-chromium）：只跑像素 diff baseline（S2 W3 交付的
   # visual-chromium project，testMatch **/visual/** + chromium.launch + spawn vite @ VITE_MOCK=true）。
@@ -478,6 +478,22 @@ jobs:
       # 同上行 G4 的挂载理由）。
       - name: Subagent-core closure guard (D9-①)
         run: node scripts/check-subagent-core-closure.mjs
+
+      # H3 subagent-service 聚合边界守卫（与 pre-commit 同源直调；守卫全量扫描
+      # SERVICE_DIR 不依赖 staged 上下文）：聚合间值 import 禁 / 聚合→壳 import 禁 /
+      # 跨聚合私有访问禁 / 支撑文件方向门 + 环检测——本地 hook 仅单一 worktree 生效
+      #（core.hooksPath 局部安装），CI 面是跨 worktree 的等价拦截点（D7 通则，
+      # 同上行 D9-① 的挂载理由）。
+      - name: Subagent-service boundary guard (H3)
+        run: node scripts/check-subagent-service-boundary.mjs
+
+      # H4 record 持久化写面守卫（与 pre-commit 同源直调；守卫全量扫描
+      # packages/*/src + extensions/**/src 不依赖 staged 上下文）：store 外 record
+      # 写面直写（R1 六名写函数 + R2 subagent-record entry）零命中——本地 hook 按
+      # staged 路径触发，触发面外的包在 CI 面等价拦截（D7 通则，同上行 H3 /
+      # D9-① 的挂载理由）。
+      - name: Record write surface guard (H4)
+        run: node scripts/check-record-write-surface.mjs
 
       # 流写逃逸护栏（2026-09-04 runtime 整机崩溃事故护栏，与 pre-commit 同源直调）：
       # 裸流写 / socket error 未挂载静态扫描——防新增代码在事件回调里裸写半关闭/

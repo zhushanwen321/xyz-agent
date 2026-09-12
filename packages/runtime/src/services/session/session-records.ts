@@ -549,23 +549,33 @@ export class SessionRecords {
 /**
  * W18：SubagentRecord 逐字段相等判定（record entry 派生缓存的发布 diff 基线）。
  * 结构固定（shared SubagentRecord），逐字段比对而非 JSON.stringify（顺序无关、无序列化抖动）。
+ * origin 在比对面（R3-1②）：活 record 的 origin 实际不变，但本函数管 publish 去重——
+ * 投影白名单新增/演化字段时漏比对会静默吞掉 publish diff，补齐防未来字段漏更。
  */
+/** publish 去重比对面：逐字段对表（原 && 链的字段集，新增需参与去重的字段在此登记）。
+ * 刻意不含 result / chatMode / resumable / engine 等未列字段（比对集变更属行为变更，
+ * 不在本判定职责内静默扩大）。 */
+const SUBAGENT_RECORD_EQUALS_FIELDS = [
+  'subagentId',
+  'sessionFile',
+  'agent',
+  'slug',
+  'task',
+  'status',
+  'model',
+  'thinkingLevel',
+  'turns',
+  'totalTokens',
+  'elapsedSeconds',
+  'startedAt',
+  'endedAt',
+  'error',
+  'closedReason',
+  'origin',
+] as const satisfies readonly (keyof SubagentRecord)[]
+
 function subagentRecordEquals(a: SubagentRecord, b: SubagentRecord): boolean {
-  return a.subagentId === b.subagentId
-    && a.sessionFile === b.sessionFile
-    && a.agent === b.agent
-    && a.slug === b.slug
-    && a.task === b.task
-    && a.status === b.status
-    && a.model === b.model
-    && a.thinkingLevel === b.thinkingLevel
-    && a.turns === b.turns
-    && a.totalTokens === b.totalTokens
-    && a.elapsedSeconds === b.elapsedSeconds
-    && a.startedAt === b.startedAt
-    && a.endedAt === b.endedAt
-    && a.error === b.error
-    && a.closedReason === b.closedReason
+  return SUBAGENT_RECORD_EQUALS_FIELDS.every((key) => a[key] === b[key])
 }
 
 /**

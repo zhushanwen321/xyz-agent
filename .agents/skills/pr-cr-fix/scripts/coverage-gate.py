@@ -222,7 +222,9 @@ def incremental_pct(coverage: dict[str, dict[int, int]], pkg: str,
             continue
         hit = sum(1 for n in executable if hits_map[n] > 0)
         if hit < len(executable):
-            uncovered_files.append(f"{rel_file} ({hit}/{len(executable)})")
+            # 条目语义 = 未覆盖行数/总可执行行（I-13 修正：旧格式 (hit/total) 是已覆盖数，
+            # 与字段名 uncovered 直觉相反，下游按「未覆盖 X 行」消费会系统性夸大缺口）。
+            uncovered_files.append(f"{rel_file} ({len(executable) - hit} uncovered / {len(executable)})")
         covered += hit
         total += len(executable)
         debug(f"match {rel_file}: executable={len(executable)} hit={hit}")

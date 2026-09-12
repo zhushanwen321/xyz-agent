@@ -21,9 +21,16 @@ export function useBackgroundWork() {
    * 指定 session 是否有 background 任务仍在跑（subagent running 或 workflow running/paused）。
    * subagent 无 paused 概念（只有 running/done/failed/cancelled/crashed）；workflow 有 paused（用户暂停）。
    * paused 算 background work：paused 不发 triggerTurn 续跑，主 agent 不会推进，仍是未完成状态。
+   *
+   * H2 W1（record-unification D1③）：workflow 脚本派发的 subagent（origin==='workflow'）
+   * 不算本 session 的后台工作——其生命周期由 workflow run 承载（终态化收口见 D7），
+   * 混入会让主 session 在 workflow 运行期间被误判 working。origin 缺省（undefined =
+   * tool 语义，存量 record）恒参与判定。判据单源 = store.hasRunning（S1：origin 排除
+   * 经 opts 传入，不再内联复刻判据）。
    */
   function hasBackgroundWork(sessionId: string): boolean {
-    return subagentStore.hasRunning(sessionId) || workflowStore.hasRunningOrPaused(sessionId)
+    const subagentWorking = subagentStore.hasRunning(sessionId, { excludeOrigin: 'workflow' })
+    return subagentWorking || workflowStore.hasRunningOrPaused(sessionId)
   }
 
   return { hasBackgroundWork }
