@@ -2108,6 +2108,29 @@
           "agent": "review-business-logic"
         }
       ]
+    },
+    {
+      "id": "C-build-08",
+      "summary": "per-worktree dev 实例装配器唯一入口（2026-09-12）：`pnpm dev` 必须经 apps/electron/scripts/dev-instance.mjs——按 worktree 名 hash 稳定派生 Vite/CDP 端口与 XYZ_AGENT_PORT_OFFSET（runtime 段，offset 步进 10 不重叠），数据目录隔离到 ~/.xyz-agent-dev/instances/<worktree>/（首启从只读模板 ~/.xyz-agent-dev.template/ 复制，模板只含配置面、运行时状态白名单排除，默认模型预置 mimo-v2.5-pro）；AI agent 真机验收必须 XYZ_DEV_BACKGROUND=1（showInactive 不抢前台焦点）。禁止绕过装配器多开 dev（固定端口互占 + 共享数据目录互写，验收证据无法绑定 worktree——2026-09-12 H3 Gate B 归因困境成因）；Electron userData/单实例锁从 XYZ_AGENT_DATA_DIR 派生，装配器是四点联动（vite server/electron loadURL/CDP/runtime 段）一致性的唯一保证，单点手改端口必致静默错配",
+      "scope": [
+        "apps/electron/scripts/dev-instance.mjs",
+        "apps/electron/package.json",
+        "apps/electron/scripts/dev-electron.mjs",
+        "packages/renderer/vite.config.ts",
+        "apps/electron/main/window/window-factory.ts"
+      ],
+      "authority": [
+        "../AGENTS.md"
+      ],
+      "dimensions": [
+        "electron-build",
+        "monorepo-impact"
+      ],
+      "enforcement": [
+        {
+          "type": "none"
+        }
+      ]
     }
   ]
 }

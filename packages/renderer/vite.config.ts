@@ -38,7 +38,10 @@ export default defineConfig(({ mode }) => {
       },
     },
     server: {
-      port: 1420,
+      // per-worktree dev 实例端口（dev-instance.mjs 按 worktree 名 hash 派生，C-dev-01）；
+      // 未注入时保持 1420（裸 vite / dev-smoke 等旧用法兼容）。strictPort 保留：被占即
+      // fail-fast，杜绝「Electron 加载到别的实例的 1420 跑旧代码」的静默错配。
+      port: Number(process.env.XYZ_VITE_PORT) || 1420,
       strictPort: true,
       // HMR file watcher：本机环境（Node 24 + macOS 15）下 Vite 8 默认的 fsevents 后端不派发变更事件
       //（独立 chokidar 同路径/同 fsevents 绑定可正常收到，问题仅在 Vite 运行时触发），导致改 .vue/.ts 不热更新。

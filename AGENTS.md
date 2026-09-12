@@ -55,9 +55,10 @@ bash scripts/validate-runtime-bundle.sh    # runtime bundle 深度验证
 
 ## 前端调试（Playwright 连 dev app）
 
-`pnpm dev` 后 Electron 开 `--remote-debugging-port=9222`，用 browser-automation skill 连 `http://localhost:9222`（截图/DOM/执行 JS，不抢焦点）。
+`pnpm dev` 走 `apps/electron/scripts/dev-instance.mjs` 装配器（C-dev-01）：按 worktree 名 hash 稳定派生端口（Vite/CDP/runtime 段）+ 数据目录 `~/.xyz-agent-dev/instances/<worktree>/`（首启从只读模板 `~/.xyz-agent-dev.template/` 复制，默认模型预置 mimo-v2.5-pro），多 worktree 并行 dev 互不干扰。**AI agent 真机验收必须 `XYZ_DEV_BACKGROUND=1 pnpm dev`**（showInactive 不抢前台焦点，遵循 browser-automation skill 对策 2）；连接前 `node apps/electron/scripts/dev-instance.mjs --print` 查本实例 CDP 端口，browser-automation 连 `http://localhost:<cdp-port>`（截图/DOM/执行 JS）。验收要干净环境时加 `--fresh`。
 
-- 多实例坑：打包版太极.app 可能同跑（占 3210）；dev renderer 在 9222、runtime 在 3310。连错看到旧代码——先确认 `list-pages` URL 是 `localhost:1420`
+- 实例排查：单实例锁按数据目录 userData 区分（多实例天然共存）；连错实例看旧代码——先确认 `list-pages` URL 是本实例的 `localhost:<vite-port>`；模板调整后 `node apps/electron/scripts/dev-instance.mjs init-template --force` 重建（只读模板勿直改）
+- 打包版太极.app 可能同跑（占 3210）；裸跑（不经装配器）时 dev CDP 9222 / Vite 1420 / runtime 3310
 - runtime 改动不热重载（tsx 非 watch）：改 runtime 源码必须重启 `pnpm dev`；renderer 走 vite HMR
 - **staged 引擎副本 dev 恒重建 [F7]**：dev 的 subagent 引擎加载 gitignored 产物 `apps/electron/resources/engines/<id>/index.js`（非源码——extensions 走源码但引擎没有 dev/build 分流）；`pnpm dev` 启动链已前置 `bundle-extensions.mjs`（<1s）重建，改 subagent CLI 源码后重启 dev 即生效。曾因 staged 滞后致 GUI 真机跑旧引擎代码（Gate B 发现 F7）。绕过 dev 链直接起 Electron 时须手动 `node scripts/bundle-extensions.mjs`
 
