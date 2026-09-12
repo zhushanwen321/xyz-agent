@@ -405,6 +405,40 @@ export function readRecordBinding(sessionFile: string): RecordBinding | undefine
   } catch {
     return undefined;
   }
+  const identity = projectValidatedIdentityFields(parsed);
+  if (identity === undefined) {
+    return undefined;
+  }
+  const optional = normalizeOptionalBindingFields(parsed);
+  return {
+    v: 1,
+    ...identity,
+    rootSessionId: optional.rootSessionId,
+    parentRecordId: optional.parentRecordId,
+    depth: optional.depth,
+    slug: optional.slug,
+    chatMode: parsed.chatMode === true,
+    round: optional.round,
+    model: optional.model,
+    thinkingLevel: optional.thinkingLevel,
+    worktree: parsed.worktree === true,
+    origin: optional.origin,
+    parentRunId: optional.parentRunId,
+    totalTokens: optional.totalTokens,
+    turns: optional.turns,
+    endedAt: optional.endedAt,
+  };
+}
+
+/**
+ * 身份必填域守卫 + 投影（recordId/agent/task/mode/startedAt 是重建 light record
+ * 的最低要求，残缺载荷拒绝重建）。守卫表达式自 readRecordBinding 原样搬移：短路
+ * 求值顺序与判读结果逐字节等价（C-data-20 解析权威）；校验通过后在本函数内完成
+ * 必填域收窄投影（抽成纯布尔守卫会丢失调用方的 TS 属性收窄）。
+ */
+function projectValidatedIdentityFields(
+  parsed: Partial<RecordBinding>,
+): Pick<RecordBinding, "recordId" | "agent" | "task" | "mode" | "startedAt"> | undefined {
   if (
     parsed.v !== 1 ||
     typeof parsed.recordId !== "string" ||
@@ -417,21 +451,43 @@ export function readRecordBinding(sessionFile: string): RecordBinding | undefine
     return undefined;
   }
   return {
-    v: 1,
     recordId: parsed.recordId,
+    agent: parsed.agent,
+    task: parsed.task,
+    mode: parsed.mode,
+    startedAt: parsed.startedAt,
+  };
+}
+
+/**
+ * 可选域类型守卫归一（非法/缺省 → 各自缺省值，不影响整体判读）。各守卫表达式自
+ * readRecordBinding 原样搬移，逐字段等价。
+ */
+function normalizeOptionalBindingFields(
+  parsed: Partial<RecordBinding>,
+): Pick<
+  RecordBinding,
+  | "rootSessionId"
+  | "parentRecordId"
+  | "depth"
+  | "slug"
+  | "round"
+  | "model"
+  | "thinkingLevel"
+  | "origin"
+  | "parentRunId"
+  | "totalTokens"
+  | "turns"
+  | "endedAt"
+> {
+  return {
     rootSessionId: typeof parsed.rootSessionId === "string" ? parsed.rootSessionId : undefined,
     parentRecordId: typeof parsed.parentRecordId === "string" ? parsed.parentRecordId : undefined,
     depth: typeof parsed.depth === "number" ? parsed.depth : 0,
-    agent: parsed.agent,
-    task: parsed.task,
     slug: typeof parsed.slug === "string" ? parsed.slug : "",
-    mode: parsed.mode,
-    startedAt: parsed.startedAt,
-    chatMode: parsed.chatMode === true,
     round: typeof parsed.round === "number" ? parsed.round : undefined,
     model: typeof parsed.model === "string" ? parsed.model : "",
     thinkingLevel: typeof parsed.thinkingLevel === "string" ? parsed.thinkingLevel : undefined,
-    worktree: parsed.worktree === true,
     // 来源身份两字段（H2 S3）：字面量守卫归一（非法/缺省 → undefined = "tool" 语义），
     // 对齐 record-store.readEntryOriginFields 主 entry 重建侧的同名守卫。
     origin:

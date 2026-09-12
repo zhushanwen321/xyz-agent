@@ -591,9 +591,32 @@ export class EngineClient {
   }
 
   /**
-   * 进程死亡 / 失败后的统一清理：镜像整体置死（失效语义 2+3：killed=true 广播后
-   * 清空）→ pidfile 删 → 在途请求 engine_crashed（附 stderr 尾）→ run 路由清空。
-   *
+   * 进程死亡 / 失败后的统一清理（收割/组杀分支各成子函数，此处只做顺序编排）：
+   * 孤儿收割（镜像置死前）→ 镜像置死（失效语义 2+3）→ pidfile 删 → 在途请求
+   * engine_crashed（附 stderr 尾）→ run 路由清空 → 活引擎组杀兜底。
+   */
+  private teardownProcess(detail: string): void {
+    this.reapOrphansAfterUnexpectedDeath(detail);
+    this.mirror.killAll();
+    if (this.pidfileWritten !== undefined) {
+      removePidfile(this.pidfileWritten);
+      this.pidfileWritten = undefined;
+    }
+    const err = engineCrashedError(detail, this.stderrTail);
+    for (const [, pending] of this.pending) {
+      if (pending.timer !== undefined) clearTimeout(pending.timer);
+      pending.reject(err);
+    }
+    this.pending.clear();
+    this.runRoutes.clear();
+    this.lastPartialHandle = undefined;
+    this.killLeakedAliveChild(detail);
+    if (this.state !== "unavailable" && this.state !== "disposed") {
+      this.state = "exited";
+    }
+  }
+
+  /**
    * [H1 U2 / 红线①收割链] 非主动死亡且引擎已死的路径，在镜像置死**之前**补发收割
    * 信号：孤儿真因 = 引擎意外死时宿主未发收割信号（原先 alreadyDead 分支直接跳过
    * killProcessTree），任务子进程留在无主进程组继续写 session 文件。插入点约束：
@@ -601,10 +624,10 @@ export class EngineClient {
    *     （置死后全量项 killed=true 不可过滤）；
    *   - 条件 = !intentionalKill && alreadyDead——主动 dispose 链已有两层杀（引擎
    *     killAllActiveChildren SIGTERM+30s + 宿主 killAll 组杀 5s 升级），跳过即不叠加、
-   *     优雅窗零压缩、pi trap-flush 零截断；进程仍活的路径（握手失败重建）由下方
-   *     既有组杀兜底承接。
+   *     优雅窗零压缩、pi trap-flush 零截断；进程仍活的路径（握手失败重建）由
+   *     killLeakedAliveChild 组杀兜底承接。
    */
-  private teardownProcess(detail: string): void {
+  private reapOrphansAfterUnexpectedDeath(detail: string): void {
     if (!this.intentionalKill && this.child !== undefined) {
       const dying = this.child;
       const alreadyDead = dying.exitCode !== null || dying.signalCode !== null;
@@ -628,34 +651,22 @@ export class EngineClient {
         }
       }
     }
-    this.mirror.killAll();
-    if (this.pidfileWritten !== undefined) {
-      removePidfile(this.pidfileWritten);
-      this.pidfileWritten = undefined;
-    }
-    const err = engineCrashedError(detail, this.stderrTail);
-    for (const [, pending] of this.pending) {
-      if (pending.timer !== undefined) clearTimeout(pending.timer);
-      pending.reject(err);
-    }
-    this.pending.clear();
-    this.runRoutes.clear();
-    this.lastPartialHandle = undefined;
+  }
+
+  /**
+   * 握手失败路径（版本越界/握手超时/启动僵死）引擎进程仍活着：必须组杀，否则
+   * crash 重建循环每次 spawn 泄漏一个常驻孤儿（测试机实测积累 370+）。主动杀
+   * （intentionalKill=true）与进程已死（exitCode/signalCode 非空）跳过重复发信号。
+   */
+  private killLeakedAliveChild(detail: string): void {
     if (this.child !== undefined) {
       const child = this.child;
       this.child = undefined;
-      // 握手失败路径（版本越界 / 握手超时 / 启动僵死）引擎进程仍活着：必须组杀，
-      // 否则泄漏为常驻孤儿（crash 重建循环每次 spawn 泄漏一个；测试机实测积累
-      // 370+ 假引擎进程）。主动杀路径（killAll 已发信号，intentionalKill=true）与
-      // 进程已死路径（onEngineExit，exitCode/signalCode 非空）跳过重复发信号。
       const alreadyDead = child.exitCode !== null || child.signalCode !== null;
       if (!alreadyDead && !this.intentionalKill && child.pid !== undefined) {
         killProcessTree(child.pid, detail, { engineId: this.engineId });
       }
       child.removeAllListeners();
-    }
-    if (this.state !== "unavailable" && this.state !== "disposed") {
-      this.state = "exited";
     }
   }
 

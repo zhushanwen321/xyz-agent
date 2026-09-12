@@ -1801,6 +1801,21 @@ export class RecordStore {
       return null;
     }
     const entry = RecordStore.buildFileCacheEntry(base, file, stamps, payloads);
+    RecordStore.projectBindingDerivedFields(entry, header, payloads);
+    this.fileCache.set(file, entry);
+    this.idToFile.set(base.id, file);
+    return entry;
+  }
+
+  /**
+   * [UF-1 / H2 A3] 绑定承载域补投影（仅 header === undefined 的绑定重建路径；
+   * identity entry 命中时绑定不参与）。自 scanFile 原样搬移：赋值条件与顺序等价。
+   */
+  private static projectBindingDerivedFields(
+    entry: FileCacheEntry,
+    header: IdentityHeaderRecon | undefined,
+    payloads: SidecarPayloads,
+  ): void {
     // [UF-1] 绑定承载的对话形态域补投影：IdentityHeaderRecon 无 round 槽位
     //（既有语义：identity entry 磁盘重建不恢复 round），绑定路径在其上恢复——
     // 续聊轮数随绑定快照可滞后一拍（state-marker.RecordBinding.round 契约）。
@@ -1816,9 +1831,6 @@ export class RecordStore {
       if (b.turns !== undefined) entry.light.turns = b.turns;
       if (b.endedAt !== undefined) entry.light.endedAt = b.endedAt;
     }
-    this.fileCache.set(file, entry);
-    this.idToFile.set(base.id, file);
-    return entry;
   }
 
   /**
