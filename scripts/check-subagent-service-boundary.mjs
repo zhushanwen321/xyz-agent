@@ -203,163 +203,236 @@ function extractAggregateGetters(source, aggregateClassNames) {
   return getters;
 }
 
-// ── 主检查 ─────────────────────────────────────────────────────────────────
+// ── 检查阶段函数（main 按序编排；经 violations/edges 汇总产出，不读全局态）──
 
-function main() {
+/** 收集 SERVICE_DIR 下检查对象：全部 .ts 文件按序，拆分聚合文件与支撑文件。
+ *  [H3/R6] 支撑文件与聚合分治：支撑文件走检查 5 方向规则，不进聚合间台账门。 */
+function collectServiceFiles() {
   const allServiceFiles = readdirSync(SERVICE_DIR)
     .filter((f) => f.endsWith(".ts"))
     .sort();
-  // [H3/R6] 支撑文件与聚合分治：支撑文件走检查 5 方向规则，不进聚合间台账门。
-  const aggregateFiles = allServiceFiles.filter((f) => !SUPPORT_FILES.has(f));
-  const supportFiles = allServiceFiles.filter((f) => SUPPORT_FILES.has(f));
-  const aggregateClassNames = extractAggregateClassNames();
-  const allSources = new Map(allServiceFiles.map((f) => [f, readFileSync(join(SERVICE_DIR, f), "utf-8")]));
-  const sources = new Map(aggregateFiles.map((f) => [f, allSources.get(f)]));
+  return {
+    allServiceFiles,
+    aggregateFiles: allServiceFiles.filter((f) => !SUPPORT_FILES.has(f)),
+    supportFiles: allServiceFiles.filter((f) => SUPPORT_FILES.has(f)),
+  };
+}
 
+/** 环检测图加边：file → sibling（Set 去重；Map 保持插入序，环路径确定性依赖它）。 */
+function addEdge(edges, file, sibling) {
+  if (!edges.has(file)) edges.set(file, new Set());
+  edges.get(file).add(sibling);
+}
+
+/** 检查 2：聚合 → 壳（一律禁，type 也不许——壳符号面只许壳自己 re-export）。
+ *  命中返回违规文本，非壳目标返回 null。 */
+function checkAggregateShellImport(file, parsed) {
+  if (!isShellTarget(join(SERVICE_DIR, file), parsed.target)) return null;
+  const syms = parsed.symbols.map((s) => (s.name === "*" ? "(default/namespace)" : s.name)).join(", ");
+  return `[聚合→壳] ${file} import subagent-service.ts（${syms}）——聚合读壳能力必须经 deps 注入（D4），禁止 import`;
+}
+
+/** 聚合→支撑：常量叶子允许值 import；bootstrap（类型+装配工厂）仅 type-only。
+ *  返回违规文本数组（service-constants.ts：允许，不入聚合间台账门）。 */
+function checkAggregateSupportImport(file, parsed, sibling) {
+  if (sibling !== "service-bootstrap.ts") return [];
   const violations = [];
-  const edges = new Map(); // 聚合/支撑文件间有向边（含白名单），供环检测
+  for (const sym of parsed.symbols) {
+    if (sym.typeOnly) continue;
+    violations.push(
+      `[聚合→支撑·值] ${file} 值 import service-bootstrap.ts 的 ${sym.name === "*" ? "(default/namespace)" : sym.name}——` +
+        `聚合只许消费其 type 声明（SubagentQueries 等），装配工厂（单例访问器族）归壳/barrel 消费面`,
+    );
+  }
+  return violations;
+}
 
-  // ── 检查 1 + 2：聚合 import 方向门 ──
+/** 聚合→聚合台账门：仅 ALLOWED_EDGES 登记的符号级单向边放行，未登记即红。 */
+function checkAggregateLedgerImport(file, parsed, sibling) {
+  const violations = [];
+  for (const sym of parsed.symbols) {
+    const symName = sym.name === "*" ? "(default/namespace)" : sym.name;
+    const key = `${file}|${sym.name}`;
+    if (ALLOWED_EDGES.get(key) === sibling) continue; // 台账内合法边
+    const kind = sym.typeOnly ? "type-only" : "值";
+    violations.push(
+      `[聚合→聚合·未登记] ${file} import ${sibling} 的 ${symName}（${kind} import）——` +
+        `聚合间协作须走壳 deps 注入或显式接口；确需新边先在 ${"scripts/check-subagent-service-boundary.mjs"} 的 ALLOWED_EDGES 登记并注明依据`,
+    );
+  }
+  return violations;
+}
+
+/** 检查 1：聚合 → 聚合（台账门）/ 聚合 → 支撑（检查 5 前半）的单条 import 处理。
+ *  无论合法与否均入环检测图（白名单边入图，反向出现即成环被捕获）。 */
+function checkAggregateSiblingImport(file, parsed, edges) {
+  const sibling = resolveServiceTarget(join(SERVICE_DIR, file), parsed.target);
+  if (!sibling) return [];
+  addEdge(edges, file, sibling);
+  if (SUPPORT_FILES.has(sibling)) return checkAggregateSupportImport(file, parsed, sibling);
+  return checkAggregateLedgerImport(file, parsed, sibling);
+}
+
+/** 检查 1 + 2：单个聚合文件的 import 逐行方向门（先壳门后台账门，与违规产出序一致）。 */
+function checkAggregateFileImports(file, src, edges, violations) {
+  for (const line of logicalImportLines(src)) {
+    if (line.trim().startsWith("//")) continue;
+    const parsed = parseImport(line);
+    if (!parsed) continue;
+    const shellViolation = checkAggregateShellImport(file, parsed);
+    if (shellViolation !== null) {
+      violations.push(shellViolation);
+      continue;
+    }
+    violations.push(...checkAggregateSiblingImport(file, parsed, edges));
+  }
+}
+
+/** 检查 1 + 2 阶段：聚合 import 方向门。 */
+function checkAggregateImports(aggregateFiles, sources, edges, violations) {
+  for (const file of aggregateFiles) checkAggregateFileImports(file, sources.get(file), edges, violations);
+}
+
+/** 检查 5 前半：支撑 → 壳默认红（防反向依赖，D4 同理），仅 SUPPORT_SHELL_EDGES 放行。
+ *  命中返回违规文本数组（台账外每符号一条），非壳目标返回 null。 */
+function checkSupportShellImports(file, parsed) {
+  if (!isShellTarget(join(SERVICE_DIR, file), parsed.target)) return null;
+  const violations = [];
+  for (const sym of parsed.symbols) {
+    const symName = sym.name === "*" ? "(default/namespace)" : sym.name;
+    const key = `${file}|${sym.name}`;
+    if (SUPPORT_SHELL_EDGES.get(key) === "subagent-service.ts") continue; // 台账内合法值边
+    violations.push(
+      `[支撑→壳·未登记] ${file} import subagent-service.ts 的 ${symName}——` +
+        `支撑文件→壳仅 SUPPORT_SHELL_EDGES 登记边放行（现状唯一 = service-bootstrap 的 SubagentService 构造依赖）；` +
+        `其余能力经 deps 注入（D4）`,
+    );
+  }
+  return violations;
+}
+
+/** 检查 5：单个支撑文件的 import 方向门；
+ *  支撑 → 聚合/支撑：允许（提供 type/常量/工厂），入环检测图。 */
+function checkSupportFileImports(file, src, edges, violations) {
+  for (const line of logicalImportLines(src)) {
+    if (line.trim().startsWith("//")) continue;
+    const parsed = parseImport(line);
+    if (!parsed) continue;
+    const shellViolations = checkSupportShellImports(file, parsed);
+    if (shellViolations !== null) {
+      violations.push(...shellViolations);
+      continue;
+    }
+    const sibling = resolveServiceTarget(join(SERVICE_DIR, file), parsed.target);
+    if (sibling) addEdge(edges, file, sibling);
+  }
+}
+
+/** 检查 5 阶段：支撑文件方向门（支撑→壳台账门 + 支撑→聚合允许入图）。 */
+function checkSupportImports(supportFiles, sources, edges, violations) {
+  for (const file of supportFiles) checkSupportFileImports(file, sources.get(file), edges, violations);
+}
+
+/** 环检测（三色 DFS；白名单边与支撑↔聚合边均入图——反向出现即成环被捕获）。
+ *  返回环路径文本数组（"a -> b -> a" 形态）。 */
+function detectCycles(edges) {
+  const color = new Map([...edges.keys()].map((k) => [k, 0]));
+  const cycles = [];
+  const dfs = (n, path) => {
+    color.set(n, 1);
+    for (const nb of edges.get(n) ?? []) {
+      if ((color.get(nb) ?? 0) === 1) cycles.push([...path, n, nb].join(" -> "));
+      else if ((color.get(nb) ?? 0) === 0) dfs(nb, [...path, n]);
+    }
+    color.set(n, 2);
+  };
+  for (const n of edges.keys()) if (color.get(n) === 0) dfs(n, []);
+  return cycles;
+}
+
+/** 检查 4 前置：聚合 class 名 → public 导出面（非 private 成员名集合）映射。 */
+function collectAggregateSurfaces(aggregateFiles, sources) {
+  const surfaces = new Map(); // 聚合 class 名 → public 面
   for (const file of aggregateFiles) {
-    const src = sources.get(file);
-    for (const line of logicalImportLines(src)) {
-      if (line.trim().startsWith("//")) continue;
-      const parsed = parseImport(line);
-      if (!parsed) continue;
+    const extracted = extractPublicSurface(sources.get(file));
+    if (extracted) surfaces.set(extracted.className, extracted.surface);
+  }
+  return surfaces;
+}
 
-      // 检查 2：聚合 → 壳（一律禁，type 也不许——壳符号面只许壳自己 re-export）
-      if (isShellTarget(join(SERVICE_DIR, file), parsed.target)) {
-        const syms = parsed.symbols.map((s) => (s.name === "*" ? "(default/namespace)" : s.name)).join(", ");
-        violations.push(
-          `[聚合→壳] ${file} import subagent-service.ts（${syms}）——聚合读壳能力必须经 deps 注入（D4），禁止 import`,
-        );
-        continue;
-      }
-
-      // 检查 1：聚合 → 聚合（台账门）/ 聚合 → 支撑（检查 5 前半）
-      const sibling = resolveServiceTarget(join(SERVICE_DIR, file), parsed.target);
-      if (!sibling) continue;
-      if (!edges.has(file)) edges.set(file, new Set());
-      edges.get(file).add(sibling);
-      if (SUPPORT_FILES.has(sibling)) {
-        // 聚合→支撑：常量叶子允许值 import；bootstrap（类型+装配工厂）仅 type-only
-        if (sibling === "service-bootstrap.ts") {
-          for (const sym of parsed.symbols) {
-            if (sym.typeOnly) continue;
-            violations.push(
-              `[聚合→支撑·值] ${file} 值 import service-bootstrap.ts 的 ${sym.name === "*" ? "(default/namespace)" : sym.name}——` +
-                `聚合只许消费其 type 声明（SubagentQueries 等），装配工厂（单例访问器族）归壳/barrel 消费面`,
-            );
-          }
-        }
-        continue; // service-constants.ts（常量叶子）：允许，不入聚合间台账门
-      }
-      for (const sym of parsed.symbols) {
-        const symName = sym.name === "*" ? "(default/namespace)" : sym.name;
-        const key = `${file}|${sym.name}`;
-        const allowed = ALLOWED_EDGES.get(key);
-        if (allowed === sibling) continue; // 台账内合法边
-        const kind = sym.typeOnly ? "type-only" : "值";
-        violations.push(
-          `[聚合→聚合·未登记] ${file} import ${sibling} 的 ${symName}（${kind} import）——` +
-            `聚合间协作须走壳 deps 注入或显式接口；确需新边先在 ${"scripts/check-subagent-service-boundary.mjs"} 的 ALLOWED_EDGES 登记并注明依据`,
-        );
-      }
+/** 检查 4：单个聚合文件内 deps getter 直调形态对照目标聚合导出面，
+ *  this.deps.getFoo().method( 的 method 非 public 即红。 */
+function checkAggregateGetterCalls(file, src, surfaces, aggregateClassNames, violations) {
+  const getters = extractAggregateGetters(src, aggregateClassNames);
+  if (getters.size === 0) return;
+  // 正文调用形态：this.deps.getFoo().method( （跨行/链式前缀容忍）
+  const callRe = /this\.deps\.(get\w+)\(\)\s*\.\s*([\w$]+)\s*\(/g;
+  let m;
+  while ((m = callRe.exec(src)) !== null) {
+    const targetClass = getters.get(m[1]);
+    if (!targetClass) continue;
+    const method = m[2];
+    const surface = surfaces.get(targetClass);
+    if (surface && !surface.has(method)) {
+      violations.push(
+        `[跨聚合私有访问] ${file}: this.deps.${m[1]}().${method}(…) —— ${method} 不在 ${targetClass} 的导出面（public 成员）上` +
+          `；聚合间协作走显式接口（窄函数注入），禁止穿透实例调内部`,
+      );
     }
   }
+}
 
-  // ── 检查 5：支撑文件方向门（支撑→壳台账门 + 支撑→聚合允许入图）──
-  for (const file of supportFiles) {
-    const src = allSources.get(file);
-    for (const line of logicalImportLines(src)) {
-      if (line.trim().startsWith("//")) continue;
-      const parsed = parseImport(line);
-      if (!parsed) continue;
-
-      // 支撑 → 壳：默认红（防反向依赖，D4 同理），仅 SUPPORT_SHELL_EDGES 放行
-      if (isShellTarget(join(SERVICE_DIR, file), parsed.target)) {
-        for (const sym of parsed.symbols) {
-          const symName = sym.name === "*" ? "(default/namespace)" : sym.name;
-          const key = `${file}|${sym.name}`;
-          if (SUPPORT_SHELL_EDGES.get(key) === "subagent-service.ts") continue;
-          violations.push(
-            `[支撑→壳·未登记] ${file} import subagent-service.ts 的 ${symName}——` +
-              `支撑文件→壳仅 SUPPORT_SHELL_EDGES 登记边放行（现状唯一 = service-bootstrap 的 SubagentService 构造依赖）；` +
-              `其余能力经 deps 注入（D4）`,
-          );
-        }
-        continue;
-      }
-
-      // 支撑 → 聚合/支撑：允许（提供 type/常量/工厂），入环检测图
-      const sibling = resolveServiceTarget(join(SERVICE_DIR, file), parsed.target);
-      if (sibling) {
-        if (!edges.has(file)) edges.set(file, new Set());
-        edges.get(file).add(sibling);
-      }
-    }
+/** 检查 4 阶段：跨聚合私有访问门（deps getter → 兄弟聚合实例 → 非 public 成员调用）。 */
+function checkCrossAggregatePrivateAccess(aggregateFiles, sources, aggregateClassNames, violations) {
+  const surfaces = collectAggregateSurfaces(aggregateFiles, sources);
+  for (const file of aggregateFiles) {
+    checkAggregateGetterCalls(file, sources.get(file), surfaces, aggregateClassNames, violations);
   }
+}
 
-  // ── 环检测（三色 DFS；白名单边与支撑↔聚合边均入图——反向出现即成环被捕获）──
-  {
-    const color = new Map([...edges.keys()].map((k) => [k, 0]));
-    const cycles = [];
-    const dfs = (n, path) => {
-      color.set(n, 1);
-      for (const nb of edges.get(n) ?? []) {
-        if ((color.get(nb) ?? 0) === 1) cycles.push([...path, n, nb].join(" -> "));
-        else if ((color.get(nb) ?? 0) === 0) dfs(nb, [...path, n]);
-      }
-      color.set(n, 2);
-    };
-    for (const n of edges.keys()) if (color.get(n) === 0) dfs(n, []);
-    for (const c of cycles) violations.push(`[聚合/支撑间环] ${c}`);
-  }
+/** 违规汇报（stderr 逐条 + 修复指引）。 */
+function reportViolations(violations) {
+  console.error("[ERROR] subagent-service 聚合边界检查未通过（H3/R5 三方向守卫）：");
+  for (const v of violations) console.error("  - " + v);
+  console.error("\n[INFO] 合法边台账与规则见 scripts/check-subagent-service-boundary.mjs 头部注释；");
+  console.error("      聚合读壳能力（assertReady 等）经 deps 注入函数，不是 import（设计 D4）。");
+  console.error("\x1b[0;31m[原则] 无论是否本次改动引入的问题，都必须正面修复解决，不允许跳过。\x1b[0m");
+}
 
-  // ── 检查 4：跨聚合私有访问门（deps getter → 兄弟聚合实例 → 非 public 成员调用）──
-  {
-    const surfaces = new Map(); // 聚合 class 名 → public 面
-    for (const file of aggregateFiles) {
-      const extracted = extractPublicSurface(sources.get(file));
-      if (extracted) surfaces.set(extracted.className, extracted.surface);
-    }
-    for (const file of aggregateFiles) {
-      const src = sources.get(file);
-      const getters = extractAggregateGetters(src, aggregateClassNames);
-      if (getters.size === 0) continue;
-      // 正文调用形态：this.deps.getFoo().method( （跨行/链式前缀容忍）
-      const callRe = /this\.deps\.(get\w+)\(\)\s*\.\s*([\w$]+)\s*\(/g;
-      let m;
-      while ((m = callRe.exec(src)) !== null) {
-        const targetClass = getters.get(m[1]);
-        if (!targetClass) continue;
-        const method = m[2];
-        const surface = surfaces.get(targetClass);
-        if (surface && !surface.has(method)) {
-          violations.push(
-            `[跨聚合私有访问] ${file}: this.deps.${m[1]}().${method}(…) —— ${method} 不在 ${targetClass} 的导出面（public 成员）上` +
-              `；聚合间协作走显式接口（窄函数注入），禁止穿透实例调内部`,
-          );
-        }
-      }
-    }
-  }
-
-  // ── 汇报 ──
-  if (violations.length > 0) {
-    console.error("[ERROR] subagent-service 聚合边界检查未通过（H3/R5 三方向守卫）：");
-    for (const v of violations) console.error("  - " + v);
-    console.error("\n[INFO] 合法边台账与规则见 scripts/check-subagent-service-boundary.mjs 头部注释；");
-    console.error("      聚合读壳能力（assertReady 等）经 deps 注入函数，不是 import（设计 D4）。");
-    console.error("\x1b[0;31m[原则] 无论是否本次改动引入的问题，都必须正面修复解决，不允许跳过。\x1b[0m");
-    return 2;
-  }
+/** 通过汇报（stdout）：文件数 + 台账边数摘要。 */
+function reportPass(aggregateFiles, supportFiles, edges) {
   const edgeCount = [...edges.values()].reduce((acc, s) => acc + s.size, 0);
   console.log(
     `[OK] subagent-service 聚合边界检查通过（${aggregateFiles.length} 聚合文件 + ${supportFiles.length} 支撑文件，` +
       `聚合/支撑间 ${edgeCount} 条边单向无环，聚合→壳与支撑→壳（登记边外）import 零命中，跨聚合私有访问零命中）`,
   );
+}
+
+/** 汇报：有违规返回 2（退出码 = 违规），否则返回 0。 */
+function reportResult(violations, aggregateFiles, supportFiles, edges) {
+  if (violations.length > 0) {
+    reportViolations(violations);
+    return 2;
+  }
+  reportPass(aggregateFiles, supportFiles, edges);
   return 0;
+}
+
+// ── 主检查（编排序列：收集 → 检查 1+2 → 检查 5 → 环检测 → 检查 4 → 汇报）──
+
+function main() {
+  const { allServiceFiles, aggregateFiles, supportFiles } = collectServiceFiles();
+  const aggregateClassNames = extractAggregateClassNames();
+  const sources = new Map(allServiceFiles.map((f) => [f, readFileSync(join(SERVICE_DIR, f), "utf-8")]));
+
+  const violations = [];
+  const edges = new Map(); // 聚合/支撑文件间有向边（含白名单），供环检测
+
+  checkAggregateImports(aggregateFiles, sources, edges, violations);
+  checkSupportImports(supportFiles, sources, edges, violations);
+  for (const c of detectCycles(edges)) violations.push(`[聚合/支撑间环] ${c}`);
+  checkCrossAggregatePrivateAccess(aggregateFiles, sources, aggregateClassNames, violations);
+  return reportResult(violations, aggregateFiles, supportFiles, edges);
 }
 
 process.exit(main());
