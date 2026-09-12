@@ -55,7 +55,7 @@ graph LR
 | Unit | 状态 | 轮次 | 证据指针 |
 |------|------|------|----------|
 | u-counts | committed | 1 | 主 agent 核验：领地 2 文件吻合；vitest 13/13 绿（useSidebarCounts.test.ts）；合理偏差 1 条已登记（§5） |
-| u-display | committed | 1 | 主 agent 核验：领地 4 文件吻合；vitest 14/14 绿（SegmentedTab.spec + sidebar-layout.test）；grep badge 零命中；自捕获修复 modelValue 漏声明（自引入，未外溢） |
+| u-display | committed | 1 | 主 agent 核验：领地 4 文件吻合；vitest 14/14 绿（SegmentedTab.spec + sidebar-layout.test）；grep badge 零命中；自捕获修复 modelValue 漏声明（自引入，未外溢）。+ 修复批次 b29689c85 追加领地：remove-persistent-decorations.test.ts（TC1 改写，见 §7 变更历史） |
 
 ## 7 残留风险与变更历史
 
@@ -64,5 +64,6 @@ graph LR
 - 2026-09-12 计划创建，双单元并行派发。
 - 2026-09-12 一致性审查第 1 轮（单 reviewer）：reasonable 3 条已登记（①sessionCount 用例超设计最低要求——无需回写 ②plugins tab 恒 0 显式处理——设计 §3.1 已补「挂载点占位不计数」 ③注释同步——已在 §5 偏差表）；unreasonable 2 条——[high] remove-persistent-decorations.test.ts TC1 打破全量红灯 → 修复批次派发（改写 TC1 + 复跑全量 0 failed）；[medium] 设计 §4 六场景未纳入验收 Gate → 本计划 §4 已补 Gate B 行，场景归属阶段 5 真机验收；doc_errors 2 条由主 agent 亲改设计文档（§3.1 listLoadError 过强表述改为「跟随 groups 现值」两态；§3.3 决策 1 影响面 + §5 U4 补记 remove-persistent-decorations.test.ts）。
 - 2026-09-12 定向复审（修复批次影响面，b29689c85）：unreasonable 未发现（TC1 新断言守卫有效且原守卫未破坏；TC1 字符串断言固有盲区由 SegmentedTab.spec.ts DOM 级守卫补足——复审确认守卫面完整；注释两态与 core 链路一致）；doc_errors 1 条 trivial（设计 §3.1 错误卡行号引用 75-83 → 76-85）已顺手校正。审查清零，转阶段 5。
-- 2026-09-12 Gate A 绿：renderer 全量 vitest 384 files / 4148 passed / 0 failed + `pnpm run lint` exit 0 + vue-tsc exit 0（待验证检查点循环依赖实证消除）；SKIP 绕过零命中。登记 3 项残留（非本次引入/补偿充分）：①MessageStream-bash.test.ts 3 个 it.skip 为区间外存量（d20a78813/34f20f4c7 引入），建议另开任务清账；②Sidebar.vue 接线行无测试 mount 覆盖——补偿防线 = SegmentedTab 4 props 必填 vue-tsc 拦截 + useSidebarCounts（源）与 SegmentedTab.spec（消费端）两端夹逼；③badge 形态守卫现存三处（DOM×2 + 字符串×1），再变更需三处同改。
+- 2026-09-12 Gate A 绿：renderer 全量 vitest 384 files / 4148 passed / 0 failed + `pnpm run lint` exit 0 + vue-tsc exit 0（待验证检查点循环依赖实证消除）；SKIP 绕过零命中。登记 3 项残留（非本次引入/补偿充分）：①MessageStream-bash.test.ts 3 个 it.skip 为区间外存量（d20a78813/34f20f4c7 引入），建议另开任务清账；②Sidebar.vue 的 SegmentedTab count 接线行（L67-70）无 mount 断言（Sidebar.vue 本体在 sidebar-assign-project-wiring 等测试中被 mount，但无 count 接线断言）——补偿防线 = SegmentedTab 4 props 必填 vue-tsc 拦截 + useSidebarCounts（源）与 SegmentedTab.spec（消费端）两端夹逼；③badge 形态守卫现存三处（DOM×2 + 字符串×1），再变更需三处同改。
 - 2026-09-12 Gate B 绿（六场景全 pass，无 blockers，真实 dev 实例 + 真实模型 MiMo-V2.5-Pro）：S1 归档 3→2→3；S2 新建 4 / 删除 3；S3 零态 + 非零态（Agents tab=1 == 列表进行中桶=1；Flows 零态符合标准）；S4 焦点切换子代理数字消失/恢复、session 恒全局；S5 真实派发 sa-34bd0a4f / sa-2366feda 派发即亮 1、终态归 0；S6 归档→计数 DOM 更新 2.1ms、tab 连点 dispatch 0.7ms。登记观察项（非本功能问题，建议另开任务）：①Files tab 切换 ~260ms = 1793 条根层文件列表渲染（存量 ViewHost 成本，设计 out-of-scope）；②console 有 vue-i18n linked-message 编译告警（空态文案「@subagent」被当 linked 语法）。环境已清理（dev 进程链精确退出，端口零占用）。**双绿达成，交付。**
+- 2026-09-12 design-code-sync 终态同步第 1 轮（基线 5f853af91，单 reviewer 四关系全量对照 + 反引号标识符机械验证全命中）：**must-fix 0** / suggestion 2 / info 4，全部当轮修完——F1 设计 §1/§2.1 fileCount「badge 链路已在用」失实（baseline 零消费）→ 改「现成但未被消费，本次接线激活」；F2 状态表 u-display 证据指针补记 b29689c85 追加领地；F3（contested-info）workflow 口径正反枚举等价性记录进设计 §2.3（union 扩值时对齐）；F4/F5 注释 stale（SegmentedTab「4 tab」→5 tab、useSidebarCounts.test 头补 sessionCount 套件）→ fixer 修复 + 涟漪命中 panel-i18n-p2.test.ts 3 处同模式一并修（24 用例绿）；F6 Gate A 残留② 表述收窄为「count 接线行无 mount 断言」。direction 分布：6 条 code-right（改文档/注释）+ 0 条 doc-right（改逻辑）+ 1 条 contested-info 记录。Step 5 退役判定：impl-plan 在 .tmp/dev-flow 合规；审查报告为会话内返回未落盘，docs/ 无伴生产物；设计文档 = 现行机制依据保留。**退役 0 / 保留 1。**

@@ -1,5 +1,6 @@
 /**
  * useSidebarCounts badge 口径单测（设计 subagent-sidebar-filter D8 / T3）。
+ * 另含 sessionCount（非归档口径：全量会话数 − 已归档，sidebar-tab-count-restore §2.3/§3.1）套件。
  *
  * subagentRunningCount 判据 = 「进行中」桶 SSOT（subagentBucket(r) === 'active'，
  * D6 #5 收敛——曾为本地重复实现 `status === 'running' && !isDoneProjection(r)`，

@@ -1,6 +1,6 @@
 # 侧边栏 SegmentedTab 计数恢复设计
 
-> **一句话结论**：四个 tab 计数数字在 v6 视觉重构中被整体移除（commit 405b14a79，非回归故障）；本设计恢复数字显示。其中 file / subagent / workflow 三个计数是渲染进程内存里现成的 computed（badge 链路已在用），只需恢复展示 + 新增「session 非归档数」一个 computed，零新增 IPC、零轮询，无可测量性能开销。
+> **一句话结论**：四个 tab 计数数字在 v6 视觉重构中被整体移除（commit 405b14a79，非回归故障）；本设计恢复数字显示。其中 subagent / workflow 两个进行中计数是 badge 链路已在用的现成 computed，fileCount 现成但删除后未被消费（本次接线激活），故只需恢复展示 + 新增「session 非归档数」一个 computed，零新增 IPC、零轮询，无可测量性能开销。
 
 ## 1 背景目标
 
@@ -22,7 +22,7 @@
 ### 2.1 代码事实（取自本仓，非编造）
 
 - `SegmentedTab.vue:23-26`：现存唯一状态指示是 7px 蓝点 badge（`v-if="tab.badge"`），仅 subagent / workflow 传 `runningCount > 0`；session / file 的 badge 硬编码 `false`（`:66-67`）。`count` 字段已不存在。
-- `useSidebarCounts.ts` 已有三个计数 computed，且 `Sidebar.vue:67-68` 已在消费传给 badge：
+- `useSidebarCounts.ts` 已有三个计数 computed；badge 链路只消费其中两个进行中计数（`Sidebar.vue:67-68` 传给 badge），`fileCount` 当时无消费方（死 computed，本次接线激活）：
   - `fileCount` = `fileTreeStore.getTree(focusedSessionId)?.length ?? 0` —— **焦点 session 文件树根层条目数**
   - `subagentRunningCount` = 焦点 session 下 `subagentBucket(r) === 'active'` 的记录数（排除 `origin === 'workflow'`）——「进行中」桶 SSOT 判据（`subagent-bucket.ts`：active = streaming + waiting，done 投影排除）
   - `workflowRunningCount` = 焦点 session 下 `status === 'running' || 'paused'` 的记录数
@@ -52,7 +52,7 @@ runtime（WS 广播/RPC，既有链路，本次零改动）
 | session | 侧边栏全量会话数 − 已归档（markedDone）数；**死会话（dead）计入** | `session.list` + `useSessionMarkers.isMarkedDone` | 用户明示「非归档」；会话 tab 列表 = 全局列表（不按焦点 session 过滤），数字与列表一致 |
 | file | 焦点 session 文件树**根层条目数（目录计入）** | `fileCount`（现成） | 与删除前显示口径完全一致；文件树懒加载（dir.children 展开前为 undefined，`file-tree.ts:19-20`），递归全量计数需 eager 拉整树，违反轻量约束——显式不做 |
 | subagent | 焦点 session，「进行中」桶数（streaming + waiting；done 投影排除；workflow 派发排除） | `subagentRunningCount`（现成） | 用户明示「非结束」= `subagentBucket` active 判据；与 SubagentList 打开后的「进行中」桶计数同源，不穿帮 |
-| workflow | 焦点 session，`status !== 'done'`（= running + legacy paused） | `workflowRunningCount`（现成） | 状态机三态，「非结束」即非终态；与 WorkflowList 打开后的列表一致 |
+| workflow | 焦点 session，`status !== 'done'`（= running + legacy paused） | `workflowRunningCount`（现成） | 状态机三态，「非结束」即非终态；与 WorkflowList 打开后的列表一致。实现为正向枚举 `running \|\| paused`（现 `useSidebarCounts.ts`），与 `!== 'done'` 在当前三值 union（`workflow.ts:28`）下等价；union 扩值时两表述需对齐收口 |
 
 **两个口径变更点（相对删除前的旧数字，有意为之）**：
 1. subagent 旧数字 = 全量记录数（含已结束）；本次按用户明示口径改为「进行中」桶数。
