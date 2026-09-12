@@ -35,16 +35,12 @@ import type {
 } from '@xyz-agent/shared'
 import { mainLogger } from './main-logger.js'
 
-// ── 常量（D1：单文件 10MB，保留末 3 段 = 主文件 + 2 个滚动段）────────────
+// ── 常量（D1：单文件 10MB，保留末 3 段 = 主文件 + .1 + .2）────────────
 const BYTES_PER_KB = 1024
 const BYTES_PER_MB = BYTES_PER_KB * BYTES_PER_KB
 const DEFAULT_MAX_FILE_MB = 10
 /** 单文件 size 轮转帽默认值（D1 定值；无 env 旋钮——设计 §5 env 清单未含台账项）。 */
 const DEFAULT_MAX_FILE_BYTES = DEFAULT_MAX_FILE_MB * BYTES_PER_MB
-/** 保留段数默认值：主文件 + .1 + .2（D1「保留末 3 段」）。 */
-const DEFAULT_RETAINED_SEGMENTS = 3
-/** 保留段数下限：主文件 + 至少 1 个滚动段（构造注入 0/1 时的防御性钳制）。 */
-const MIN_RETAINED_SEGMENTS = 2
 
 /** 台账文件名按角色（D1 双文件）；writer 构造时按 role 取名。 */
 const FILE_BY_ROLE: Record<CrashJournalFileRole, string> = {
@@ -67,8 +63,6 @@ export interface CrashJournalFileWriterOptions extends CrashJournalWriterOptions
   dir?: string
   /** 单文件 size 帽（字节）；缺省 10MB（D1）。 */
   maxFileBytes?: number
-  /** 保留段数（主文件 + N-1 个滚动段）；缺省 3（D1）。 */
-  retainedSegments?: number
 }
 
 /**
@@ -82,7 +76,6 @@ export interface CrashJournalFileWriterOptions extends CrashJournalWriterOptions
 export class CrashJournalFileWriter implements CrashJournalWriter {
   private readonly dir: string
   private readonly maxFileBytes: number
-  private readonly retainedSegments: number
   private readonly mainFile: string
   /** 主文件自打开（或跨重启 stat 弥合）以来的字节数（轮转判定，main-logger 同款计数）。 */
   private bytesWritten = 0
@@ -94,7 +87,6 @@ export class CrashJournalFileWriter implements CrashJournalWriter {
   constructor(options: CrashJournalFileWriterOptions) {
     this.dir = options.dir ?? getCrashJournalDir()
     this.maxFileBytes = options.maxFileBytes ?? DEFAULT_MAX_FILE_BYTES
-    this.retainedSegments = Math.max(MIN_RETAINED_SEGMENTS, options.retainedSegments ?? DEFAULT_RETAINED_SEGMENTS)
     this.mainFile = join(this.dir, FILE_BY_ROLE[options.role])
   }
 
@@ -145,7 +137,8 @@ export class CrashJournalFileWriter implements CrashJournalWriter {
   }
 
   /**
-   * 级联轮转：最老段先删腾位 → 逐代 rename 上移（`.1`→`.2` … 主文件→`.1`）。
+   * 级联轮转（D1 定值三段：主文件 + `.1` + `.2`，对齐 runtime 侧 SEGMENT_SUFFIXES 形态）：
+   * 最老段先删腾位 → 逐代 rename 上移（`.1`→`.2`，主文件→`.1`）。
    * 顺序硬约束：必须从最老代开始，保证每个 rename 的目标不存在（POSIX 原子覆盖 /
    * Windows 目标已存即失败——从老到新腾位使两平台语义一致）。全部 best-effort：
    * 单步失败不阻塞后续步（数据不丢优先于段位整齐——rename 失败时主文件继续写，仅
@@ -153,19 +146,22 @@ export class CrashJournalFileWriter implements CrashJournalWriter {
    */
   private rotate(): void {
     try {
-      unlinkSync(`${this.mainFile}.${this.retainedSegments - 1}`)
+      unlinkSync(`${this.mainFile}.2`)
     // eslint-disable-next-line taste/no-silent-catch -- 最老段 unlink 的 ENOENT 是首启常态；IO 错误 best-effort 不阻塞级联后续步（对齐 rotate 整体容错）
     } catch {
       // no-op
     }
-    for (let gen = this.retainedSegments - 1; gen >= 1; gen--) {
-      const from = gen === 1 ? this.mainFile : `${this.mainFile}.${gen - 1}`
-      try {
-        renameSync(from, `${this.mainFile}.${gen}`)
-        // eslint-disable-next-line taste/no-silent-catch -- 轮转 rename 失败不阻塞写入链路；主文件续写数据不丢，仅丢该次滚动（对齐 main-logger rotateMain 容错）
-      } catch {
-        // no-op
-      }
+    try {
+      renameSync(`${this.mainFile}.1`, `${this.mainFile}.2`)
+    // eslint-disable-next-line taste/no-silent-catch -- 轮转 rename 失败不阻塞写入链路；主文件续写数据不丢，仅丢该次滚动（对齐 main-logger rotateMain 容错）
+    } catch {
+      // no-op
+    }
+    try {
+      renameSync(this.mainFile, `${this.mainFile}.1`)
+    // eslint-disable-next-line taste/no-silent-catch -- 同上：主文件→.1 失败仅丢该次滚动，appendFileSync 续写数据不丢
+    } catch {
+      // no-op
     }
     this.bytesWritten = 0
   }
