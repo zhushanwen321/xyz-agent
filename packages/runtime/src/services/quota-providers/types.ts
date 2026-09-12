@@ -36,15 +36,6 @@ export function statusToReason(status: number): QuotaFetchFailureReason {
 }
 
 /**
- * 归一化用户粘贴的 cookie 字符串为合法 Cookie 头形态。处理三类常见粘贴伪影
- * （形态清单来自 CodexBar CookieHeaderNormalizer / Mimo-Usage 的实测用户输入）：
- * ① curl 命令 / `Cookie:` 前缀整段粘贴 → 提取头值；
- * ② 键值对内空白（`k = v; k2 = v2`）→ 去除；
- * ③ 整串被单双引号包裹 → 去包裹。
- * 键值对内值的引号不动（`k="v"` 是浏览器线上真实传输形态，剥引号反而破坏鉴权）。
- * 归一化后为空（无任何有效键值对）返回空串，由调用方按 unauthorized 处理。
- */
-/**
  * 归一化用户粘贴 cookie 的分隔空白伪影（`k = v ;  k2 = v2` → `k=v; k2=v2`）。
  * 只做空白修剪：键值对内值的引号原样保留（`k="v"` 是浏览器线上传输形态，动了反而破坏鉴权）。
  * 归一化后为空（无任何 k=v 对）返回空串，调用方按 unauthorized 处理。
