@@ -526,10 +526,13 @@ export default [
   // chat 轮次 recordId 路由面）。H1 chat-run 统一期间收割链与轮次活性承载并入后
   // 541 行，按仓内惯例（偏差 #2 message-dispatcher 同款）登记 override；结构性拆分
   // （正向请求面 / 反向路由面 / 收割面）登记为后续重构债，随 H3 service 拆分轮处置。
+  // [HISTORICAL] metrics-gate cyclo 偿还（teardownProcess 17 → reapOrphansAfterUnexpectedDeath
+  // / killLeakedAliveChild 原地拆解，各 ≤7）：行为保持提取的 helper 签名/花括号/调用行
+  // +6 代码行越 545 上限（547），同轮抬至 555——拆分债本体不变。
   {
     files: ['packages/subagent-core/src/execution/engine/client/engine-client.ts'],
     rules: {
-      'max-lines': ['warn', { max: 545, skipBlankLines: true, skipComments: true }],
+      'max-lines': ['warn', { max: 555, skipBlankLines: true, skipComments: true }],
     },
   },
   // [H3/R4 已消解] subagent-service.ts 单列 override（max 1700）已移除——R4 抽取
