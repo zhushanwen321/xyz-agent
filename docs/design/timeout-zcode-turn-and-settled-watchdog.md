@@ -290,7 +290,7 @@ deliverMessage（subagent-service.ts:1177）/ runSpawn（session-runner.ts:2453�
 ### D9：settled-watchdog 重锚定 = 两段式（选定，P0-4 核心）
 
 - **采用**：单窗口拆两段：
-  - **中段（prompt → agent_end）**：无进展检测，阈值 30min（新常量 `SETTLED_MID_ROUND_NO_PROGRESS_MS`，对齐 `KEEP_ALIVE_NO_PROGRESS_TIMEOUT_MS` 先例），**有效协议事件行刷新**（stdout pump 解析出的合法 JSONL 事件——message_*/tool_*/turn_end 等；LC-9 的 invalid 行不刷新，防调试噪音续命）；连续静默 30min → 判 wedged，kill + 该轮失败终态化。**残余误杀面（v1.1 登记，S4）**：与 keep-alive 先例不同（fire 时复核存活后代），中段静默 fire 直接 kill 无复核——chatMode 轮内一次 >30min 无 stdout 事件的长工具执行（长构建/子任务）会被判 wedged；标定与缓解挂 ⛔P-Z1（pi 侧 chatMode 轮内 gap 类比采样，长工具形态真实存在 → fire 前 get_state 复核或阈值上调）。现状 10min 全程窗对该形态更差（非回归）。
+  - **中段（prompt → agent_end）**：无进展检测，阈值 30min（新常量 `SETTLED_MID_ROUND_NO_PROGRESS_MS`，对齐既有 keep-alive 无进展检测先例的 30min 量级），**有效协议事件行刷新**（stdout pump 解析出的合法 JSONL 事件——message_*/tool_*/turn_end 等；LC-9 的 invalid 行不刷新，防调试噪音续命）；连续静默 30min → 判 wedged，kill + 该轮失败终态化。**残余误杀面（v1.1 登记，S4）**：与 keep-alive 先例不同（fire 时复核存活后代），中段静默 fire 直接 kill 无复核——chatMode 轮内一次 >30min 无 stdout 事件的长工具执行（长构建/子任务）会被判 wedged；标定与缓解挂 ⛔P-Z1（pi 侧 chatMode 轮内 gap 类比采样，长工具形态真实存在 → fire 前 get_state 复核或阈值上调）。现状 10min 全程窗对该形态更差（非回归）。
   - **收尾段（agent_end → agent_settled）**：固定硬上限，**维持 600s 常量值不变、锚点改挂 agent_end 之后**——P-T2c 实测收尾段 <2ms、compact 30 万 tokens 40.1s，按探针自身降级规则（P99×10 = 401s < 600s）600s 成立；事件不刷新（头注释对收尾段的固定上界论证**保留并归位**：收尾段内输出确实不能证明 settled 将到达）。
   - 配置通道：新 env `XYZ_SUBAGENT_SETTLED_WATCHDOG_MS`（>0 覆盖收尾段、≤0 关闭两段——关闭即回到「三无窗口」，warn 提示）；中段阈值 v1 不开 env（减法，保持与 keep-alive 同为常量）。
 - **LC-1 三 wedged 场景的覆盖复核**（重锚定必须逐场景交代）：①pi 版本偏斜无事件（agent_end 永不到达）→ 中段静默 30min 回收 ✓；②post-run compact 卡死（agent_end 已到、settled 不来）→ 收尾段 600s 回收 ✓；③stdout 行损坏（settled 行被丢）→ 收尾段 600s 回收 ✓。两段合起来对三场景的覆盖不弱于现状，且中段对场景①的判定从「10min 固定」变为「30min 无进展」——修复了它误杀工作轮的缺陷。
