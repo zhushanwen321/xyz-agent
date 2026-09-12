@@ -25,7 +25,7 @@
 // | markCancelled(record) | 取消终态（tombstone endedAt） | 同 markFinalized 写序（writeCancelledState） |
 // | markBatchFinalized(records) | sync 批终态（barrier：manifest 落盘完成先于批通知写账——「通知可达 ⇒ 索引就位」构造性保证） | barrier + 批 entry + manifest |
 // | adoptEngineDeath(id, {error}) | 引擎死亡收养（error/result/resumable 三写；监督器接管编排留调用方） | entry（best-effort） |
-// | markResurrected(record, wasClosed) | 磁盘终态位翻回活态（acquire-first 三件套 + 内存翻回 + register，单 try 域原子收敛，任一步失败响亮抛错，D3c） | `.alive` 写（writeSync）先 → `.state`/`.finalized` 删 + 内存翻回 + register |
+// | markResurrected(record, wasClosed) | 磁盘终态位翻回活态（acquire-first 三件套 + 内存翻回 + register，单 try 域原子收敛，任一步失败响亮抛错，D3c） | `.alive` 写（writeSync）先 → `.state`/`.finalized`/`.cancelled` 删 + 内存翻回 + register |
 // | markIdleArchived(record) | idle-GC 归档（30 天 TTL 内存回收，非终态化——磁盘仍 running 可接管） | store.archive 先 → `.alive` release 后（archive 抛错则整体失败 marker 必未删） |
 // | acquireWriteLease(sessionFile, id) | store 内部 acquire 动作（writeAliveMarker 唯一包装；spawn 侧 sessionFile 回填挂钩用，D3a 时机①，U2b 消费） | `.alive` 写（失败响亮抛错） |
 //
@@ -890,7 +890,8 @@ export class RecordStore {
    * 意图原语：磁盘终态位翻回活态（透明重生回边整体收编，D3c 规格）。
    *
    * acquire-first 顺序（单 try 域原子收敛）：写 `.alive` 写权声明（acquire）→ 删
-   * `.state` → 删 `.finalized` legacy，随后 resurrectClosed 内存翻回 + register——
+   * `.state` → 删 `.finalized`/`.cancelled` legacy（读侧兼容回退认领旧名，残留未删
+   * 则重建仍读出终态），随后 resurrectClosed 内存翻回 + register——
    * 任一步失败**响亮抛错**（禁止 best-effort 吞错续跑：acquire 失败 = 双写风险敞口；
    * acquire-first 顺序保证失败时终态位未删、磁盘保持旧形态）。reportTransition（entry
    * 上报）留编排层（纯投递副作用，失败不破坏状态一致性）。
@@ -917,7 +918,11 @@ export class RecordStore {
       writeAliveMarker(sessionFile, { pid: process.pid, id, startedAt: Date.now() });
       if (wasClosed) {
         fs.rmSync(`${sessionFile}${STATE_SIDECAR_EXT}`, { force: true });
+        // 旧名两名全量清理（与 writeStateMarker 写侧清理对称）：readStateMarker 在 .state
+        // 缺失时回退旧名——残留任一旧终态文件都会让重建读出 cancelled/finalized，破坏
+        // live ≡ reload。
         fs.rmSync(`${sessionFile}.finalized`, { force: true });
+        fs.rmSync(`${sessionFile}.cancelled`, { force: true });
       }
     } catch (err) {
       logger.error(

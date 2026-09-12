@@ -481,6 +481,24 @@ describe("RecordStore 意图 API 立面（U1 A1/A2/A5/A6）", () => {
       expect(store.getMutable("rs-1")).toBe(record); // register
     });
 
+    it("(iii) pre-L4 legacy：仅 .cancelled 终态（无 .state/.finalized）→ resurrect 后 readStateMarker undefined（live ≡ reload）", () => {
+      // 存量形态：L4 合并前 writeCancelledTombstone 的旧名 tombstone（单行 JSON +
+      // 换行），readStateMarker 在 .state 缺失时回退认领——resurrect 必须一并删除，
+      // 否则磁盘终态位未真正翻转（重建 cancelled 与内存 running 不一致）。
+      fs.writeFileSync(
+        `${sessionFile}.cancelled`,
+        `${JSON.stringify({ id: "rs-legacy", status: "cancelled", agent: "worker", startedAt: 1000, endedAt: 4000 })}\n`,
+      );
+      expect(stateMarker.readStateMarker(sessionFile)).toMatchObject({ status: "cancelled", endedAt: 4000 }); // 前置：旧名回退可读
+      const record = makeClosedCandidate("rs-legacy");
+
+      store.markResurrected(record, true);
+
+      expect(stateMarker.readStateMarker(sessionFile)).toBeUndefined(); // 磁盘终态位真正翻转
+      expect(record.status).toBe("running"); // 内存翻回
+      expect(store.getMutable("rs-legacy")).toBe(record); // register
+    });
+
     it("(ii) acquire 后删终态位失败 → 响亮抛错：marker 已写、.state 仍在、内存无半态", () => {
       fs.writeFileSync(`${sessionFile}.state`, JSON.stringify({ status: "finalized", reason: "parent-shutdown" }));
       const record = makeClosedCandidate("rs-2");
