@@ -29,6 +29,11 @@ import { COLD_LOOKUP_SCAN_LIMIT, coldLookupForAction, type ColdLookupDeps } from
 import type { SubagentRecord } from "../types.ts";
 import { ResurrectDeniedError } from "../types.ts";
 
+/** [U1/A4] 「异进程且存活」的确定性模拟 pid：1 号进程（launchd/init）必然存在且非
+ *  本测试进程——kill(1, 0) 对普通用户返回 EPERM，isProcessAlive 按「存在但无权限」
+ *  保守判活（self-pid 排除后不能再以本进程 pid 模拟异进程实例）。 */
+const FOREIGN_LIVE_PID = 1;
+
 /** 磁盘/索引侧候选记录（SubagentRecord 最小合法形状 + closed 可重连缺省）。 */
 function makeFound(overrides: Partial<SubagentRecord> = {}): SubagentRecord {
   return {
@@ -222,9 +227,10 @@ describe("[D4-③] coldLookupForAction 冷查/复活链", () => {
   });
 
   it("closed 候选仍有异进程活实例（.alive 指向活 pid）→ 拒绝双写，register 不残留", () => {
-    // 用本测试进程 pid 模拟「另一进程的活跃实例」——isProcessAlive 判活为真
+    // [U1/A4] 探针已补 self-pid 排除——「异进程」模拟不能再用本测试进程 pid，改用
+    // 恒活的外部 pid 1（launchd/init：kill(1,0) → EPERM → isProcessAlive 判活为真）。
     const sessionFile = writeSessionFixture();
-    writeAliveMarker(sessionFile, { pid: process.pid, id: "sa-cold-1", startedAt: Date.now() });
+    writeAliveMarker(sessionFile, { pid: FOREIGN_LIVE_PID, id: "sa-cold-1", startedAt: Date.now() });
     const deps = makeDeps({ disk: [makeFound({ sessionFile })] });
 
     expect(() => coldLookupForAction(deps, "sa-cold-1", true)).toThrow(ResurrectDeniedError);
@@ -236,7 +242,7 @@ describe("[D4-③] coldLookupForAction 冷查/复活链", () => {
 
   it("running 候选仍有异进程活实例（父进程重启后旧子进程尚存窗口）→ 拒绝并给恢复指引", () => {
     const sessionFile = writeSessionFixture();
-    writeAliveMarker(sessionFile, { pid: process.pid, id: "sa-cold-1", startedAt: Date.now() });
+    writeAliveMarker(sessionFile, { pid: FOREIGN_LIVE_PID, id: "sa-cold-1", startedAt: Date.now() });
     const deps = makeDeps({ disk: [makeFound({ sessionFile, status: "running" })] });
 
     expect(() => coldLookupForAction(deps, "sa-cold-1", true)).toThrow(ResurrectDeniedError);

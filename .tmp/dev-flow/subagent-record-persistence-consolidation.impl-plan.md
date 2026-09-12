@@ -27,9 +27,9 @@
 | Unit | 职责 | 领地（精确文件路径，均在 packages/subagent-core/src/ 下，另注除外） | 依赖 | 隔离 | 验收条款 |
 |------|------|------|------|------|---------|
 | U1 (P1) | store 意图 API 立面 + 内部收编 | execution/record-store.ts、execution/state-marker.ts、execution/alive-store.ts、execution/__tests__/record-store.test.ts、__tests__/state-marker.test.ts、__tests__/alive-store.test.ts | — | plain | A1-A8（见下） |
-| U2a (P2a) | 写点迁移主战场：四件套/cancel/dispose/resurrect 回边 | execution/finalize-record.ts、execution/service/record-lifecycle.ts、execution/cold-lookup.ts、__tests__/finalize-record.test.ts、__tests__/cold-lookup.test.ts、__tests__/dispose-manifest-recovery.test.ts | U1 | plain | B1-B6 |
-| U2b (P2b) | 外围调用面：idle-GC 归口/监督器直写点归口/spawn acquire 挂钩 | execution/idle-gc.ts、execution/round-supervisor/service-binding.ts、execution/service/run-orchestration.ts、__tests__/idle-gc.test.ts、round-supervisor/service-binding.test.ts | U1 | plain | C1-C4 |
-| U3 (P3) | subagent-service 批写/轮次/收养归口 | execution/subagent-service.ts、__tests__/gc-timer.test.ts（如涉及）、新增 __tests__/batch-finalized.test.ts | U1 | plain | D1-D3 |
+| U2a (P2a) | 写点迁移主战场：四件套/cancel/dispose/resurrect 回边 + doFinalizeRoundToIdle 本体→markRoundIdle | execution/finalize-record.ts、execution/service/record-lifecycle.ts、execution/cold-lookup.ts、__tests__/finalize-record.test.ts、__tests__/cold-lookup.test.ts、__tests__/dispose-manifest-recovery.test.ts | U1 | plain | B1-B6 |
+| U2b (P2b) | 外围调用面：idle-GC 归口/监督器直写点归口/spawn acquire 挂钩 + settleOneShotOutcome→markRoundIdle | execution/idle-gc.ts、execution/round-supervisor/service-binding.ts、execution/service/run-orchestration.ts、__tests__/idle-gc.test.ts、round-supervisor/service-binding.test.ts | U1 | plain | C1-C4 |
+| U3 (P3) | subagent-service 构造接线（manifestDir）/批写 markBatchFinalized/轮始 markRoundStarted/收养 adoptEngineDeath | execution/subagent-service.ts、__tests__/gc-timer.test.ts（如涉及）、新增 __tests__/batch-finalized.test.ts | U1 | plain | D1-D3 |
 | U4b (P4b) | (a′) fork-from 守卫 3 换直接探针 | execution/subagent-actions-core.ts、__tests__/ 相应守卫测试 | U1 | plain | E1-E2 |
 | U4a (P4a) | 读面收尾：投影移除/换探针/字段链删除/常量退役/boot pid 单判据 | execution/record-store.ts、execution/alive-store.ts、execution/types.ts、execution/record-entry.ts、__tests__/record-store.test.ts、__tests__/record-store-orphan-revive.test.ts | U1, U2a, U4b | plain | F1-F5 |
 | U4c (P4c) | 缓存降级 + rebuildIndexes + 词汇双写 + tmp 恢复退役 | execution/record-store.ts、execution/manifest-store.ts、execution/sessions-index.ts、execution/subagent-service.ts、extensions/universal/subagent-workflow/src/session-lifecycle.ts、__tests__/manifest-store-tmp-recovery.test.ts、extensions 侧相应测试 | U3, U4a | plain | G1-G4 |
@@ -62,8 +62,8 @@
 - C4 subagent-core vitest 全绿
 
 **U3（P3 批写/轮次归口）**
-- D1 writeBatchMemberManifest 直写 → markBatchFinalized（barrier 复刻：manifest 落盘先于批通知写账——「通知可达 ⇒ 索引就位」）——单测 barrier 语义
-- D2 Continuation 轮末 + one-shot settleOneShotOutcome → markRoundIdle(outcome)；热路径轮始两写点（subagent-service.ts:1398-1401/:1497）→ markRoundStarted；adoptEngineDeath 归口（:2403-2407）
+- D1 writeBatchMemberManifest 直写 → markBatchFinalized（barrier 复刻：manifest 落盘先于批通知写账——「通知可达 ⇒ 索引就位」）——单测 barrier 语义；RecordStore 构造点（subagent-service.ts:269）接线 manifestDir 第 4 参数（U1 偏差 3 的收尾接线）
+- D2 markRoundStarted 轮始写点（语义定位：status=running + result/resumable 清除；设计行号 :1398/:1497 系 H3 拆分前旧值）+ adoptEngineDeath 收养调用点（三写：error/result/resumable）——markRoundIdle 的两个调用方分属 U2a（doFinalizeRoundToIdle 本体）/U2b（settleOneShotOutcome），不在本单元
 - D3 subagent-core vitest 全绿
 
 **U4b（P4b fork-from 守卫换探针）**
@@ -140,17 +140,27 @@ graph TD
 
 ## 5 合理偏差登记表
 
-（初始为空——执行期逐条登记）
+**U1（轮 1，2026-09-12）**——dev 报备 + 协调者核验接受，阶段 3 一致性审查终裁：
+1. markFinalized/markCancelled 签名 `(record, closedReason?)` 代替设计概念签名 `(id, reason)`——终态投影需完整 record，对齐 register/archive(record) 先例
+2. markResurrected 增显式 `wasClosed` 参数——D3c 两接管形态（closed 三件套全量 / running 接管跳删仍 acquire）无法从产物自身推断，判别权在调用方
+3. manifest writeSync 载体 = RecordStore 第 4 构造参数 manifestDir + writeAtomicFileSync（manifest-store.ts 不在 U1 领地）；缺省降级异步（D7 双轨期现行语义），接线归 U2a/U3
+4. markFinalized/markCancelled 额外吸收 updateRecordBinding（终态 usage 快照）——设计 §3.1 写面列未列，但 doFinalizeRecord Step3a 现状簿记含它，不吸收则 U2a 迁移时静默回归
+5. 「record 留 running」实现口径 = 磁盘面（无 .state）+ 不 archive + 返回 false；内存已冻结态不回滚（回滚即 resurrect 语义）
+6. §3.4「GUI 通知面」在 subagent-core 层 = logger.error；entry 面待 U2a 调用方按返回值接线
+7. findForeignLiveInstance 移除 now 形参（软超时退役后死参）
+8. 领地裁量：cold-lookup.test.ts 两例模拟手法修复（A4 self-pid 排除使 process.pid 模拟失义，改 FOREIGN_LIVE_PID=1；源码未动，断言语义零变化）
+
+**U1 连带回归挂账**：extensions/universal/subagent-workflow/src/__tests__/transparent-resume.test.ts:315「异进程活实例→拒绝」失败（同因：process.pid 模拟失义）——挂 U4b 领地一并修复（同族探针测试适配）。
 
 ## 6 状态表
 
 | Unit | 状态(pending/in-progress/committed/blocked) | 轮次 | 证据指针 |
 |------|------|------|---------|
-| U1 | pending | 0 | — |
-| U2a | pending | 0 | — |
-| U2b | pending | 0 | — |
-| U3 | pending | 0 | — |
-| U4b | pending | 0 | — |
+| U1 | committed | 1 | 核验 2026-09-12：领地吻合（cold-lookup.test.ts 裁量已登记）；subagent-core vitest 2937 passed / 4 skipped；P-B4 探针 PASS（pi dist appendCompaction 直驱，custom entry 全保留） |
+| U2a | in-progress | 1 | 后台派发 2026-09-12 W2 批 |
+| U2b | in-progress | 1 | 后台派发 2026-09-12 W2 批 |
+| U3 | in-progress | 1 | 后台派发 2026-09-12 W2 批 |
+| U4b | in-progress | 1 | 后台派发 2026-09-12 W2 批（含 transparent-resume 回归修复） |
 | U4a | pending | 0 | — |
 | U4c | pending | 0 | — |
 | U5 | pending | 0 | — |
@@ -158,8 +168,12 @@ graph TD
 ## 7 残留风险与变更历史
 
 **残留风险（开局登记）**：
-- 待验证检查点②（manifest 被 GUI/runtime 直读依赖面）——U4c 开工前由该单元 dev 核实并登记结论
-- P-B4 探针结论（U1 A7）——若 compaction 丢改写 custom entry，E1 判定源在长会话无崩溃也劣化，需升级回设计层（D4② 登记评估项）
+- 待验证检查点②（manifest 被 GUI/runtime 直读依赖面）——U4c 开工前由该单元 dev 核实并登记结论（未决）
+- ~~P-B4 探针结论（U1 A7）~~——**已关闭（U1 轮 1）**：实装 pi@0.84.4 dist SessionManager 直驱 appendCompaction，custom entry（subagent-record / notify-ledger 类 / pending:register-unregister）文件面全保留不改写——E1 判定源（entry 尾）与「entry 可丢」承载假设在 compaction 面不劣化，设计 D4② 登记评估项无需立项；残余丢失面仍仅 debounce-flush × SIGKILL 交集（D4② 既述）
+- extensions transparent-resume.test.ts:315 回归——挂 U4b 修复（见偏差登记表尾）
+- record-store.ts 行数 1207（U1 后）——eslint 提额 1400 过渡（已随 U1 commit），H4 全落地后按意图原语族拆分（终态原语/轮次簿记/重建三轴），属独立重构任务
+- 待验证检查点①（writeSync 时延）——U5 H4 实测
+- 待验证检查点③（pi flush 窗口分布）——S3/Gate B 观察期采样
 - 认知外改动 docs/design/timeout-zcode-turn-and-settled-watchdog.md（工作区 1 行外部变更）——全程不碰不裹挟
 
 **变更历史**：

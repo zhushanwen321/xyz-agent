@@ -449,12 +449,23 @@ export default [
   {
     files: [
       'packages/subagent-core/src/execution/execution-record.ts',
-      'packages/subagent-core/src/execution/record-store.ts',
       'packages/subagent-core/src/orchestration/worker-message-pump.ts',
       'packages/subagent-core/src/shared/resource-discovery.ts',
     ],
     rules: {
       'max-lines': ['warn', { max: 1000, skipBlankLines: true, skipComments: true }],
+    },
+  },
+  // [H4 record 持久化收敛] record-store.ts 单独提额：H4 设计（docs/design/
+  // subagent-record-persistence-consolidation.md）把 record 全部写面收编进
+  // RecordStore（十意图原语 + 同步写权威），U1 API 立面落地后 800→1207，
+  // U4a 读面收尾 / U4c rebuildIndexes 还将增长。写面收口与行数守卫是显式
+  // 冲突，提额至 1400 过渡；H4 全落地后按意图原语族拆分（终态原语/轮次
+  // 簿记/重建三轴）属独立重构任务，登记于 H4 impl-plan 残留风险。
+  {
+    files: ['packages/subagent-core/src/execution/record-store.ts'],
+    rules: {
+      'max-lines': ['warn', { max: 1400, skipBlankLines: true, skipComments: true }],
     },
   },
   // zcode-engine.ts：zcode app-server 常驻引擎的唯一聚合中心（连接池 + 会话生命周期 +

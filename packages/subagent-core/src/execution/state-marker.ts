@@ -17,10 +17,16 @@
 //     reason 不携带（原 tombstone 其余字段 id/agent/startedAt 无消费方，随合并删除）。
 //
 // 读侧**兼容旧两名**（存量文件不迁移重写）：`.state` 优先，缺失时回退 `.finalized`
-// / `.cancelled` 并归一为同一 StateMarker。`.alive`（子进程自写 pid 探活，跨进程
-// 语义）不并入。
+// /`.cancelled` 并归一为同一 StateMarker。`.alive`（跨进程写权声明，D3 v7——acquire/
+// release 归口 RecordStore 意图原语）不并入。
 //
-// best-effort：写 IO 错静默，不阻断主流程。
+// 写侧语义（record 持久化收敛 §3.4 / D8 v7，U1 改造）：**权威同步写 + 响亮重试**——
+// `.state` 是终态判定权威（D1），写失败不再静默：重试 3 次指数退避（100ms 起），
+// 仍失败 logger.error 响亮暴露并返回 false（不抛出，收尾主流程可继续；调用方据
+// 返回值保持 record 不翻终态——record 留 running，boot 孤儿恢复终态化承接）。
+// 双轨期旧直接调用方（finalize-record / 孤儿恢复 / round-supervisor）可忽略返回值，
+// 「不抛出」使其行为与改造前兼容（旧 best-effort 吞错形态的失败面从静默变为响亮
+// 留痕，迁移完成后由意图原语消费返回值，D7 双轨失败语义归一）。
 //
 // [UF-1] record 绑定 sidecar（`.record-binding`）同挂本载体族：宿主侧在 record.sessionFile
 // 回填点写「record id → session 文件」映射（engine-CLI 化后子 session 文件无身份 entry，
@@ -50,6 +56,45 @@ const LEGACY_FINALIZED_EXT = ".finalized";
 const LEGACY_CANCELLED_EXT = ".cancelled";
 
 // ============================================================
+// 写侧重试参数（§3.4 错误规格）
+// ============================================================
+
+/** 写失败重试次数（初始尝试之外再试 3 次）。 */
+const STATE_WRITE_RETRY_COUNT = 3;
+/** 指数退避基准：100ms → 200ms → 400ms（磁盘满/权限错通常是暂时状态，立即放弃
+ *  会让「同步写必落」在可恢复故障上静默失效）。 */
+const STATE_WRITE_RETRY_BASE_DELAY_MS = 100;
+
+/** 同步退避等待的 SharedArrayBuffer 字长（Atomics.wait 最小载体，单 int32 字）。 */
+const SLEEP_WAIT_INT32_WORDS = 1;
+/** int32 每字 4 字节（Atomics 载体分配换算常数）。 */
+const INT32_BYTES_PER_WORD = 4;
+/** 指数退避底数（100ms → 200ms → 400ms 的倍率来源）。 */
+const BACKOFF_EXPONENT_BASE = 2;
+
+/**
+ * 同步 sleep（重试退避用）。Atomics.wait 是 Node 侧标准同步等待原语：不烧 CPU、
+ * 不依赖 event loop——写函数运行在同步收尾路径（disposeAllRecords 等同步链），
+ * 无法 await。测试经 _setStateMarkerSleepForTest 注入替身（免真实 700ms 等待，
+ * 形态对齐 settled-watchdog `_resetSettledWatchdogsForTest` 模块级测试钩子先例）。
+ */
+function defaultRetrySleep(ms: number): void {
+  Atomics.wait(
+    new Int32Array(new SharedArrayBuffer(SLEEP_WAIT_INT32_WORDS * INT32_BYTES_PER_WORD)),
+    0,
+    0,
+    ms,
+  );
+}
+
+let retrySleep: (ms: number) => void = defaultRetrySleep;
+
+/** 测试钩子：注入退避替身（fn=undefined 恢复实装）。 */
+export function _setStateMarkerSleepForTest(fn: ((ms: number) => void) | undefined): void {
+  retrySleep = fn ?? defaultRetrySleep;
+}
+
+// ============================================================
 // 类型
 // ============================================================
 
@@ -72,42 +117,72 @@ export interface SidecarStat {
 }
 
 // ============================================================
-// 写侧（唯一入口：两终态共用 .state）
+// 写侧（唯一入口：两终态共用 .state；权威同步写 + 响亮重试）
 // ============================================================
 
 /**
- * 写 finalized 终态 sidecar。
- * best-effort：任何 I/O 错误静默（finalize 标记是次要信号，status 已在内存 record 上设好）。
+ * 写 finalized 终态 sidecar（权威同步写，§3.4）。
+ * 失败重试 3 次指数退避（100ms 起）；仍失败 logger.error 响亮暴露并返回 false——
+ * 调用方（RecordStore.markFinalized 意图原语）据此保持 record 不翻终态（record 留
+ * running，boot 孤儿恢复终态化承接）。不抛出：双轨期旧直接调用方行为兼容。
  *
  * @param sessionFile session.jsonl 绝对路径
  * @param reason 可选的关闭原因（磁盘重建用它还原 closedReason）。传 undefined =
  *        空串（死因不可考，重建兜底 disconnected）。
+ * @returns true = 已落盘；false = 重试耗尽仍未落（错误已 error 级留痕）。
  */
-export function writeFinalizedState(sessionFile: string, reason?: string): void {
-  writeStateMarker(sessionFile, reason === undefined ? { status: "finalized" } : { status: "finalized", reason });
+export function writeFinalizedState(sessionFile: string, reason?: string): boolean {
+  return writeStateMarker(sessionFile, reason === undefined ? { status: "finalized" } : { status: "finalized", reason });
 }
 
 /**
- * 写 cancelled 终态 sidecar。
- * best-effort：写失败不阻断 cancel 主流程（status 已在内存 record 上设好）。
+ * 写 cancelled 终态 sidecar（权威同步写 + tombstone endedAt，§3.4）。
+ * 失败重试语义同 writeFinalizedState（响亮重试，终写失败返回 false 不抛出）。
  *
  * @param endedAt 精确结束时间（重建判定分支消费；调用方传 record.endedAt ?? Date.now()）
+ * @returns true = 已落盘；false = 重试耗尽仍未落（错误已 error 级留痕）。
  */
-export function writeCancelledState(sessionFile: string, endedAt: number): void {
-  writeStateMarker(sessionFile, { status: "cancelled", endedAt });
+export function writeCancelledState(sessionFile: string, endedAt: number): boolean {
+  return writeStateMarker(sessionFile, { status: "cancelled", endedAt });
 }
 
-/** .state 写入 + 旧名清理（互斥由单文件单状态字段构造性保证）。 */
-function writeStateMarker(sessionFile: string, marker: StateMarker): void {
-  try {
-    // 旧名清理（存量残留）：.state 是唯一权威，残留旧文件会被兼容读路径优先让位——
-    // 但删除可避免 GC 前重复 stat。force:true 静默 ENOENT（未写过旧名的 session 正常路径）。
-    fs.rmSync(`${sessionFile}${LEGACY_FINALIZED_EXT}`, { force: true });
-    fs.rmSync(`${sessionFile}${LEGACY_CANCELLED_EXT}`, { force: true });
-    fs.writeFileSync(`${sessionFile}${STATE_SIDECAR_EXT}`, JSON.stringify(marker), "utf-8");
-  } catch (_e) {
-    void _e; // 静默：写失败不阻断收尾主流程。
+/**
+ * .state 写入 + 旧名清理（互斥由单文件单状态字段构造性保证）。
+ * 响亮重试（§3.4）：初始尝试 + 3 次指数退避重试（100/200/400ms）；仍失败
+ * logger.error（终态权威未落必须可见）并返回 false——**不抛出**（收尾路径同步链
+ * 不因重试耗尽中断，record 留 running 的处置由意图原语按返回值编排）。
+ */
+function writeStateMarker(sessionFile: string, marker: StateMarker): boolean {
+  let lastError: unknown;
+  for (let attempt = 0; attempt <= STATE_WRITE_RETRY_COUNT; attempt++) {
+    if (attempt > 0) {
+      // 指数退避：attempt=1 → 100ms、2 → 200ms、3 → 400ms。
+      retrySleep(STATE_WRITE_RETRY_BASE_DELAY_MS * BACKOFF_EXPONENT_BASE ** (attempt - 1));
+    }
+    try {
+      // 旧名清理（存量残留）：.state 是唯一权威，残留旧文件会被兼容读路径优先让位——
+      // 但删除可避免 GC 前重复 stat。force:true 静默 ENOENT（未写过旧名的 session 正常路径）。
+      fs.rmSync(`${sessionFile}${LEGACY_FINALIZED_EXT}`, { force: true });
+      fs.rmSync(`${sessionFile}${LEGACY_CANCELLED_EXT}`, { force: true });
+      fs.writeFileSync(`${sessionFile}${STATE_SIDECAR_EXT}`, JSON.stringify(marker), "utf-8");
+      return true;
+    } catch (err) {
+      lastError = err;
+    }
   }
+  logger.error(
+    "[subagents] terminal state marker write failed after retries; record stays running " +
+      "(boot orphan recovery will re-finalize). Recovery: free disk/permissions and retry the finalize action.",
+    {
+      detail: {
+        sessionFile,
+        markerStatus: marker.status,
+        attempts: STATE_WRITE_RETRY_COUNT + 1,
+        error: lastError instanceof Error ? lastError.message : String(lastError),
+      },
+    },
+  );
+  return false;
 }
 
 // ============================================================
