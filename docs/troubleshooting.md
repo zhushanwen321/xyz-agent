@@ -9,6 +9,7 @@ Runtime 日志落盘到 `<数据目录>/logs/`（`runtime-YYYY-MM-DD.log`，按�
 | **Electron 主进程** | 终端直接看 | 终端启动 `/Applications/太极.app/Contents/MacOS/TaiJi` 或 `log show --process TaiJi` |
 | **Runtime** | 终端 `[runtime:out]` / `[runtime:err]` 前缀 + `~/.xyz-agent-dev/logs/runtime-*.log` | 同主进程转发 + `~/.xyz-agent/logs/runtime-*.log` |
 | **pi 子进程** | 终端 pi 自身输出 + `~/.xyz-agent-dev/logs/pi-<date>-<sessionId>.jsonl` | `~/.xyz-agent/logs/pi-<date>-<sessionId>.jsonl` + pi 日志目录 `~/.xyz-agent/pi/agent/logs/` |
+| **升级子系统** | `~/.xyz-agent-dev/update/update-error.log`（JSONL 512KB×2 轮转；失败登记含 errorCode/rawCause/engine/releaseSource，成功登记 source-selection/source-failover/download-success） | `~/.xyz-agent/update/update-error.log`（同左） |
 | **前端 DevTools** | Cmd+Option+I 打开 | 同左 |
 
 **打包模式启动应用获取完整日志**：
@@ -37,11 +38,11 @@ Resources/
 │   ├── agent/                         # agent skills/extensions
 │   └── assets/                        # agent 资源文件
 ├── extensions/                        # builtin pi extensions
-│   └── @zhushanwen/<pkg>/             # 13 个 @zhushanwen/pi-*（esbuild bundle 产物）
+│   └── @zhushanwen/<pkg>/             # 18 个 @zhushanwen/pi-*（esbuild bundle 产物）
 └── bin/xyz-settings                   # xyz-settings CLI（pi Skill 引用）
 ```
 
-> **注**：builtin pi extensions（13 个 `@zhushanwen/pi-*`）随应用打包内置在 `Resources/extensions/@zhushanwen/` 下，离线可用、无需安装。其中 infrastructure 级 6 个（`pi-pending-notifications` / `pi-session-reader` / `pi-structured-output` / `pi-agent-ext` / `pi-system-prompt` / `pi-msg-id-mapper`）不可禁用，feature 级 7 个可在 Settings → Extensions 中禁用/启用。第三方扩展（任意 npm 包 / 本地目录 / git）经 Settings → Extensions 安装到数据目录。
+> **注**：builtin pi extensions（18 个 `@zhushanwen/pi-*`，数量与分组以 `packages/shared/src/mandatory-extensions.json` 为 SSOT）随应用打包内置在 `Resources/extensions/@zhushanwen/` 下，离线可用、无需安装。其中 infrastructure 级 6 个（`pi-pending-notifications` / `pi-session-reader` / `pi-structured-output` / `pi-agent-ext` / `pi-system-prompt` / `pi-msg-id-mapper`）不可禁用，feature 级可在 Settings → Extensions 中禁用/启用。第三方扩展（任意 npm 包 / 本地目录 / git）经 Settings → Extensions 安装到数据目录。
 
 **数据目录** (`~/.xyz-agent/`)：
 
@@ -52,7 +53,8 @@ Resources/
 ├── runtime.port          # runtime 端口号（文本文件）
 ├── session-data/         # session 持久化数据
 ├── pi/agent/logs/        # pi 日志
-└── plugins/              # 插件数据
+├── plugins/              # 插件数据
+└── update/               # 升级子系统（update-error.log 登记 + manual/ 手动认领目录：断网逃生通道，name+size+sha256 三重校验）
 ```
 
 **开发模式差异**：数据目录 `~/.xyz-agent-dev/`，端口 +100（3310-3320），Electron userData 隔离。
@@ -116,7 +118,7 @@ lsof -i :3210-3220 -P | grep LISTEN | awk '{print $2}' | sort -u
 
 ### 4. Extension 相关问题
 
-builtin pi extensions（13 个 `@zhushanwen/pi-*`）随应用打包内置，不经过 npm 安装，离线可用：
+builtin pi extensions（18 个 `@zhushanwen/pi-*`，数量与分组以 `packages/shared/src/mandatory-extensions.json` 为 SSOT）随应用打包内置，不经过 npm 安装，离线可用：
 
 ```bash
 # 检查打包产物中的 builtin extensions
@@ -243,7 +245,7 @@ grep storeDir node_modules/.modules.yaml
 CI=true ELECTRON_SKIP_BINARY_DOWNLOAD=1 pnpm install   # 约 6-7s 重建本地布局，然后重试 commit
 ```
 
-**防护与根治**：护栏 `.githooks/check_pnpm_store_layout.sh` 挂在 pre-commit 第 0 段（install-hooks.sh 生成）与 validate-runtime-bundle.sh Gate 0，翻转即红并输出 [FIX] 指引——同时也兼作引擎侧「不覆写 HOME」修复的验收探针（修复落地后护栏应恒绿，红 = 回退信号）。根治在引擎侧不覆写 HOME（2026-09-03 开发中）；备选方案 `.npmrc` pin `store-dir` 评估结论：`~` 展开仍 HOME 相对（无效）、相对路径解析基准未验证（有 per-package store 撕裂风险）、写死绝对路径不可移植——均不采用。
+**防护与根治**：护栏 `.githooks/check_pnpm_store_layout.sh` 挂在 pre-commit 第 0 段（install-hooks.sh 生成）与 validate-runtime-bundle.sh Gate 0，翻转即红并输出 [FIX] 指引。根治已落地（2026-09 zcode 引擎共享宿主 HOME 修订，HOME 池化删除——spawn env 不再覆写 HOME）；护栏继续保留，语义是防 HOME 覆写回退（正常应恒绿，红 = 引擎侧覆写 HOME 回退的信号）。备选方案 `.npmrc` pin `store-dir` 评估结论：`~` 展开仍 HOME 相对（无效）、相对路径解析基准未验证（有 per-package store 撕裂风险）、写死绝对路径不可移植——均不采用。
 
 ### 12. subagent 完成后不回收 / 回收慢：sessionFile 获取链与 workflow 域守护特征串判读（2026-09-10 重放移植重写；2026-09-11 H1 续聊链修订）
 
@@ -317,6 +319,9 @@ grep -E "\[sessionfile\]|agent_end get_state backfill|workflow no-progress watch
 | `ELECTRON_RUN_AS_NODE` | Node 模式 | `1`（runtime 子进程） | 未设置 |
 | `VITE_MOCK=true` | Mock 模式 | — | 可选 |
 | `XYZ_RUNTIME_BASH_RPC_TIMEOUT_MS` | bash RPC 超时逃生门（0=不限时） | 未设置（默认 1h） | 可选 |
+| `XYZ_SUBAGENT_SETTLED_WATCHDOG_MS` | settled-watchdog 收尾段/两段全关（≤0 会连带关闭 workflow no-progress 熔断，见 §12 ③） | 未设置 | 可选 |
+| `XYZ_ZCODE_TURN_IDLE_TIMEOUT_MS` | zcode turn idle 判定（静默超时判死） | 未设置（默认 30min） | 可选 |
+| `XYZ_ZCODE_TURN_MAX_TIMEOUT_MS` | zcode turn 总上界（>0 覆盖、≤0 关闭） | 未设置（默认 60min） | 可选 |
 
 > 注意：`XYZ_RUNTIME_BASH_RPC_TIMEOUT_MS` 在 runtime 进程生命周期内**读一次即缓存**（`rpc-client.ts` resolveBashRpcTimeoutMs——中途改 env 不生效且无提示，超时决策须进程内稳定）。改后必须重启应用/`pnpm dev` 才生效。
 
@@ -405,7 +410,7 @@ bare repo + worktree 结构下，`.bare/hooks/pre-commit` 是全部 worktree 共
 |---|---|---|---|
 | ① 自有状态对账 | 状态变化 100% 经由自身请求/事件路径 | **禁止周期轮询**。主链路 = 回执 + 事件失效；周期 pull 会掩盖主链路 bug | thinkingLevel 30s 轮询（已随设计定案删除，附录 C.4） |
 | ② 活性探测 | 对端死掉/卡死时无法自报 | 允许，但**优先升级式触发**（事件静默超时 / 请求失败再探），无条件周期须论证 | pingPi 60s、WS 15s ping+45s watchdog、Electron 30s /health |
-| ③ 外部世界 | 数据源在外部、无 push 通道 | 允许轮询；频率 = 外部约束（API 限额 / 下游缓存 TTL），不做无依据加密 | 应用更新检查（GitHub 限额 60 次/h → 60min 间隔） |
+| ③ 外部世界 | 数据源在外部、无 push 通道 | 允许轮询；频率 = 外部约束（API 限额 / 下游缓存 TTL），不做无依据加密 | 应用更新检查（GitHub + AtomGit 双源，全源限流退避——rateLimited = 全部源均在退避窗口才报；周期 60min 不变） |
 | ④ 空转 | 有 push 通道仍轮询，或产出数据无消费者 | **删除或事件化** | plugin-host 30s memory monitor（lastActiveAt 只写不读，已删）、handoff 2s 轮询（onExit 多播化后已事件化） |
 
 新增定时器必须自答三个问题（写进代码注释）：**这个信息会变吗？变的时候对方为什么不 push？轮询周期掩盖的是什么主链路缺口？** 答不出第三个问题 = 该定时器在代偿某个未修的主链路 bug，先修主链路。
@@ -428,7 +433,7 @@ pi 升级（`PI_VERSION` bump）或触碰相关模块时逐条重验；锚点均
 ### 2. F10：jsonl-run-store「首写立即可见」在 pi 延迟首写窗口内不成立（PS-14）
 
 - **pi 锚点**：`dist/core/session-manager.js:724-752`（`_persist` 无 assistant message 且未 flush 时仅内存记账不落盘；首条 assistant 到达才 `openSync("wx")` 全量写出）
-- **机制**：`extensions/subagent-workflow/src/orchestration/jsonl-run-store.ts` 期望「run entry 写入即跨 session 重启可从 jsonl 发现」。新 session 经 /wf 命令启动 workflow（主 session 尚无 assistant）的窗口内 crash，run entry 只在内存，盘上无文件
+- **机制**：`extensions/universal/subagent-workflow/src/jsonl-run-store.ts` 期望「run entry 写入即跨 session 重启可从 jsonl 发现」。新 session 经 /wf 命令启动 workflow（主 session 尚无 assistant）的窗口内 crash，run entry 只在内存，盘上无文件
 - **触发条件**：全新 session + 首条 assistant 产出前 + 窗口内进程 crash/被杀 的三重组合（概率低，未实测可达性）
 - **处置建议**：现有兜底已生效——读序 entry > state 文件（store 自写）> 空，crash 恢复仍可发现 run，无需改动。升级 pi 时核对 `_persist` 的 hasAssistant 延迟首写分支是否仍在；若 pi 改为立即落盘，此观察项可关闭
 
@@ -489,7 +494,9 @@ pi 升级（`PI_VERSION` bump）或触碰相关模块时逐条重验；锚点均
 - **机制**：appendEntry 写的 custom entry 是持久化状态记录，AI 看不到；想让 AI 看到必须走 custom_message（sendCustomMessage）或 sendUserMessage
 - **处置建议**：这正是 extension 日志规范选 appendEntry 做「事后排查」通道的技术依据（不耗 token，见 logging-conventions.md）；反向地，靠 appendEntry「通知 AI」的代码是 bug——结果语义通知走账本 courier（C-ext-19）
 
-### 12. chat 轮 cancel 后子进程退出原因呈 exit code 143 而非 signal SIGTERM（协议 v1.x）
+### 12. chat 轮 cancel 后子进程退出原因呈 exit code 143 而非 signal SIGTERM（协议 v1.x）[HISTORICAL]
+
+> **2026-09 H1 修订**：锚点 `packages/pi-subagent-cli/src/chat-session.ts` 已随 chat 域整族退役（续聊轮 = 新 run + resume 锚点，见上 §12 subagent 大节头部 H1 修订注记），其产物 `engine_round_aborted`/`engine_round_crashed` 错误码一并消失（现树 grep 恒零命中是预期）。pi 的 SIGTERM trap → 自行 `exit(143)` 语义仍适用 run 链任务子进程，观察对象改挂 run 域（`packages/pi-subagent-cli/src/spawn-runner.ts`）——run 任务子进程被 SIGTERM 杀死时同样呈 exit code 143 而非 signal。
 
 - **现象**：chat 轮被 cancel/强关后，record/journal 的失败原因显示 `exit code 143` 而非 `signal SIGTERM`（对比：run 域引擎进程死亡呈 `signal SIGTERM`，见 conformance engine-crash 用例）。
 - **根因**：pi rpc-mode 对 SIGTERM 的 trap 是优雅收口后自行 `process.exit(143)`（`dist/modes/rpc/rpc-mode.js` trap 段）——子进程以**主动 exit** 结束，OS 层无信号终止事件，chat-session 只能拿到 (143, null)。

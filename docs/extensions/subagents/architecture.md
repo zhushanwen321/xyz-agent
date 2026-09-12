@@ -42,7 +42,7 @@ subagent 能力现由 5 类包协作，跨进程边界只有一处（宿主 ↔ 
 └────────────────────────────────────────────────────────────────────────┘
         ▲
         │ 宿主侧 relay 通道（tee 帧归属）
-   packages/runtime/src/infra/relay/（relay-env / relay-registry / relay-server / relay-tee）
+   packages/runtime/src/infra/relay/（relay-env / relay-paths / relay-registry / relay-server / relay-tee）
 ```
 
 ## 2. 各包职责与关键模块
@@ -67,8 +67,8 @@ subagent 能力现由 5 类包协作，跨进程边界只有一处（宿主 ↔ 
 
 | 子域 | 内容 |
 |---|---|
-| `src/execution/` | 执行域主体：`subagent-service.ts`（编排与状态机）、`subprocess-agent-runner.ts`（workflow 域 run 入口）、`record-store.ts`（内存 + 磁盘重建容器）、`execution-record.ts`（唯一状态对象与 CAS）、`concurrency-pool.ts`（background 并发与优先级排队）、`state-marker.ts` / `alive-store.ts`（终态与探活 sidecar）、`lifecycle-manager.ts`（idle timer）、`settled-watchdog.ts`（轮次活性守护）、`notifier.ts` / `notify-ledger.ts`（确认式送达）、`worktree-manager.ts` / `worktree-git-ops.ts` / `worktree-registry.ts`（worktree 隔离）、`manifest-store.ts` / `sessions-index.ts` / `session-reconstructor.ts` / `session-file-gc.ts` / `idle-gc.ts`（持久化与回收）、`dialog-queue.ts` / `ui-request-handler-factory.ts`（反向 UI 通道） |
-| `src/execution/engine/` | 引擎接入面：发现（`engine-discovery-roots` / `engine-discovery-scan` / `engine-inspect-package` / `engine-manifest`）、注册与路由（`registry` / `routing` / `types` / `port`）、`client/`（`engine-client` / `remote-engine` 协议客户端 / `reverse-router` / `capability-gate` / `reaper` / `pid-file`）、`common/`（`event-journal` / `journal-wiring` / `journal-replay` / `kill-chain` / `nesting-guard` / `pool-manager` / `persona-router` / `session-view-*` / `data-dir`）、`host/`（`host-bridge` / `host-ui-endpoint` / `pi-host-binding` / `spawned-children`） |
+| `src/execution/` | 执行域主体：`subagent-service.ts`（装配壳）+ `service/`（六聚合：`session-baselines` / `sync-collect-domain` / `record-lifecycle` / `record-access` / `workflow-dispatch` / `run-orchestration` + `service-bootstrap`）、`conversation-continuation.ts`（chat→run 统一，H1 唯一新增组件）、`subprocess-agent-runner.ts`（workflow 域 run 入口）、`record-store.ts`（内存 + 磁盘重建容器）、`execution-record.ts`（唯一状态对象与 CAS）、`concurrency-pool.ts`（background 并发与优先级排队）、`state-marker.ts` / `alive-store.ts`（终态与探活 sidecar）、`lifecycle-manager.ts`（idle timer）、`settled-watchdog.ts`（轮次活性守护）、`notifier.ts` / `notify-ledger.ts`（确认式送达）、`worktree-manager.ts` / `worktree-git-ops.ts` / `worktree-registry.ts`（worktree 隔离）、`manifest-store.ts` / `sessions-index.ts` / `session-reconstructor.ts` / `session-file-gc.ts` / `idle-gc.ts`（持久化与回收）、`dialog-queue.ts` / `ui-request-handler-factory.ts`（反向 UI 通道） |
+| `src/execution/engine/` | 引擎接入面：发现（`engine-discovery-roots` / `engine-discovery-scan` / `engine-inspect-package` / `engine-manifest`）、注册与路由（`registry` / `routing` / `types` / `port`）、`client/`（`client-options` / `engine-client` / `mirror` / `pid-file` / `reaper` / `remote-engine` 协议客户端 / `reverse-router`）、`common/`（`capability-gate` / `event-journal` / `journal-wiring` / `journal-replay` / `kill-chain` / `nesting-guard` / `pool-manager` / `persona-router` / `session-view-*` / `data-dir`）、`host/`（`host-bridge` / `host-ui-endpoint` / `pi-host-binding` / `spawned-children`） |
 | `src/execution/round-supervisor/` | 轮次监督器：看门狗与待决重认领（`supervisor` / `service-binding` / `notify-accounting` / `reconcile-sweep`） |
 | `src/orchestration/` | workflow 域：脚本生成与校验（`script-generate` / `script-lint` / `args-validator` / `workflow-files`）、执行（`execute-agent-call` / `launcher` / `lifecycle`）、worker（`worker-host` / `worker-script-builder` / `worker-message-pump`）、运行存储与快照（`file-run-store` / `run-snapshot`）、资源发现（`skill-discovery` / `config-loader` / `agent-opts-resolver`） |
 | `src/core/` | 宿主端口与日志（`host-services` / `notify-ports` / `logger` / `error-message`） |
@@ -95,7 +95,7 @@ subagent 能力现由 5 类包协作，跨进程边界只有一处（宿主 ↔ 
 
 `initialize` · `probe` · `run` · `cancel` · `read` · `listModels` · `validateModel` · `dispose` · `ping`
 
-反向通道（引擎 → 宿主）覆盖进度与交互：`host/streamDelta`（增量文本）、`host/askUser`（UI 请求）、`host/childSpawned`（子进程注册）、`host/childStateChanged`（任务子进程生命周期上报，C-pi-15）等。chat 域独立协议面（原第 9 通道 `host/roundLifecycle` 与 `interact` 方法）已随 H1（[subagent-chat-run-unification.md](../design/subagent-chat-run-unification.md)）退役：续聊轮 = 新 run + resume 锚点（`RunParams.resume`），轮活性经 run 事件通道既有事件（含 `activity` 变体）与 run 终态应答承载（约束 C-proc-13，authority 已改挂该设计）。
+反向通道（引擎 → 宿主）覆盖进度与交互：`host/streamDelta`（增量文本）、`host/askUser`（UI 请求）、`host/childSpawned`（子进程注册）、`host/childStateChanged`（任务子进程生命周期上报，C-pi-15）等。chat 域独立协议面（原第 9 通道 `host/roundLifecycle` 与 `interact` 方法）已随 H1（[subagent-chat-run-unification.md](../../design/subagent-chat-run-unification.md)）退役：续聊轮 = 新 run + resume 锚点（`RunParams.resume`），轮活性经 run 事件通道既有事件（含 `activity` 变体）与 run 终态应答承载（约束 C-proc-13，authority 已改挂该设计）。
 
 `run` 的上下文（`RunContextParams`）承载每次运行的定位信息：`taskId` / `poolKey` / `recordId` / `sessionRootId`（relay 身份键权威源，见 F6 修复）等——引擎据它重写子进程的 relay 身份 env，不靠 env 继承。
 
@@ -105,7 +105,8 @@ subagent 能力现由 5 类包协作，跨进程边界只有一处（宿主 ↔ 
 |---|---|---|
 | 状态单一真源 | `execution-record.ts` + `record-store.ts` | 内存 record 与 `session.jsonl` 磁盘重建两条通路共用同一 reducer；对外状态两态（`active` / `ended`） |
 | 终态标记 | `state-marker.ts` | 单一 `<session>.state` sidecar（`{status, reason?, endedAt?}`）标记 finalized / cancelled；旧名 `.finalized` / `.cancelled` 只读兼容；record 绑定 sidecar `<session>.record-binding`（UF-1：id→file + rootSessionId，跨重启续聊数据源）同挂本载体族 |
-| 进程探活 | `alive-store.ts` | `.alive`（pid + 启动时刻）探活面——写者未随 H1 消亡：随 U6 从 cold-resurrect.ts 改名迁入 cold-lookup.ts，resurrect 回边（跨重启续聊活链）仍调 `writeAliveMarker`（`cold-lookup.ts:157`，把 `.alive` 刷新为当前进程以翻回磁盘活态）——非零写者；[subagent-record-persistence-consolidation.md](../design/subagent-record-persistence-consolidation.md) D3 的「零写者后删除」清理执行前须先处置该写点 |
+| 进程探活 | `alive-store.ts` | `.alive`（pid + 启动时刻）探活面——写者未随 H1 消亡：随 U6 从 cold-resurrect.ts 改名迁入 cold-lookup.ts，resurrect 回边（跨重启续聊活链）仍调 `writeAliveMarker`（`cold-lookup.ts:157`，把 `.alive` 刷新为当前进程以翻回磁盘活态）——非零写者；[subagent-record-persistence-consolidation.md](../../design/subagent-record-persistence-consolidation.md) D3 的「零写者后删除」清理执行前须先处置该写点 |
+| chat→run 统一 | `conversation-continuation.ts` | ConversationContinuation = H1 chat→run 统一唯一新增组件（每 chatMode record 一个实例）：`onMessage` 状态迁移（终态 guard 分流 / 在途轮 abort 入队 / 空则派发）、`dispatchRound` 每轮派发（载荷组装 + 轮活性守护挂载 + 经泛化主干发起 run）、`onRunSettled` 轮末收口（doFinalizeRoundToIdle + 通知门路由）；[subagent-chat-run-unification.md](../../design/subagent-chat-run-unification.md) §3.4 |
 | 空闲回收 | `lifecycle-manager.ts` | per-record idle timer——chat 域长驻消亡后 arm 面（armChatIdleTimer）随 H1 退役，仅存 disarm 防误杀与超时回落常量（`XYZ_SUBAGENT_IDLE_TIMEOUT_MS`） |
 | 楔死回收 | `settled-watchdog.ts` | settled 永不到达的两段式守护：中段无进展检测（刷新源 = run 事件通道既有事件）+ 收尾段固定上界（交棒 = run 应答驱动）；run 域（含 chatMode 续聊轮）与 workflow 域共用同一原语 |
 | 引擎装载 | `engine/engine-discovery*.ts` → `registry.ts` → `routing.ts` | 三级发现装载 cli descriptor；core 壳侧零内建引擎（`pi` 亦经发现装载） |
@@ -144,6 +145,8 @@ subagent 能力现由 5 类包协作，跨进程边界只有一处（宿主 ↔ 
 | 体系深化设计（方案层，含体系图与术语） | [docs/design/subagent-post-convergence-architecture.md](../../design/subagent-post-convergence-architecture.md) |
 | core 抽包与 barrel/semver 契约（D5） | [docs/design/subagent-core-package-extraction.md](../../design/subagent-core-package-extraction.md) |
 | 双轨收敛（双份实现归一） | [docs/design/subagent-dual-track-convergence.md](../../design/subagent-dual-track-convergence.md) |
+| 引擎协议化（引擎外移独立 CLI 进程） | [docs/design/subagent-engine-protocolization.md](../../design/subagent-engine-protocolization.md) |
+| SubagentService 六聚合拆分（壳 + 聚合） | [docs/design/subagent-service-decomposition.md](../../design/subagent-service-decomposition.md) |
 | 不通知根因与恢复链（F 系列） | [docs/design/subagent-agent-end-recovery-replay.md](../../design/subagent-agent-end-recovery-replay.md) |
 | 无界等待与回收层上界审计 | [docs/design/subagent-core-unbounded-wait-audit.md](../../design/subagent-core-unbounded-wait-audit.md) |
 | zcode 引擎形态与会话库隔离 | [docs/design/zcode-engine-appserver-resident.md](../../design/zcode-engine-appserver-resident.md) · [docs/design/zcode-session-db-isolation.md](../../design/zcode-session-db-isolation.md) |
