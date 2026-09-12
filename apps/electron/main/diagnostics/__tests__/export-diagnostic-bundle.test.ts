@@ -26,6 +26,7 @@ import {
   tailBytes,
   normalizeFsError,
 } from '../export-diagnostic-bundle.js'
+import { parseJournalLines } from '../trigger-evaluator.js'
 import { listZipEntries, buildZipArchive } from '../minimal-zip.js'
 import { DIAGNOSTIC_EXPORT_PRIVACY_NOTICE } from '@xyz-agent/shared'
 
@@ -177,13 +178,14 @@ describe('export-diagnostic-bundle（crash-forensics D6 u3a）', () => {
     })
 
     it('extractLatestPiVersion 取最近事件的 piVersion，无记录为 unknown', () => {
+      // 【oe-audit C5】入参 = parseJournalLines 共享产物（events）；坏行（缺 ts）在 parse 口径滤除
       expect(extractLatestPiVersion([])).toBe('unknown')
-      expect(extractLatestPiVersion([journalLine('crash', { piVersion: '0.84.4' })])).toBe('0.84.4')
+      expect(extractLatestPiVersion(parseJournalLines([journalLine('crash', { piVersion: '0.84.4' })]).events)).toBe('0.84.4')
       expect(
-        extractLatestPiVersion([
+        extractLatestPiVersion(parseJournalLines([
           JSON.stringify({ ts: new Date(NOW - 3600_000).toISOString(), layer: 'runtime', event: 'crash', piVersion: '0.83.0' }),
           journalLine('crash', { piVersion: '0.84.4' }),
-        ]),
+        ]).events),
       ).toBe('0.84.4')
     })
   })

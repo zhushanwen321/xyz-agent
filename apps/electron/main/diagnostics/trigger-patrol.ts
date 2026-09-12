@@ -15,11 +15,11 @@
  * 【平台节流声明（D2）】macOS 后台/不可见时 timer clamping 会拉长巡检间隔——
  * 条件窗口是周/月级，巡检延迟数小时可容忍；显式接受，不申请 powerSaveBlocker。
  */
-import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import type { CrashJournalEvent } from '@xyz-agent/shared'
 import { crashJournal, getCrashJournalDir } from '../logs/crash-journal.js'
 import { mainLogger } from '../logs/main-logger.js'
+import { readJournalLines } from './journal-io.js'
 import { evaluateTriggerConditions } from './trigger-evaluator.js'
 import type { TriggerConditionRow, TriggerEvaluationResult } from './trigger-evaluator.js'
 
@@ -105,21 +105,5 @@ export function startTriggerPatrol(options: { intervalMs?: number } = {}): () =>
   return () => clearInterval(timer)
 }
 
-/**
- * 读台账文件为行数组。文件不存在（首事件前台账未建立）= 常态空台账，静默返回空
- * （评估器将以 no-data 显式呈现）；其余读取失败降级为空台账 + WARN（非静默——
- * 「评估器读不到台账文件 → 摘要标注数据缺失而非静默空白」，设计 §3.1 失败路径）。
- */
-function readJournalLines(file: string, warn: (line: string) => void): string[] {
-  try {
-    return readFileSync(file, 'utf8').split('\n')
-  } catch (err) {
-    if (isEnoent(err)) return []
-    warn(`[trigger-patrol] 台账读取失败 ${file}: ${err instanceof Error ? err.message : String(err)}（按空台账处理，评估结果将显式 no-data）`)
-    return []
-  }
-}
-
-function isEnoent(err: unknown): boolean {
-  return typeof err === 'object' && err !== null && 'code' in err && (err as { code?: unknown }).code === 'ENOENT'
-}
+// 台账读取统一走 ./journal-io.ts（【oe-audit C5】家族单一 reader：ENOENT 常态空 +
+// 其余失败 warn 的设计 §3.1 口径 SSOT，patrol / export-diagnostic-bundle 共用）。

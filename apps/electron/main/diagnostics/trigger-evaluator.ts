@@ -171,12 +171,12 @@ export interface EvaluateTriggerConditionsInput {
 }
 
 /** 带解析时间轴的台账事件。字段经 unknown 守卫访问（台账开放枚举，畸形值不炸评估器）。 */
-interface DatedEvent {
+export interface DatedEvent {
   raw: Record<string, unknown>
   tsMs: number
 }
 
-interface ParsedJournal {
+export interface ParsedJournal {
   events: DatedEvent[]
   skipped: number
   lastTsMs: number | null

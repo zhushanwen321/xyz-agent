@@ -36,9 +36,11 @@ import { join } from 'node:path'
 import { getDataDir } from '@xyz-agent/shared/paths'
 import type { DiagnosticExportBundleResult, DiagnosticExportSummary } from '@xyz-agent/shared'
 import { DIAGNOSTIC_EXPORT_PRIVACY_NOTICE } from '@xyz-agent/shared'
+import { mainLogger } from '../logs/main-logger.js'
 import { buildZipArchive } from './minimal-zip.js'
-import { evaluateTriggerConditions } from './trigger-evaluator.js'
-import type { TriggerConditionRow, TriggerEvaluationResult } from './trigger-evaluator.js'
+import { readJournalLines } from './journal-io.js'
+import { evaluateTriggerConditions, parseJournalLines } from './trigger-evaluator.js'
+import type { DatedEvent, TriggerConditionRow, TriggerEvaluationResult } from './trigger-evaluator.js'
 
 // ── 常量（D6 定值）────────────────────────────────────────────────────────────
 
@@ -142,38 +144,23 @@ function readTextIfExists(file: string): string | null {
   }
 }
 
-/** 读台账文件为行数组（trigger-patrol readJournalLines 同口径：ENOENT = 常态空台账）。 */
-function readJournalLines(file: string): string[] {
-  try {
-    return readFileSync(file, 'utf8').split('\n')
-  } catch {
-    return []
-  }
-}
+// 台账读取统一走 ./journal-io.ts（【oe-audit C5】：原本地全静默吞版本违反设计 §3.1
+// 「读取失败 → 显式 no-data 而非静默空白」——现与 patrol 共用 ENOENT 常态空 + 失败 warn 口径）。
 
 /**
- * 从台账行提取最近一次出现的 piVersion（runtime 事件按 D1 schema 携带）。main 进程无
+ * 从台账事件提取最近一次出现的 piVersion（runtime 事件按 D1 schema 携带）。main 进程无
  * pi 二进制的同步版本查询面（runtime 侧是 spawn `pi --version` 异步获取），台账是
  * main 侧唯一已落盘的权威来源；全空返回 unknown（显式非静默）。
+ * 【oe-audit C5】入参从原始行改为共享 parse 产物（events，与 detailPaths/首屏表格
+ * 同一次 parseJournalLines 输出）——消除家族内并行 JSONL 循环。
  */
-export function extractLatestPiVersion(lines: readonly string[]): string {
+export function extractLatestPiVersion(events: readonly DatedEvent[]): string {
   let latest: { tsMs: number; version: string } | null = null
-  for (const line of lines) {
-    if (line.trim() === '') continue
-    try {
-      const parsed: unknown = JSON.parse(line)
-      if (typeof parsed !== 'object' || parsed === null) continue
-      const rec = parsed as Record<string, unknown>
-      const version = rec.piVersion
-      if (typeof version !== 'string' || version === '') continue
-      const tsMs = typeof rec.ts === 'string' ? Date.parse(rec.ts) : Number.NaN
-      // 无 ts 的行仍采纳（排在无序尾部的兜底），但不覆盖已知更晚版本
-      const comparable = Number.isNaN(tsMs) ? -1 : tsMs
-      if (latest === null || comparable >= latest.tsMs) latest = { tsMs: comparable, version }
-      // eslint-disable-next-line taste/no-silent-catch -- 坏行跳过（评估器 skippedLineCount 同口径；版本提取不必重复计数，评估结果已显式坏行数）
-    } catch {
-      // no-op
-    }
+  for (const event of events) {
+    const version = event.raw.piVersion
+    if (typeof version !== 'string' || version === '') continue
+    // 无 ts 的事件不会出现（parseJournalLines 的 ts 守卫已滤）；tsMs 直接可用
+    if (latest === null || event.tsMs >= latest.tsMs) latest = { tsMs: event.tsMs, version }
   }
   return latest?.version ?? 'unknown'
 }
@@ -282,8 +269,12 @@ export function buildDiagnosticEntries(options: CollectDiagnosticOptions = {}): 
       missing.push({ archivePath: `crashes/${name}`, reason: '台账文件尚未建立（首事件前常态）' })
     }
   }
-  const mainLines = readJournalLines(join(crashesDir, 'main.jsonl'))
-  const runtimeLines = readJournalLines(join(crashesDir, 'runtime.jsonl'))
+  // 【oe-audit C5】读取 1 次 + parse 1 次，三消费方（detailPaths/piVersion/首屏表格）
+  // 共享同一 events（评估器内部另行 parse 的口径与 parseJournalLines 同源）
+  const journalWarn = (line: string): void => mainLogger.warn(line)
+  const mainLines = readJournalLines(join(crashesDir, 'main.jsonl'), journalWarn)
+  const runtimeLines = readJournalLines(join(crashesDir, 'runtime.jsonl'), journalWarn)
+  const journalEvents = [...parseJournalLines(mainLines).events, ...parseJournalLines(runtimeLines).events]
 
   // ② 各层日志家族尾部（每家族 mtime 最新一份取末 256KB）
   collectLogFamilyTails(logsDir, entries, missing)
@@ -302,7 +293,7 @@ export function buildDiagnosticEntries(options: CollectDiagnosticOptions = {}): 
   }
 
   // ④ 台账事件 detailPath 引用的深查文件（D1 schema 配对设计；尾部同口径防全量 stderr 撑包）
-  const detailPaths = collectDetailPaths([...mainLines, ...runtimeLines])
+  const detailPaths = collectDetailPaths(journalEvents)
   for (const detail of detailPaths.included) {
     const full = join(dataDir, detail)
     if (existsSync(full)) {
@@ -324,7 +315,7 @@ export function buildDiagnosticEntries(options: CollectDiagnosticOptions = {}): 
   const evaluated = evaluateTriggerConditions({ mainLines, runtimeLines })
   const environment: DiagnosticEnvironment = {
     appVersion: options.appVersion ?? 'unknown',
-    piVersion: extractLatestPiVersion([...mainLines, ...runtimeLines]),
+    piVersion: extractLatestPiVersion(journalEvents),
     platform: process.platform,
     platformRelease: osRelease(),
     arch: process.arch,
@@ -335,7 +326,7 @@ export function buildDiagnosticEntries(options: CollectDiagnosticOptions = {}): 
   const collectResult: Omit<DiagnosticCollectResult, 'entries'> = { missing, environment, evaluated, exportedAt }
   entries.push({
     archivePath: 'summary.md',
-    content: buildSummaryMarkdown({ entries, ...collectResult }),
+    content: buildSummaryMarkdown({ entries, journalEvents, ...collectResult }),
     note: '人读摘要（最近 10 条台账事件 + 触发状态表 + 包内清单说明 + DiagnosticReports 指引）',
   })
 
@@ -343,33 +334,24 @@ export function buildDiagnosticEntries(options: CollectDiagnosticOptions = {}): 
 }
 
 /**
- * 台账行中 detailPath 字段抽取（去重，最新事件优先，帽 MAX_DETAIL_FILES）。
+ * 台账事件中 detailPath 字段抽取（去重，最新事件优先，帽 MAX_DETAIL_FILES）。
  * 只收相对路径形态（D1 schema 例：logs/pi-crash-….log）；绝对路径/越界路径不收
- * （诊断包不读 dataDir 之外的任何文件）。
+ * （诊断包不读 dataDir 之外的任何文件）。【oe-audit C5】入参 = 共享 parse 产物。
  */
-function collectDetailPaths(lines: readonly string[]): { included: string[]; excluded: number } {
+function collectDetailPaths(events: readonly DatedEvent[]): { included: string[]; excluded: number } {
   const seen: string[] = []
   let excluded = 0
-  for (let i = lines.length - 1; i >= 0; i--) {
-    const line = lines[i]
-    if (line === undefined || line.trim() === '') continue
-    try {
-      const parsed: unknown = JSON.parse(line)
-      if (typeof parsed !== 'object' || parsed === null) continue
-      const detail = (parsed as Record<string, unknown>).detailPath
-      if (typeof detail !== 'string' || detail === '') continue
-      const normalized = detail.split('\\').join('/')
-      if (normalized.startsWith('/') || normalized.includes('..')) continue // 越界路径不收
-      if (seen.includes(normalized)) continue
-      if (seen.length >= MAX_DETAIL_FILES) {
-        excluded++
-        continue
-      }
-      seen.push(normalized)
-      // eslint-disable-next-line taste/no-silent-catch -- 坏行跳过（与评估器 skippedLineCount 同口径，不重复计数）
-    } catch {
-      // no-op
+  for (let i = events.length - 1; i >= 0; i--) {
+    const detail = events[i]?.raw.detailPath
+    if (typeof detail !== 'string' || detail === '') continue
+    const normalized = detail.split('\\').join('/')
+    if (normalized.startsWith('/') || normalized.includes('..')) continue // 越界路径不收
+    if (seen.includes(normalized)) continue
+    if (seen.length >= MAX_DETAIL_FILES) {
+      excluded++
+      continue
     }
+    seen.push(normalized)
   }
   return { included: seen.reverse(), excluded }
 }
@@ -377,7 +359,10 @@ function collectDetailPaths(lines: readonly string[]): { included: string[]; exc
 // ── summary.md 渲染（纯函数）──────────────────────────────────────────────────
 
 /** 环境块 + 状态表 + 首屏表格 + 清单说明 + DiagnosticReports 指引（D6 summary.md 三段明文）。 */
-export function buildSummaryMarkdown(collected: Omit<DiagnosticCollectResult, 'entries'> & { entries: DiagnosticEntry[] }): string {
+export function buildSummaryMarkdown(
+  collected: Omit<DiagnosticCollectResult, 'entries'>
+    & { entries: DiagnosticEntry[]; journalEvents: readonly DatedEvent[] },
+): string {
   const { environment, evaluated, exportedAt, missing } = collected
   const lines: string[] = []
   lines.push('# xyz-agent 诊断包')
@@ -396,7 +381,7 @@ export function buildSummaryMarkdown(collected: Omit<DiagnosticCollectResult, 'e
   lines.push('')
   lines.push('## 最近台账事件')
   lines.push('')
-  lines.push(recentEventsTable(collected.entries))
+  lines.push(recentEventsTable(collected.journalEvents))
   lines.push('')
   lines.push('## 触发条件状态表')
   lines.push('')
@@ -423,42 +408,30 @@ export function buildSummaryMarkdown(collected: Omit<DiagnosticCollectResult, 'e
   return lines.join('\n')
 }
 
-/** 首屏表格：两本台账合并按 ts 降序取前 N 条（坏行已在评估器口径中跳过）。 */
-function recentEventsTable(entries: readonly DiagnosticEntry[]): string {
-  interface JournalRow { ts: string; layer: string; event: string; sessionId: string; reason: string; detail: string }
-  const rows: JournalRow[] = []
-  for (const entry of entries) {
-    if (entry.sourcePath === undefined || !entry.archivePath.startsWith('crashes/')) continue
-    let content: string
-    try {
-      content = readFileSync(entry.sourcePath, 'utf8')
-    } catch {
-      continue // 台账读失败时首屏表格留空（清单 missing 已显式），不阻断 summary 渲染
-    }
-    for (const line of content.split('\n')) {
-      if (line.trim() === '') continue
-      try {
-        const parsed = JSON.parse(line) as Record<string, unknown>
-        rows.push({
-          ts: typeof parsed.ts === 'string' ? parsed.ts : '',
-          layer: typeof parsed.layer === 'string' ? parsed.layer : '',
-          event: typeof parsed.event === 'string' ? parsed.event : '',
-          sessionId: typeof parsed.sessionId === 'string' ? parsed.sessionId : '',
-          reason: typeof parsed.reason === 'string' ? parsed.reason : '',
-          detail: typeof parsed.detailDigest === 'string' ? parsed.detailDigest : '',
-        })
-        // eslint-disable-next-line taste/no-silent-catch -- 坏行跳过（评估器 skippedLineCount 同口径，首屏表格只渲染可解析行）
-      } catch {
-        // no-op
+/**
+ * 首屏表格：两本台账合并按 ts 降序取前 N 条。【oe-audit C5】消费共享 parse 产物
+ * （journalEvents，与 detailPaths/piVersion 同一次 parseJournalLines 输出）——不再
+ * 对已读过的台账文件二次 readFileSync + 逐行 parse。
+ */
+function recentEventsTable(events: readonly DatedEvent[]): string {
+  const str = (v: unknown): string => (typeof v === 'string' ? v : '')
+  const rows = [...events]
+    .sort((a, b) => b.tsMs - a.tsMs)
+    .slice(0, SUMMARY_RECENT_EVENT_COUNT)
+    .map((event) => {
+      const raw = event.raw
+      return {
+        ts: str(raw.ts),
+        layer: str(raw.layer),
+        event: str(raw.event),
+        sessionId: str(raw.sessionId),
+        reason: str(raw.reason),
+        detail: str(raw.detailDigest).replace(/\|/g, '\\|').slice(0, SUMMARY_DETAIL_DIGEST_MAX_CHARS),
       }
-    }
-  }
-  rows.sort((a, b) => Date.parse(b.ts) - Date.parse(a.ts))
+    })
   const head = '| 时间 | 层 | 事件 | sessionId | 原因 | 详情摘要 |'
   const sep = '| --- | --- | --- | --- | --- | --- |'
-  const body = rows.slice(0, SUMMARY_RECENT_EVENT_COUNT).map((r) =>
-    `| ${r.ts} | ${r.layer} | ${r.event} | ${r.sessionId} | ${r.reason} | ${r.detail.replace(/\|/g, '\\|').slice(0, SUMMARY_DETAIL_DIGEST_MAX_CHARS)} |`,
-  )
+  const body = rows.map((r) => `| ${r.ts} | ${r.layer} | ${r.event} | ${r.sessionId} | ${r.reason} | ${r.detail} |`)
   return [head, sep, ...(body.length > 0 ? body : ['| （台账为空） | | | | | |'])].join('\n')
 }
 
