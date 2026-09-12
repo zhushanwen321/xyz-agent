@@ -7,10 +7,13 @@
  * 即得 → 即时查询、无历史依赖）。两模块不共享状态，消费方各异（本模块 → relief 降级；
  * mem-pressure → reattach 高水位延迟 / D5 硬升级）。
  *
- * 采样环（D4 原文）：`process.memoryUsage()` + `v8.getHeapStatistics().heap_size_limit`，
- * 内存环形数组保 24h（60s 采样 → 1440 条容量随 interval 换算）。环数据只存内存不落盘
- * （水位 5min 日志行是既有 startMemoryWatermarkTimer 的职责，保留不动）；Gate W 水位复审
- * 的人工明细走既有日志行，本环服务运行期趋势判定与未来消费方（getStatus 暴露）。
+ * 趋势判定形态（D4）：`process.memoryUsage()` + `v8.getHeapStatistics().heap_size_limit`，
+ * 持续性判定走连续拍计数器（consecutiveAboveWarn）+ 最近一拍样本（lastSample）——单拍
+ * 采样即得，无历史依赖。【oe-audit C4】D4 原文的 24h 采样环已删：环只存内存不落盘、
+ * 无 RPC / 不进诊断包 / 重启即丢，运行期判定不读环（走计数器），Gate W 水位复审的人工
+ * 明细走既有 5min 水位日志行（startMemoryWatermarkTimer）——环是无出口的观测，删除
+ * 不改变任何现役或武装后行为；armed 后若需分钟级历史，给水位日志加密采样即可（落盘、
+ * 可复盘）。
  *
  * 两级阈值（相对 heap_size_limit，D4：告警 70% / 临界 85%，具体值 Gate W 校准；env 可覆盖）：
  * - warn（≥70%）：memory-relief 降级档——清可回收物（renderer LRU 收紧经 WS 通知通道）。
@@ -29,8 +32,8 @@
  * 回落 → 不重复执行；回落后再越线 → 可再次执行」）取本实现口径。
  *
  * 武装门（Gate W，设计 §3.2 方案 B / §5 env 命名）：`XYZ_RUNTIME_WATCHDOG_ARMED` 默认
- * off——代码完整交付但降级动作默认不武装。off 时采样环照跑（观测先行：即使永不武装，
- * 采样环补全水位数据——impl-plan u6 批次理由），relief 与 renderer 通知都不执行。
+ * off——代码完整交付但降级动作默认不武装。off 时采样照跑（判定面运行，getStatus 可查），
+ * relief 与 renderer 通知都不执行。
  *
  * best-effort 契约（对齐 crash-journal/mem-pressure：旁路设施故障不放大为调用链故障）：
  * 采样回调全量 try/catch，失败记一次主日志 warn（模块级 once 防周期失败刷屏）后静默；
@@ -58,9 +61,6 @@ export const DEFAULT_WATCHDOG_WARN_PERCENT = 70
 /** 临界档默认阈值（%，D4：85%，Gate W 校准）。 */
 export const DEFAULT_WATCHDOG_CRITICAL_PERCENT = 85
 
-/** 采样环保留时长 = 24h（D4：内存环形数组保 24h；单字面量形态，对齐 BYTES_PER_MB 惯例）。 */
-export const WATCHDOG_RING_DURATION_MS = 86_400_000
-
 /** 百分比换算基数（usedPercent 刻度与 env 阈值合法性上界共用，禁裸 100）。 */
 const PERCENT_SCALE = 100
 
@@ -77,7 +77,7 @@ export const ENV_WATCHDOG_WARN_PCT = 'XYZ_RUNTIME_WATCHDOG_WARN_PCT'
 export const ENV_WATCHDOG_CRIT_PCT = 'XYZ_RUNTIME_WATCHDOG_CRIT_PCT'
 export const ENV_WATCHDOG_SAMPLE_MS = 'XYZ_RUNTIME_WATCHDOG_SAMPLE_MS'
 
-/** 单个采样样本（环元素）。usedPercent = heapUsed / heapSizeLimit × 100。 */
+/** 单个采样样本。usedPercent = heapUsed / heapSizeLimit × 100。 */
 export interface WatchdogSample {
   /** 采样时刻（epoch ms）。 */
   ts: number
@@ -91,9 +91,9 @@ export interface WatchdogSample {
   usedPercent: number
 }
 
-/** 看门狗运行态快照（观测面：getStatus 暴露，测试断言与未来消费方共用）。 */
+/** 看门狗运行态快照（观测面：getStatus 暴露，测试断言共用）。 */
 export interface WatchdogStatus {
-  /** 最近一拍档位（环空 = 'normal'）。 */
+  /** 最近一拍档位（从未采样 = 'normal'）。 */
   level: 'normal' | WatchdogMemoryLevel
   /** 连续越线拍数（≥ 告警线连续计；normal 拍归零）。 */
   consecutiveAboveWarn: number
@@ -101,10 +101,8 @@ export interface WatchdogStatus {
    * relief 锁状态：true = 可执行；false = 已执行且水位未回落（反弹缓解锁，见文件头）。
    */
   reliefAvailable: boolean
-  /** 最近一拍样本（环空 = null）。 */
+  /** 最近一拍样本（从未采样 = null）。 */
   lastSample: WatchdogSample | null
-  /** 采样环内容（时间升序，旧 → 新；返回副本，外部改动不影响内部环）。 */
-  samples: WatchdogSample[]
 }
 
 /** 看门狗启动选项（全部可注入；缺省值见各字段——生产接线经 resolveWatchdogConfig 展开）。 */
@@ -117,8 +115,6 @@ export interface WatchdogOptions {
   warnPercent?: number
   /** 临界档阈值 %（默认 85）。 */
   criticalPercent?: number
-  /** 环容量（条）；缺省按 24h / interval 换算（D4 环保留时长语义）。 */
-  ringCapacity?: number
   /** process.memoryUsage 注入（测试构造任意水位）。 */
   memoryUsage?: () => NodeJS.MemoryUsage
   /** heap 上限来源注入（测试固定分母；缺省 v8.getHeapStatistics().heap_size_limit）。 */
@@ -216,7 +212,7 @@ export function classifyMemoryLevel(
 /**
  * 启动看门狗（组合根 listen 成功后调用一次；测试直接构造注入全量依赖）。
  *
- * 返回句柄持 stop（clearInterval；采样环数据随实例丢弃——观测态不跨重启语义）。
+ * 返回句柄持 stop（clearInterval；观测态随实例丢弃，不跨重启）。
  * 定时器 unref：采样是旁路观测面，不得阻止进程自然退出（对齐水位定时器形态）。
  */
 export function startWatchdog(options: WatchdogOptions = {}): WatchdogHandle {
@@ -224,8 +220,6 @@ export function startWatchdog(options: WatchdogOptions = {}): WatchdogHandle {
   const sampleIntervalMs = options.sampleIntervalMs ?? DEFAULT_WATCHDOG_SAMPLE_INTERVAL_MS
   const warnPercent = options.warnPercent ?? DEFAULT_WATCHDOG_WARN_PERCENT
   const criticalPercent = options.criticalPercent ?? DEFAULT_WATCHDOG_CRITICAL_PERCENT
-  const ringCapacity = options.ringCapacity
-    ?? Math.max(1, Math.ceil(WATCHDOG_RING_DURATION_MS / sampleIntervalMs))
   const memoryUsage = options.memoryUsage ?? defaultMemoryUsage
   const heapSizeLimit = options.heapSizeLimit ?? defaultHeapSizeLimit
   const onRelief = options.onRelief
@@ -233,7 +227,7 @@ export function startWatchdog(options: WatchdogOptions = {}): WatchdogHandle {
   const journal = options.journal ?? getCrashJournal()
   const now = options.now ?? (() => Date.now())
 
-  const ring: WatchdogSample[] = []
+  let lastSample: WatchdogSample | null = null
   let consecutiveAboveWarn = 0
   let reliefAvailable = true
   let lastLevel: 'normal' | WatchdogMemoryLevel = 'normal'
@@ -251,8 +245,7 @@ export function startWatchdog(options: WatchdogOptions = {}): WatchdogHandle {
       rss: usage.rss,
       usedPercent: (usage.heapUsed / limit) * PERCENT_SCALE,
     }
-    ring.push(sample)
-    if (ring.length > ringCapacity) ring.shift()
+    lastSample = sample
     return sample
   }
 
@@ -292,7 +285,7 @@ export function startWatchdog(options: WatchdogOptions = {}): WatchdogHandle {
         return
       }
       consecutiveAboveWarn++
-      if (!armed) return // Gate W off：纯观测（样本已进环），无动作无通知
+      if (!armed) return // Gate W off：纯观测（判定面照算，lastSample 可查），无动作无通知
       broadcast?.({
         level,
         heapUsed: sample.heapUsed,
@@ -325,8 +318,7 @@ export function startWatchdog(options: WatchdogOptions = {}): WatchdogHandle {
         level: lastLevel,
         consecutiveAboveWarn,
         reliefAvailable,
-        lastSample: ring.length > 0 ? ring[ring.length - 1] : null,
-        samples: ring.slice(),
+        lastSample,
       }
     },
   }

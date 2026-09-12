@@ -44,7 +44,6 @@ interface Harness {
 function startHarness(opts: {
   armed?: boolean
   usage: () => NodeJS.MemoryUsage
-  ringCapacity?: number
   warnPercent?: number
   criticalPercent?: number
 }): Harness {
@@ -59,7 +58,6 @@ function startHarness(opts: {
     onRelief: relief,
     broadcast: (p) => broadcast(p),
     journal,
-    ringCapacity: opts.ringCapacity,
     warnPercent: opts.warnPercent,
     criticalPercent: opts.criticalPercent,
   })
@@ -258,20 +256,21 @@ describe('renderer 广播通知（WatchdogMemoryPressurePayload 契约）', () =
     h.handle.stop()
   })
 
-  it('Gate W off（armed=false）：高位多拍零广播零 relief，采样环照跑（观测先行）', () => {
+  it('Gate W off（armed=false）：高位多拍零广播零 relief，判定面照算（观测先行）', () => {
     const h = startHarness({ armed: false, usage: usageAtPercent(90) })
     advanceTicks(WATCHDOG_SUSTAIN_TICKS + 2)
     expect(h.broadcast).not.toHaveBeenCalled()
     expect(h.relief).not.toHaveBeenCalled()
     expect(h.journalAppend).not.toHaveBeenCalled()
     const status = h.handle.getStatus()
-    expect(status.samples.length).toBe(WATCHDOG_SUSTAIN_TICKS + 2)
+    expect(status.lastSample).not.toBeNull()
+    expect(status.consecutiveAboveWarn).toBe(WATCHDOG_SUSTAIN_TICKS + 2)
     expect(status.level).toBe('critical') // 判定照算（观测面）
     h.handle.stop()
   })
 })
 
-describe('采样环与收口', () => {
+describe('采样观测与收口（oe-audit C4：24h 采样环已删，观测面 = lastSample + 计数器）', () => {
   beforeEach(() => {
     vi.useFakeTimers()
   })
@@ -279,20 +278,10 @@ describe('采样环与收口', () => {
     vi.useRealTimers()
   })
 
-  it('环容量淘汰：超容量后保最近 N 条（默认容量 = 24h/interval，D4 环保留语义）', () => {
-    const h = startHarness({ usage: usageAtPercent(50), ringCapacity: 3 })
-    advanceTicks(5)
-    const samples = h.handle.getStatus().samples
-    expect(samples).toHaveLength(3)
-    h.handle.stop()
-  })
-
-  it('默认环容量 = ceil(24h / 60s) = 1440（设计 D4：环形数组保 24h）', () => {
+  it('样本形态：lastSample 携带 ts/heapUsed/heapSizeLimit/rss/usedPercent（D4 采样字段）', () => {
     const h = startHarness({ usage: usageAtPercent(50) })
     advanceTicks(2)
-    expect(h.handle.getStatus().samples.length).toBe(2)
-    // 容量经 24h 语义换算：抽样验证 getStatus 样本形态（ts/heapUsed/heapSizeLimit/rss/usedPercent）
-    const s = h.handle.getStatus().samples[0] as WatchdogSample
+    const s = h.handle.getStatus().lastSample as WatchdogSample
     expect(s.heapSizeLimit).toBe(HEAP_LIMIT)
     expect(s.rss).toBe(2_000_000_000)
     expect(s.usedPercent).toBeCloseTo(50, 5)
@@ -300,15 +289,14 @@ describe('采样环与收口', () => {
     h.handle.stop()
   })
 
-  it('stop 后不再采样；getStatus 返回副本（外部改动不影响内部环）', () => {
+  it('stop 后不再采样（lastSample 停留在 stop 前最后一拍，重复读取返回同引用）', () => {
     const h = startHarness({ usage: usageAtPercent(50) })
     advanceTicks(1)
     h.handle.stop()
     advanceTicks(3)
-    expect(h.handle.getStatus().samples).toHaveLength(1)
-    const samples = h.handle.getStatus().samples
-    samples.pop()
-    expect(h.handle.getStatus().samples).toHaveLength(1)
+    const status1 = h.handle.getStatus()
+    expect(status1.lastSample).not.toBeNull()
+    expect(h.handle.getStatus().lastSample).toBe(status1.lastSample)
   })
 
   it('采样异常（memoryUsage 抛错）不逃逸定时器回调，后续拍继续（best-effort）', () => {
@@ -325,7 +313,7 @@ describe('采样环与收口', () => {
     expect(() => advanceTicks(2)).not.toThrow()
     fail = false
     advanceTicks(1)
-    expect(handle.getStatus().samples).toHaveLength(1)
+    expect(handle.getStatus().lastSample).not.toBeNull()
     handle.stop()
   })
 })
