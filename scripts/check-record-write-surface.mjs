@@ -33,8 +33,9 @@
 // 与 .d.ts——测试 mock/替身形态不属于生产写面）。
 //
 // 退出码：0 通过 / 1 违规（打印 文件:行 + 厽中 + 恢复动作）。
-// 接线：pre-commit 按路径触发（packages/subagent-core/src、extensions/universal/
-// subagent-workflow/src、本脚本 staged 时）。
+// 接线：pre-commit 按路径触发（packages/subagent-core/src、extensions/**/src
+// 全域、本脚本 staged 时——阶段 4 修复组 C 扩全，原仅 subagent-workflow 单包）；
+// CI invariants 面全量兜底（ci.yml，跨 worktree 等价拦截）。
 
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { dirname, join, relative, resolve } from "node:path";

@@ -1362,8 +1362,12 @@ fi
 # ============================================================================
 # ============================================================================
 # record 持久化写面守卫（H4/S4/D7，subagent-record-persistence-consolidation）
-#   staged 命中 record 写面载体（packages/subagent-core/src/）、extension 消费面
-#   （extensions/universal/subagent-workflow/src/）或守卫脚本自身时触发：
+#   staged 命中 record 写面载体（packages/subagent-core/src/）、extensions 扫描根
+#   全域（extensions/**/src，与守卫脚本扫描根对齐）或守卫脚本自身时触发：
+#   [HISTORICAL] 原触发面仅 extensions/universal/subagent-workflow/src 一包，触发
+#   面外的包（如 session-reader）违规只能延迟暴露（阶段 3 一致性审查 P2）——扩为
+#   结构无关的 glob 全域匹配，新增分组/包零维护（同上方 EXTENSION_PKG_FILES
+#   两段式改造的教训：禁止与目录结构耦合的清单式写法）。
 #   scripts/check-record-write-surface.mjs —— grep 门兜底（R1 六名写函数直调 +
 #   R2 subagent-record entry 直写，store 外零命中）。一级拦截 = eslint
 #   no-restricted-imports（eslint.config.mjs subagent-core 块，模块边界级）；
@@ -1373,8 +1377,8 @@ fi
 #   的防线。不设独立 SKIP_* 开关（R1 后惯例，总闸 SKIP_ALL_CHECKS 兜底）。
 # ============================================================================
 
-RECORD_WRITE_SURFACE_STAGED=$(git diff --cached --name-only -- packages/subagent-core/src/ extensions/universal/subagent-workflow/src/ scripts/check-record-write-surface.mjs)
-if echo "$RECORD_WRITE_SURFACE_STAGED" | grep -qE "^packages/subagent-core/src/|^extensions/universal/subagent-workflow/src/|^scripts/check-record-write-surface\.mjs$"; then
+RECORD_WRITE_SURFACE_STAGED=$(git diff --cached --name-only -- packages/subagent-core/src/ ':(glob)extensions/**/src/**' scripts/check-record-write-surface.mjs)
+if echo "$RECORD_WRITE_SURFACE_STAGED" | grep -qE "^packages/subagent-core/src/|^extensions/.*/src/|^scripts/check-record-write-surface\.mjs$"; then
     print_section "[record 持久化写面守卫]"
     if [ ! -f "scripts/check-record-write-surface.mjs" ]; then
         echo -e "${RED}[ERROR] 找不到 scripts/check-record-write-surface.mjs（H4/U5 守卫交付物缺失）${NC}"

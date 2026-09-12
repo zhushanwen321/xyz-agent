@@ -478,6 +478,14 @@ jobs:
       - name: Subagent-service boundary guard (H3)
         run: node scripts/check-subagent-service-boundary.mjs
 
+      # H4 record 持久化写面守卫（与 pre-commit 同源直调；守卫全量扫描
+      # packages/*/src + extensions/**/src 不依赖 staged 上下文）：store 外 record
+      # 写面直写（R1 六名写函数 + R2 subagent-record entry）零命中——本地 hook 按
+      # staged 路径触发，触发面外的包在 CI 面等价拦截（D7 通则，同上行 H3 /
+      # D9-① 的挂载理由）。
+      - name: Record write surface guard (H4)
+        run: node scripts/check-record-write-surface.mjs
+
       # 流写逃逸护栏（2026-09-04 runtime 整机崩溃事故护栏，与 pre-commit 同源直调）：
       # 裸流写 / socket error 未挂载静态扫描——防新增代码在事件回调里裸写半关闭/
       # destroyed 流，逃逸为 uncaughtException → 整机 shutdown（D7 通则，CI 面同源拦截）。
