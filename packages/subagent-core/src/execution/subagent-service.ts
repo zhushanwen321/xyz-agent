@@ -269,7 +269,8 @@ export class SubagentService {
     // [U1 偏差 3 收尾 / D8 v7] 第 4 参 manifestDir 接线（与 manifestStore 同源同一
     // recordsDir，构造点同语句保证不漂移）：终态原语（markFinalized/markCancelled/
     // markBatchFinalized）的 manifest 面走 writeAtomicFileSync 同步落盘——停机窗
-    // fire-and-forget 竞态构造性消灭；缺省该参数时 store 降级异步写（双轨期语义）。
+    // fire-and-forget 竞态构造性消灭；生产构造点恒传 manifestDir（见下方构造
+    // 调用），缺省降级异步分支仅纯内存测试形态可达。
     this.store = new RecordStore(sessionsDir, this.manifestStore, this.pi ?? undefined, recordsDir);
     // [W4 发射点② / U5 收口项②] markRoundIdle 簿记⑧的 pending 注销闭包接线（唯一
     // 装配点——轮终注销由 store 统一发射，调用方薄壳不再双轨重复发）。

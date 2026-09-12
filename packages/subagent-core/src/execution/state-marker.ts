@@ -24,9 +24,8 @@
 // `.state` 是终态判定权威（D1），写失败不再静默：重试 3 次指数退避（100ms 起），
 // 仍失败 logger.error 响亮暴露并返回 false（不抛出，收尾主流程可继续；调用方据
 // 返回值保持 record 不翻终态——record 留 running，boot 孤儿恢复终态化承接）。
-// 双轨期旧直接调用方（finalize-record / 孤儿恢复 / round-supervisor）可忽略返回值，
-// 「不抛出」使其行为与改造前兼容（旧 best-effort 吞错形态的失败面从静默变为响亮
-// 留痕，迁移完成后由意图原语消费返回值，D7 双轨失败语义归一）。
+// 迁移已完成（D7）：写函数唯一生产调用方 = record-store 内部（意图原语消费返回
+// 值，失败面从旧 best-effort 静默吞错变为响亮留痕 + 显式处置）。
 //
 // [UF-1] record 绑定 sidecar（`.record-binding`）同挂本载体族：宿主侧在 record.sessionFile
 // 回填点写「record id → session 文件」映射（engine-CLI 化后子 session 文件无身份 entry，
@@ -124,7 +123,7 @@ export interface SidecarStat {
  * 写 finalized 终态 sidecar（权威同步写，§3.4）。
  * 失败重试 3 次指数退避（100ms 起）；仍失败 logger.error 响亮暴露并返回 false——
  * 调用方（RecordStore.markFinalized 意图原语）据此保持 record 不翻终态（record 留
- * running，boot 孤儿恢复终态化承接）。不抛出：双轨期旧直接调用方行为兼容。
+ * running，boot 孤儿恢复终态化承接）。不抛出：失败处置经返回值交意图原语编排。
  *
  * @param sessionFile session.jsonl 绝对路径
  * @param reason 可选的关闭原因（磁盘重建用它还原 closedReason）。传 undefined =

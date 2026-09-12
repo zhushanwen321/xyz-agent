@@ -265,7 +265,7 @@ describe("registerSubagentsCommand — RPC message/start dispatch + 留痕", () 
 
     await runHandler("message sa-1 turn 进行中的定向消息");
 
-    // pi 0.84.1 sendCustomMessage：isStreaming 且无 deliverAs 时默认 steer 当前
+    // pi 0.84.4 sendCustomMessage：isStreaming 且无 deliverAs 时默认 steer 当前
     // turn——分流契约要求显式 nextTurn（入 _pendingNextTurnMessages 队列，下个
     // turn 注入，不打断当前 turn）
     expect(sendMessageMock).toHaveBeenCalledTimes(1);

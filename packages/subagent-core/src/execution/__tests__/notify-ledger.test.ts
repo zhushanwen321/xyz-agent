@@ -1023,7 +1023,7 @@ describe("createNotifier — ledger 四步接线（U2）", () => {
 // ─── MF-5: settled 监听单例化 ──────────────────────────────
 //
 // 回归背景：index.ts:428-430 每次 session_start 注册新 pi.on("agent_settled")
-// handler，旧实例 dispose 只置标志不移除物理监听（pi 0.84.1 on() 无 off）——
+// handler，旧实例 dispose 只置标志不移除物理监听（pi 0.84.4 on() 无 off）——
 // 长会话 N 次切换累积 N 个死 handler。修复：bind 路径首次注册模块级单例
 // handler（settledEdgeDispatch），后续 bind 只换 boundLedger 引用。
 

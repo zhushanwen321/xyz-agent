@@ -90,7 +90,7 @@ function isModelOverrideObj(a: unknown): a is { model?: unknown; thinkingLevel?:
 /**
  * start 路径类参数（skillPath / cwd）运行时守卫：绝对路径 + 禁 `..` 穿越。
  *
- * 校验链事实（pi 0.84.1 实装，登记 PS-20）：pi agent-loop 对注册 typebox schema
+ * 校验链事实（pi 0.84.4 实装，登记 PS-20）：pi agent-loop 对注册 typebox schema
  * 有运行时强校验——agent-loop.js:403-404 在 beforeToolCall / execute 之前调
  * validateToolArguments（pi-ai validation.js:247：Value.Convert :249 + Compile :210
  * + Check :265，失败 throw `Validation failed for tool` :272-273）→ catch 走

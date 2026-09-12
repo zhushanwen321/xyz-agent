@@ -140,8 +140,9 @@ export class RecordLifecycle {
    *  写点缺口）：优雅停机关掉的在途 record 重启后 list 不可见（records/<id>.json 不
    *  存在）、message 报 not found——「展示层∪动作链」双失。[B3/D8] 终态化归口
    *  store.markFinalized 后 manifest 随终态原语落盘（manifestDir 接线后 writeSync 同步
-   *  完成于本同步函数体内，停机窗 fire-and-forget 竞态构造性消灭；双轨期降级异步，
-   *  SIGKILL 竞态丢失由 recoverOrphanRecords 的可重连 entry 重物化自愈兜底）。
+   *  完成于本同步函数体内，停机窗 fire-and-forget 竞态构造性消灭；生产构造点恒传
+   *  manifestDir，缺省降级异步仅纯内存测试形态，SIGKILL 竞态丢失由
+   *  recoverOrphanRecords 的可重连 entry 重物化自愈兜底）。
    *  归口同时补齐 .state 权威写与 .alive release——重启后行为按 D8 矩阵五行
    *  （chat×fork-new 收紧硬拒 / one-shot×shutdown 放宽可续 / 纳管态降级手动 resurrect）。
    *

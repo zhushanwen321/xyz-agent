@@ -12,8 +12,7 @@
 // [U1 / record 持久化收敛 §3.1] 意图级操作 API 立面（store 唯一写入口）
 // ════════════════════════════════════════════════════════════════════
 // 调用方说「发生了什么」，不说「写哪个文件」——文件布局知识收在本类内部。
-// 双轨期（设计 D7）：旧直写路径（finalize-record / record-lifecycle / cold-lookup /
-// idle-gc / subagent-service）未迁移前与本 API 并存，调用方迁移归 U2a/U2b/U3。
+// 迁移已完成：全部写点经本 API，旧直写路径已删除（守卫见 D7）。
 //
 // | 意图原语 | 语义 | 内部写面 |
 // |---------|------|---------|
@@ -841,8 +840,9 @@ export class RecordStore {
         }
       }
     } else if (this.manifestStore !== undefined) {
-      // 双轨降级：异步屏障 allSettled（失败 warn 不阻断写账——反查索引缺失只影响
-      // 指针行反查，session-reader 错误文案已指引绝对路径兜底）。
+      // 缺省降级分支（仅纯内存测试形态可达）：异步屏障 allSettled（失败 warn 不
+      // 阻断写账——反查索引缺失只影响指针行反查，session-reader 错误文案已指引
+      // 绝对路径兜底）。
       const results = await Promise.allSettled(
         records.map((rec) => this.manifestStore!.writeManifest(RecordStore.batchManifestRecord(rec))),
       );
@@ -892,8 +892,9 @@ export class RecordStore {
    * `.state` → 删 `.finalized`/`.cancelled` legacy（读侧兼容回退认领旧名，残留未删
    * 则重建仍读出终态），随后 resurrectClosed 内存翻回 + register——
    * 任一步失败**响亮抛错**（禁止 best-effort 吞错续跑：acquire 失败 = 双写风险敞口；
-   * acquire-first 顺序保证失败时终态位未删、磁盘保持旧形态）。reportTransition（entry
-   * 上报）留编排层（纯投递副作用，失败不破坏状态一致性）。
+   * acquire-first 顺序保证失败时磁盘保持 closed 可读形态——极端形态下经 legacy
+   * 文件名回退仍读出终态，见 catch 文案）。reportTransition（entry 上报）留编排层
+   * （纯投递副作用，失败不破坏状态一致性）。
    *
    * 两种接管形态统一（wasClosed 判别）：closed 候选 = 三件套全量；running 候选接管
    * （跨重启磁盘重建）= 跳过删终态位（无 `.state` 可删）**仍 acquire marker**
@@ -926,7 +927,7 @@ export class RecordStore {
     } catch (err) {
       logger.error(
         `[subagents] markResurrected(${id}) failed to acquire/flip terminal position; ` +
-          `resurrect aborted loudly (disk keeps its previous shape, memory unregistered)`,
+          `resurrect aborted loudly (disk keeps a closed-readable shape (possibly via legacy filename), memory unregistered)`,
         { detail: { sessionFile, error: err instanceof Error ? err.message : String(err) } },
       );
       throw new Error(
