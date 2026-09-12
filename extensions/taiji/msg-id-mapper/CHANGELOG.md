@@ -1,5 +1,11 @@
 # @zhushanwen/pi-msg-id-mapper
 
+## 1.0.8
+
+### Patch Changes
+
+- 4955dad6e: chore: refresh dependency range (triggered by @zhushanwen/pi-extension-logger@0.5.0 → @zhushanwen/pi-extension-logger@0.6.0)
+
 ## 1.0.7
 
 ### Patch Changes

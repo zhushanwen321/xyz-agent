@@ -1,5 +1,11 @@
 # @zhushanwen/pi-permission
 
+## 1.4.3
+
+### Patch Changes
+
+- 4955dad6e: chore: refresh dependency range (triggered by @zhushanwen/pi-ext-guards@0.2.1 → @zhushanwen/pi-ext-guards@0.3.0, @zhushanwen/pi-extension-logger@0.5.0 → @zhushanwen/pi-extension-logger@0.6.0, @zhushanwen/pi-llm-shared@0.6.0 → @zhushanwen/pi-llm-shared@0.7.0)
+
 ## 1.4.2
 
 ### Patch Changes

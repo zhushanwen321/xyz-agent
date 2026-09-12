@@ -1,5 +1,11 @@
 # @zhushanwen/pi-ask-user
 
+## 7.1.3
+
+### Patch Changes
+
+- 4955dad6e: chore: refresh dependency range (triggered by @xyz-agent/extension-protocol@0.8.2 → @xyz-agent/extension-protocol@0.9.0, @zhushanwen/pi-extension-logger@0.5.0 → @zhushanwen/pi-extension-logger@0.6.0)
+
 ## 7.1.2
 
 ### Patch Changes

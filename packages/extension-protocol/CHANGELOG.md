@@ -1,5 +1,13 @@
 # @xyz-agent/extension-protocol
 
+## 0.9.0
+
+### Minor Changes
+
+- 4955dad6e: Subagent in-flight report protocol module.
+
+  Adds the `src/extensions/subagent-inflight/` protocol module (~195 lines): `SUBAGENT_INFLIGHT_MARKER` marker constant, `isInFlightReportAck` frame predicate, `SubagentInFlightReport` / ack payload types, and encode/decode helpers for the in-flight subagent reporting channel consumed by `@zhushanwen/pi-subagent-workflow` (host/inflight-reporter). Purely additive — no existing exports change.
+
 ## 0.8.2
 
 ### Patch Changes
