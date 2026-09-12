@@ -118,6 +118,8 @@ vi.mock("@zhushanwen/subagent-core/orchestration/lifecycle.ts", async (importOri
 });
 
 // ⑦⑨⑥ SubagentService mock：方法全部挂 hoisted spy（跨实例聚合计数）。
+// [H3/R6 连带] SubagentService 类仍从壳导出（壳 mock 保留）；单例访问器族外移
+// service/service-bootstrap.ts，经 importOriginal 只替换 get/set（同 session-lifecycle）。
 vi.mock("@zhushanwen/subagent-core/execution/subagent-service.ts", () => ({
   SubagentService: class {
     initSession = mockInitSession;
@@ -127,9 +129,15 @@ vi.mock("@zhushanwen/subagent-core/execution/subagent-service.ts", () => ({
     getStreamSink = () => null;
     dispose = vi.fn();
   },
-  getSubagentService: () => null,
-  setSubagentService: vi.fn(),
 }));
+vi.mock(
+  "@zhushanwen/subagent-core/execution/service/service-bootstrap.ts",
+  async (importOriginal) => {
+    const actual =
+      await importOriginal<typeof import("@zhushanwen/subagent-core/execution/service/service-bootstrap.ts")>();
+    return { ...actual, getSubagentService: () => null, setSubagentService: vi.fn() };
+  },
+);
 
 vi.mock("@zhushanwen/subagent-core/execution/model-config-service.ts", () => ({
   ModelConfigService: class {
