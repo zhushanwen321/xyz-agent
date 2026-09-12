@@ -2,26 +2,26 @@
 //
 // 时序收尾逻辑（从 subagent-service.ts 提取，降低主文件行数 < 1000 上限）。
 //
-// D-017 时序：collectPatch → completeRecord → archive → cleanup(finalized+worktree+
-// aliveMarker+pending注销) → manifest(最后 best-effort)。
+// [U2a / §3.1 意图 API 迁移] 终态持久化四件套（.state 写 + entry/archive + manifest +
+// .alive 删）归口 store.markFinalized / markCancelled——本文件降级为**副作用编排层**
+// （collectPatch / completeRecord / worktree cleanup / pending 注销① / onFinalized 钩子，
+// §3.1 副作用归属边界）。文件布局知识（写哪个文件、什么顺序）不再散落此处：D8 v7 写序
+//（.state writeSync 先 → manifest writeSync 后 → .alive 删）由 store 内部单点保证。
 //
-// [Critical #1 / PR #85] cleanup 全部在 manifest 写之前执行——manifest 是 sa- id 反查
-// 索引（最新已知快照），非正确性依赖，写失败仅记录不阻断。旧实现 Step 2.5 throw 会跳过
-// Step 3 cleanup，导致磁盘满/权限错时 worktree 泄漏 + finalized marker 不写 + alive
-// marker 残留 + pending 记账错乱。现 manifest 写移到 Step 4（最后），best-effort
-//（console.error + appendEntry，不 throw）。
+// [Critical #1 / PR #85 精神保持] manifest 写失败（store 内部 best-effort 吞错）与终态
+// 原语返回 false 均不得跳过 worktree cleanup——磁盘满/权限错时 worktree 泄漏比索引缺失
+// 严重；终态写失败时 record 留 running 形态（磁盘无终态位），下次 boot 孤儿恢复终态化
+// 承接（§3.4）。
 //
-// B9 兜底：completeRecord/archive 抛错→后续 cleanup/manifest 仍执行。
+// B9 兜底：completeRecord/终态原语抛错→后续 cleanup 仍执行。
 
 import * as fs from "node:fs";
 import * as path from "node:path";
 
 import { getLogger } from "../core/logger.ts";
 
-import { removeAliveMarker } from "./alive-store.ts";
 import { bestEffort } from "./best-effort.ts";
 import { completeRecord } from "./execution-record.ts";
-import { updateRecordBinding, writeCancelledState, writeFinalizedState } from "./state-marker.ts";
 import type { ManifestStore } from "./manifest-store.ts";
 import type { ModelConfigService } from "./model-config-service.ts";
 import { getSubagentSessionDir } from "./path-encoding.ts";
@@ -34,11 +34,17 @@ const logger = getLogger("subagents");
 
 /** doFinalizeRecord 的依赖（从 SubagentService 注入，避免 this 绑定 + 解耦可测试）。 */
 export interface FinalizeDeps {
+  /**
+   * [U2a 双轨期保留] manifestStore 不再被 doFinalizeRecord 直接消费（终态 manifest 写
+   * 已归口 store.markFinalized/markCancelled 内部——store 自持 manifestStore/manifestDir）。
+   * 字段保留是因为调用方装配面（run-orchestration / record-lifecycle）仍按此形状构造
+   * （run-orchestration 领地在 U2b/U3，先行删字段会编译断）；U5 测试面切换时随装配收口。
+   */
   manifestStore: ManifestStore;
   worktreeManager: WorktreeManager;
   store: RecordStore;
   modelService: ModelConfigService;
-  /** Pi ExtensionAPI（仅用 appendEntry 记录 manifest 写失败事件）。null 在 dispose 后。 */
+  /** Pi ExtensionAPI（终态写失败的响亮 entry 上报）。null 在 dispose 后。 */
   pi: { appendEntry?: (type: string, data: unknown) => void } | null;
   /** pending-notifications 终态注销（绑定 pi.events.emit，由调用方闭包提供）。 */
   emitUnregister(id: string, status: string): void;
@@ -55,9 +61,10 @@ export interface FinalizeDeps {
    * [T1/PS-9] subagent sessionDir（getSubagentSessionDir(agentDir, rootCwd)，调用方注入）。
    *
    * record.sessionFile 缺失（RC-1 握手失败 + LC-4 反查也未命中的残余形态）时用于磁盘
-   * 反查：按 identity（record.id）扫目录找真实 session 文件，作为 tombstone/finalized
-   * sidecar 与 removeAliveMarker 的依据——消除「sessionFile 缺失 → 终态原因丢失 +
-   * alive marker 残留」。undefined = 调用方无法提供（反查跳过，行为退回修复前）。
+   * 反查：按 identity（record.id）扫目录找真实 session 文件，作为终态原语
+   * （store.markFinalized/markCancelled 的 .state/manifest/.alive 面）的锚点依据——
+   * 消除「sessionFile 缺失 → 终态原因丢失 + alive marker 残留」。undefined = 调用方
+   * 无法提供（反查跳过，行为退回修复前）。
    */
   sessionDir?: string;
   // [review 修复] 已删除 redeliverPending 回调（MF-1 消费确认制补投）：pendingMessages
@@ -96,11 +103,10 @@ function findSessionFileByRecordIdentity(
 /**
  * [T1/PS-9] Step 序言：sessionFile 缺失时按 record 身份在 sessionDir 反查回填。
  *
- * 放在一切步骤前，让 archive 投影 / Step 3 marker / Step 4 manifest 统一受益。
- * RC-1（握手失败）+ LC-4（收尾反查未命中）的残余形态下，磁盘上 session 文件仍可能
- * 真实存在（identity 携带 record.id）——反查命中则 tombstone/finalized sidecar 与
- * removeAliveMarker 有了依据，终态原因不再丢失、alive marker 不再残留；未命中则
- * 保持旧行为（best-effort 跳过）。
+ * 放在一切步骤前，让终态原语（archive 投影 / .state / manifest / .alive release）
+ * 统一受益。RC-1（握手失败）+ LC-4（收尾反查未命中）的残余形态下，磁盘上 session
+ * 文件仍可能真实存在（identity 携带 record.id）——反查命中则终态原语有了锚点，
+ * 终态原因不再丢失、alive marker 不再残留；未命中则保持旧行为（best-effort 跳过）。
  */
 function resolveMissingSessionFile(deps: FinalizeDeps, record: ExecutionRecord): void {
   if (record.sessionFile || !deps.sessionDir) return;
@@ -135,36 +141,8 @@ async function collectPatchIfWorktree(deps: FinalizeDeps, record: ExecutionRecor
 }
 
 /**
- * Step 3a: 终态 sidecar（best-effort 幂等，仅 sessionFile 存在时执行）。
- * L4 合并：finalized / cancelled 统一写 `<session>.state`（单一形态，status 字段区分）；
- * cancelled 保留精确 endedAt，其余 reason 进 reason 字段（磁盘重建用它还原
- * closedReason，不再一律硬编码 gc）。
- */
-function writeTerminalState(record: ExecutionRecord, closedReason: ClosedReason | undefined): void {
-  if (!record.sessionFile) return;
-  try {
-    if (closedReason === "cancelled") {
-      writeCancelledState(record.sessionFile, record.endedAt ?? Date.now());
-    } else {
-      writeFinalizedState(record.sessionFile, closedReason);
-    }
-    // [H2 A3] 终态 usage 快照随 binding 落盘：light 列表面（collectRecords 磁盘重建）
-    // 无 turns/totalTokens 数据源（子文件无 identity entry，全量重建面不可用），
-    // 恒 0——binding 快照是该面的唯一低成本文本源。best-effort（内部已吞 IO 错）；
-    // binding 缺失（回填点异常窗口）时内部跳过，不造残缺身份。
-    updateRecordBinding(record.sessionFile, {
-      totalTokens: record.totalTokens,
-      turns: record.turnCount,
-      endedAt: record.endedAt,
-    });
-  } catch (err) {
-    bestEffort(err, "writeTerminalState (finalizeRecord Step3)");
-  }
-}
-
-/**
  * Step 3b: worktree cleanup（best-effort 幂等，仅 worktree 绑定时执行）。
- * [Critical] 绝不能因 manifest 写失败而跳过（否则 worktree 泄漏）。
+ * [Critical] 绝不能因终态原语失败（含 manifest 写失败）而跳过（否则 worktree 泄漏）。
  */
 async function cleanupWorktreeIfBound(deps: FinalizeDeps, record: ExecutionRecord): Promise<void> {
   if (!record.worktreeHandle) return;
@@ -175,70 +153,17 @@ async function cleanupWorktreeIfBound(deps: FinalizeDeps, record: ExecutionRecor
   }
 }
 
-/** Step 3c: 删 .alive marker（best-effort 幂等，仅 sessionFile 存在时执行）。 */
-function removeAliveMarkerIfPresent(record: ExecutionRecord): void {
-  if (!record.sessionFile) return;
-  try {
-    removeAliveMarker(record.sessionFile);
-  } catch (err) {
-    bestEffort(err, "removeAliveMarker (finalizeRecord Step3)");
-  }
-}
-
 /**
- * Step 4 (last): manifest 持久化（best-effort，不阻断、不 throw）。
+ * 时序收尾（D-017，[U2a] 终态持久化面归口 store 意图原语后的编排形态）。
  *
- * [Critical #1] manifest 是 sa- id 反查索引（最新已知快照），不是正确性依赖。本步骤
- * 写终态快照；sync 批成功成员不经此处——落标出口（subagent-service
- * appendBatchFinalizedEntry）已先行补写，message upgrade 到终态时被本步骤原子
- * 覆盖。写失败时仅记录（console.error + appendEntry），绝不让 manifest 写失败
- * 跳过 Step 3 cleanup 或抛出打断 finalize 链。旧实现 Step 2.5 throw 会
- * 跳过 Step 3 cleanup。task/slug/model 从 ExecutionRecord 抓取（配合
- * ManifestRecord 补字段），manifestToSubagent 投影时用真实值而非硬编码空串。
+ * 步骤：序言 sessionFile 反查 → Step 0 collectPatch → Step 1 completeRecord →
+ * Step 2 终态原语（store.markFinalized / markCancelled：.state writeSync + entry/
+ * archive + manifest + .alive 删，D8 v7 写序）→ Step 3b worktree cleanup →
+ * pending 注销① → onFinalized 钩子。
  *
- * [M1/M2 Gate B] deps 收窄为 Pick（manifestStore + pi）并导出：disposeAllRecords /
- * cancelBackground 的编排性终态化不经 doFinalizeRecord，但同属「终态必须留反查索引」
- * 语义（曾缺失 → 重启后 list 不可见 + message not found），复用本函数单点投影
- * （含 closedReason——manifest 源快照三分流的唯一依据）。
- */
-export async function writeManifestBestEffort(
-  deps: Pick<FinalizeDeps, "manifestStore" | "pi">,
-  record: ExecutionRecord,
-): Promise<void> {
-  try {
-    await deps.manifestStore.writeManifest({
-      id: record.id,
-      rootSessionId: record.rootSessionId ?? "",
-      parentRecordId: record.parentRecordId,
-      agentName: record.agent,
-      // v4 B-1: manifest status 统一为 closed（cancelled 折入 closed，区分靠 tombstone sidecar）
-      status: "closed",
-      // [M2 Gate B] L2 死因随 manifest 持久化：磁盘 sidecar 缺席形态（sessionFile 未
-      // 回填 / cancel 窗口期）下，manifest 源是快照 closedReason 的唯一恢复通道。
-      closedReason: record.closedReason,
-      createdAt: record.startedAt,
-      completedAt: record.endedAt ?? Date.now(),
-      sessionFile: record.sessionFile,
-      task: record.task,
-      slug: record.slug,
-      model: record.model,
-    });
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    logger.error(`[subagent] manifest 写入失败 (record=${record.id}): ${msg}`);
-    deps.pi?.appendEntry?.("subagent:manifest-write-failed", {
-      id: record.id,
-      error: msg,
-    });
-  }
-}
-
-/**
- * 时序收尾（D-017）。步骤 0→4 全部 best-effort 互不阻断（除 manifest 外都幂等）。
- *
- * [Critical #1] Step 3 cleanup 全部在 Step 4 manifest 之前——manifest 写失败仅 console.error +
- * appendEntry，不 throw 不跳过 cleanup。task/slug/model 从 ExecutionRecord 抓取（配合 ManifestRecord
- * 补字段），manifestToSubagent 投影真实值而非硬编码空串。
+ * [Critical #1] 终态原语失败（返回 false = .state 重试耗尽；或意外抛错）不得跳过
+ * worktree cleanup——写失败时 record 留 running（磁盘无终态位），副作用清理照常
+ * （幂等）；§3.4 响亮 entry 上报由本编排层接线（store 层已 logger.error）。
  */
 export async function doFinalizeRecord(
   deps: FinalizeDeps,
@@ -260,41 +185,56 @@ export async function doFinalizeRecord(
     bestEffort(err, "completeRecord (finalizeRecord B9)", "error");
   }
 
-  // ── Step 2: archive（B9: 抛错→后续仍执行）──
+  // ── Step 2: 终态持久化四件套归口（B1 迁移点）──
+  // cancelled 走 markCancelled（.state 载荷 status:"cancelled" + 精确 endedAt），其余
+  // markFinalized。两原语内部写序 = .state writeSync 先 → binding/archive/manifest →
+  // .alive 删（release 出口①，D8 v7）；manifestDir 未接线时 manifest 降级异步
+  // fire-and-forget（双轨期现行语义，U3 接线）。
+  let persisted = false;
   try {
-    deps.store.archive(record);
+    persisted =
+      closedReason === "cancelled"
+        ? deps.store.markCancelled(record)
+        : deps.store.markFinalized(record, closedReason);
   } catch (err) {
-    bestEffort(err, "store.archive (finalizeRecord B9)", "error");
+    bestEffort(err, "store terminal primitive (finalizeRecord B9)", "error");
+  }
+  if (!persisted) {
+    // [§3.4 / U1 偏差 6 接线] 终态写失败（重试耗尽）响亮 entry 上报——GUI 通知面腿；
+    // 日志 error 级腿已由 state-marker 内部完成。record 留 running 形态（磁盘无终态
+    // 位、未 archive），下次 boot 孤儿恢复终态化承接。
+    const reasonDesc = closedReason ?? record.closedReason ?? "gc";
+    logger.error(
+      `[subagent] terminal state write failed after retries (record=${record.id}, reason=${reasonDesc}); ` +
+        `record stays running on disk — boot orphan recovery will finalize it`,
+    );
+    deps.pi?.appendEntry?.("subagent:state-write-failed", {
+      id: record.id,
+      status,
+      closedReason: reasonDesc,
+    });
   }
 
-  // ── Step 3: finalized + cleanup + aliveMarker（全部先执行，幂等）──
-  // [Critical] 清理必须在 manifest 写入之前：worktree cleanup / finalized marker / aliveMarker
-  //   都是幂等且不可跳过的副作用。绝不能因 manifest 写失败而跳过 worktree cleanup
-  //   （否则 worktree 泄漏）。各件独立 try/catch，互不阻断。
-  writeTerminalState(record, closedReason);
+  // ── Step 3b: worktree cleanup（best-effort，不可被终态写失败跳过）──
   await cleanupWorktreeIfBound(deps, record);
-  removeAliveMarkerIfPresent(record);
 
   // pending-notifications：终态注销（只记 registry 状态，通知由 BgNotifier 发）
   // [W4 发射点枚举归属①] 注销合法发射点枚举（设计 D2）第 ① 处：subagent record
   // 终态化（finalizeRecord 路径，含监督器放弃）。其余合法发射点：② chatMode 轮末
   // idle（doFinalizeRoundToIdle，本文件下方）；③ workflow run 终态迁移
-  // （transition("done") 路径）；④ 监督器显式放弃（走本路径，终态化+注销同批）；
+  //（transition("done") 路径）；④ 监督器显式放弃（走本路径，终态化+注销同批）；
   // ⑤ 注册对账 sweep 补发（round-supervisor/reconcile-sweep.ts）。进程退出本身
   // 永远不是注销理由（subagent-service disposeAllRecords 的 emit 属①——其同批
   // completeRecord+archive 终态化）。
   deps.emitUnregister(record.id, status);
 
   // [F-5 修复] 宿主侧终态收口钩子（chat 轮路由注销的单一汇聚点，见 FinalizeDeps
-  // .onFinalized 注释）。fire-and-forget：钩子失败不阻断 manifest 收尾（闭包内自查）。
+  // .onFinalized 注释）。fire-and-forget：钩子失败不阻断收尾（闭包内自查）。
   try {
     deps.onFinalized?.(record.id);
   } catch (err) {
     bestEffort(err, "onFinalized hook (finalizeRecord)");
   }
-
-  // ── Step 4 (last): manifest 持久化（best-effort，不阻断、不 throw）──
-  await writeManifestBestEffort(deps, record);
 }
 
 /**
@@ -311,120 +251,35 @@ export type RoundSettlementOutcome =
 /**
  * 对话模式轮次完成收尾：record 进 idle 态（非终态化，等待续聊）。
  *
- * 与 doFinalizeRecord 的关键区别（M2-A idle 语义）：
+ * [U2a/B5] 轮终簿记全集（①-⑨）归口 store.markRoundIdle——本方法瘦身为编排薄壳。
+ * 簿记语义（细节与 result 写入规则见 record-store.markRoundIdle 方法头）：
  *   - 不调 completeRecord（record 不冻结，保留 turns[] 等运行时状态供续聊累积）
  *   - 不调 store.archive（record 留内存，getMutable 可查、list 可见）
  *   - 不 cleanup worktree（保留对话模式工作目录）
- *   - 不写 manifest：轮终回 running-resumable 非终态化，本方法无终态快照可写——
- *     manifest 是 sa- id 反查索引（最新已知快照），sync 批成员的先行快照由落标出口
- *     补写（subagent-service appendBatchFinalizedEntry），此处不重复
- *   - 删 .alive marker（进程已 SIGTERM 回收，不再是活进程）
- *   - emitUnregister（进程已死，从 pending 活跃后代差集移除；record 留内存不 archive）
+ *   - 不写 manifest（轮终回 running-resumable 非终态化，无终态快照可写）
+ *   - **[B5/D3a] `.alive` 不再删除**——写权声明跨轮延续（release = 终态原语或
+ *     idle-GC 归档两出口；轮终 record 仍 resumable、随时续聊 spawn 写同一
+ *     sessionFile，删则轮后跨进程防御空窗）
+ *   - [A3] 终态簿记已冻结（endedAt 已设）的调用由 store 内硬断言 fail-fast
+ *     （复活终态的调用即 bug——S7 防御），throw 先于本方法的 pending 注销发射
  *
- * 状态：record.status = "running"（覆盖 closed 回滚——机制本体，配套前置 = 调用方
- * 已做终态守卫；H1 U2 起唯一活调用面 = Continuation 轮末分流与 SP-5 one-shot 成功，
- * 两面均构造性保证不会回滚「终态簿记已冻结」的 close——[A3] 该保证由入口硬断言
- * 显式化，见方法体内断言注释）。
- * record.round += 1（成功失败同计——round = attempt 计数，失败轮不递增会让失败通知
- * 与上一轮成功通知同 dedup key，60s 窗内被吞，设计 D7）。各步骤 best-effort 互不阻断。
- *
- * @param outcome [H1 U2 / D7] 轮终 outcome——result 写入规则按 kind 分流：
- *   成功轮 result = content（chat 域空 content 兜底 "(no output this round)"，
- *   lastError 不混入正文——现行 `roundText || (lastError ? …)` 混入形态退役）；
- *   one-shot 共享调用点恒传 success（行为零变化 G3：空 content → 前值 ?? "(empty)"）。
- *   失败轮 result = 前值 ?? 失败摘要（首轮失败无正文可保则写
- *   "round did not complete: <reason>"——GUI record 视图不被失败污染、renderer
- *   hasRunning 判据 result !== undefined 仍成立），record.lastError 写失败原因；
- *   [T2-③/LC-1] 可达性从 result 字段迁移到通知 outcome（失败通知由调用方承载）。
- * @throws Error record 终态簿记已冻结（completeRecord 已跑）仍被调用（复活终态的
- *   调用即 bug——fail-fast）。
+ * @throws Error record 终态簿记已冻结（completeRecord 已跑）仍被调用（store.markRoundIdle
+ *   内硬断言——冻结权威判据 = endedAt 已设，写点枚举与两构造性调用面论证见其方法头）。
  */
 export async function doFinalizeRoundToIdle(
   deps: FinalizeDeps,
   record: ExecutionRecord,
   outcome: RoundSettlementOutcome,
 ): Promise<void> {
-  // [A3 硬断言] 本方法会把 closed 回滚为 running（下方状态机段）——对「终态簿记已
-  // 冻结」record 的调用会复活终态（S7 破坏：close 抢先后迟到轮末回滚 + 追加通知 +
-  // 二次 unregister）。冻结的权威判据 = record.endedAt 已设。endedAt 写点枚举：
-  // ① 运行时唯一生产写点 = completeRecord（execution-record.ts；tryTransition 只置
-  // status/closedReason 刻意不触 endedAt，其 CAS 乐观置位与本方法的回滚是设计配套）；
-  // ② 磁盘重建路径（record-store.ts 终态 sidecar 分支）亦写 endedAt——record 生而
-  // 终态形态，本断言对该形态行为正确（已终态重建 record 被拦截回滚，不再复活）。
-  // 两个构造性调用面均满足：
-  //   - Continuation 轮末分流：onRunSettled 终态守卫整体 early-return 后同步进入
-  //    （守卫与断言间无 await 窗），record 从未终态化 → endedAt undefined；
-  //   - settleOneShotOutcome SP-5 共享调用点：CAS 抢锁成功后的锁内回滚，tryTransition
-  //     置 closed 不设 endedAt。
-  //   [A3 偏差登记] 实施计划 §5 U2 偏差行承诺的「U6 删死代码后补 status==='running'
-  //   硬断言」字面形态不可达：SP-5 面与被删旧 chat 载体（watchdog/spawnFailure/
-  //   roundFailed）同构——均 tryTransition(closed) 后以 closed 进入，running-only
-  //   断言即 SP-5 生产回归（one-shot 成功轮 throw，违背 G3 零变化）+ 既有单测族
-  //   （finalize-record.test.ts roundToIdle 17 例）锁定该形态。收窄为「endedAt 未冻结」
-  //   断言：比字面形态更贴合 S7 防御目标（closed+user-close 的 closeChatIdle 危险
-  //   形态——completeRecord 已跑——恰被本断言拦截，而字面 running-only 反而拦不住它）。
-  if (record.endedAt !== undefined) {
-    throw new Error(
-      `doFinalizeRoundToIdle(${record.id}): terminal bookkeeping already frozen ` +
-      `(status: ${record.status}${record.closedReason !== undefined ? `/${record.closedReason}` : ""}, ` +
-      `endedAt: ${record.endedAt}) — round-idle finalization would resurrect a finalized record. ` +
-      `Recovery: caller must gate on record.status === "running" (Continuation terminal-state guard) ` +
-      `or enter via the settleOneShotOutcome CAS winner path only.`,
-    );
-  }
-  // [D7 写入规则] 轮终 result 写入按 outcome.kind 分流（MF-2 承诺不变：record.result
-  // 供 notifier idle 回复正文，恒写非空——renderer hasRunning 判据依赖）。
-  let nextResult: string | undefined;
-  if (outcome.kind === "failed") {
-    // 失败轮：前值保真（有最后成功正文则保留），无前值（首轮失败）写失败摘要；
-    // lastError 写失败原因（排障面——renderer 在 result 非 undefined 时不显示 error）。
-    record.lastError = outcome.reason;
-    nextResult = record.result ?? `round did not complete: ${outcome.reason}`;
-  } else if (record.chatMode) {
-    // chat 成功轮：本轮增量 = content；空 content 兜底 "(no output this round)"
-    //（D7 ⑤——统一占位，lastError 失败文案不再混入成功轮正文）。
-    nextResult = outcome.content || "(no output this round)";
-  } else {
-    // one-shot 成功轮（SP-5 共享调用点，G3 行为零变化）：content 或前值 ?? "(empty)"
-    //（[R2-1] 轮终写点恒写非空，措辞与 notifier buildLlmContent 的
-    // `record.result ?? "(empty)"` 兜底同款，通知文案逐字节不变）。
-    nextResult = outcome.content || record.result || "(empty)";
-  }
-  record.result = nextResult;
-
-  // 删 .alive marker（进程已 SIGTERM 回收）。
-  // sessionFile 窗口期可能 undefined（极少——对话模式轮次完成意味着 session 已跑过），
-  // 缺失时跳过但仍设内存 idle（重启后磁盘重建会落到 crashed，边界可接受）。
-  if (record.sessionFile) {
-    try {
-      removeAliveMarker(record.sessionFile);
-    } catch (err) {
-      bestEffort(err, "removeAliveMarker (doFinalizeRoundToIdle)");
-    }
-  }
+  // 簿记①-⑨归口（含 A3 硬断言与⑨ reportRecordTransition entry 上报）。
+  // 返回 false = record 不在 store 内存（debug 留痕，无副作用）——两构造性调用面
+  //（Continuation 轮末分流 / settleOneShotOutcome SP-5）的 record 均在内存，false 即
+  // 调用方 bug，留痕足够。
+  deps.store.markRoundIdle(record.id, outcome);
 
   // pending-notifications：进程已死，从活跃后代差集移除（record 留内存不 archive，
   // v4 B-1：record 现为 running-resumable，但 pending 注册的是进程活跃性，进程死了需注销）。
+  // [W4 发射点②] 双轨期留在调用方发射：store.markRoundIdle 簿记⑧经 setPendingUnregister
+  // 注入（U3 接线，未注入时 no-op）——接线后本调用与 store 内部⑧的去重收口归 U5。
   deps.emitUnregister(record.id, "running");
-
-  // 状态机（v4 B-1）：record 保持 running（旧 idle 折入 running，覆盖 tryTransition 设的 closed，
-  // 可冷路径 resume），轮次计数 +1。idleSince 时间戳独立保留供 GC 判据。
-  // [S10] closedReason 同步清除：调用方（runAndFinalize catch / MF-6 分支）先 tryTransition
-  // 设了 closed+closedReason 再回退 running——不清则 "gc"/"cancelled" 残留在 running record 上，
-  // 泄漏进 list 投影与后续 notify 载荷（toNotifyRecord 透传 record.closedReason），让一个
-  // 活跃 record 看起来像已被某原因关闭过。
-  record.status = "running";
-  record.closedReason = undefined;
-  record.round = (record.round ?? 0) + 1;
-  record.idleSince = Date.now();
-  // 执行态信号（residual-fixes）：轮终回 running-resumable = 无活进程驱动（idle timer
-  // 回收/保活等待续聊），GUI 侧据此判 waiting（非 streaming）。冷路径续轮（进程启动）清除。
-  record.resumable = true;
-
-  // W16 [D4]：轮终回 running-resumable 是类外状态写点（record 留内存不走 archive），
-  // 显式上报迁移——entry 携带新 round 与本轮 result，pi 文件的重建源不滞后。
-  deps.store.reportRecordTransition(record);
-
-  // [review 修复] 已删除残留 pendingMessages 的 redeliverPending 补投段（MF-1 消费
-  // 确认安全网）：三段消费链随 deliverToRunning 一并移除，本段不可达。
 }

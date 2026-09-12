@@ -81,6 +81,9 @@ describe("会话形态续聊投递（run + resume 锚点）", () => {
     record = makeIdleRecord();
     // sessionFile 用 agentDir 下路径（finalizeRoundToIdle 写 .idle sidecar 不留 /tmp 垃圾）
     record.sessionFile = path.join(agentDir, "fake-session.jsonl");
+    // [U2a/B5] 轮终簿记归口 store.markRoundIdle（按 id 查内存）——record 须 register 进
+    // store（生产链路 getRecordForAction/run 流程的 record 恒在内存，测试补齐同形态）。
+    (service as unknown as { store: { register: (r: ExecutionRecord) => void } }).store.register(record);
   });
 
   afterEach(() => {
@@ -163,6 +166,8 @@ describe("deliverChatMessage（chatMode 统一投递 → Continuation 派发）"
     record = makeIdleRecord(); // chatMode:true, running, round=1
     // sessionFile：续聊锚点需要
     record.sessionFile = path.join(agentDir, "fake-session.jsonl");
+    // [U2a/B5] markRoundIdle 按 id 查 store 内存——record 须 register（见上 describe 注）。
+    (service as unknown as { store: { register: (r: ExecutionRecord) => void } }).store.register(record);
     lifecycle._resetLifecycleState();
   });
 
@@ -230,6 +235,8 @@ describe("deliverChatMessage 并发守卫（review round2 MF1）", () => {
     service.initSession({ pi: makePi(), sessionId: "root-session" });
     record = makeIdleRecord();
     record.sessionFile = path.join(agentDir, "fake-session.jsonl");
+    // [U2a/B5] markRoundIdle 按 id 查 store 内存——record 须 register（见上 describe 注）。
+    (service as unknown as { store: { register: (r: ExecutionRecord) => void } }).store.register(record);
     lifecycle._resetLifecycleState();
   });
 
@@ -267,6 +274,8 @@ describe("deliverChatMessage 并发守卫（review round2 MF1）", () => {
   it("守卫是 record 级：A 在途轮不拦截 B 的 message", async () => {
     const recordB = makeIdleRecord("sa-chat-b");
     recordB.sessionFile = path.join(agentDir, "fake-session-b.jsonl");
+    // [U2a/B5] 同 beforeEach——recordB 须 register 进 store（markRoundIdle 内存查）。
+    (service as unknown as { store: { register: (r: ExecutionRecord) => void } }).store.register(recordB);
 
     await service.chatActions.deliverChatMessage(record, "A msg");
     await vi.waitFor(() => expect(fake.runs.length).toBe(1));

@@ -34,7 +34,9 @@ import { RecordStore } from "../record-store.ts";
 import { getSubagentRecordsDir } from "../path-encoding.ts";
 import { SubagentService, type PiLike } from "../subagent-service.ts";
 import { endedMessageGuard } from "../subagent-actions-core.ts";
+import { isBootReadoptable } from "../round-supervisor/domain.ts";
 import type { ExecutionRecord, SubagentRecord } from "../types.ts";
+import { isReconnectableFinalReason } from "../types.ts";
 
 function makeTmpAgentDir(): string {
   return fs.mkdtempSync(path.join(os.tmpdir(), "dispose-manifest-"));
@@ -155,16 +157,34 @@ describe("[M1/M2 Gate B] 编排性终态化 manifest 反查索引 + 重启冷查
 
   it("M1: 在途 record 的 engineHandle.sessionRef.sessionFile 提升为终态锚点（entry+manifest 带真实路径）", async () => {
     const promoted = path.join(agentDir, "enc", "20260910T000000_sess-e1.jsonl");
+    // [U2a/B3] dispose 终态化归口 markFinalized 后 .state/binding 随锚点真实落盘——
+    // 父目录须真实存在（旧路径不写 .state，promoted 仅作 manifest 字符串投影）。
+    fs.mkdirSync(path.dirname(promoted), { recursive: true });
+    fs.writeFileSync(promoted, "{}\n", "utf-8");
     const record = makeRecord({
       id: "sa-promote",
       engineHandle: { sessionRef: { sessionId: "sess-e1", sessionFile: promoted }, poolKey: "shared" },
     });
     (service as unknown as ServiceInternals).store.register(record);
 
+    // 预写 .alive（断言 dispose 的 release 出口①——D8 终态原语内部删）
+    fs.writeFileSync(
+      `${promoted}.alive`,
+      `${JSON.stringify({ pid: 99999, id: "sa-promote", startedAt: 1000 })}\n`,
+      "utf-8",
+    );
+
     service.disposeAllRecords("parent-shutdown");
 
     // record 本体提升（archive entry 投影随之携带）
     expect(record.sessionFile).toBe(promoted);
+    // [B3/D8] .state 权威写随归口生效（reason = 真实 parent-shutdown，非重建兜底 gc）
+    expect(JSON.parse(fs.readFileSync(`${promoted}.state`, "utf-8"))).toEqual({
+      status: "finalized",
+      reason: "parent-shutdown",
+    });
+    // .alive release（终态原语内部删——旧 dispose 不删 marker 的形态随归口消灭）
+    expect(fs.existsSync(`${promoted}.alive`)).toBe(false);
     // manifest 落真实锚点（重启 revive/fork-from 可直接定位子文件）
     await vi.waitFor(() => expect(fs.existsSync(manifestPath(agentDir, "sa-promote"))).toBe(true));
     const manifest = JSON.parse(fs.readFileSync(manifestPath(agentDir, "sa-promote"), "utf-8")) as Record<string, unknown>;
@@ -290,7 +310,7 @@ describe("[M1/M2 Gate B] 编排性终态化 manifest 反查索引 + 重启冷查
   });
 
   it("M2: manifest 源 user-close 快照走「主动关闭」专属文案（读侧投影三分流收口）", async () => {
-    // user-close 终态正常路径走 doFinalizeRecord（writeManifestBestEffort 携 closedReason，
+    // user-close 终态正常路径走 doFinalizeRecord（store.markFinalized 携 closedReason，
     // 写侧由 finalize-record.test.ts 钉）；此处钉读侧：离线构造 user-close manifest，
     // 重启后 endedMessageGuard 不再误入 reconnectable/fork-from 分支（Gate B 实测错分流形态）。
     const restarted = makeServiceOn(agentDir);
@@ -315,5 +335,127 @@ describe("[M1/M2 Gate B] 编排性终态化 manifest 反查索引 + 重启冷查
     expect(err.message).toContain("deliberately closed by user (closedReason: user-close)");
     expect(err.message).toContain("cannot be messaged or resumed");
     expect(err.message).not.toContain("ended but reconnectable");
+  });
+
+  // ── [B3/D8] disposeAllRecords 终态化归口 markFinalized——行为变化矩阵五行 ──
+  //
+  // 归口前 dispose 不写 .state 不删 .alive（重启恒分支 4 兜底 running + 孤儿恢复
+  // 分流）；归口后 .state 携真实 reason（parent-*），重启判定链 = buildRecord 读
+  // .state 还原 closedReason → isReconnectableFinalReason 过滤（message resurrect
+  // 准入）/ isBootReadoptable（supervisor 自动重认领，只收 running）。五行断言以
+  // .state 磁盘产物 + 两谓词直测判定链（与重启重建同源）。
+  describe("[B3/D8] disposeAllRecords 终态化归口 markFinalized——行为变化矩阵五行", () => {
+    /** 构造带真实 sessionFile + .alive marker 的活跃 record 并注册进 service store。 */
+    function registerActiveRecord(opts: {
+      id: string;
+      chatMode?: boolean;
+      resumable?: boolean;
+      result?: string;
+    }): { record: ExecutionRecord; sessionFile: string } {
+      const sessionFile = path.join(agentDir, `sess-${opts.id}.jsonl`);
+      fs.writeFileSync(sessionFile, "{}\n", "utf-8");
+      fs.writeFileSync(
+        `${sessionFile}.alive`,
+        `${JSON.stringify({ pid: 99999, id: opts.id, startedAt: 1000 })}\n`,
+        "utf-8",
+      );
+      const record = makeRecord({
+        id: opts.id,
+        chatMode: opts.chatMode ?? false,
+        resumable: opts.resumable,
+        result: opts.result,
+        sessionFile,
+      });
+      (service as unknown as ServiceInternals).store.register(record);
+      return { record, sessionFile };
+    }
+
+    /** dispose 后的 .state 磁盘产物读取（归口行为变化的核心断言面）。 */
+    function readDisposedState(sessionFile: string): { status: string; reason?: string } {
+      return JSON.parse(fs.readFileSync(`${sessionFile}.state`, "utf-8")) as { status: string; reason?: string };
+    }
+
+    it("行 1 [chat × parent-shutdown 不变]：.state reason=parent-shutdown ∈ 可重连集 → resurrect 可续", () => {
+      const { sessionFile } = registerActiveRecord({ id: "sa-d8-chat-shutdown", chatMode: true });
+      expect(service.disposeAllRecords("parent-shutdown")).toBe(1);
+
+      const marker = readDisposedState(sessionFile);
+      expect(marker).toEqual({ status: "finalized", reason: "parent-shutdown" });
+      // 可续性判定链：closedReason=parent-shutdown ∈ RECONNECTABLE_FINAL_REASONS →
+      // message resurrect 准入（closed(parent-shutdown) 可重连，D8 行 1「不变」）
+      expect(isReconnectableFinalReason(marker.reason)).toBe(true);
+      // release 出口①：.alive 删除
+      expect(fs.existsSync(`${sessionFile}.alive`)).toBe(false);
+    });
+
+    it("行 2 [chat × parent-fork 收紧，已接受]：.state reason=parent-fork ∉ 可重连集 → message resurrect 硬拒（fork-from 承接）", () => {
+      const { sessionFile } = registerActiveRecord({ id: "sa-d8-chat-fork", chatMode: true });
+      service.disposeAllRecords("parent-fork");
+
+      const marker = readDisposedState(sessionFile);
+      expect(marker).toEqual({ status: "finalized", reason: "parent-fork" });
+      // 收紧裁决（D8 行 2）：RECONNECTABLE 注释本就不含 parent-fork/new——现状宽松
+      // （可续）是 dispose 不写 .state 的副作用而非有意设计；承接通道 = fork-from 新 id
+      expect(isReconnectableFinalReason(marker.reason)).toBe(false);
+    });
+
+    it("行 3 [one-shot × parent-shutdown 放宽，正向]：.state reason=parent-shutdown ∈ 可重连集 → 可续（不再孤儿恢复直断 gc）", () => {
+      const { sessionFile } = registerActiveRecord({ id: "sa-d8-oneshot-shutdown" });
+      service.disposeAllRecords("parent-shutdown");
+
+      const marker = readDisposedState(sessionFile);
+      expect(marker).toEqual({ status: "finalized", reason: "parent-shutdown" });
+      // 放宽裁决（D8 行 3）：现状 dispose 不写 .state → one-shot 重启被孤儿恢复直断
+      // gc 不可续；归口后真实 reason 落可重连集，与 conversation-continuation D4
+      // revive 格意图一致（「session shutdown 时被 disposeAllRecords 关成
+      // parent-shutdown 的在途 one-shot 正靠此路径保持可续」）
+      expect(isReconnectableFinalReason(marker.reason)).toBe(true);
+    });
+
+    it("行 4 [one-shot × parent-new 一致]：.state reason=parent-new ∉ 可重连集 → 不可续（reason 更真实，不再谎报 gc）", () => {
+      const { sessionFile } = registerActiveRecord({ id: "sa-d8-oneshot-new" });
+      service.disposeAllRecords("parent-new");
+
+      const marker = readDisposedState(sessionFile);
+      expect(marker).toEqual({ status: "finalized", reason: "parent-new" });
+      // 一致裁决（D8 行 4）：现状直断 gc 也不可续——行为一致，死因从谎报 gc 变真实
+      expect(isReconnectableFinalReason(marker.reason)).toBe(false);
+    });
+
+    it("行 5 [one-shot 纳管态 × parent-shutdown 降级，已接受]：closed(parent-shutdown) → 自动重认领失效，降级手动 resurrect（可重连）", () => {
+      // 纳管态形态：resumable=true 且无 result（监督器死亡接管后重启的 W4 形态）
+      const { record, sessionFile } = registerActiveRecord({
+        id: "sa-d8-adoptable",
+        resumable: true,
+        result: undefined,
+      });
+      expect(record.resumable).toBe(true);
+      expect(record.result).toBeUndefined();
+      service.disposeAllRecords("parent-shutdown");
+
+      // 归口后内存终态：completeRecord 已跑（result 合成 ""——空串非 undefined）
+      expect(record.status).toBe("closed");
+      expect(record.closedReason).toBe("parent-shutdown");
+      const marker = readDisposedState(sessionFile);
+      expect(marker.reason).toBe("parent-shutdown");
+
+      // 自动重认领失效：isBootReadoptable 只收 running（domain.ts 单一权威谓词）——
+      // 归口后重启形态 status=closed → 谓词不命中（现状 SIGKILL 形态分支 4 running
+      // → 命中自动重认领）。give-up 的 supervisorNotify 通知面消失（已接受）。
+      expect(
+        isBootReadoptable({
+          status: "closed",
+          resumable: true,
+          chatMode: false,
+          hasResult: record.result !== undefined,
+        }),
+      ).toBe(false);
+      // 降级后的兜底通道在：手动 message resurrect 可达（closedReason ∈ 可重连集）
+      expect(isReconnectableFinalReason("parent-shutdown")).toBe(true);
+      // 对照（现状形态的自动重认领命中——「降级」的差分锚点）：分支 4 兜底 running
+      expect(
+        isBootReadoptable({ status: "running", resumable: true, chatMode: false, hasResult: false }),
+      ).toBe(true);
+    });
   });
 });

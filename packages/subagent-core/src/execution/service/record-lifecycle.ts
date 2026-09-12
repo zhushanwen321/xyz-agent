@@ -43,7 +43,8 @@
 
 import { toErrorMessage } from "../../core/error-message.ts";
 
-import { removeAliveMarker } from "../alive-store.ts";
+import { getLogger } from "../../core/logger.ts";
+
 import { bestEffort } from "../best-effort.ts";
 import type { CollectCoordinator } from "../collect-coordinator.ts";
 import { completeRecord, tryTransition } from "../execution-record.ts";
@@ -53,7 +54,7 @@ import { startIdleGc } from "../idle-gc.ts";
 // 路径防误杀）。
 import { disarmIdleTimer } from "../lifecycle-manager.ts";
 import { isIdle, isResumable } from "../lifecycle-predicates.ts";
-import { doFinalizeRecord, writeManifestBestEffort } from "../finalize-record.ts";
+import { doFinalizeRecord } from "../finalize-record.ts";
 import { FileRunStore } from "../../orchestration/file-run-store.ts";
 import type { ManifestStore } from "../manifest-store.ts";
 import type { ModelConfigService } from "../model-config-service.ts";
@@ -61,10 +62,11 @@ import type { NotifyHost, PiLike } from "../notify-host.ts";
 import type { RecordStore } from "../record-store.ts";
 // [W4] 轮次活性监督器三态撤下 + settled watchdog disarm（终态路径防 timer 误触发）。
 import { disarmRoundFromProtocol, disarmSettledWatchdog } from "../settled-watchdog.ts";
-import { updateRecordBinding, writeCancelledState } from "../state-marker.ts";
 import { resolvePiWorkflowStateDir } from "../workflow-state-root.ts";
 import type { WorktreeManager } from "../worktree-manager.ts";
 import type { AgentResult, ClosedReason, ExecutionRecord } from "../types.ts";
+
+const logger = getLogger("subagents");
 
 /**
  * [R1 打样模式 1] 聚合协作 deps——**全部晚绑定闭包，构造期零求值**。
@@ -139,10 +141,12 @@ export class RecordLifecycle {
    *
    *  [M1 Gate B] 本路径曾整体缺 manifest 反查索引（不经 doFinalizeRecord 的唯一终态
    *  写点缺口）：优雅停机关掉的在途 record 重启后 list 不可见（records/<id>.json 不
-   *  存在）、message 报 not found——「展示层∪动作链」双失。现补 writeManifestBestEffort
-   *  （best-effort fire-and-forget，对齐既有 finalize 语义；shutdown 窗口内不阻塞——
-   *  session_shutdown handler 后续 await 给了 flush 窗，SIGKILL 竞态丢失由
-   *  recoverOrphanRecords 的可重连 entry 重物化自愈，见该处注释）。
+   *  存在）、message 报 not found——「展示层∪动作链」双失。[B3/D8] 终态化归口
+   *  store.markFinalized 后 manifest 随终态原语落盘（manifestDir 接线后 writeSync 同步
+   *  完成于本同步函数体内，停机窗 fire-and-forget 竞态构造性消灭；双轨期降级异步，
+   *  SIGKILL 竞态丢失由 recoverOrphanRecords 的可重连 entry 重物化自愈兜底）。
+   *  归口同时补齐 .state 权威写与 .alive release——重启后行为按 D8 矩阵五行
+   *  （chat×fork-new 收紧硬拒 / one-shot×shutdown 放宽可续 / 纳管态降级手动 resurrect）。
    *
    *  [M1 sessionFile 锚点提升] 在途 record 的 sessionFile 尚未回填（run 应答未到）时，
    *  R4 运行中句柄回填（onHandleReady → backfillEngineHandle）可能已把引擎上报的子
@@ -180,10 +184,28 @@ export class RecordLifecycle {
         toolCalls: [],
       };
       completeRecord(record, result, "closed", reason);
-      // [M1 sessionFile 锚点提升] 先于 archive——close 终态 entry 随之携带锚点。
+      // [M1 sessionFile 锚点提升] 先于终态原语——archive entry 与 manifest 随之携带锚点。
       this.promoteSessionFileFromEngineHandle(record);
-      this.deps.getStore().archive(record);
-      // [F-5 修复] 本路径不经 doFinalizeRecord（编排性关闭直连 completeRecord+archive），
+      // [B3/D8] 终态化归口 markFinalized：原「不写 .state 不删 .alive + manifest
+      // fire-and-forget」升级为完整终态原语（.state writeSync 权威 + manifest + .alive
+      // 删，D8 v7 写序）——D8 行为变化矩阵五行生效点（chat×fork-new 硬拒收紧 /
+      // one-shot×shutdown 放宽可续 / 纳管态降级手动 resurrect，均已接受）。manifestDir
+      // 未接线（U3）时 manifest 降级异步（双轨期现行语义），其余面不变。
+      const persisted = this.deps.getStore().markFinalized(record, reason);
+      if (!persisted) {
+        // [§3.4] .state 重试耗尽：响亮 entry 上报（record 磁盘留 running，boot 孤儿
+        // 恢复终态化承接）；清理副作用继续——dispose 路径幂等且无重试机会。
+        logger.error(
+          `[subagents] disposeAllRecords: terminal state write failed after retries ` +
+            `(record=${record.id}, reason=${reason}); record stays running on disk — boot orphan recovery will finalize it`,
+        );
+        this.deps.getPi()?.appendEntry?.("subagent:state-write-failed", {
+          id: record.id,
+          status: "closed",
+          closedReason: reason,
+        });
+      }
+      // [F-5 修复] 本路径不经 doFinalizeRecord（编排性关闭直连 completeRecord+终态原语），
       // chat 轮路由注销在此补齐（幂等；闭包持 record/stream 引用，防泄漏）。
       // [H1 U2] 汇聚点扩为 onRecordFinalizedCleanup（路由注销 + Continuation 清理）。
       this.deps.onRecordFinalizedCleanup(record.id);
@@ -196,9 +218,6 @@ export class RecordLifecycle {
       }
       // pending-notifications 注销
       this.deps.getNotifyHost().emitPendingUnregister(record.id, "closed");
-      // [M1 Gate B] manifest 反查索引补写（Step 4 对位：cleanup 之后最后一步）。
-      // 内部自吞错（logger + appendEntry），void 即弃——不阻塞 shutdown 收尾。
-      void writeManifestBestEffort({ manifestStore: this.deps.getManifestStore(), pi: this.deps.getPi() }, record);
       count++;
     }
     return count;
@@ -422,44 +441,38 @@ export class RecordLifecycle {
     if (!tryTransition(record, "closed", "cancelled")) {
       return false; // detached 已 finalize，cancel 来晚了
     }
-    // 抢到锁：completeRecord（用空 result 填 cancelled）+ archive（立即移出内存）+ notify。
-    // 写 cancelled 终态 sidecar：session.jsonl 被 abort 截断，cancelled 状态靠 sidecar 标记，
-    // collectRecords 重建时 override status=cancelled。durationMs 用真实耗时（startedAt → now）。
+    // 抢到锁：completeRecord（用空 result 填 cancelled）+ 终态原语（archive + notify）。
+    // cancelled 终态靠 sidecar 标记（session.jsonl 被 abort 截断），collectRecords 重建时
+    // override status=cancelled。durationMs 用真实耗时（startedAt → now）。
     const cancelledResult: AgentResult = { text: "", turns: record.turnCount, durationMs: Date.now() - record.startedAt, success: false, error: "cancelled by user", sessionId: record.id, toolCalls: [] };
     completeRecord(record, cancelledResult, "closed", "cancelled");
-    // [M1 sessionFile 锚点提升] 先于 sidecar/manifest——spawn 窗口期 cancel 的 record
+    // [M1 sessionFile 锚点提升] 先于终态原语——spawn 窗口期 cancel 的 record
     // 经 engineHandle 提升后，sidecar 与 manifest 都能落在真实子文件上。
     this.promoteSessionFileFromEngineHandle(record);
-    // 写终态 sidecar（best-effort，sessionFile 可能为 undefined——窗口期 cancel）。
-    if (record.sessionFile) {
-      writeCancelledState(record.sessionFile, record.endedAt ?? Date.now());
-      // [H2 A3] 终态 usage 快照随 binding 落盘（finalizeRecord Step3a 同款语义，
-      // cancel 独立终态链的镜像补点——绕过 writeTerminalState，故在此补）。
-      updateRecordBinding(record.sessionFile, {
-        totalTokens: record.totalTokens,
-        turns: record.turnCount,
-        endedAt: record.endedAt,
+    // [B2] 终态写面归口 store.markCancelled：.state writeSync（cancelled + 精确 endedAt）+
+    // 终态 usage binding 快照 + archive + manifest（closedReason=cancelled 让
+    // endedMessageGuard 走「主动关闭」专属文案——sessionFile 缺失形态的重启可见性由此
+    // 承接，Gate B sq-c）+ .alive 删（release 出口①）。
+    const persisted = this.deps.getStore().markCancelled(record);
+    if (!persisted) {
+      // [§3.4] .state 重试耗尽：响亮 entry 上报（record 磁盘留 running，boot 孤儿恢复
+      // 终态化承接）；cancel 副作用继续——进程已死、CAS 已抢锁，通知与清理不可丢。
+      logger.error(
+        `[subagents] cancelBackground: terminal state write failed after retries ` +
+          `(record=${record.id}); record stays running on disk — boot orphan recovery will finalize it`,
+      );
+      this.deps.getPi()?.appendEntry?.("subagent:state-write-failed", {
+        id: record.id,
+        status: "closed",
+        closedReason: "cancelled",
       });
     }
-    this.deps.getStore().archive(record);
-    // [M2 Gate B] manifest 反查索引补写（best-effort fire-and-forget）。本路径原不写
-    // manifest：sessionFile 缺失形态（spawn 窗口期 cancel）重启后 record 完全不可见，
-    // message 报原始 not-found（Gate B 实测 sq-c）——补写后 manifest 源可见且
-    // closedReason=cancelled 让 endedMessageGuard 走「主动关闭」专属文案。
-    void writeManifestBestEffort({ manifestStore: this.deps.getManifestStore(), pi: this.deps.getPi() }, record);
-    // worktree cleanup + removeAliveMarker（终态 sidecar 单文件单状态，无互斥清理需求）。
+    // worktree cleanup（终态 sidecar 单文件单状态，无互斥清理需求）。
     // cleanup 已 async 化——boolean 同步返回语义不变，清理 fire-and-forget。
     if (record.worktreeHandle) {
       void this.deps.getWorktreeManager().cleanup(record.worktreeHandle).catch((err: unknown) => {
         bestEffort(err, "worktree cleanup (cancelBackground)");
       });
-    }
-    if (record.sessionFile) {
-      try {
-        removeAliveMarker(record.sessionFile);
-      } catch (err) {
-        bestEffort(err, "removeAliveMarker (cancelBackground)");
-      }
     }
     // pending-notifications：cancel 注销（只记 registry 状态）
     this.deps.getNotifyHost().emitPendingUnregister(record.id, "closed");

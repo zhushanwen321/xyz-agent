@@ -9,12 +9,9 @@
 // 宿主侧解析承载。变化轴：改跨重启重建 / 透明重生回边 / 可重连守卫语义，只改本文件；
 // Service 的 getRecordForAction 保留归属校验编排（内存未命中分支委托 coldLookupForAction）。
 
-import * as fs from "node:fs";
-
-import { findForeignLiveInstance, writeAliveMarker } from "./alive-store.ts";
-import { createRecord, resurrectClosed } from "./execution-record.ts";
+import { findForeignLiveInstance } from "./alive-store.ts";
+import { createRecord } from "./execution-record.ts";
 import type { StatusFilter } from "./record-store.ts";
-import { STATE_SIDECAR_EXT } from "./state-marker.ts";
 import type { ExecutionRecord, SubagentRecord } from "./types.ts";
 import { isReconnectableFinalReason, ResurrectDeniedError } from "./types.ts";
 
@@ -30,10 +27,15 @@ export interface ColdLookupDeps {
   /** store 的磁盘全扫（内存未命中 / 索引未热时兜底）。rootFilter 恒 undefined
    *  （冷查不做 root 过滤——归属校验在候选定位之后，见 coldLookupForAction）。 */
   collectRecords: (limit: number, statusFilter: StatusFilter, rootFilter: undefined) => SubagentRecord[];
-  /** 重建 record 注册进内存 store。 */
+  /** 重建 record 注册进内存 store。（[U2a/B4] register 已收编进 markResurrected——
+   *  字段保留供编排层显式性与测试断言，resurrect 回边不再直接调用。） */
   register: (record: ExecutionRecord) => void;
-  /** 重建后的 transition entry 上报（live ≡ reload 等价性）。 */
+  /** 重建后的 transition entry 上报（live ≡ reload 等价性——纯投递副作用，留编排层）。 */
   reportRecordTransition: (record: ExecutionRecord) => void;
+  /** [U2a/B4] 透明重生回边原语（store.markResurrected，D3c 规格）：acquire-first
+   *  三件套（写 .alive 写权声明 → 删 .state → 删 .finalized legacy）+ resurrectClosed
+   *  内存翻回 + register，单 try 域原子收敛；任一步失败响亮抛错中止主流程。 */
+  markResurrected: (record: ExecutionRecord, wasClosed: boolean) => void;
   /** 当前所属根 session id（归属校验用，运行时可变——initSession 建立）。 */
   getSessionRootId: () => string | null;
   /** 本进程嵌套基线 recordId（直接父校验用；根进程 undefined）。 */
@@ -48,10 +50,11 @@ export interface ColdLookupDeps {
  *  异进程实例（父进程重启后旧子进程尚存的窗口），resume 会 spawn 第二个 pi 子进程
  *  写同一 session JSONL（本代码最忌惮的双写者形态，v4 A-5/P7 事故模式）。closed 候选
  *  的同款守卫已在 assertReconnectAllowed（v8.5 D）；本守卫闭合 running 候选的防御
- *  不对称。marker 的 pid 是子进程 pi 的 pid（非父进程），本进程持有的 running record
- *  恒在内存（archive 才移出），可达本冷查分支的 running 候选必然来自磁盘重建——
- *  探针命中即拒绝（ResurrectDeniedError，与 closed 候选守卫同异常类型，错误含 pid
- *  与恢复指引）。 */
+ *  不对称。marker 的 pid 是**宿主进程** pid（D3d 失实注释修正：写者 = 宿主的写权声明
+ *  acquire——resurrect 回边 / running 接管 / spawn 锚点确立，非子进程 pi 自写），本
+ *  进程持有的 running record 恒在内存（archive 才移出），可达本冷查分支的 running
+ *  候选必然来自磁盘重建——探针命中即拒绝（ResurrectDeniedError，与 closed 候选守卫
+ *  同异常类型，错误含 pid 与恢复指引）。 */
 function findColdLookupCandidate(
   deps: ColdLookupDeps,
   id: string,
@@ -141,32 +144,22 @@ function resurrectColdRecord(
   // 隔离——正是 worktree 要防的并发写冲突场景）。close 不受影响（closeChatIdle 走
   // doFinalizeRecord，泄漏的 worktree 由 reaper 兜底回收）。
   record.hadWorktree = found.worktree === true;
-  // [v8.5 D] 透明重生回边：独立函数不走 tryTransition 单向语义（closed 单向性对正常
-  // 执行流完整保留）；准入唯一依据 = A 档 sidecar 真实死因 ∈ 可重连集。死亡语义位由
-  // resurrectClosed 清除；register 后立刻上报 transition entry，live/reload 视图同步
-  // 翻回 running（等价性由 applyEntry reducer 保证，对齐 SP-2 重建即报告先例）。
+  // [U2a/B4 → D3c] 透明重生回边整体收编 store.markResurrected：acquire-first 顺序
+  // （写 .alive 写权声明 → 删 .state → 删 .finalized legacy）+ resurrectClosed 内存
+  // 翻回 + register，单 try 域原子收敛。准入唯一依据 = A 档 sidecar 真实死因 ∈ 可重连
+  // 集（守卫已在上方跑完）；reportTransition（entry 上报）留本编排层（纯投递副作用，
+  // 失败不破坏状态一致性）。
+  // 两种接管形态统一 acquire（D3c）：closed 候选（wasClosed=true）三件套全量；running
+  // 候选接管（跨重启磁盘重建，wasClosed=false）跳过删终态位（无 .state 可删）**仍
+  // acquire marker**——「接管即声明」，现状此路径不写 marker 的 B/C 双写窗随归口消灭。
+  // 失败语义 = 响亮抛错中止主流程（§3.4）：acquire 失败 = 双写风险敞口，禁止
+  // best-effort 吞错续跑（旧「单 try 吞错后继续 resurrectClosed + register」形态随
+  // 归口消灭）；acquire-first 顺序保证失败时终态位未删、磁盘保持旧形态（可重试）。
   const wasClosed = found.status !== "running";
+  deps.markResurrected(record, wasClosed);
   if (wasClosed) {
-    // [review MF-8] 磁盘终态位同步翻转：record-store buildRecord 分支 1（终态 sidecar
-    // 存在 → closed）优先级高于 .alive 活态分支，重生若不删 sidecar，任何磁盘扫描
-    // （异进程 / reload / session-reader）都会把本进程内存里 running 的 record 报成
-    // closed/disconnected——破坏 live ≡ reload，且为跨进程二次 resurrect 开门。
-    // [L4 合并] `.state` 是现行终态载体（读侧权威）；`.finalized` 为 legacy 兼容删除
-    // （读侧旧名回退仍在，存量残留不清理则同样翻回 closed）。两者同取 best-effort
-    // 对齐 BC-4 语义；.alive 刷新为当前进程（后续 resume spawn 会覆盖写）。
-    if (record.sessionFile) {
-      try {
-        fs.rmSync(`${record.sessionFile}${STATE_SIDECAR_EXT}`, { force: true });
-        fs.rmSync(`${record.sessionFile}.finalized`, { force: true });
-        writeAliveMarker(record.sessionFile, { pid: process.pid, id, startedAt: Date.now() });
-      } catch (_e) {
-        void _e; // best-effort：sidecar 翻转失败不阻断重生主流程
-      }
-    }
-    resurrectClosed(record);
-  }
-  deps.register(record);
-  if (wasClosed) {
+    // 重生后立刻上报 transition entry（live/reload 视图同步翻回 running，等价性由
+    // applyEntry reducer 保证，对齐 SP-2 重建即报告先例）。
     deps.reportRecordTransition(record);
   }
   return record;

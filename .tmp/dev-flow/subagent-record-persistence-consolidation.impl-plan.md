@@ -162,12 +162,20 @@ graph TD
 
 **U3→U2b D2 移交项（协调者登记）**：①markRoundStarted 轮始写点（conversation-continuation.ts dispatchRoundAsync:320-322 + ContinuationHost 接口新增方法 + run-orchestration.ts:1300-1316 host 装配实现）②adoptEngineDeath 收养点（run-orchestration.ts:818-824 本体 + :799/:851 调用点）——两处全在 U2b 领地（run-orchestration.ts）+ conversation-continuation.ts（需扩 U2b 领地）。U2b 合入后定向修复轮派发。U1 record-store.ts:867 注释「U3 迁移」预期与计划严禁清单矛盾，随移交修正。
 
+**U2a（轮 1，2026-09-12）**——dev 报备 + 协调者核验接受：
+1. record-access.ts 领地外 +3 行机械接线（ColdLookupDeps 新必填字段 markResurrected 装配点 :471，计划遗漏的编译必需连带）
+2. delivery-methods.test.ts 领地外测试适配 +9（3 用例补 register 对齐生产形态——record 恒在内存）
+3. FinalizeDeps.manifestStore 字段保留不删（run-orchestration 装配面在 U2b/U3 领地，删则编译断）——**U5 收口项①**
+4. doFinalizeRoundToIdle 保留调用方 emitUnregister 发射（store.setPendingUnregister 待接线）——**U5 收口项②（接线后去重收口）**
+5. B3 disposeAllRecords 双 writeSync 断言在 manifestDir 接线前以 waitFor 异步形态落地（U3 已接线，同步性断言留 U4a/U5 复核）
+6. 决策：终态写失败 entry 定名 subagent:state-write-failed；写失败返回 false 时副作用编排继续（清理不可跳过）；doFinalizeRecord 对终态原语包 try/catch（archive listener 抛错不跳 worktree cleanup）
+
 ## 6 状态表
 
 | Unit | 状态(pending/in-progress/committed/blocked) | 轮次 | 证据指针 |
 |------|------|------|---------|
 | U1 | committed | 1 | 核验 2026-09-12：领地吻合（cold-lookup.test.ts 裁量已登记）；subagent-core vitest 2937 passed / 4 skipped；P-B4 探针 PASS（pi dist appendCompaction 直驱，custom entry 全保留） |
-| U2a | in-progress | 1 | 后台派发 2026-09-12 W2 批 |
+| U2a | committed | 1 | 核验 2026-09-12：B1-B6 全达成（grep 零命中 + 领地 74/74 绿 + D8 五行矩阵断言）；2 领地外触碰登记（record-access.ts 机械接线 +3 / delivery-methods.test.ts 适配 +9） |
 | U2b | in-progress | 1 | 后台派发 2026-09-12 W2 批 |
 | U3 | committed | 1 | 核验 2026-09-12：D1+D3 达成（批写归口 grep 零命中 + manifestDir 接线 + 领地 46/46 绿）；D2 两项被领地封锁移交 U2b 修（见偏差登记表尾） |
 | U4b | committed | 1 | 核验 2026-09-12：3 文件领地吻合；E1 grep 仅注释残留；actions-core 41 + transparent-resume 15 单绿；transparent-resume 回归收账 |

@@ -474,6 +474,9 @@ export class RecordAccess {
       this.deps.getStore().collectRecords(limit, statusFilter, rootFilter),
     register: (record) => this.deps.getStore().register(record),
     reportRecordTransition: (record) => this.deps.getStore().reportRecordTransition(record),
+    // [U2a/B4] 透明重生回边原语（store.markResurrected）——ColdLookupDeps 新增字段的
+    // 机械装配行（接口装配点不在 U2a 领地清单内的连带接线）。
+    markResurrected: (record, wasClosed) => this.deps.getStore().markResurrected(record, wasClosed),
     getSessionRootId: () => this.deps.getSessionRootId(),
     getBaselineRecordId: () => this.deps.getExecNesting().baseline()?.recordId ?? undefined,
   };

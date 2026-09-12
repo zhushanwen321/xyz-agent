@@ -12,9 +12,10 @@
 //     ResurrectDeniedError 且内存无残留（register 不被调用）；
 //   - 部分恢复：closed 可重连记录 → resurrectClosed 回边翻回 running + 磁盘终态位
 //     同步翻转（.state（L4 现行终态载体）与 legacy .finalized 删除 + .alive 刷新当前
-//     进程）+ register/transition 上报；
-//   - 恢复源缺失：sessionFile 缺失 / sidecar 翻转失败（目录不存在）均不阻断重生
-//     （best-effort 语义）。
+//     进程）+ register/transition 上报——[U2a/B4] 回边三件套整体收编
+//     store.markResurrected（deps 注入真实 RecordStore 实例承载）；
+//   - [B4/D3c] 恢复源缺失（sessionFile 缺失 / marker 写失败）→ 响亮抛错中止重生主流程
+//     （旧「单 try 吞错续跑」形态消灭——acquire 失败 = 双写风险敞口，§3.4）。
 //
 // fixture 一律 mkdtempSync 自建自删（tmpdir），不触碰真实数据目录。
 
@@ -26,6 +27,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { readAliveMarker, writeAliveMarker } from "../alive-store.ts";
 import { COLD_LOOKUP_SCAN_LIMIT, coldLookupForAction, type ColdLookupDeps } from "../cold-lookup.ts";
+import { RecordStore } from "../record-store.ts";
 import type { SubagentRecord } from "../types.ts";
 import { ResurrectDeniedError } from "../types.ts";
 
@@ -70,13 +72,20 @@ interface DepOverrides {
   baseline?: string;
 }
 
-/** 构造依赖注入桩（register / reportRecordTransition 可断言副作用）。 */
+/** 构造依赖注入桩。markResurrected 经真实 RecordStore 承载（[U2a/B4] 回边收编 store
+ *  原语——磁盘三件套/内存翻回/register 需真实落盘语义，stub 无法验证）；register 用
+ *  spy 包住 store.register 供「内存无残留」断言（markResurrected 内部 register 与
+ *  spy 同一入口）。sessionsDir 经 beforeEach 刷新（describe 作用域变量模块级桥接）。 */
+let currentSessionsDir = "";
 function makeDeps(o: DepOverrides = {}): ColdLookupDeps {
+  const store = new RecordStore(currentSessionsDir);
+  const registerSpy = vi.spyOn(store, "register");
   return {
     findLightById: vi.fn(() => o.direct),
     collectRecords: vi.fn(() => o.disk ?? []),
-    register: vi.fn(),
+    register: registerSpy,
     reportRecordTransition: vi.fn(),
+    markResurrected: (record, wasClosed) => store.markResurrected(record, wasClosed),
     getSessionRootId: vi.fn(() => o.rootId ?? "root-session"),
     getBaselineRecordId: vi.fn(() => o.baseline),
   };
@@ -87,6 +96,7 @@ describe("[D4-③] coldLookupForAction 冷查/复活链", () => {
 
   beforeEach(() => {
     dir = fs.mkdtempSync(path.join(os.tmpdir(), "cold-lookup-"));
+    currentSessionsDir = dir;
   });
 
   afterEach(() => {
@@ -316,31 +326,58 @@ describe("[D4-③] coldLookupForAction 冷查/复活链", () => {
     expect(vi.mocked(deps.register)).not.toHaveBeenCalled();
   });
 
-  // ── 恢复源缺失（best-effort 不阻断重生主流程）──
+  // ── 恢复源缺失（[B4/D3c] 响亮失败——吞错续跑形态消灭）──
 
-  it("sessionFile 缺失的 closed 候选 → 跳过 sidecar 翻转，重生照常完成（register + transition 上报）", () => {
+  it("[B4] sessionFile 缺失的 closed 候选 → markResurrected 响亮抛错中止重生（无锚点无法声明写权）", () => {
     const deps = makeDeps({ disk: [makeFound({ sessionFile: undefined })] });
 
-    const record = coldLookupForAction(deps, "sa-cold-1", true)!;
-
-    expect(record.status).toBe("running");
-    expect(record.sessionFile).toBeUndefined();
-    expect(vi.mocked(deps.register)).toHaveBeenCalledTimes(1);
-    expect(vi.mocked(deps.reportRecordTransition)).toHaveBeenCalledTimes(1);
+    // acquire 失败 = 双写风险敞口，禁止 best-effort 吞错续跑（§3.4/D3c——旧形态
+    // 「跳过 sidecar 翻转、重生照常完成」随回边收编消灭：无锚点的 running record
+    // 缺跨进程写权声明，正是 D3 要防的事故形态入口）。
+    expect(() => coldLookupForAction(deps, "sa-cold-1", true)).toThrow(/no sessionFile anchor/);
+    expect(vi.mocked(deps.register)).not.toHaveBeenCalled();
+    expect(vi.mocked(deps.reportRecordTransition)).not.toHaveBeenCalled();
   });
 
-  it("sidecar 翻转失败（sessionFile 所在目录不存在，writeAliveMarker ENOENT）→ best-effort 吞错，重生不中断", () => {
+  it("[B4] sidecar 翻转失败（sessionFile 所在目录不存在，writeAliveMarker ENOENT）→ 响亮中止，终态位未被误删", () => {
     // 恢复源缺失形态：sessionFile 指向已消失的目录（推导路径过期 / 目录被清理）
     const sessionFile = path.join(dir, "vanished-dir", "20260901T000000-000_sa-cold-1.jsonl");
+    // 离线预置终态位（目录存在时才可写——改为断言 acquire-first 失败后磁盘保持旧形态
+    // 的推演基础：无终态位可删的目录缺失形态下，响亮失败即全部可观察行为）
     const deps = makeDeps({ disk: [makeFound({ sessionFile })] });
+
+    // acquire-first 写权声明失败 → 整体响亮抛错（单 try 域原子收敛，D3c）。
+    expect(() => coldLookupForAction(deps, "sa-cold-1", true)).toThrow(
+      /write-lease acquire\/terminal-position flip failed/,
+    );
+    expect(vi.mocked(deps.register)).not.toHaveBeenCalled();
+    expect(vi.mocked(deps.reportRecordTransition)).not.toHaveBeenCalled();
+    // marker 写入确实失败（目录不存在，未落盘）
+    expect(fs.existsSync(`${sessionFile}.alive`)).toBe(false);
+  });
+
+  it("[B4/D3c] acquire-first 失败后磁盘保持旧形态（终态位未删，重生可重试）", () => {
+    // acquire 成功但终态位删除失败不可构造（rmSync force 幂等）——验证 acquire-first
+    // 顺序的可观察等价面：目录存在 + 终态位在，marker 写成功路径下才执行删除。
+    // 本用例钉失败方向的可重试性：closed 候选 + 守卫通过 + 目录消失 → 响亮中止后
+    // .state 残留形态不变（无「半翻」状态）。
+    const sessionFile = path.join(dir, "gone", "20260901T000000-000_sa-cold-1.jsonl");
+    const deps = makeDeps({ disk: [makeFound({ sessionFile })] });
+    expect(() => coldLookupForAction(deps, "sa-cold-1", true)).toThrow();
+    // 磁盘面零触碰（目录本不存在——构造性「保持旧形态」）
+    expect(fs.existsSync(sessionFile)).toBe(false);
+  });
+
+  it("[B4/D3c] running 候选接管（wasClosed=false）→ 仍 acquire marker（接管即声明，B/C 双写窗闭合）", () => {
+    const sessionFile = writeSessionFixture();
+    const deps = makeDeps({ disk: [makeFound({ sessionFile, status: "running" })] });
 
     const record = coldLookupForAction(deps, "sa-cold-1", true)!;
 
-    // best-effort：sidecar 翻转失败不阻断重生主流程（状态回边与注册照常）
     expect(record.status).toBe("running");
+    // 「接管即声明」：running 接管形态无终态位可删，但 acquire 照做——A 崩溃（marker
+    // pid 死）→ B 接管刷新 pid=B → C 再触达被拦（S8⑤ 验收锚点的磁盘面前置）。
+    expect(readAliveMarker(sessionFile)).toMatchObject({ pid: process.pid, id: "sa-cold-1" });
     expect(vi.mocked(deps.register)).toHaveBeenCalledTimes(1);
-    expect(vi.mocked(deps.reportRecordTransition)).toHaveBeenCalledTimes(1);
-    // marker 写入确实失败（目录不存在，未落盘）
-    expect(fs.existsSync(`${sessionFile}.alive`)).toBe(false);
   });
 });
