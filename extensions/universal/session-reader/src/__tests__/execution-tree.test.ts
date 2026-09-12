@@ -4,6 +4,7 @@ import { execSync } from 'node:child_process'
 import { mkdtemp, mkdir, writeFile, rm } from 'node:fs/promises'
 import { join } from 'node:path'
 import { buildExecutionTree, formatExecutionTreeText, type ExecutionTreeNode } from '../core/execution-tree.js'
+import { listRecordManifests } from '../discovery/subagents.js'
 
 /**
  * M3b U7 buildExecutionTree 单测（design m3b 6 testCases）。
@@ -18,7 +19,8 @@ import { buildExecutionTree, formatExecutionTreeText, type ExecutionTreeNode } f
  * - TC-m3b-cycle-detection：workflow 指针环（A→B→A），visited Set 防环
  * - TC-m3b-single-node：单节点树（无后代，ES5）
  * - TC-m3b-source-priority：parentRecordId 三级数据源优先级（manifest>identity>flat，DM4）
- * - TC-m3b-real-data-guard：本机真实语料解析不抛错、root 定位正确（skipIf CI 无数据）
+ * - TC-m3b-real-data-guard：运行时动态选根（从真实 records 聚合出有关联 subagent record 的
+ *   main session），不抛错 + 树非空（sourceMode 为两种合法形态之一）；无数据/无合适根诚实 skip
  */
 
 // ---- fixture 常量（uuid 特征，互不为子串，满足 extractSessionIdFromFilename）----
@@ -45,6 +47,37 @@ const HAS_REAL = (() => {
     return false
   }
 })()
+
+/**
+ * 真实数据动态选根（TC-m3b-real-data-guard，方案 A）。
+ *
+ * 从真实 records（subagents/<cwdSlug>/records/*.json，与 buildExecutionTree 同源数据）聚合
+ * rootSessionId，选关联 record 数最多的 main session 作根——存在关联 subagent record
+ * ⇒ 树必然非空。禁止硬编码 session id（外部状态烤死即失效）。
+ *
+ * @returns rootSessionId；真实数据中无任何有关联 record 的 session 时 undefined（调用方诚实 skip）
+ */
+async function pickRealRootSessionId(): Promise<string | undefined> {
+  let manifests
+  try {
+    manifests = await listRecordManifests(REAL_AGENT_DIR)
+  } catch {
+    return undefined
+  }
+  const countByRoot = new Map<string, number>()
+  for (const m of manifests) {
+    countByRoot.set(m.rootSessionId, (countByRoot.get(m.rootSessionId) ?? 0) + 1)
+  }
+  let best: string | undefined
+  let bestCount = 0
+  for (const [sid, count] of countByRoot) {
+    if (count > bestCount) {
+      best = sid
+      bestCount = count
+    }
+  }
+  return best
+}
 
 // ---- fixture helpers（自包含，拓扑同 subagents.test.ts）----
 
@@ -688,22 +721,27 @@ describe('buildExecutionTree - fixture', () => {
 })
 
 // ============================================================
-// 真实数据守卫（CI 无本机 ~/.pi/agent → skip）
+// 真实数据守卫（CI 无本机 ~/.pi/agent，或无有关联 record 的 session → skip）
 // ============================================================
 
 describe.skipIf(!HAS_REAL)('buildExecutionTree - 真实数据守卫', () => {
-  it('TC-m3b-real-data-guard：本机真实语料解析不抛错，root 定位正确', async () => {
-    // 取一个真实存在的 main session（FAM 是 fork 家族根）
-    const FAM = '019fe620-8ae1-78a7-b76a-43a1ba4cc3c7'
-    const tree = await buildExecutionTree(FAM, REAL_AGENT_DIR)
-    // [HISTORICAL] 只断言与宿主数据纪元无关的不变量：sourceMode / totalNodes 取决于 FAM
-    // 家族在 subagents/**/records 下的 manifest 存量，会被 pi GC 清空（2026-09-11 实测该
-    // 家族 records/ 已空 → related=[] → sourceMode='precise'、totalNodes=1，原 flat-fallback
-    // + totalNodes>1 断言随数据演化假红）。flat-fallback 语义由 fixture 用例
-    // TC-m3b-flat-fallback 确定性覆盖，不依赖本机可变语料。
+  it('TC-m3b-real-data-guard：运行时动态选根（有关联 record 的 main session），不抛错 + 树非空', async (ctx) => {
+    // 方案 A：运行时从真实数据选根，不硬编码 session id；方案 C：无合适根诚实跳过（优于假绿）。
+    // [HISTORICAL] 前形态硬编码 FAM 家族 id + 弱断言（该家族 records 被 pi GC 清空后 2026-09-11
+    // 假红），动态选根结构性消除对特定家族存量的依赖。
+    const rootSessionId = await pickRealRootSessionId()
+    if (rootSessionId === undefined) {
+      ctx.skip('真实数据中不存在任何有关联 subagent record 的 main session，无可守卫目标')
+      return
+    }
+    const tree = await buildExecutionTree(rootSessionId, REAL_AGENT_DIR)
+    // sourceMode 是数据形态描述非守卫目标：真实数据随 parentRecordId 演化，两种形态均合法
+    expect(['flat-fallback', 'precise']).toContain(tree.sourceMode)
+    // 树非空：选根保证该 main session 有关联 subagent record（root + ≥1 后代节点）
+    expect(tree.totalNodes).toBeGreaterThan(1)
+    // 不抛错（已隐含：到这行说明成功）
     expect(tree.root.type).toBe('main')
-    expect(tree.root.sessionId).toBe(FAM)
-    expect(tree.totalNodes).toBeGreaterThanOrEqual(1)
+    expect(tree.root.sessionId).toBe(rootSessionId)
   }, 60000)
 })
 
