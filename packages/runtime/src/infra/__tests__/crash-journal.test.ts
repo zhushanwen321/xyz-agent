@@ -180,35 +180,34 @@ describe('crash-journal writer（真实 IO，tmp 隔离）', () => {
   })
 })
 
-describe('错误/降级路径（review S-12a：流写错误自愈与 close-轮转并发收口）', () => {
-  it('流异步写错误（档位是目录 → EISDIR）→ append 不抛、warn 出口 once、后续 append 惰性重开不放大', async () => {
+describe('错误/降级路径（review S-12a：写错误自愈；【oe-audit C3】同步形态）', () => {
+  it('同步写错误（档位是目录 → EISDIR）→ append 不抛、warn 出口 once、后续 append 不放大', async () => {
     // vi.resetModules + 动态 import：拿到干净的模块级 failureReported once 状态（既有
     // 单例 describe 同款形态），并经 initCrashJournal 第二参注入可观测 sink
     vi.resetModules()
     const mod = await import('../crash-journal.js')
     const warn = vi.fn()
-    // 目标档预建为目录：createWriteStream 同步返回流，异步 open EISDIR → 'error' 事件
+    // 目标档预建为目录：appendFileSync EISDIR 同步抛错 → append catch → warn once
     mkdirSync(join(dataDir, 'logs', 'crashes', 'runtime.jsonl'), { recursive: true })
-    mod.initCrashJournal(dataDir, { warn, error: vi.fn() })
+    mod.initCrashJournal(dataDir, { warn })
     expect(() => mod.getCrashJournal().append(makeEvent(0))).not.toThrow()
-    await vi.waitFor(() => expect(warn).toHaveBeenCalledTimes(1))
-    expect(warn.mock.calls[0]![0]).toContain('write stream error')
-    // once 语义：继续 append（惰性重开仍失败）不再刷 warn（防失败风暴）
-    expect(() => mod.getCrashJournal().append(makeEvent(1))).not.toThrow()
-    await new Promise((resolve) => setTimeout(resolve, 20))
     expect(warn).toHaveBeenCalledTimes(1)
-    // close 可 await：降级后无活跃流，收口不挂起、不向调用链放大
+    expect(warn.mock.calls[0]![0]).toContain('append failed')
+    // once 语义：继续 append（仍失败）不再刷 warn（防失败风暴）
+    expect(() => mod.getCrashJournal().append(makeEvent(1))).not.toThrow()
+    expect(warn).toHaveBeenCalledTimes(1)
+    // close 可 await：同步形态收口不挂起、不向调用链放大
     await expect(mod.closeCrashJournal()).resolves.toBeUndefined()
   })
 
-  it('轮转窗口内立即 close：close 等待轮转续体（pending 回放）完成后才 end，行不丢', async () => {
-    // 与既有「轮转边界不丢行」用例的差异：不在 append 间 tick 等轮转落地，而是触发
-    // 轮转后立即 close——覆盖 close 的 rotationInFlight await 分支（确定性收口路径）
+  it('轮转边界同步收口：触发轮转的行直接写新档（无 pending 窗口），close 后行不丢', async () => {
+    // 【oe-audit C3】同步形态下轮转即时生效（append 完成即落盘），原「轮转窗口内 close
+    // 等 pending 回放」机制已删；本用例保留同一断言面：轮转边界的行序与归属不因 close 时序变化
     const w = createCrashJournalWriter({ role: 'runtime', dataDir, maxFileBytes: 500 })
     w.append(makeEvent(0))
     w.append(makeEvent(1))
-    w.append(makeEvent(2)) // 2×~193B 后第三行超 500 → 触发轮转，本行入 pendingLines
-    await w.close() // 不 tick：内部先 await rotationInFlight 再 end 最终流
+    w.append(makeEvent(2)) // 2×~193B 后第三行超 500 → 触发轮转，本行直接写新档
+    await w.close() // 同步形态 close 即完成
     expect(parseLines(readSegment('runtime.jsonl.1')).map((r) => r.sessionId)).toEqual(['s-000', 's-001'])
     expect(parseLines(readSegment('runtime.jsonl')).map((r) => r.sessionId)).toEqual(['s-002'])
   })
