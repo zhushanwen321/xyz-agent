@@ -1360,6 +1360,36 @@ else
 fi
 
 # ============================================================================
+# ============================================================================
+# record 持久化写面守卫（H4/S4/D7，subagent-record-persistence-consolidation）
+#   staged 命中 record 写面载体（packages/subagent-core/src/）、extension 消费面
+#   （extensions/universal/subagent-workflow/src/）或守卫脚本自身时触发：
+#   scripts/check-record-write-surface.mjs —— grep 门兜底（R1 六名写函数直调 +
+#   R2 subagent-record entry 直写，store 外零命中）。一级拦截 = eslint
+#   no-restricted-imports（eslint.config.mjs subagent-core 块，模块边界级）；
+#   本门拦的是 import 层拦不住的类方法调用（ManifestStore.writeManifest）与
+#   字面量写形态。触发面并入本路径范围的 staged 删除（pathspec 清单天然含 D）：
+#   单独 staged 删除守卫脚本也必须触发——下方 [ ! -f ] 存在性检查正是删除场景
+#   的防线。不设独立 SKIP_* 开关（R1 后惯例，总闸 SKIP_ALL_CHECKS 兜底）。
+# ============================================================================
+
+RECORD_WRITE_SURFACE_STAGED=$(git diff --cached --name-only -- packages/subagent-core/src/ extensions/universal/subagent-workflow/src/ scripts/check-record-write-surface.mjs)
+if echo "$RECORD_WRITE_SURFACE_STAGED" | grep -qE "^packages/subagent-core/src/|^extensions/universal/subagent-workflow/src/|^scripts/check-record-write-surface\.mjs$"; then
+    print_section "[record 持久化写面守卫]"
+    if [ ! -f "scripts/check-record-write-surface.mjs" ]; then
+        echo -e "${RED}[ERROR] 找不到 scripts/check-record-write-surface.mjs（H4/U5 守卫交付物缺失）${NC}"
+        exit 1
+    fi
+    if ! node scripts/check-record-write-surface.mjs; then
+        echo -e "${RED}[ERROR] record 持久化写面守卫未通过——store 外 record 写面直写，按上方 ✗ 明细与 Recovery 指引改调 RecordStore 意图原语${NC}"
+        echo -e "${RED}[原则] 无论是否本次改动引入的问题，都必须正面修复解决，不允许跳过。${NC}"
+        exit 1
+    fi
+    echo -e "${GREEN}[OK] record 持久化写面守卫通过${NC}"
+else
+    echo -e "${GREEN}[OK] 无 record 写面载体变更，跳过 record 持久化写面守卫${NC}"
+fi
+
 # 文档-代码符号漂移守卫（C-proc-10）
 #   staged 命中映射设计文档（docs/design/）或 update 源码模块或守卫脚本自身时触发：
 #   scripts/check-doc-symbol-drift.mjs —— TypeScript AST 提取源码符号表 × 设计文档

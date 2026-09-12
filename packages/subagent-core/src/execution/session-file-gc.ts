@@ -124,7 +124,7 @@ function cleanDirent(dir: string, entry: fs.Dirent, now: number, allowManifestJs
   } else if (
     allowManifestJson &&
     entry.name.endsWith(".json") &&
-    // 跳过 .tmp.：recoverTmpFiles（session_start）同步处理 tmp，GC 不重复。
+    // 跳过 .tmp.：sweepTmpFiles（session_start）同步处理 tmp，GC 不重复。
     // 不校验内容——30 天 mtime 已是强 orphan 信号，扩展名 + 文件名足够。
     !entry.name.includes(".tmp.")
   ) {
@@ -139,7 +139,7 @@ function cleanDirent(dir: string, entry: fs.Dirent, now: number, allowManifestJs
 
 /** 递归扫描目录，unlink 超 TTL 的 .jsonl 文件及其 .cancelled sidecar。
  *  [F2] 进入名为 records 的子目录时，额外清理超 TTL 的 manifest .json（跳过 .tmp.——
- *  recoverTmpFiles 同步处理）。allowManifestJson 仅由父调用按目录名开启，其他位置
+ *  sweepTmpFiles 同步处理）。allowManifestJson 仅由父调用按目录名开启，其他位置
  *  （如 subagents/worktrees.json）不匹配 .json，避免误删 worktree reaper 状态文件。 */
 function walkAndClean(dir: string, now: number, allowManifestJson = false): void {
   let entries: fs.Dirent[];

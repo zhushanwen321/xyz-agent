@@ -219,8 +219,9 @@ export async function writeAtomicFile(
  *
  * 供两类消费方：
  * - cleanupStaleTmpFiles 的内部步骤；
- * - 需要按域校验内容再决定「删 or 提升为正式文件」的宿主恢复逻辑
- *   （manifest-store.recoverTmpFiles 模式：tmp 合法且目标缺失 → rename 提升）。
+ * - 需要按域校验内容再决定「删 or 提升为正式文件」的宿主恢复逻辑（基于
+ *   listStaleTmpFiles + parseAtomicTmpPath().targetPath 组合实现；曾有的
+ *   manifest promote 消费方已随 U4c 缓存降级退役为 sweepTmpFiles 纯删除）。
  *
  * 目录不存在 → 返回空数组（恢复扫描对未初始化布局宽容）。非约定形态文件
  * 一律不认（用户数据零误伤边界见 parseAtomicTmpPath 注释）。
@@ -270,7 +271,7 @@ export interface CleanupStaleTmpResult {
 /**
  * 清理目录内约定形态的 tmp 残留（单条失败不阻断其余条目，逐条结果回传）。
  *
- * 恢复语义（对齐 manifest-store.recoverTmpFiles 的删除分支泛化）：本函数只做
+ * 恢复语义（删除级恢复；曾对齐的 manifest-store promote 分支已随 U4c 退役）：本函数只做
  * 「删除」级恢复；「校验后提升为正式文件」需域知识（manifest 记录合法性），
  * 由调用方基于 listStaleTmpFiles + parseAtomicTmpPath().targetPath 自行实现。
  */

@@ -271,6 +271,9 @@ export class SubagentService {
     // markBatchFinalized）的 manifest 面走 writeAtomicFileSync 同步落盘——停机窗
     // fire-and-forget 竞态构造性消灭；缺省该参数时 store 降级异步写（双轨期语义）。
     this.store = new RecordStore(sessionsDir, this.manifestStore, this.pi ?? undefined, recordsDir);
+    // [W4 发射点② / U5 收口项②] markRoundIdle 簿记⑧的 pending 注销闭包接线（唯一
+    // 装配点——轮终注销由 store 统一发射，调用方薄壳不再双轨重复发）。
+    this.store.setPendingUnregister((id, status) => this.notifyHost.emitPendingUnregister(id, status));
     // [R2] 域 #5 聚合：sync 批自闭合语义（collectCoordinator 装配 + E9 dispose 转账 +
     // E1 崩溃恢复 + settled 有界重扫 + collectSync 配置读取）。deps 全晚绑定闭包（构造期
     // 零求值——store/notifyHost/baselines 基线字段等运行时可变态经闭包
@@ -309,7 +312,6 @@ export class SubagentService {
     this.recordLifecycle = new RecordLifecycle({
       assertReady: () => this.assertReady(),
       getStore: () => this.store,
-      getManifestStore: () => this.manifestStore,
       getWorktreeManager: () => this.worktreeManager,
       getModelService: () => this.modelService,
       getNotifyHost: () => this.notifyHost,
@@ -333,7 +335,6 @@ export class SubagentService {
     this.runOrchestration = new RunOrchestration({
       assertReady: () => this.assertReady(),
       getStore: () => this.store,
-      getManifestStore: () => this.manifestStore,
       getModelService: () => this.modelService,
       getCwd: () => this.cwd,
       getWorktreeManager: () => this.worktreeManager,

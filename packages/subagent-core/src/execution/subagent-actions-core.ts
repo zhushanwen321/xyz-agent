@@ -714,7 +714,7 @@ function assertAndLookupForkFromSource(service: SubagentService, id: string): Su
   // 读到半截历史，等它结束再接更安全。判据 = findForeignLiveInstance 直接探针（同
   // cold-lookup 双守卫判据；[U4b / D3b (a′)] 原读 rec.externalInstance 重建缓存换现查
   // 探针——语义等价（externalInstance 非空 ⟺ 探针非空）且比重建时点缓存更新鲜；
-  // externalInstance 字段链删除归 U4a），不拦 status==='running' 的快照——后者含跨重启
+  // externalInstance 字段链已随 U4a 删除），不拦 status==='running' 的快照——后者含跨重启
   // 回退重建的 running 记录（无活 pid，历史已完整落盘），它们正是 endedMessageGuard
   // 指引 fork-from 的目标；拦了会让 agent 在「建议 fork-from」与「fork-from 拒绝
   // running」两条错误间死循环。sessionFile 缺失（entry-born 孤儿）时无从探活，

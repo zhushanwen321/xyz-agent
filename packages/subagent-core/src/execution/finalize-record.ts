@@ -22,7 +22,6 @@ import { getLogger } from "../core/logger.ts";
 
 import { bestEffort } from "./best-effort.ts";
 import { completeRecord } from "./execution-record.ts";
-import type { ManifestStore } from "./manifest-store.ts";
 import type { ModelConfigService } from "./model-config-service.ts";
 import { getSubagentSessionDir } from "./path-encoding.ts";
 import type { RecordStore } from "./record-store.ts";
@@ -34,13 +33,6 @@ const logger = getLogger("subagents");
 
 /** doFinalizeRecord 的依赖（从 SubagentService 注入，避免 this 绑定 + 解耦可测试）。 */
 export interface FinalizeDeps {
-  /**
-   * [U2a 双轨期保留] manifestStore 不再被 doFinalizeRecord 直接消费（终态 manifest 写
-   * 已归口 store.markFinalized/markCancelled 内部——store 自持 manifestStore/manifestDir）。
-   * 字段保留是因为调用方装配面（run-orchestration / record-lifecycle）仍按此形状构造
-   * （run-orchestration 领地在 U2b/U3，先行删字段会编译断）；U5 测试面切换时随装配收口。
-   */
-  manifestStore: ManifestStore;
   worktreeManager: WorktreeManager;
   store: RecordStore;
   modelService: ModelConfigService;
@@ -277,9 +269,7 @@ export async function doFinalizeRoundToIdle(
   // 调用方 bug，留痕足够。
   deps.store.markRoundIdle(record.id, outcome);
 
-  // pending-notifications：进程已死，从活跃后代差集移除（record 留内存不 archive，
-  // v4 B-1：record 现为 running-resumable，但 pending 注册的是进程活跃性，进程死了需注销）。
-  // [W4 发射点②] 双轨期留在调用方发射：store.markRoundIdle 簿记⑧经 setPendingUnregister
-  // 注入（U3 接线，未注入时 no-op）——接线后本调用与 store 内部⑧的去重收口归 U5。
-  deps.emitUnregister(record.id, "running");
+  // [W4 发射点②] pending 注销（进程已死，从活跃后代差集移除）已随 U5 收口进
+  // markRoundIdle 簿记⑧——SubagentService 构造点经 setPendingUnregister 注入
+  // notifyHost.emitPendingUnregister，本编排层不再双轨重复发射。
 }

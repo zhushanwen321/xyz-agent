@@ -115,9 +115,9 @@ describe("ManifestStore", () => {
   });
 
   // [U4c / G3] tmp 恢复退役（D6）：manifest 已是可丢可重建缓存（权威 = `.state`，
-  // 重建 = RecordStore.rebuildIndexes），promote 半写 tmp 的恢复语义失效——recoverTmpFiles
-  // 统一静默删除（含 0 字节/半写形态），recovered 恒 0。
-  describe("recoverTmpFiles", () => {
+  // 重建 = RecordStore.rebuildIndexes），promote 半写 tmp 的恢复语义失效——[H4/U5
+  // 更名收口] recoverTmpFiles → sweepTmpFiles（名实对齐静默删除），返回删除计数。
+  describe("sweepTmpFiles", () => {
     it("should delete tmp when manifest exists", async () => {
       const id = "test-recovery-1";
       const manifestPath = path.join(tmpDir, `${id}.json`);
@@ -126,9 +126,9 @@ describe("ManifestStore", () => {
       fs.writeFileSync(manifestPath, '{"id":"test-recovery-1"}');
       fs.writeFileSync(tmpPath, '{"id":"test-recovery-1"}');
 
-      const result = await store.recoverTmpFiles();
+      const result = await store.sweepTmpFiles();
 
-      expect(result.deleted).toBe(1);
+      expect(result).toBe(1);
       expect(fs.existsSync(tmpPath)).toBe(false);
       expect(fs.existsSync(manifestPath)).toBe(true);
     });
@@ -148,10 +148,9 @@ describe("ManifestStore", () => {
         createdAt: Date.now(),
       }));
 
-      const result = await store.recoverTmpFiles();
+      const result = await store.sweepTmpFiles();
 
-      expect(result.deleted).toBe(1);
-      expect(result.recovered).toBe(0);
+      expect(result).toBe(1);
       expect(fs.existsSync(manifestPath)).toBe(false);
       expect(fs.existsSync(tmpPath)).toBe(false);
     });
@@ -162,9 +161,9 @@ describe("ManifestStore", () => {
 
       fs.writeFileSync(tmpPath, "invalid json {{{");
 
-      const result = await store.recoverTmpFiles();
+      const result = await store.sweepTmpFiles();
 
-      expect(result.deleted).toBe(1);
+      expect(result).toBe(1);
       expect(fs.existsSync(tmpPath)).toBe(false);
     });
 
@@ -172,9 +171,8 @@ describe("ManifestStore", () => {
       const id = "test-recovery-4";
       const tmpPath = path.join(tmpDir, `${id}.json.tmp.12345`);
       fs.writeFileSync(tmpPath, JSON.stringify({ foo: "bar" })); // 合法 JSON，非 manifest
-      const result = await store.recoverTmpFiles();
-      expect(result.deleted).toBe(1);
-      expect(result.recovered).toBe(0);
+      const result = await store.sweepTmpFiles();
+      expect(result).toBe(1);
       expect(fs.existsSync(tmpPath)).toBe(false);
     });
   });

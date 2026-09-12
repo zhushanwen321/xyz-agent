@@ -200,38 +200,37 @@ export class RecordAccess {
       if (visibleIds.has(rec.id)) continue; // 查询面已可见：磁盘锚或 manifest 幸存
       if (rec.rootSessionId !== this.deps.getSessionRootId()) continue; // 只治本 session 树
       if (rec.status !== "closed" || !isReconnectableFinalReason(rec.closedReason)) continue;
-      // manifest 投影（对齐 writeManifestBestEffort 字段面；status 恒 closed——
-      // entry 的 closed 即终态自描述，无 running 形态可达此处）。
-      void this.deps.getManifestStore()
-        .writeManifest({
-          id: rec.id,
-          rootSessionId: rec.rootSessionId ?? "",
-          parentRecordId: rec.parentRecordId,
-          agentName: rec.agent,
-          status: "closed",
-          closedReason: rec.closedReason,
-          createdAt: rec.startedAt,
-          completedAt: rec.endedAt ?? Date.now(),
-          sessionFile: rec.sessionFile,
-          task: rec.task,
-          slug: rec.slug,
-          model: rec.model,
-        })
-        .catch((err: unknown) => {
-          logger.warn(`[subagents] re-materialized manifest write failed (record=${rec.id})`, {
-            reason: err instanceof Error ? err.message : String(err),
-          });
-        });
+      // manifest 投影补写走 store 公开原语（[H4 收口 / G1] store 外零 manifest 直写；
+      // status 恒 closed——entry 的 closed 即终态自描述，无 running 形态可达此处）。
+      this.deps.getStore().rematerializeManifest({
+        id: rec.id,
+        rootSessionId: rec.rootSessionId ?? "",
+        parentRecordId: rec.parentRecordId,
+        agentName: rec.agent,
+        status: "closed",
+        closedReason: rec.closedReason,
+        createdAt: rec.startedAt,
+        completedAt: rec.endedAt ?? Date.now(),
+        sessionFile: rec.sessionFile,
+        task: rec.task,
+        slug: rec.slug,
+        model: rec.model,
+      });
     }
   }
 
-  /** 启动恢复：扫描 manifest tmp 残留（崩溃打断的 writeManifest 留下的 *.json.tmp.<pid>），
-   *  3 分支判定（manifest已存在删tmp / tmp合法promote / tmp非法删）。幂等，不 throw。
-   *  ADR-035 启动恢复接线——session_start 每次都调（与 maybeCleanupExpiredSessionFiles 一致）。
-   *  manifestStore 保持 private 封装，本方法是唯一公开入口。 */
+  /** 启动清扫：manifest tmp 残留（崩溃打断的原子写留下的 *.json.tmp.<pid>）静默删除
+   *  ——[U4c / D6] tmp 恢复已退役（manifest 是可丢可重建缓存，promote 语义失效）。
+   *  幂等，不 throw。ADR-035 启动清扫接线——session_start 每次都调（与
+   *  maybeCleanupExpiredSessionFiles 一致）。manifestStore 保持 private 封装，本方法
+   *  是公开入口。 */
   async recoverManifestTmpFiles(): Promise<{ deleted: number; recovered: number }> {
     try {
-      return await this.deps.getManifestStore().recoverTmpFiles();
+      const deleted = await this.deps.getManifestStore().sweepTmpFiles();
+      // recovered 恒 0：promote 已随 U4c 退役——公开签名保留 {deleted, recovered}
+      // 形态（subagent-service 壳转发 + subagent-workflow session-lifecycle 消费
+      // swept.deleted，改签名波及 extension 消费面）。
+      return { deleted, recovered: 0 };
     } catch (err) {
       bestEffort(err, "recoverManifestTmpFiles", "error");
       return { deleted: 0, recovered: 0 };

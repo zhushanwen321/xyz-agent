@@ -309,6 +309,25 @@ grep -E "\[sessionfile\]|agent_end get_state backfill|workflow no-progress watch
 - **崩溃/失败轮语义**：轮在途引擎崩溃 → 失败通知单发（Continuation 独立构造载荷，正文 = 失败摘要 + 恢复指引，dedup key `record:round`）+ record 保持 running-resumable（不被终态化短路）——「失败后无通知」或「失败即 closed」都属异常，查 Continuation onRunSettled 失败分支与 `notifyGateAllowsDelivery` 门（cancelled / parent-new / parent-fork 竞态窗拦发是设计行为）。
 - **孤儿收割**：引擎 CLI 意外死亡时宿主在镜像置死前收割任务子进程（POSIX 组杀 / Windows 快照逐 pid taskkill，非主动死亡路径触发）。session 文件出现交错行 = 收割链失效证据，按设计登记升级文件锁/写者探测（红线③残余窗口：宿主重启窗）。
 
+### 13. record 直写守卫拦截（eslint no-restricted-imports / check-record-write-surface，2026-09-12 H4 收敛）
+
+> **权威 SSOT**：[design/subagent-record-persistence-consolidation.md](design/subagent-record-persistence-consolidation.md)（§3.3 D7 守卫分级 / §3.1 意图级 API 表）；约束登记 C-data-19。
+
+record 持久化写面（`.state` 终态权威 / `.alive` 写权声明 / manifest 投影 / sessions-index 缓存 / `subagent-record` entry）的唯一写入口 = `RecordStore` 意图原语（`packages/subagent-core/src/execution/record-store.ts`）。两级守卫：
+
+**① eslint 报错「store 外禁 import 终态 sidecar 写函数 / .alive 写删函数 / sessions-index 落盘函数」**（`no-restricted-imports`，模块边界一级拦截）
+
+- 触发形态：store 外（`record-store.ts` 之外，测试豁免）import `writeFinalizedState` / `writeCancelledState`（state-marker.ts）、`writeAliveMarker` / `removeAliveMarker`（alive-store.ts）、`saveIndex`（sessions-index.ts）。
+- 下一步：改调 RecordStore 意图原语——终态 = `markFinalized` / `markCancelled`（内部 `.state` writeSync 先 + manifest writeSync 后 + `.alive` 删，D8 写序单点）；写权声明 acquire = `acquireWriteLease`；归档 = `markIdleArchived`。**读函数（`readStateMarker` / `isProcessAlive` / `findForeignLiveInstance` 等）不受限**，按需 import。绑定 sidecar（`writeRecordBinding` / `updateRecordBinding`，UF-1 面）不在终态写面收敛范围。
+
+**② pre-commit 报错「record 持久化写面守卫未通过——store 外 record 写面直写」**（`scripts/check-record-write-surface.mjs`，grep 门兜底）
+
+- 触发形态（eslint 拦不住的写形态）：R1 类方法直调 `manifestStore.writeManifest(...)` / `saveIndex(...)` 等六名写函数；R2 `appendEntry("subagent-record", ...)` 直写（record 主记录 entry 归 store 的 register/archive/reportRecordTransition 内置）。
+- 下一步：manifest 投影补写走 `RecordStore.rematerializeManifest`（entry 重物化腿唯一入口）；批量终态走 `markBatchFinalized`（barrier 语义内置）；状态上报走 `reportRecordTransition` / `reportSubagentRecord`。notify-ledger 投递账、reconcile-sweep 注销、pending:register/unregister 通道的 customType 不属 `subagent-record`，天然不在拦截面。
+- 复跑：`node scripts/check-record-write-surface.mjs`（应输出 `OK：... store 外 record 写面零命中`）。
+
+**误拦判定**：新写面确属 store 职责之外（如独立 extension 自有域）时，须在守卫脚本 `EXTENSION_DOMAIN_ALLOWLIST` 登记文件并注明设计依据（登记处即台账），禁止行内豁免绕过。
+
 ## 环境变量速查
 
 | 变量 | 用途 | 生产默认值 | 开发默认值 |

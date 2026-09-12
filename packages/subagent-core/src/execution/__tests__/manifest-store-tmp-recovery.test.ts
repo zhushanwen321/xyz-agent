@@ -1,12 +1,12 @@
 // src/execution/__tests__/manifest-store-tmp-recovery.test.ts
 //
-// [U4c / G3] tmp 恢复退役（D6）：recoverTmpFiles 语义 = 全部 tmp **静默删除**——
+// [U4c / G3] tmp 恢复退役（D6）：sweepTmpFiles 语义 = 全部 tmp **静默删除**——
 // manifest 已是可丢可重建缓存（权威 = `.state`，重建 = RecordStore.rebuildIndexes），
 // promote 半写 tmp 的恢复语义失效。断言面：
 //   - 合法 JSON 的 tmp（旧 promote 分支 2 形态）也删——promote 退役的核心锚点；
 //   - manifest 已存在时的陈旧 tmp（旧分支 1 形态）删；
 //   - 非法 JSON 的 tmp（旧分支 3 形态）删；
-//   - recovered 恒 0（返回形态沿用，转发链签名不变）；
+//   - 返回删除计数（promote 退役后无恢复形态；公开转发链 recoverManifestTmpFiles 签名不变）；
 //   - [T5④ / PS-13] per-file 容错保留：单个 tmp 删除失败（ENOENT——并发回收/外部
 //     清理抢先）只 warn + 跳过，不再中断整轮。
 
@@ -42,7 +42,7 @@ const VALID_MANIFEST = {
   status: "running",
 };
 
-describe("[U4c/G3] recoverTmpFiles 退役为静默删除（promote 语义失效）", () => {
+describe("[U4c/G3] sweepTmpFiles 静默删除（promote 语义失效；H4/U5 更名收口）", () => {
   let dir: string;
   let store: ManifestStore;
 
@@ -65,9 +65,9 @@ describe("[U4c/G3] recoverTmpFiles 退役为静默删除（promote 语义失效�
 
   it("合法 tmp + manifest 缺失（旧 promote 形态）→ 删而非提升（promote 退役锚点）", async () => {
     fs.writeFileSync(path.join(dir, "sa-good.json.tmp.111"), JSON.stringify(VALID_MANIFEST));
-    const result = await store.recoverTmpFiles();
+    const result = await store.sweepTmpFiles();
     // 重建源 = `.state` + rebuildIndexes——半写 tmp 不再被复活成「看似权威」的索引
-    expect(result).toEqual({ deleted: 1, recovered: 0 });
+    expect(result).toBe(1);
     expect(fs.existsSync(path.join(dir, "sa-good.json"))).toBe(false);
     expect(fs.existsSync(path.join(dir, "sa-good.json.tmp.111"))).toBe(false);
     expect(loggerMock.warn).not.toHaveBeenCalled();
@@ -77,8 +77,8 @@ describe("[U4c/G3] recoverTmpFiles 退役为静默删除（promote 语义失效�
     fs.writeFileSync(path.join(dir, "sa-stale.json"), JSON.stringify(VALID_MANIFEST));
     fs.writeFileSync(path.join(dir, "sa-stale.json.tmp.222"), "{}");
     fs.writeFileSync(path.join(dir, "sa-junk.json.tmp.333"), "not json");
-    const result = await store.recoverTmpFiles();
-    expect(result).toEqual({ deleted: 2, recovered: 0 });
+    const result = await store.sweepTmpFiles();
+    expect(result).toBe(2);
     expect(fs.existsSync(path.join(dir, "sa-stale.json"))).toBe(true);
     expect(fs.existsSync(path.join(dir, "sa-stale.json.tmp.222"))).toBe(false);
     expect(fs.existsSync(path.join(dir, "sa-junk.json.tmp.333"))).toBe(false);
@@ -98,11 +98,10 @@ describe("[U4c/G3] recoverTmpFiles 退役为静默删除（promote 语义失效�
       return actualFs.unlinkSync(p);
     });
 
-    const result = await store.recoverTmpFiles();
+    const result = await store.sweepTmpFiles();
 
     // 整轮不中断：doomed 之外的 tmp 处理完
-    expect(result.deleted).toBe(1);
-    expect(result.recovered).toBe(0);
+    expect(result).toBe(1);
     expect(fs.existsSync(path.join(dir, "sa-a.json.tmp.444"))).toBe(false);
     // 失败留痕（warn 级，含文件名）
     expect(loggerMock.warn).toHaveBeenCalledWith(
@@ -114,8 +113,8 @@ describe("[U4c/G3] recoverTmpFiles 退役为静默删除（promote 语义失效�
 
   it("无 tmp 残留 → 零副作用零告警", async () => {
     fs.writeFileSync(path.join(dir, "sa-quiescent.json"), JSON.stringify(VALID_MANIFEST));
-    const result = await store.recoverTmpFiles();
-    expect(result).toEqual({ deleted: 0, recovered: 0 });
+    const result = await store.sweepTmpFiles();
+    expect(result).toBe(0);
     expect(loggerMock.warn).not.toHaveBeenCalled();
   });
 });

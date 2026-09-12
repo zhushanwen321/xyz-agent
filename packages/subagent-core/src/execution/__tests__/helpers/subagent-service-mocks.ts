@@ -111,7 +111,7 @@ export function manifestStoreModule() {
     writeManifest = vi.fn(async () => {});
     readManifest = vi.fn(async () => null);
     listAllSync = vi.fn(() => []);
-    recoverTmpFiles = vi.fn(async () => []);
+    sweepTmpFiles = vi.fn(async () => 0);
   }
   return { ManifestStore: vi.fn(function (_recordsDir: string) { return new FakeManifestStore(); }) };
 }

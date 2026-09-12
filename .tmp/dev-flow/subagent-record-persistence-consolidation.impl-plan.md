@@ -205,7 +205,7 @@ graph TD
 | U4b | committed | 1 | 核验 2026-09-12：3 文件领地吻合；E1 grep 仅注释残留；actions-core 41 + transparent-resume 15 单绿；transparent-resume 回归收账 |
 | U4a | committed | 1 | 核验 2026-09-12：F1-F5 达成（领地 106/106 绿 + externalInstance/ALIVE_SOFT_TIMEOUT_MS 代码级零残留 + doc-symbol-drift 绿 + tsc 零错） |
 | U4c | committed | 1 | 核验 2026-09-12：G1-G4 达成（subagent-core 领地 47 绿 + session-reader 316 绿含 2 新跨包例 + workflow 922 绿 + extensions 三连绿）；检查点②关闭（唯一绕 store 直读方 = session-reader，双写字段集覆盖完备） |
-| U5 | pending | 0 | — |
+| U5 | in-progress | 1 | 后台派发 2026-09-12（全前驱 committed；携带全部挂账收口项 A/B/C 三段 11 项） |
 
 ## 7 残留风险与变更历史
 

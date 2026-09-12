@@ -114,7 +114,6 @@ describe("doFinalizeRecord — manifest status 透传 (M3 4 态)", () => {
       opts.syncManifest === false ? undefined : tmpDir,
     );
     return {
-      manifestStore,
       worktreeManager: {},
       store,
       modelService: {},
@@ -550,7 +549,6 @@ describe("doFinalizeRoundToIdle — chatMode 轮次完成进 idle (M2-A)", () =>
     const pi = { appendEntry: vi.fn() };
     const store = new RecordStore(tmpDir, manifestStore, pi, tmpDir);
     const deps = {
-      manifestStore,
       worktreeManager: { cleanup: vi.fn(), collectPatch: vi.fn() },
       store,
       modelService: {},
@@ -652,13 +650,17 @@ describe("doFinalizeRoundToIdle — chatMode 轮次完成进 idle (M2-A)", () =>
     expect(deps.worktreeManager.cleanup).not.toHaveBeenCalled();
   });
 
-  it("emitUnregister 被调（status=running，进程已死从 pending 活跃差集移除）", async () => {
+  it("轮终注销经 store 簿记⑧发射（setPendingUnregister 注入闭包，status=running）", async () => {
     const { deps, store } = makeDeps();
+    // [B5/U5 收口] 注销由 store.markRoundIdle 簿记⑧统一发射（SubagentService 构造点
+    // 注入 emitPendingUnregister；调用方薄壳不再双轨重复发）。
+    const unregisterSpy = vi.fn();
+    store.setPendingUnregister(unregisterSpy);
     const record = makeMinimalRecord({ id: "rec-emit" });
     record.status = "closed";
     store.register(record);
     await doFinalizeRoundToIdle(deps, record, { kind: "success", content: "done" });
-    expect(deps.emitUnregister).toHaveBeenCalledWith("rec-emit", "running");
+    expect(unregisterSpy).toHaveBeenCalledWith("rec-emit", "running");
   });
 
   it("不调 completeRecord：record 不冻结（endedAt / agentResult 仍 undefined）", async () => {

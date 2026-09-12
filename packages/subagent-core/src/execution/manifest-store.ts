@@ -195,7 +195,8 @@ export class ManifestStore {
   }
 
   /**
-   * 启动时清扫 tmp 残留（[U4c / D6] tmp 恢复退役后的语义）。
+   * 启动时清扫 tmp 残留（[U4c / D6] tmp 恢复退役后的语义——[H4/U5 收口] 更名
+   * recoverTmpFiles → sweepTmpFiles，名实对齐「静默删除」）。
    *
    * 旧语义（ADR-035 三分支：manifest 已存在删 tmp / tmp 合法且 manifest 缺失
    * promote / tmp 非法删）已随缓存降级退役——manifest 现为可丢可重建缓存
@@ -204,11 +205,12 @@ export class ManifestStore {
    * tmp（含 0 字节/半写形态——D8 停机窗残留由本清扫顺带清理）。
    *
    * [T5④ / PS-13] per-file 容错保留：单个 tmp 删除失败（ENOENT——并发回收/外部
-   * 清理抢先、EACCES 等）只 warn + 跳过该文件，不再中断整轮。返回值形态沿用
-   * `{deleted, recovered}`（recovered 恒 0——promote 退役的显式信号；转发链
-   * record-access/subagent-service 签名不变）。
+   * 清理抢先、EACCES 等）只 warn + 跳过该文件，不再中断整轮。promote 退役后
+   * 无恢复形态，返回值简化为删除计数。
+   *
+   * @returns 删除的 tmp 文件数。
    */
-  async recoverTmpFiles(): Promise<{ deleted: number; recovered: number }> {
+  async sweepTmpFiles(): Promise<number> {
     let deleted = 0;
     let failed = 0;
 
@@ -224,7 +226,7 @@ export class ManifestStore {
         // [T5④/PS-13] 单文件失败不中断整轮：warn 留痕（含文件名与原因）后继续处理
         // 剩余 tmp。常见于 tmp 已被并发回收/外部清理删除（ENOENT）——自愈场景不再放大。
         failed++;
-        logger.warn(`[subagents] recoverTmpFiles: failed to remove ${tmpFile}, skipping (leftovers retry on next startup)`, {
+        logger.warn(`[subagents] sweepTmpFiles: failed to remove ${tmpFile}, skipping (leftovers retry on next startup)`, {
           detail: fileErr instanceof Error ? fileErr.message : String(fileErr),
         });
       }
@@ -232,10 +234,10 @@ export class ManifestStore {
 
     if (failed > 0) {
       logger.warn(
-        `[subagents] recoverTmpFiles: ${failed} of ${tmpFiles.length} tmp file(s) could not be removed`,
+        `[subagents] sweepTmpFiles: ${failed} of ${tmpFiles.length} tmp file(s) could not be removed`,
       );
     }
 
-    return { deleted, recovered: 0 };
+    return deleted;
   }
 }

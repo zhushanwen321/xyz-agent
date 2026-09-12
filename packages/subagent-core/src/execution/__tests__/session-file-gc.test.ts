@@ -317,8 +317,8 @@ describe("maybeCleanupExpiredSessionFiles", () => {
     expect(fs.existsSync(worktrees)).toBe(true);
   });
 
-  it("[F2] preserves .json.tmp.* inside records/ (recoverTmpFiles owns them)", () => {
-    // 跳过 .tmp.：session_start 的 recoverTmpFiles 同步处理 tmp，GC 不重复。
+  it("[F2] preserves .json.tmp.* inside records/ (sweepTmpFiles owns them)", () => {
+    // 跳过 .tmp.：session_start 的 sweepTmpFiles 同步处理 tmp，GC 不重复。
     forceCleanupTrigger();
     const tmp = createSessionFile(
       path.join("--Users-x-proj--", "records", "rec-2.json.tmp.123"),

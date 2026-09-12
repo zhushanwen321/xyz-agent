@@ -170,6 +170,50 @@ export default [
       'max-lines': 'off',
     },
   },
+  // [H4 record 持久化收敛 / D7 守卫分级] store 外禁 import record 写面函数——
+  // eslint no-restricted-imports 是模块边界一级拦截（新增写者在 import 面即报错），
+  // grep 门（scripts/check-record-write-surface.mjs）降为文本级兜底（拦类方法调用
+  // 与字面量写形态）。写面唯一入口 = RecordStore（packages/subagent-core/src/
+  // execution/record-store.ts，豁免）；测试文件豁免（mock/替身形态非生产写面）。
+  // 边界登记：manifest 写面是 ManifestStore 实例方法（writeManifest）——import 层
+  // 拦不住（装配点构造合法），该面由 grep 门 R1 兜底；writeRecordBinding /
+  // updateRecordBinding（UF-1 绑定 sidecar）不在 record 终态写面收敛范围，不拦。
+  // barrel（packages/subagent-core/src/index.ts）零导出本组写函数，公开面不外泄。
+  {
+    files: ['packages/subagent-core/src/**/*.ts'],
+    ignores: [
+      'packages/subagent-core/src/execution/record-store.ts',
+      'packages/subagent-core/src/**/__tests__/**',
+      'packages/subagent-core/src/**/*.test.ts',
+    ],
+    rules: {
+      'no-restricted-imports': [
+        'error',
+        {
+          patterns: [
+            {
+              group: ['**/state-marker.ts'],
+              importNames: ['writeFinalizedState', 'writeCancelledState'],
+              message:
+                'store 外禁 import 终态 sidecar 写函数（.state 是终态权威）——经 RecordStore.markFinalized/markCancelled 意图原语落盘（H4/G1，D7 守卫分级）',
+            },
+            {
+              group: ['**/alive-store.ts'],
+              importNames: ['writeAliveMarker', 'removeAliveMarker'],
+              message:
+                'store 外禁 import .alive 写/删函数（跨进程写权声明）——acquire/release 归 RecordStore 意图原语内部（H4/G1，D7 守卫分级）',
+            },
+            {
+              group: ['**/sessions-index.ts'],
+              importNames: ['saveIndex'],
+              message:
+                'store 外禁 import sessions-index 落盘函数（索引是可丢缓存）——索引维护归 RecordStore 内部（H4/G1，D7 守卫分级）',
+            },
+          ],
+        },
+      ],
+    },
+  },
   // [HISTORICAL] useContenteditableInput.ts 是 composer 富文本输入的唯一聚合点：
   // 视觉行移动（getClientRects+caretRangeFromPoint）+ segments 解析（getSegmentsFromEl）
   // + 草稿/光标/IME/粘贴事件处理 + Cmd+V 双通路图片粘贴。各职责共享 savedRange/preferredX

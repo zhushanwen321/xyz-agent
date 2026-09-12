@@ -56,7 +56,6 @@ import { disarmIdleTimer } from "../lifecycle-manager.ts";
 import { isIdle, isResumable } from "../lifecycle-predicates.ts";
 import { doFinalizeRecord } from "../finalize-record.ts";
 import { FileRunStore } from "../../orchestration/file-run-store.ts";
-import type { ManifestStore } from "../manifest-store.ts";
 import type { ModelConfigService } from "../model-config-service.ts";
 import type { NotifyHost, PiLike } from "../notify-host.ts";
 import type { RecordStore } from "../record-store.ts";
@@ -82,8 +81,6 @@ export interface RecordLifecycleDeps {
   readonly assertReady: () => void;
   /** RecordStore（#1 留壳共享依赖；本聚合消费面：批量回收/终态 archive/GC 数据源）。 */
   readonly getStore: () => RecordStore;
-  /** ManifestStore（#1 留壳；终态 manifest 反查索引投影写——D 通道）。 */
-  readonly getManifestStore: () => ManifestStore;
   /** WorktreeManager（终态 worktree 绑定清理，fire-and-forget）。 */
   readonly getWorktreeManager: () => WorktreeManager;
   /** ModelConfigService（doFinalizeRecord FinalizeDeps 形参——独立模块签名要求具体类型）。 */
@@ -365,7 +362,6 @@ export class RecordLifecycle {
     };
     await doFinalizeRecord(
       {
-        manifestStore: this.deps.getManifestStore(),
         worktreeManager: this.deps.getWorktreeManager(),
         store: this.deps.getStore(),
         modelService: this.deps.getModelService(),
@@ -494,7 +490,6 @@ export class RecordLifecycle {
   ): Promise<void> {
     await doFinalizeRecord(
       {
-        manifestStore: this.deps.getManifestStore(),
         worktreeManager: this.deps.getWorktreeManager(),
         store: this.deps.getStore(),
         modelService: this.deps.getModelService(),

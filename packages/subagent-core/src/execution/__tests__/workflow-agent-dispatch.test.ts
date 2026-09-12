@@ -431,22 +431,27 @@ describe("executeWorkflowAgent stream 自构（设计 D2「service 派发路径�
 
 describe("executeWorkflowAgent D7 成功收口", () => {
   it("成功 → closed/gc 立即终态化 + archive（非 SP-5 running-idle）+ 字段保真回脚本", async () => {
-    const { service, store, fake, entries } = makeHarness();
+    const { service, store, fake, entries, tmpRoot } = makeHarness();
     const pending = service.executeWorkflowAgent(baseOpts(), "run-7");
     await flush();
     const run = soleRun(fake);
     const record = runningRecord(store);
 
+    // [H4/U5 适配] sessionFile 必须是真实可写路径（mkdtemp 下）——假路径触发
+    // writeFinalizedState ENOENT 重试耗尽 → markFinalized false 不 archive，
+    // 旧断言（终态化 + archive）随终态原语同步写权威化而失效。
+    fs.mkdirSync(path.join(tmpRoot, "wf"), { recursive: true });
+    const sessionFile = path.join(tmpRoot, "wf", "session.jsonl");
     run.settle({
       content: "done",
-      sessionFile: "/tmp/wf/session.jsonl",
+      sessionFile,
       usage: { input: 10, output: 5, cacheRead: 0, cacheWrite: 0, cost: 0.1, contextTokens: 15, turns: 2 },
     });
     const result: AgentResult = await pending;
 
     // 回脚本字段保真（outcome 直映射：usage/sessionFile 不丢）
     expect(result.content).toBe("done");
-    expect(result.sessionFile).toBe("/tmp/wf/session.jsonl");
+    expect(result.sessionFile).toBe(sessionFile);
     expect(result.usage?.turns).toBe(2);
     // D7：成功即终态化 closed/gc + archive 出内存（不再 SP-5 running-resumable）
     expect(record.status).toBe("closed");

@@ -80,7 +80,6 @@ import { hasLiveProcessHandle } from "../lifecycle-predicates.ts";
 // [V2 决策 3] lifecycle-manager：[T4②] DEFAULT_IDLE_TIMEOUT_MS 是 assertIdleTimeoutMsSafe
 // 错误文案的缺省时长基准（[R4] 唯一消费主体随域迁入本聚合）。
 import { DEFAULT_IDLE_TIMEOUT_MS } from "../lifecycle-manager.ts";
-import type { ManifestStore } from "../manifest-store.ts";
 import type { ModelConfigService } from "../model-config-service.ts";
 import type { AgentConfig, ModelInfo, ResolvedModel } from "../model-resolver.ts";
 import type { NotifyHost, PiLike } from "../notify-host.ts";
@@ -143,7 +142,7 @@ function delay(ms: number): Promise<void> {
  * 窄结构类型只声明聚合真实消费的通道（不整实例注入）。四类成员：
  * - 断言面（assertReady）：execute/executeAndAwait/deliverChatMessage 入口就绪门
  *  （本体在 SessionBaselines，壳转发）。
- * - #1 留壳共享依赖 getter（getStore/getManifestStore/getModelService/getNotifyHost/
+ * - #1 留壳共享依赖 getter（getStore/getModelService/getNotifyHost/
  *   getPool/getWorktreeManager/getCwd/getPi/getRoundSupervisor/getCollectCoordinator）：
  *   getter 现读同一实例（B-6 roundSupervisor 留壳、C-6 装配闭包经壳 late-bound）。
  * - 会话基线 getter（getExecNesting/getSessionRootId/getStreamSink/getUiObservability）：
@@ -159,8 +158,6 @@ export interface RunOrchestrationDeps {
   /** RecordStore（#1 留壳共享依赖；运行中句柄回填 reportRecordTransition/Continuation
    *  revive register 面）。 */
   readonly getStore: () => RecordStore;
-  /** ManifestStore（finalizeRoundToIdle → doFinalizeRoundToIdle FinalizeDeps）。 */
-  readonly getManifestStore: () => ManifestStore;
   /** ModelConfigService（resolveModel 代理 + 路由全局缺省 + FinalizeDeps）。 */
   readonly getModelService: () => ModelConfigService;
   /** 进程 cwd（worktree create 锚点）。 */
@@ -982,11 +979,9 @@ export class RunOrchestration {
       // markRoundIdle 的 one-shot 兜底 前值 ?? "(empty)"）。
       // [U2b] 轮终簿记①-⑨归口 store.markRoundIdle（SP-5 成功分支与 chat 轮末共享轮终
       // 语义；`.alive` 跨轮保留 [D3a/B5]——release 出口 = 终态原语/idle-GC 归档）。
-      // [W4 发射点②] 双轨期注销留调用方发射：store 簿记⑧经 setPendingUnregister 注入
-      //（U3 接线，未注入时 no-op）——接线后与本处的去重收口归 U5（对齐
-      // doFinalizeRoundToIdle 薄壳同款双轨形态）。
+      // [W4 发射点② / U5 收口项②] pending 注销已随 store 簿记⑧统一发射（SubagentService
+      // 构造点 setPendingUnregister 接线），本分支不再双轨重复发射。
       this.deps.getStore().markRoundIdle(record.id, { kind: "success", content: result.text });
-      this.deps.getNotifyHost().emitPendingUnregister(record.id, "running");
     } else if (!aborted && record.closeAfterRound === true) {
       // [M5] 优雅关闭挂起的失败轮：轮已完成即兑现 close 意图终态化（含本轮 result）。
       await this.consumeCloseAfterRound(record, result, "gc");
@@ -1424,7 +1419,6 @@ export class RunOrchestration {
   ): Promise<void> {
     await doFinalizeRoundToIdle(
       {
-        manifestStore: this.deps.getManifestStore(),
         worktreeManager: this.deps.getWorktreeManager(),
         store: this.deps.getStore(),
         modelService: this.deps.getModelService(),

@@ -581,7 +581,8 @@ export class RecordStore {
   /**
    * [§3.1 markRoundIdle 簿记⑧] pending-notifications 轮终注销（发射点②）的注入面。
    * store 不直接依赖 pending 注册表（「零副作用编排」边界——文件布局收口 ≠ 通知
-   * 注册表依赖）；迁移期由调用方注入 emitUnregister 闭包（U3 接线），缺省 no-op。
+   * 注册表依赖）；由 SubagentService 构造点注入 emitPendingUnregister 闭包（U5 收口
+   * 接线），缺省 no-op（纯内存测试形态不发射）。
    */
   private pendingUnregister: ((id: string, status: string) => void) | undefined;
 
@@ -648,7 +649,7 @@ export class RecordStore {
 
   /**
    * 注入 pending-notifications 轮终注销闭包（markRoundIdle 簿记⑧发射点②，见字段
-   * pendingUnregister 注释）。迁移期（U3）由 SubagentService 接线。
+   * pendingUnregister 注释）。装配点 = SubagentService 构造器（U5 收口接线）。
    */
   setPendingUnregister(fn: ((id: string, status: string) => void) | undefined): void {
     this.pendingUnregister = fn;
@@ -749,7 +750,8 @@ export class RecordStore {
     rec.idleSince = Date.now();
     rec.resumable = true;
     // ⑦ `.alive` 保留——无删除动作（D3a 跨轮延续，见方法头）。
-    // ⑧ pending 注销发射点②（未注入时跳过——U3 接线前 no-op）。
+    // ⑧ pending 注销发射点②（已接线 SubagentService 装配点；未注入时跳过——纯内存
+    // 测试形态 no-op）。
     this.pendingUnregister?.(id, "running");
     // ⑨ entry 上报（best-effort 过程面）。
     this.reportRecordTransition(rec);
@@ -865,8 +867,8 @@ export class RecordStore {
   /**
    * 意图原语：引擎死亡收养（字段⑤⑩——error/result/resumable 三写，record 保持
    * resumable 交监督器接管，禁 completed 谎报 / closed 直接终局）。归口写点：
-   * adoptResumableAfterEngineDeath（run-orchestration，U3 迁移）；监督器
-   * adoptOnProcessDeath 编排留调用方。
+   * adoptResumableAfterEngineDeath（run-orchestration——已随 U2b 修复轮迁移）；
+   * 监督器 adoptOnProcessDeath 编排留调用方。
    *
    * @returns false = id 不在内存（debug 留痕，无副作用）。
    */
@@ -1146,6 +1148,35 @@ export class RecordStore {
     const msg = err instanceof Error ? err.message : String(err);
     logger.error(`[subagents] manifest write failed (record=${id}): ${msg}`);
     pi?.appendEntry?.("subagent:manifest-write-failed", { id, error: msg });
+  }
+
+  /**
+   * [H4 收口 / G1] entry 重物化腿的 manifest 投影补写（record-access 可重连终态
+   * 重物化通道的唯一入口——store 外零 manifest 直写）。manifest 是可丢缓存（D5），
+   * 本方法只做缺员补写：失败 warn 留痕不响亮（缓存补缺失败不构成宿主错误，对齐
+   * U4c rebuildIndexes 的降级语义——区别于终态面 writeManifestPersisted 的响亮）；
+   * manifestDir 接线时为同步写（停机窗防护与终态面同源）。
+   */
+  rematerializeManifest(manifest: ManifestRecord): void {
+    const warnFailure = (err: unknown): void => {
+      logger.warn("[subagents] rematerialize manifest write failed (cache backfill)", {
+        detail: { id: manifest.id, error: err instanceof Error ? err.message : String(err) },
+      });
+    };
+    if (this.manifestDir !== undefined) {
+      try {
+        writeAtomicFileSync(
+          path.join(this.manifestDir, `${manifest.id}.json`),
+          JSON.stringify(manifest, null, MANIFEST_INDENT_SPACES),
+        );
+      } catch (err) {
+        warnFailure(err);
+      }
+      return;
+    }
+    if (this.manifestStore !== undefined) {
+      void this.manifestStore.writeManifest(manifest).catch(warnFailure);
+    }
   }
 
   /** 按 id 查找。返回可变 record（仅 runtime 内部用）。 */
