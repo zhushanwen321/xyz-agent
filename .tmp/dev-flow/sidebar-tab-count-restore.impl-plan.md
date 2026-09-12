@@ -63,3 +63,4 @@ graph LR
 - **认知外改动隔离**：工作区存在本会话外改动（`.tmp/dev-flow/subagent-record-persistence-consolidation.impl-plan.md`、`docs/design/timeout-zcode-turn-and-settled-watchdog.md`），全程不碰、不裹挟提交。
 - 2026-09-12 计划创建，双单元并行派发。
 - 2026-09-12 一致性审查第 1 轮（单 reviewer）：reasonable 3 条已登记（①sessionCount 用例超设计最低要求——无需回写 ②plugins tab 恒 0 显式处理——设计 §3.1 已补「挂载点占位不计数」 ③注释同步——已在 §5 偏差表）；unreasonable 2 条——[high] remove-persistent-decorations.test.ts TC1 打破全量红灯 → 修复批次派发（改写 TC1 + 复跑全量 0 failed）；[medium] 设计 §4 六场景未纳入验收 Gate → 本计划 §4 已补 Gate B 行，场景归属阶段 5 真机验收；doc_errors 2 条由主 agent 亲改设计文档（§3.1 listLoadError 过强表述改为「跟随 groups 现值」两态；§3.3 决策 1 影响面 + §5 U4 补记 remove-persistent-decorations.test.ts）。
+- 2026-09-12 定向复审（修复批次影响面，b29689c85）：unreasonable 未发现（TC1 新断言守卫有效且原守卫未破坏；TC1 字符串断言固有盲区由 SegmentedTab.spec.ts DOM 级守卫补足——复审确认守卫面完整；注释两态与 core 链路一致）；doc_errors 1 条 trivial（设计 §3.1 错误卡行号引用 75-83 → 76-85）已顺手校正。审查清零，转阶段 5。

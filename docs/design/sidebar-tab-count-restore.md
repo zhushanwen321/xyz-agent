@@ -66,7 +66,7 @@ runtime（WS 广播/RPC，既有链路，本次零改动）
 
 四个 tab 图标右侧显示最小号数字；数字为 0 时不渲染（避免一排 0 的噪音，与删除前 `v-if="tab.count > 0"` 行为一致）。派一个 subagent 后 Agents tab 立即出现「1」，结束归 0 消失；归档一个会话后 session 数字 −1；切换焦点 session 时 file / Agents / Flows 数字跟随变化、session 数字不变（全局口径）。第 5 个 plugins tab 是挂载点占位（无 plugin 贡献时 ViewHost 自隐藏），不参与计数，恒不渲染数字。
 
-失败/边界路径：session 列表加载失败时计数跟随 groups 现值——首载失败（groups 本来为空）数字为 0 不渲染；重载失败时 groups 保留旧快照，数字与列表一致显示旧计数（满足「不穿帮」）。错误态由列表区的错误卡 + 重试按钮承载（`Sidebar.vue:75-83`），计数不重复报错；`useSessionMarkers` cache 未 hydrate 时首次读取自动触发 `ensureCache()`（既有行为），无额外处理。
+失败/边界路径：session 列表加载失败时计数跟随 groups 现值——首载失败（groups 本来为空）数字为 0 不渲染；重载失败时 groups 保留旧快照，数字与列表一致显示旧计数（满足「不穿帮」）。错误态由列表区的错误卡 + 重试按钮承载（`Sidebar.vue:76-85`），计数不重复报错；`useSessionMarkers` cache 未 hydrate 时首次读取自动触发 `ensureCache()`（既有行为），无额外处理。
 
 ### 3.2 方案对比
 
