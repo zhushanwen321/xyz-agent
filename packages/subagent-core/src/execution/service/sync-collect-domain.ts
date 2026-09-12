@@ -119,11 +119,12 @@ export class SyncCollectDomain {
     this.deps = deps;
     // collectCoordinator（subagent-sync-collect U2）：notifyComplete 唯一路由入口——
     // async 直通（字节不变）/ sync 批缓冲 + 闭合检测。[U3 接线点] 已接线：flush =
-    // manifest 屏障（await 全部落盘）→ notifier.notifyBatch 单条批投递（幂等键
-    // sync-batch:<hash> + 闭合触发排程合批 flush：同宏任务去抖窗口收纳背靠背
-    // route——U8 拆批盲窗修复 → ledger 写账 → attemptDeliver 边沿投递）+
-    // batchFinalized 落标（出口①，见下方闭包注释）。屏障先于写账 = 「通知可达 ⇒
-    // 索引就位」的构造性保证（时序竞态修复，见 flushBatch 闭包注释）。
+    // store.markBatchFinalized（manifest 屏障 + batchFinalized 落标合一原语，屏障
+    // await 全部落盘——出口①，见下方闭包注释）先于 notifier.notifyBatch 单条批
+    // 投递（幂等键 sync-batch:<hash> ledger 写账 → attemptDeliver 边沿投递）；
+    // 闭合触发排程合批 flush：同宏任务去抖窗口收纳背靠背 route——U8 拆批盲窗修复。
+    // 屏障先于写账 = 「通知可达 ⇒ 索引就位」的构造性保证（时序竞态修复，见
+    // flushBatch 闭包注释）。
     // [U8] 排程与 E9/E1 交互：dispose 经 convertPendingSyncBufferToAsync 先取消挂起
     // 排程（取消而非同步 flush——双通道并发写账防护，见该函数注释）；E1 只在
     // session_start 编排处运行（此前 dispose 已取消排程，补发直走 notifyBatch 不经

@@ -253,7 +253,7 @@ export type RoundSettlementOutcome =
  *     idle-GC 归档两出口；轮终 record 仍 resumable、随时续聊 spawn 写同一
  *     sessionFile，删则轮后跨进程防御空窗）
  *   - [A3] 终态簿记已冻结（endedAt 已设）的调用由 store 内硬断言 fail-fast
- *     （复活终态的调用即 bug——S7 防御），throw 先于本方法的 pending 注销发射
+ *     （复活终态的调用即 bug——S7 防御），throw 先于 store 簿记⑧的注销发射
  *
  * @throws Error record 终态簿记已冻结（completeRecord 已跑）仍被调用（store.markRoundIdle
  *   内硬断言——冻结权威判据 = endedAt 已设，写点枚举与两构造性调用面论证见其方法头）。

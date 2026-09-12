@@ -2134,7 +2134,7 @@
     },
     {
       "id": "C-data-19",
-      "summary": "record 持久化写面唯一入口：subagent record 状态（.state 终态权威 / .alive 写权声明 / manifest 投影 / sessions-index 缓存 / subagent-record entry）的写面全部归 RecordStore 意图原语（markFinalized/markCancelled/markBatchFinalized/markRoundStarted/markRoundIdle/adoptEngineDeath/markResurrected/markIdleArchived/register/appendEvent），store 外零直写。守卫两级：eslint no-restricted-imports（subagent-core 块，store 外禁 import writeFinalizedState/writeCancelledState/writeAliveMarker/removeAliveMarker/saveIndex——模块边界一级拦截）+ scripts/check-record-write-surface.mjs（pre-commit 按路径触发，grep 门兜底拦类方法调用与 subagent-record entry 直写）。终态原语持久化面全同步（.state writeSync 先 + manifest writeSync 后，D8 v7），实测 P99 0.29ms（D2 阈值 10ms）",
+      "summary": "record 持久化写面唯一入口：subagent record 状态（.state 终态权威 / .alive 写权声明 / manifest 投影 / sessions-index 缓存 / subagent-record entry）的写面全部归 RecordStore 意图原语（markFinalized/markCancelled/markBatchFinalized/markRoundStarted/markRoundIdle/adoptEngineDeath/markResurrected/markIdleArchived/register/appendEvent），store 外零直写。守卫两级：eslint no-restricted-imports（subagent-core 块，store 外禁 import writeFinalizedState/writeCancelledState/writeAliveMarker/removeAliveMarker/saveIndex——模块边界一级拦截）+ scripts/check-record-write-surface.mjs（pre-commit 按路径触发，grep 门兜底拦类方法调用与 subagent-record entry 直写）。终态原语持久化面全同步（.state writeSync 先 + manifest writeSync 后，D8 v7），实测 P99 <0.5ms（N=100 采样、数字时变，terminal-write-latency.test.ts 常驻回归；D2 阈值 10ms）",
       "scope": [
         "packages/subagent-core/src/**",
         "extensions/universal/subagent-workflow/src/**"

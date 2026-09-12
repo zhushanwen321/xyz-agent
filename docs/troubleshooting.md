@@ -322,7 +322,7 @@ record 持久化写面（`.state` 终态权威 / `.alive` 写权声明 / manifes
 
 **② pre-commit 报错「record 持久化写面守卫未通过——store 外 record 写面直写」**（`scripts/check-record-write-surface.mjs`，grep 门兜底）
 
-- 触发形态（eslint 拦不住的写形态）：R1 类方法直调 `manifestStore.writeManifest(...)` / `saveIndex(...)` 等六名写函数；R2 `appendEntry("subagent-record", ...)` 直写（record 主记录 entry 归 store 的 register/archive/reportRecordTransition 内置）。
+- 触发形态（eslint 拦不住的写形态）：R1 六名写函数直调——类方法形态（`manifestStore.writeManifest(...)`，ManifestStore 实例方法 import 层拦不住）与独立函数形态（`saveIndex(...)` 等）；R2 `appendEntry` 调用行含 `subagent-record` 字面量（对象参数 customType 形态，record 主记录 entry 归 store 的 register/archive/reportRecordTransition 内置）。
 - 下一步：manifest 投影补写走 `RecordStore.rematerializeManifest`（entry 重物化腿唯一入口）；批量终态走 `markBatchFinalized`（barrier 语义内置）；状态上报走 `reportRecordTransition` / `reportSubagentRecord`。notify-ledger 投递账、reconcile-sweep 注销、pending:register/unregister 通道的 customType 不属 `subagent-record`，天然不在拦截面。
 - 复跑：`node scripts/check-record-write-surface.mjs`（应输出 `OK：... store 外 record 写面零命中`）。
 

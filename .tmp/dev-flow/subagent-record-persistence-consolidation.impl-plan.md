@@ -176,6 +176,22 @@ graph TD
 4. 分支编号不重排（沿用设计文档「分支 4」表述，注释注明缘由）
 5. 遗留清扫挂 U5：subagent-actions-core.ts:715-717 注释过时表述 + subagent-service-multiproc-guard.test.ts:32 mock 工厂多余键
 
+**U5（轮 1，2026-09-12）**——dev 报备 + 阶段 3 审查补登记（区3-D2）：
+1. eslint 边界形态偏离设计 D7 字面「禁 import state-marker/manifest-store/alive-store 写函数」：writeManifest 是 ManifestStore 实例方法（import 层空集不可拦）——实装 = 可拦五名（state-marker 2 + alive-store 2）+ sessions-index saveIndex，manifest 面归 grep 门 R1 兜底（实测拦截有效）；分工已在 eslint.config.mjs 注释登记
+2. grep 守卫 R2 口径收窄为「appendEntry + subagent-record 字面量同行」对象参数形态（初版纯字面量误拦 runtime 读面失效回调 5 处）
+3. notify-gate 适配超「补 register」字面：同时补 status="closed"+endedAt 完整终态形态（只 register 时 tryTransition 抢成赢家覆写 user-close，门判据漂移）
+4. record-access manifest 直写收口为新公开原语 rematerializeManifest（缓存面 warn 语义，区别于终态面响亮——对齐 U4c rebuildIndexes 先例）；barrel 核查 = 写函数从未导出无需改动
+5. sweepTmpFiles 更名仅内部层，公开转发链保留 {deleted, recovered} 形态（extension 源码禁触）
+6. CI invariants 未接线（.github/workflows 不在 U5 领地）——阶段 4 修复组 C 补
+
+**阶段 3 一致性审查结论（2026-09-12，三区并行 reviewer）**：
+- **flushBatch 源序翻转终裁（U3 偏差 2）：通过**——设计 §3.1 仅钉「manifest 落盘先于批通知写账」（新实现保持，测试字面锁死）；「写账先于落标」是旧实现内部语义非设计条款；新丢失窗（微任务级）比 D4② 已接受残余窗小约三个数量级且后果同类；合一原语下三段序不可兼得（保写账先行需 notifyBatch 进 store，违反副作用边界）；构造性收益 = 旧「写账成功落标丢失 → E1 重复补发」面消灭。设计 D4② 已补录第二形态残余窗
+- **修复组 A（P2）**：markResurrected 补删 legacy `.cancelled`（pre-L4 存量 live≡reload 破坏，设计 D3c 与实现共同盲点）——设计已同步补行
+- **修复组 B（P2×4）**：pending:unregister emit 恰好一次断言 + write-lease 测试名/注释双轨表述过时 + sync-collect 构造器注释源序 + finalize-record JSDoc 指涉
+- **修复组 C（P2）**：守卫触发面扩 extensions/**/src + CI invariants 接线
+- **文档订正（主 agent，已完成）**：设计 §3.4 拆两写面口径（.state 面=重试留 running / manifest 面=响亮不回滚 rebuild 兜底）+ §5 notify-ledger 条目订正零改动 + D3c 补 `.cancelled` + D4② 补第二形态窗；constraints C-data-19 时延数字统一区间表述（<0.5ms，N=100 时变，render 同步）；troubleshooting §13 措辞精度（类方法/独立函数形态 + R2 对象参数形态）
+- **promote 点补报备（区2-U1，协调者裁决）**：record-lifecycle promoteSessionFileFromEngineHandle 不挂 acquire——两消费点紧邻终态原语（acquire 后数行即 release），同步段内无防御价值、该形态 record 马上终态化不构成双写面；设计 D3a「promote 提升点挂钩」字面据此失真，属实施裁量的合理演化
+
 **认知外改动登记（2026-09-12 二次）**：docs/architecture/runtime-module-map.md / subagent-engine-abstraction.md / docs/extensions/subagents/data-model.md 三个文件的「2026-09-12 重数行数」统计刷新——与 H4 无关的并行产物，全程不碰不裹挟（同 timeout 文档处置）。
 
 **U4c（轮 1，2026-09-12）**——dev 报备 + 协调者核验接受：
@@ -205,7 +221,7 @@ graph TD
 | U4b | committed | 1 | 核验 2026-09-12：3 文件领地吻合；E1 grep 仅注释残留；actions-core 41 + transparent-resume 15 单绿；transparent-resume 回归收账 |
 | U4a | committed | 1 | 核验 2026-09-12：F1-F5 达成（领地 106/106 绿 + externalInstance/ALIVE_SOFT_TIMEOUT_MS 代码级零残留 + doc-symbol-drift 绿 + tsc 零错） |
 | U4c | committed | 1 | 核验 2026-09-12：G1-G4 达成（subagent-core 领地 47 绿 + session-reader 316 绿含 2 新跨包例 + workflow 922 绿 + extensions 三连绿）；检查点②关闭（唯一绕 store 直读方 = session-reader，双写字段集覆盖完备） |
-| U5 | in-progress | 1 | 后台派发 2026-09-12（全前驱 committed；携带全部挂账收口项 A/B/C 三段 11 项） |
+| U5 | committed | 1 | 核验 2026-09-12：11 项全达成（守卫零命中 1220 文件 + 全量 2971 绿 + D2 时延 P99=0.404ms 关闭检查点① + 挂账全收口）；**阶段 2 全单元 committed** |
 
 ## 7 残留风险与变更历史
 
@@ -214,7 +230,7 @@ graph TD
 - ~~P-B4 探针结论（U1 A7）~~——**已关闭（U1 轮 1）**：实装 pi@0.84.4 dist SessionManager 直驱 appendCompaction，custom entry（subagent-record / notify-ledger 类 / pending:register-unregister）文件面全保留不改写——E1 判定源（entry 尾）与「entry 可丢」承载假设在 compaction 面不劣化，设计 D4② 登记评估项无需立项；残余丢失面仍仅 debounce-flush × SIGKILL 交集（D4② 既述）
 - extensions transparent-resume.test.ts:315 回归——挂 U4b 修复（见偏差登记表尾）
 - record-store.ts 行数 1207（U1 后）——eslint 提额 1400 过渡（已随 U1 commit），H4 全落地后按意图原语族拆分（终态原语/轮次簿记/重建三轴），属独立重构任务
-- 待验证检查点①（writeSync 时延）——U5 H4 实测
+- ~~待验证检查点①（writeSync 时延）~~——**已关闭（U5）**：markFinalized N=100 实测 p50=0.155ms / P99=0.404ms / max=1.295ms，远低于 10ms 重审阈值（terminal-write-latency.test.ts 常驻回归）
 - 待验证检查点③（pi flush 窗口分布）——S3/Gate B 观察期采样
 - 认知外改动 docs/design/timeout-zcode-turn-and-settled-watchdog.md（工作区 1 行外部变更）——全程不碰不裹挟
 
