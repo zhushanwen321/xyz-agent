@@ -22,7 +22,10 @@ import { readFileSync } from 'node:fs'
 const { showSpy, showInactiveSpy, captureOnce } = vi.hoisted(() => ({
   showSpy: vi.fn(),
   showInactiveSpy: vi.fn(),
-  captureOnce: { cb: undefined as undefined | (() => void) },
+  // 按事件名捕获：merge 后 window-factory 还有 once('closed')（crash-resilience 的
+  // windows Map 清理钩）注册在 ready-to-show 之后，单一 cb 槽会被覆盖——S10 必须取
+  // ready-to-show 自己的回调，不能拿“最后一个 once”。
+  captureOnce: { cbs: {} as Record<string, () => void> },
 }))
 
 vi.mock('electron', () => {
@@ -30,7 +33,7 @@ vi.mock('electron', () => {
     show = showSpy
     showInactive = showInactiveSpy
     on = vi.fn()
-    once = (_event: string, cb: () => void) => { captureOnce.cb = cb }
+    once = (event: string, cb: () => void) => { captureOnce.cbs[event] = cb }
     isDestroyed = () => false
     destroy = vi.fn()
     loadFile = vi.fn().mockResolvedValue(undefined)
@@ -69,7 +72,7 @@ describe('window-factory: ready-to-show 焦点策略 env 矩阵（S10）', () =>
   beforeEach(() => {
     showSpy.mockClear()
     showInactiveSpy.mockClear()
-    captureOnce.cb = undefined
+    captureOnce.cbs = {}
   })
   afterEach(() => {
     vi.unstubAllEnvs()
@@ -77,8 +80,9 @@ describe('window-factory: ready-to-show 焦点策略 env 矩阵（S10）', () =>
 
   async function createAndFireReadyToShow() {
     const { win } = await createWindow(undefined, { isDev: false, generateId: () => 'w-test' })
-    expect(captureOnce.cb).toBeTypeOf('function')
-    captureOnce.cb!()
+    const readyToShow = captureOnce.cbs['ready-to-show']
+    expect(readyToShow).toBeTypeOf('function')
+    readyToShow!()
     return win
   }
 
