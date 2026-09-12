@@ -90,26 +90,26 @@ harness 必备能力（业务价值视角，2026-09-12 用户裁决）：
 
 | 包 | 组 | 分级 | 依据 |
 |----|----|------|------|
-| agent-ext | taiji | P1 | xyz-agent 集成基座，挂了集成能力降级但 pi 主链路存活 |
-| msg-id-mapper | taiji | P1 | 挂了消息映射错乱 |
+| ask-user | universal | **P0** | 边界判例 #3（2026-09-12 用户裁决升 P0） |
 | plugin-bridge | taiji | **P0** | 跟随插件系统（P0） |
-| system-prompt | taiji | P1 | 挂了 agent 裸人格、所有会话质量崩 |
-| system-prompt-trace | taiji | P3 | 观测留痕 |
-| ask-user | universal | **P0** | 边界判例 #3（2026-09-12 升 P0） |
+| subagent-workflow | universal | **P0** | 边界判例 #2（2026-09-12 用户裁决升 P0） |
+| agent-ext | taiji | P1 | xyz-agent 集成基座，挂了集成能力降级但 pi 主链路存活 |
 | base-tool-enhance | universal | P1 | bash 前台链挂了 agent 失去执行能力（原生回退仅保底） |
-| cache-probe | universal | P3 | 特定人群 |
-| goal | universal | P3 | 特定人群 |
-| pending-notifications | universal | P2 | 通知汇聚 |
+| msg-id-mapper | taiji | P1 | 挂了消息映射错乱 |
 | permission | universal | P1 | 审批闭环（边界判例 #7） |
+| system-prompt | taiji | P1 | 挂了 agent 裸人格、所有会话质量崩 |
+| pending-notifications | universal | P2 | 通知汇聚 |
 | plan | universal | P2 | 面板能力 |
-| rename-session | universal | P3 | 低频有手动路径 |
-| scheduler | universal | P3 | 特定人群 |
-| session-manager | universal | P3 | 高级编排人群 |
 | session-reader | universal | P2 | 通知链依赖 |
 | smart-context | universal | P2 | 手动 compact 兜底 |
 | structured-output | universal | P2 | workflow 模式依赖 |
-| subagent-workflow | universal | **P0** | 边界判例 #2（2026-09-12 升 P0） |
 | todo | universal | P2 | 面板能力 |
+| cache-probe | universal | P3 | 特定人群 |
+| goal | universal | P3 | 特定人群 |
+| rename-session | universal | P3 | 低频有手动路径 |
+| scheduler | universal | P3 | 特定人群 |
+| session-manager | universal | P3 | 高级编排人群 |
+| system-prompt-trace | taiji | P3 | 观测留痕 |
 | unified-hooks（deprecated） | universal | — | 已废弃，残留安装需先卸载 |
 
 **包内标注规则**：包内有 `ARCHITECTURE.md` / `docs/*.md` 的（当前：ask-user、todo、session-reader），文件头加一行 `> 功能分级：P<x>（依据见 docs/feature-priorities.md §6）`；只有 CHANGELOG/README 的包**只登记本表**（CHANGELOG 是发布记录、README 面向用户，均不作登记载体）。
