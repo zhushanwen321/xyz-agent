@@ -210,6 +210,32 @@ export class WorkflowDispatch {
     //（getAgentConfig——路由输入只要 frontmatter engine；显式 ref 解析失败的报错归
     // identity 阶段的 getRequiredAgentConfig，不在路由层重复）。
     const agentConfig = opts.agent ? this.deps.getModelService().getAgentConfig(opts.agent) : undefined;
+    const route = await this.routeWorkflowEngine(opts, agentConfig);
+    // ② 预检（capability-gate 单点；AgentCallOpts 直传——TaskShapeForGate 是结构子集）
+    assertTaskShapeSupported(route.engineId, route.engine.capabilities(), opts);
+    // ③ 非 pi 引擎 model 校验 + identity 解析（详见 resolveWorkflowIdentity）+
+    // record 引擎留痕盖章（详见 stampWorkflowEngineTrace）。
+    const identity = await this.resolveWorkflowIdentity(route, opts, execOpts, agentConfig);
+    this.stampWorkflowEngineTrace(route, execOpts);
+
+    // ── record 注册（origin:"workflow" + parentRunId；record 级 pending:register
+    //    照旧——与既有派发路径同款）──
+    const record = this.deps.createRecordForMode(identity, execOpts, "background", {
+      origin: "workflow",
+      parentRunId,
+    });
+    this.deps.getNotifyHost().emitPendingRegister(record.id, record.agent);
+
+    const effectiveSignal = signal ?? record.controller?.signal;
+    return this.runWorkflowEngineTask(record, opts, identity, route.engine, effectiveSignal, onEvent, stream);
+  }
+
+  /** [executeWorkflowAgent 阶段拆分] 八步迁移①：引擎路由（D2 单轨——统一经
+   *  routeEngineForHost：三层输入 + probe 守卫 + pi 同步短路）+ Promise 决议。 */
+  private async routeWorkflowEngine(
+    opts: AgentCallOpts,
+    agentConfig: AgentConfig | undefined,
+  ): Promise<EngineRouteResult> {
     const routed = routeEngineForHost({
       routing: {
         callEngine: opts.engine,
@@ -221,12 +247,19 @@ export class WorkflowDispatch {
       probe: (engineId) => getEngine(engineId).probe(),
       piEngine: this.deps.resolveChatEnginePort(),
     });
-    const route: EngineRouteResult = routed instanceof Promise ? await routed : routed;
-    // ② 预检（capability-gate 单点；AgentCallOpts 直传——TaskShapeForGate 是结构子集）
-    assertTaskShapeSupported(route.engineId, route.engine.capabilities(), opts);
-    // ③ 非 pi 引擎 model 校验：经 resolveIdentityForEngine 内的 validateModelForEngine
-    //（与 chat 域 executeViaEngine 同一入口同一文案；model 源 = 显式 opts.model >
-    // agent frontmatter——u-h2 D2-1③ 同款）。
+    return routed instanceof Promise ? await routed : routed;
+  }
+
+  /** [executeWorkflowAgent 阶段拆分] 八步迁移③：非 pi 引擎 model 校验：经
+   *  resolveIdentityForEngine 内的 validateModelForEngine（与 chat 域 executeViaEngine
+   *  同一入口同一文案；model 源 = 显式 opts.model > agent frontmatter——u-h2 D2-1③
+   *  同款）。model 源非空时同步覆写 execOpts.model（record 留痕 + taskSpec 直传一致）。 */
+  private async resolveWorkflowIdentity(
+    route: EngineRouteResult,
+    opts: AgentCallOpts,
+    execOpts: ExecuteOptions,
+    agentConfig: AgentConfig | undefined,
+  ): Promise<ResolvedIdentity> {
     const isPiRoute = route.engineId === DEFAULT_ENGINE_ID;
     const engineModel = isPiRoute ? undefined : (opts.model ?? agentConfig?.model);
     const identity = isPiRoute
@@ -239,25 +272,19 @@ export class WorkflowDispatch {
         execOpts,
       );
     if (!isPiRoute && engineModel !== undefined) execOpts.model = engineModel;
-    // record 引擎留痕（对齐 executeViaEngine 盖章规则：pi 纯缺省不盖键；pi 兜底盖
-    // 'pi'+from；非 pi 盖 engineId）。
+    return identity;
+  }
+
+  /** [executeWorkflowAgent 阶段拆分] record 引擎留痕（对齐 executeViaEngine 盖章规则：
+   *  pi 纯缺省不盖键；pi 兜底盖 'pi'+from；非 pi 盖 engineId）。原位 mutate execOpts。 */
+  private stampWorkflowEngineTrace(route: EngineRouteResult, execOpts: ExecuteOptions): void {
+    const isPiRoute = route.engineId === DEFAULT_ENGINE_ID;
     if (!isPiRoute) {
       execOpts.engine = route.engineId;
     } else if (route.engineFallback !== undefined) {
       execOpts.engine = DEFAULT_ENGINE_ID;
     }
     if (route.engineFallback !== undefined) execOpts.engineFallback = route.engineFallback;
-
-    // ── record 注册（origin:"workflow" + parentRunId；record 级 pending:register
-    //    照旧——与既有派发路径同款）──
-    const record = this.deps.createRecordForMode(identity, execOpts, "background", {
-      origin: "workflow",
-      parentRunId,
-    });
-    this.deps.getNotifyHost().emitPendingRegister(record.id, record.agent);
-
-    const effectiveSignal = signal ?? record.controller?.signal;
-    return this.runWorkflowEngineTask(record, opts, identity, route.engine, effectiveSignal, onEvent, stream);
   }
 
   /**
@@ -502,26 +529,39 @@ function outcomeToWorkflowResult(outcome: AgentOutcome): WorkflowAgentResult {
  * worker 层/引擎层独有字段不入 record
  * 消费面（taskSpec 装配走 opts 原样直传，不经本映射）。
  */
+/**
+ * 字段存在性投影（条件 spread 的查表化承载）：value 非 undefined 时经 project 产出
+ * 键值片段，否则空对象——语义等价 `...(x !== undefined ? { key: x } : {})`（仅查
+ * undefined，falsy 值照常透传），把逐字段条件分支的复杂度堆叠收敛到单点。
+ */
+function present<T>(
+  value: T | undefined,
+  project: (value: T) => Partial<ExecuteOptions>,
+): Partial<ExecuteOptions> {
+  return value === undefined ? {} : project(value);
+}
+
 function workflowCallToExecuteOptions(opts: AgentCallOpts): ExecuteOptions {
   const agentName = opts.description ?? opts.agent ?? "unknown";
   const slug = agentName.length > SLUG_MAX_LENGTH ? agentName.slice(0, SLUG_MAX_LENGTH) : agentName;
   return {
     task: opts.prompt,
     slug,
-    ...(opts.agent !== undefined ? { agent: opts.agent } : {}),
-    ...(opts.model !== undefined ? { model: opts.model } : {}),
-    ...(opts.thinkingLevel !== undefined ? { thinkingLevel: opts.thinkingLevel } : {}),
-    ...(opts.skillPath !== undefined ? { skillPath: opts.skillPath } : {}),
-    ...(opts.appendSystemPrompt !== undefined ? { appendSystemPrompt: opts.appendSystemPrompt } : {}),
-    ...(opts.schema !== undefined ? { schema: opts.schema } : {}),
-    ...(opts.schemaEnv !== undefined ? { schemaEnv: opts.schemaEnv } : {}),
-    ...(opts.maxTurns !== undefined ? { maxTurns: opts.maxTurns } : {}),
-    ...(opts.graceTurns !== undefined ? { graceTurns: opts.graceTurns } : {}),
-    ...(opts.fork !== undefined ? { fork: opts.fork } : {}),
-    ...(opts.forkSource !== undefined ? { forkFromSessionFile: opts.forkSource } : {}),
-    ...(opts.worktree !== undefined ? { worktree: opts.worktree } : {}),
-    ...(opts.cwd !== undefined ? { cwd: opts.cwd } : {}),
-    ...(opts.conversation !== undefined ? { conversation: opts.conversation } : {}),
-    ...(opts.idleTimeoutMs !== undefined ? { idleTimeoutMs: opts.idleTimeoutMs } : {}),
+    ...present(opts.agent, (agent) => ({ agent })),
+    ...present(opts.model, (model) => ({ model })),
+    ...present(opts.thinkingLevel, (thinkingLevel) => ({ thinkingLevel })),
+    ...present(opts.skillPath, (skillPath) => ({ skillPath })),
+    ...present(opts.appendSystemPrompt, (appendSystemPrompt) => ({ appendSystemPrompt })),
+    ...present(opts.schema, (schema) => ({ schema })),
+    ...present(opts.schemaEnv, (schemaEnv) => ({ schemaEnv })),
+    ...present(opts.maxTurns, (maxTurns) => ({ maxTurns })),
+    ...present(opts.graceTurns, (graceTurns) => ({ graceTurns })),
+    ...present(opts.fork, (fork) => ({ fork })),
+    // forkSource → forkFromSessionFile：两 DTO 键名不同源的显式映射。
+    ...present(opts.forkSource, (forkSource) => ({ forkFromSessionFile: forkSource })),
+    ...present(opts.worktree, (worktree) => ({ worktree })),
+    ...present(opts.cwd, (cwd) => ({ cwd })),
+    ...present(opts.conversation, (conversation) => ({ conversation })),
+    ...present(opts.idleTimeoutMs, (idleTimeoutMs) => ({ idleTimeoutMs })),
   };
 }
