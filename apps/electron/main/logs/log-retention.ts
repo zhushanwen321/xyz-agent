@@ -40,9 +40,11 @@ const RETENTION_PREFIXES = ['runtime-', 'pi-', 'plugin-crash-', 'main-', 'render
  * 它们是「固定名 + writer 持有型 append fd」的兜底取证类（常态零输出即健康）：mtime
  * 超龄被 unlink 后 writer 仍持有已删 inode 的 fd，写入静默落进孤儿文件（写成功、盘上
  * 无路径、零错误信号），到 fd 重建前新 stderr 全部丢失——恰在崩溃取证时刻失效。它们的
- * 治理唯一归 writer 进程侧 size 轮转（electron-runtime-stderr.log → main 的
- * process-control.ts；zcode-appserver-stderr.log → runtime 进程侧 u5b）。显式集合排除
- * 是防御性的：前缀清单演化（如出现 *-stderr 类前缀）时不会误伤这两文件。
+ * 治理唯一归 writer 进程侧 size 轮转：electron-runtime-stderr.log → main 的
+ * process-control.ts；zcode-appserver-stderr.log 是 W5 前历史遗留固定名（现 writer =
+ * zcode-subagent-cli，pid 维度文件名 zcode-appserver-stderr-<pid>.log 不匹配任何清理
+ * 前缀），保留在集合中仅防御性排除。显式集合排除是防御性的：前缀清单演化（如出现
+ * *-stderr 类前缀）时不会误伤这些文件。
  */
 const FIXED_NAME_STDERR_FILES = new Set(['electron-runtime-stderr.log', 'zcode-appserver-stderr.log'])
 

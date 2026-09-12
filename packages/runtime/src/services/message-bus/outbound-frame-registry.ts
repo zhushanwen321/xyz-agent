@@ -6,7 +6,7 @@
  *
  * - **契约保持式截断**：超截断档（OUTBOUND_FRAME_TRUNCATE_BYTES，默认 32MB）的 session 级
  *   push 帧，消息类型不变，按「帧内字段路径注册表」把大字段原地替换为占位载荷（content 类
- *   整字段替换为 text block 数组——对齐 event-interpreter.ts:641 hook 改写分支「保持 pi 持久化
+ *   整字段替换为 text block 数组——对齐 event-interpreter.ts:1054 hook 改写分支「保持 pi 持久化
  *   形态」权威先例；record 类类型保持替换；数组类单元素占位；字符串类占位文案），然后正常
  *   分配 seq、按 topic 三分类流转、广播——客户端收到截断版，ring 存截断版，断连回放与重
  *   订阅拉到的都是同一份截断版，seq 连续性 / gap 检测 / live≡reload 语义全部不被破坏。
@@ -62,13 +62,13 @@ export const DEFAULT_OUTBOUND_FRAME_GUARD_OPTIONS: OutboundFrameGuardOptions = {
 //
 // | wire 帧类型                        | 帧内大字段路径                          | 形态     | 生产点（实证） |
 // |------------------------------------|-----------------------------------------|----------|----------------|
-// | message.message_end                | payload.entry.message.content           | content  | infra/pi/event-adapter.ts:927（全部持久化 entry 的实时权威载体，live≡reload 协议层依据；图片 = content 数组内 Image block，entry 无独立 images 字段） |
-// | message.tool_call_end              | payload.entry.message.content           | content  | services/session/event-interpreter.ts:674（工具结果文本；与 message_end 双路下发，两帧都注册保帧间一致） |
-// | message.tool_call_start            | payload.entry.arguments                 | record   | services/session/event-interpreter.ts:617（write 类工具写入全文在 arguments，toolResult 只回小确认） |
-// | session.traceEntryAppended         | payload.entries                         | array-entry | services/session/trace-sync.ts:332 / :403（pi entry JSON 逐条增量） |
+// | message.message_end                | payload.entry.message.content           | content  | infra/pi/event-adapter.ts:948（全部持久化 entry 的实时权威载体，live≡reload 协议层依据；图片 = content 数组内 Image block，entry 无独立 images 字段） |
+// | message.tool_call_end              | payload.entry.message.content           | content  | services/session/event-interpreter.ts:1089（工具结果文本；与 message_end 双路下发，两帧都注册保帧间一致） |
+// | message.tool_call_start            | payload.entry.arguments                 | record   | services/session/event-interpreter.ts:1032（write 类工具写入全文在 arguments，toolResult 只回小确认） |
+// | session.traceEntryAppended         | payload.entries                         | array-entry | services/session/trace-sync.ts:363 / :434（pi entry JSON 逐条增量） |
 // | session.subagentEntriesAppended    | payload.entries                         | array-entry | infra/relay/relay-tee.ts:120（穷举新发现——subagent entry 增量帧，与 traceEntryAppended 同构；subagent 历史是巨型 JSONL 高发源，设计 D5① 自证） |
-// | subagent.stream_delta              | payload.lines                           | array-string | infra/relay/relay-tee.ts:171 / :189（lines = 累积全文 split('\n')；undefined = 终态清除，undefined 时帧小不触发守卫） |
-// | message.bashResult                 | payload.output                          | string   | services/session/message-dispatcher.ts:760（穷举新发现——bash 终态帧的 output 全文；上游 pi bash RPC 自截是既有防线，本条目是其失效时的纵深） |
+// | subagent.stream_delta              | payload.lines                           | array-string | infra/relay/relay-tee.ts:172 / :190（lines = 累积全文 split('\n')；undefined = 终态清除，undefined 时帧小不触发守卫） |
+// | message.bashResult                 | payload.output                          | string   | services/session/message-dispatcher.ts:1042 / :1115（穷举新发现——bash 终态帧的 output 全文；上游 pi bash RPC 自截是既有防线，本条目是其失效时的纵深） |
 // | terminal.data                      | payload.data                            | string   | services/terminal/terminal-service.ts:113（穷举新发现——PTY 输出块，用户 cat 大文件可达 MB 级；transient 类，miss 丢弃无 gap 风险） |
 //
 // 【判定不登记（控制面 / 有界载荷，逐类留痕防复穷举）】
@@ -160,7 +160,7 @@ function nextPlaceholderEntryId(): string {
 /**
  * 按字段形态构造占位载荷（类型保持）：
  * - content：整字段替换为 [{type:'text', text: 占位}]——block 数组结构合法，对齐
- *   event-interpreter.ts:641 hook 改写先例（保持 pi 持久化形态，reducer 对 content 形态既有兼容）。
+ *   event-interpreter.ts:1054 hook 改写先例（保持 pi 持久化形态，reducer 对 content 形态既有兼容）。
  * - record：{truncated, reason, originalBytes}——arguments 契约是 Record，谎报类型禁止。
  * - array-string / array-entry：单元素占位数组，元素形态与原元素同型
  *   （lines 的元素是 string → 占位字符串；entries 的元素是 PiEntry → 最小 PiMessageEntry 形态，
