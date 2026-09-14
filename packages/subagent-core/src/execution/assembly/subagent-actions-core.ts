@@ -596,6 +596,19 @@ export async function messageHandler(
     );
   }
 
+  // [round2-notify-fix] sync 批成员硬拒续聊：collect:"sync" 是「一次派发一批」的
+  // one-shot 语义，批成员续轮会把轮次通知重新路由进批缓冲（collectMode 残留 sync），
+  // 叠加批身份键的账本幂等语义曾致第二轮批通知静默丢失（2026-09-14 事故，详见
+  // buildBatchNotifyId 注释）。工具 description 已同步明示禁续聊；本守卫是结构性
+  // 兑现——仅靠 description 约束 LLM 行为不可靠。
+  if (record.collectMode === "sync") {
+    throw new Error(
+      `subagent ${id} was started with collect:"sync" (one-shot batch member) — batch members are not continuable. ` +
+      `Recovery: use action:'close' to release it, then action:'start' a new subagent for the follow-up ` +
+      `(omit collect, or use conversation:true if you plan to iterate with messages).`,
+    );
+  }
+
   // one-shot upgrade：非 chatMode 的 active record（running/idle——[U4] idle 纳入：
   // markSettled 轮收口 / 跨重启磁盘重建产出 idle 非 chatMode 形态，收 message 时
   // 自动升级为 chatMode，后续走 Continuation 统一续聊路径（新 run + resume 锚点）。

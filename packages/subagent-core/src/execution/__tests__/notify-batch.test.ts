@@ -1,8 +1,9 @@
 // src/execution/__tests__/notify-batch.test.ts
 //
 // notifier.notifyBatch 单测族（subagent-sync-collect U3）：
-//   1. buildBatchNotifyId：幂等键 sync-batch:<sha1(sorted ids)>——同成员集不同登记
-//      顺序同 hash（D2 隐式批身份稳定性），不同成员集异 hash；
+//   1. buildBatchNotifyId：幂等键 sync-batch:<sha1(sorted id:epoch:round)>——同成员集
+//      （同轮次）不同登记顺序同 hash（D2 隐式批身份稳定性），不同成员集异 hash；
+//      [round2-notify-fix] 同成员集跨轮异 hash（续轮批必为新键——2026-09-14 事故回归锁）；
 //   2. buildBatchLlmContent：批头计数（N finished / M failed / K cancelled，A3/A8
 //      前置）+ 批头行与成员条目 "\n\n---\n\n" join 形态；
 //   3. notifyBatch + fake ledger：单 entry 写账 + notifyId 正确 + details 批形态 +
@@ -111,6 +112,11 @@ function makeMember(id: string, over: Partial<BgNotifyRecord> = {}): BgNotifyRec
   };
 }
 
+/** [round2-notify-fix] 纯 id 成员视图 helper（旧字符串签名迁移）。 */
+function mid(...ids: string[]): { id: string }[] {
+  return ids.map((id) => ({ id }));
+}
+
 // ─── 协调器集成 harness（collect-coordinator.test.ts 同款注入风格）──
 
 function makeExecutionRecord(id: string, collectMode: "sync" | undefined): ExecutionRecord {
@@ -175,21 +181,51 @@ afterEach(() => {
 
 // ─── 1. 批身份键 ──
 
-describe("buildBatchNotifyId — sync-batch:<sha1(sorted ids)>", () => {
+describe("buildBatchNotifyId — sync-batch:<sha1(sorted id:epoch:round)>", () => {
   it("同成员集不同登记顺序同 hash（D2 隐式批身份稳定性）", () => {
-    const a = buildBatchNotifyId(["sa-c", "sa-a", "sa-b"]);
-    const b = buildBatchNotifyId(["sa-b", "sa-c", "sa-a"]);
-    const c = buildBatchNotifyId(["sa-a", "sa-b", "sa-c"]);
+    const a = buildBatchNotifyId(["sa-c", "sa-a", "sa-b"].map((id) => ({ id })));
+    const b = buildBatchNotifyId(["sa-b", "sa-c", "sa-a"].map((id) => ({ id })));
+    const c = buildBatchNotifyId(["sa-a", "sa-b", "sa-c"].map((id) => ({ id })));
     expect(a).toBe(b);
     expect(b).toBe(c);
   });
 
   it("前缀 sync-batch: + 不同成员集异 hash（跨批不互吞）", () => {
-    const id = buildBatchNotifyId(["sa-1", "sa-2"]);
+    const id = buildBatchNotifyId(mid("sa-1", "sa-2"));
     expect(id.startsWith("sync-batch:")).toBe(true);
-    expect(id).not.toBe(buildBatchNotifyId(["sa-1", "sa-3"]));
+    expect(id).not.toBe(buildBatchNotifyId(mid("sa-1", "sa-3")));
     // 单成员批也是合法批（后派 async 与残留单 sync 的混派边界）
-    expect(buildBatchNotifyId(["sa-1"])).not.toBe(buildBatchNotifyId(["sa-2"]));
+    expect(buildBatchNotifyId(mid("sa-1"))).not.toBe(buildBatchNotifyId(mid("sa-2")));
+  });
+
+  // [round2-notify-fix] 2026-09-14 事故回归锁：同批成员经 message 续轮后（round +1），
+  // 第二轮批通知必须产生新 notifyId——旧实现只 hash id 集合，同批第二轮与第一轮
+  // 同键，被账本 ackedIds 幂等拒绝后静默丢失（主 agent 永久悬挂 2 小时）。
+  it("[round2-notify-fix] 同成员集跨轮异 hash（续轮批必为新键）", () => {
+    const r1 = buildBatchNotifyId([
+      { id: "sa-a", round: 1 },
+      { id: "sa-b", round: 1 },
+      { id: "sa-c", round: 1 },
+    ]);
+    const r2 = buildBatchNotifyId([
+      { id: "sa-c", round: 2 },
+      { id: "sa-a", round: 2 },
+      { id: "sa-b", round: 2 },
+    ]);
+    expect(r1).not.toBe(r2);
+    // 同轮重验（重复 flush / E1 重建重发）仍同键——防重发语义保持
+    const r1Again = buildBatchNotifyId([
+      { id: "sa-a", round: 1 },
+      { id: "sa-b", round: 1 },
+      { id: "sa-c", round: 1 },
+    ]);
+    expect(r1).toBe(r1Again);
+    // epoch 维度同样参与防撞（reopen 后 round 归零不与历史轮撞键）
+    const reopened = buildBatchNotifyId([
+      { id: "sa-a", epoch: 1, round: 0 },
+      { id: "sa-b", epoch: 1, round: 0 },
+    ]);
+    expect(reopened).not.toBe(buildBatchNotifyId(mid("sa-a", "sa-b")));
   });
 });
 
@@ -247,7 +283,7 @@ describe("notifyBatch — ledger 写账 → 边沿投递（与 notify 同一通�
     });
 
     const members = [makeMember("sa-b"), makeMember("sa-a")];
-    const expectedId = buildBatchNotifyId(["sa-b", "sa-a"]);
+    const expectedId = buildBatchNotifyId(members);
     const accepted = notifier.notifyBatch(members);
     expect(accepted).toBe(true);
 
@@ -359,7 +395,7 @@ describe("notifyBatch — 无 ledger 内核路径降级（旧装配/无 ledger �
     expect(accepted).toBe(true);
     expect(loggerMock.warn).toHaveBeenCalledWith(
       expect.stringContaining("notify ledger not bound"),
-      expect.objectContaining({ notifyId: buildBatchNotifyId(["sa-x", "sa-y"]) }),
+      expect.objectContaining({ notifyId: buildBatchNotifyId(mid("sa-x", "sa-y")) }),
     );
     expect(sent).toHaveLength(1);
     expect(sent[0]!.content).toContain("Subagent batch completed: 2 finished, 0 failed, 0 cancelled.");
@@ -431,7 +467,7 @@ async function settleFlush(): Promise<void> {
     expect(sent.content).toContain("Subagent batch completed: 3 finished");
     const details = sent.details as { batch: boolean; notifyId: string; items: BgNotifyRecord[] };
     expect(details.items.map((i) => i.id).sort()).toEqual(["sa-1", "sa-2", "sa-3"]);
-    expect(details.notifyId).toBe(buildBatchNotifyId(["sa-1", "sa-2", "sa-3"]));
+    expect(details.notifyId).toBe(buildBatchNotifyId(mid("sa-1", "sa-2", "sa-3")));
   });
 
   it("flush 后新 sync 成员开新批（缓冲清空语义），两批 hash 互异", async () => {
@@ -448,8 +484,8 @@ async function settleFlush(): Promise<void> {
     expect(mock.sentMessages).toHaveLength(2);
     const ids = mock.sentMessages.map((m) => (m.details as { notifyId: string }).notifyId);
     expect(new Set(ids).size).toBe(2);
-    expect(ids).toContain(buildBatchNotifyId(["sa-1"]));
-    expect(ids).toContain(buildBatchNotifyId(["sa-2"]));
+    expect(ids).toContain(buildBatchNotifyId(mid("sa-1")));
+    expect(ids).toContain(buildBatchNotifyId(mid("sa-2")));
   });
 
   it("混派正交（A8）：async record 直通不走批，sync 成员批闭合不受 async 干扰", async () => {

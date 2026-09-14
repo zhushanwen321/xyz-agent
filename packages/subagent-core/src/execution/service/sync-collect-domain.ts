@@ -184,7 +184,17 @@ export class SyncCollectDomain {
         // accepted=false（同成员集批已在账——重复 flush / E1 重建重发形态）时已落标
         // 属幂等覆写（appendEntry last-writer-wins，该批此前成功投递时已落标），无
         // 行为差异。
-        this.deps.getNotifyHost().notifyBatch(live, this.getCollectSyncBudget());
+        // [round2-notify-fix] accepted 检查留痕：false = dispose 短路（空批/已销）或
+        // 账本幂等拒绝（同键已在账/已销账）——后者曾静默丢批通知无排查线索
+        // （2026-09-14 事故）。落标已先行（幂等覆写），此处仅 warn 可见性，不重试。
+        const accepted = this.deps.getNotifyHost().notifyBatch(live, this.getCollectSyncBudget());
+        if (!accepted) {
+          logger.warn(
+            `[subagents] sync-collect flushBatch: notifyBatch not accepted (${live.length} member(s)) — ` +
+              `notify dropped (dispose window or duplicate batch notifyId; members already batchFinalized)`,
+            { detail: { memberIds: live.map((m) => m.id) } },
+          );
+        }
       },
     });
   }

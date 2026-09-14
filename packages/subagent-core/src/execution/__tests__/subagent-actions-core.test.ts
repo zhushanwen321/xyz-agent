@@ -675,6 +675,23 @@ describe("⛔4 messageHandler（守卫 + upgrade + 投递，快照 = pi-sw 实�
     expect(deliverChatMessage).not.toHaveBeenCalled();
   });
 
+  it("[round2-notify-fix] collect:'sync' 批成员硬拒续聊 → 硬拒 + close/重派指引，不升级不投递（2026-09-14 事故回归锁）", async () => {
+    const deliverChatMessage = vi.fn(async () => {});
+    const syncRec = makeExecRecord({ id: "bg-sync", chatMode: false, status: "running", collectMode: "sync" });
+    const err = await errOf(() =>
+      messageHandler(
+        makeService({ getRecordForAction: vi.fn(() => syncRec), deliverChatMessage }),
+        { subagentId: "bg-sync", text: "re-review the fix please" },
+      ),
+    );
+    expect(err.errorName).toBe("Error");
+    expect(err.message).toContain('collect:"sync" (one-shot batch member)');
+    expect(err.message).toContain("Recovery: use action:'close'");
+    // 不升级、不投递：批成员语义一次性
+    expect(syncRec.chatMode).toBe(false);
+    expect(deliverChatMessage).not.toHaveBeenCalled();
+  });
+
   it("getRecordForAction 拒绝 + 无终态快照 → 原错误透传（文案最准原则）", async () => {
     expect(
       await errOf(() =>
