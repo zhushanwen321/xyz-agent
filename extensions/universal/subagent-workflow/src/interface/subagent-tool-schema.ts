@@ -121,7 +121,12 @@ export const SubagentParams = Type.Object({
       "tasks must be chained across messages (one start after the prior completes), never batched. " +
       "Use 'async' (or omit) for immediate per-subagent completion notifications. " +
       "Incompatible with conversation:true — that combination is rejected immediately before start; " +
-      "remove either conversation or collect.",
+      "remove either conversation or collect. " +
+      "[round2-notify-fix] Sync members are STRICTLY one-shot: do NOT send action:'message' to a " +
+      "collect:'sync' subagent to iterate (e.g. focused re-review) — it is rejected. For follow-up " +
+      "rounds, close the finished member and start a fresh subagent with the prior result attached " +
+      "in the task text; use conversation:true (without collect) when you genuinely need multi-round " +
+      "dialog with one agent.",
   })),
   // action:"list" → listParam OPTIONAL (all fields optional, defaults apply). Ignored by other actions.
   listParam: Type.Optional(Type.Object({

@@ -85,7 +85,7 @@ describe("sync batch notification golden (U3 — batch format lock, design §3.1
       ].join("\n\n---\n\n"),
     );
     expect(details.batch).toBe(true);
-    expect(details.notifyId).toBe(buildBatchNotifyId(["bg-aaa", "bg-bbb", "bg-ccc"]));
+    expect(details.notifyId).toBe(buildBatchNotifyId(["bg-aaa", "bg-bbb", "bg-ccc"].map((id) => ({ id }))));
     expect(details.items).toHaveLength(3);
   });
 
@@ -149,6 +149,6 @@ describe("sync batch details — bg-notify-render batch branch end-to-end (⛔1 
     expect(joined).toContain("boom");
     expect(joined).toContain("explore-ext");
     // 顶层新增 notifyId 键对渲染透明（extractBatch 只认 batch/items 两键）
-    expect(details.notifyId).toBe(buildBatchNotifyId(["bg-aaa", "bg-bbb", "bg-ccc"]));
+    expect(details.notifyId).toBe(buildBatchNotifyId(["bg-aaa", "bg-bbb", "bg-ccc"].map((id) => ({ id }))));
   });
 });

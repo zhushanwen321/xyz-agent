@@ -287,7 +287,18 @@ export function createNotifyLedger(
     record(notifyId, content, record): boolean {
       if (disposed) return false;
       // 幂等去重：在账（pending/sent）/ 已销账 / 已放弃（[T4③] 终态绝不重发）→ false
-      if (items.has(notifyId) || ackedIds.has(notifyId) || abandonedIds.has(notifyId)) return false;
+      // [round2-notify-fix] 拒绝时 warn 留痕：历史上此分支静默（零日志），同键碰撞导致的
+      // 通知丢失无排查线索（2026-09-14 事故的观测盲区）。warn 不改变行为，仅提供可检索
+      // 证据；预期内的同轮重发（重复 flush / E1 重建重发）也会留痕——可接受，重发本就
+      // 罕见且值得被看见。
+      if (items.has(notifyId) || ackedIds.has(notifyId) || abandonedIds.has(notifyId)) {
+        logger.warn(
+          "[subagents] notify ledger rejected duplicate notifyId (already " +
+            `${abandonedIds.has(notifyId) ? "abandoned" : ackedIds.has(notifyId) ? "acked" : "in-ledger"}) — notification dropped by idempotency`,
+          { detail: { notifyId } },
+        );
+        return false;
+      }
       host.appendLedgerEntry(NOTIFY_LEDGER_CUSTOM_TYPE, {
         v: 1,
         notifyId,

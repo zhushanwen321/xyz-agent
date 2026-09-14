@@ -213,9 +213,30 @@ const BATCH_NOTIFY_ID_PREFIX = "sync-batch:";
  * 重建批 / E1 补发凭此与账本原条目对齐，幂等去重）；不同成员集必异 hash（跨批不互吞）。
  * 成员 id 为 sa-xxx 格式无分隔歧义，join(",") 仅作边界防御。
  */
-export function buildBatchNotifyId(memberIds: readonly string[]): string {
+/** 批身份成员视图：notifyId 的参与面——id + 世代 + 轮次（BgNotifyRecord 的同构子集）。 */
+export interface BatchNotifyMember {
+  readonly id: string;
+  /** [round2-notify-fix] 世代（reopen 后归零防撞段；缺省 0 = 未推进世代的旧格式）。 */
+  readonly epoch?: Epoch;
+  /** [round2-notify-fix] 成员轮次（chatMode 续轮每轮 +1；one-shot settle 快照携带）。 */
+  readonly round?: number;
+}
+
+/**
+ * [round2-notify-fix] 批身份键改为成员 (id, epoch, round) 三元组的排序摘要。
+ *
+ * 历史 bug（2026-09-14 事故，session 01a09f85）：旧实现只 hash 成员 id 集合——
+ * `collect:"sync"` 批的成员经 `action:"message"` 续轮后（collectMode 残留 sync，
+ * 轮次通知被路由进批缓冲），第二轮 flush 的成员集与第一轮相同 → 同 notifyId →
+ * 账本 `ackedIds` 命中第一轮已销账的键 → `ledger.record` 幂等拒绝 → 批通知静默
+ * 丢失（无日志无补偿），主 agent 永久悬挂。三元组键使同批第 N 轮必为新键。
+ *
+ * 防重发语义保持：同一轮 settle 的重复 flush / E1 重建重发（成员快照 round 相同）
+ * 仍同键，账本幂等去重照常拦截——只把「跨轮」分开，不放松「同轮重发」。
+ */
+export function buildBatchNotifyId(members: readonly BatchNotifyMember[]): string {
   const digest = createHash("sha1")
-    .update([...memberIds].sort().join(","))
+    .update([...members].map((m) => `${m.id}:${m.epoch ?? 0}:${m.round ?? 0}`).sort().join(","))
     .digest("hex");
   return `${BATCH_NOTIFY_ID_PREFIX}${digest}`;
 }
@@ -639,7 +660,9 @@ export function createNotifier(host: NotifierHost): BgNotifier {
           ? { ...record, outcome: record.outcome ?? deriveOutcome(record.closedReason, record.error) }
           : { ...record },
       );
-      const batchNotifyId = buildBatchNotifyId(payloads.map((p) => p.id));
+      // [round2-notify-fix] 批身份键含轮次维度：payloads（BgNotifyRecord）结构兼容
+      // BatchNotifyMember——同批续轮后第二轮必为新键（见 buildBatchNotifyId 注释）。
+      const batchNotifyId = buildBatchNotifyId(payloads);
       // budget（可选）= service flushBatch/E1 补发接线传入的 config 热读值（U4 deviation #8
       // 由 U5 接线）；undefined → buildBatchLlmContent 参数缺省 = 设计默认值（4000/24000）。
       // 账本重放走写入时已定格的 content，预算在写账时刻生效（“flush 时热读”语义）。
