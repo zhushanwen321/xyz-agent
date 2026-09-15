@@ -162,7 +162,7 @@ type ViewedPanelsSource = Ref<readonly (string | null)[]>
  * 幂等：同 ref 重复绑定无副作用；新 ref 覆盖（测试隔离重绑定用）。
  * 未绑定时 getViewedVids 返回空集（驱逐无豁免，安全默认）。
  */
-// taste:allow-no-data-owner W24-EX-B（模块级单例 UI 瞬态，12 类未覆盖存量，登记草稿）：panel 枚举绑定单例 ref
+// taste:allow-no-data-owner W24-EX-B（模块级单例 UI 瞬态，12 类未覆盖存量，已登记 §4 ⑧ 2026-09-15）：panel 枚举绑定单例 ref
 const boundViewedPanels: Ref<ViewedPanelsSource | null> = ref(null)
 
 /** 绑定 panel 枚举源（renderer 装配层调用；重绑定覆盖旧源） */

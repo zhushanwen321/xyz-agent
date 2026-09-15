@@ -111,7 +111,7 @@ export function convertToDialogRequest(e: UiRequestEvent): DialogRequest {
 // （respond 删除）是两个独立工厂、壳层（useExtensionHostBridge）各自 provide——表在模块级
 // 才能让 respond 路径删条目。生产每进程单 source + 单 transport（initExtensionHostBridge
 // 一次性 provide）；测试经 __resetDialogRequestIdSessionsForTest 隔离。
-// taste:allow-no-data-owner W24-EX-A（ADR-0049 全局 sid 协调器/订阅注册基建，登记草稿）：requestId→sessionId 反查表（dialog 撤窗/应答路由），非 GUI 数据
+// taste:allow-no-data-owner W24-EX-A（ADR-0049 全局 sid 协调器/订阅注册基建，已登记 §4 ⑧ 2026-09-15）：requestId→sessionId 反查表（dialog 撤窗/应答路由），非 GUI 数据
 const requestIdSessions = new Map<string, string>()
 
 /**

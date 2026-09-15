@@ -1735,13 +1735,14 @@
     },
     {
       "id": "C-ext-19",
-      "summary": "结果语义通知必须走确认式送达（持久账本 + 幂等键，session-delivery/notify-ledger 通道），禁止新建依赖 pi 内存队列（steer/nextTurn/followUp）的 at-most-once 通道；交互式注入仅限非结果语义。生效口径：新代码即禁、存量列迁移切片（subagent-workflow 内存量经 g4-allow 行级豁免定性和迁移去向，scheduler 迁移登记 pi-boundary-reliability 附录 B 待办，G4 扫描面随迁移合入扩面）",
+      "summary": "结果语义通知必须走确认式送达（持久账本 + 幂等键，session-delivery/notify-ledger 通道），禁止新建依赖 pi 内存队列（steer/nextTurn/followUp）的 at-most-once 通道；交互式注入仅限非结果语义。scheduler 到期触发注入已改判（2026-09-14 用户裁决，权威源 scheduler-steer-direct-dispatch.md 裁决记录）：投递模型被 steer 直投 + 受理即记账重构，scheduler 触发按「提醒语义非结果语义」处置，at-least-once 降级为受理后 at-most-once 属设计已接受代价（busy 打断/abort 丢轮/无合批三代价四要素登记于该设计 §5），pi-boundary-reliability 附录 B 的 scheduler 账本化迁移待办随之销账（2026-09-15）。生效口径：新代码即禁、subagent-workflow 内存量经 g4-allow 行级豁免定性和迁移去向；G4（check_subagent_channels.py）扫描面 = extensions/universal/subagent-workflow/src/ 唯一——scheduler 不在扫描面、无 g4-allow 义务，仅当 scheduler 未来承载结果语义通知时才重新评估扩面",
       "scope": [
         "extensions/**",
         "packages/session-delivery/**"
       ],
       "authority": [
         "architecture/pi-boundary-reliability.md#d5确认式送达通用化at-most-once-内存通道禁止用于结果语义选定",
+        "architecture/scheduler-steer-direct-dispatch.md",
         "extensions/extension-conventions.md"
       ],
       "dimensions": [
