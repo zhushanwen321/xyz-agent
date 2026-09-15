@@ -30,8 +30,8 @@
  * 提取失败一律 fail（宁可误报不可漏报，pi-ai 源码形态变化时红灯提示人工同步）。
  */
 import { readFileSync, existsSync } from 'node:fs'
-import { dirname, join } from 'node:path'
-import { fileURLToPath } from 'node:url'
+import { dirname, join, resolve } from 'node:path'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..')
 const PI_AI = '@earendil-works/pi-ai'
@@ -180,102 +180,105 @@ export function resolvePiAiRoot() {
   }
 }
 
-// ── 权威源读取 ───────────────────────────────────────────────────────
+// ── main()：CLI 直跑才执行（vitest import 纯函数导出时不触发扫描/exit，check-publish-surface 先例）──
 
-const piAiRoot = resolvePiAiRoot()
-let dtsText
-let piAiVersion
-if (piAiRoot.error) {
-  console.error(
-    `  ✗ node_modules 实装 pi-ai 不可用（${piAiRoot.error}）——恢复动作：仓库根执行 pnpm install 后重跑 node scripts/check-thinking-levels.mjs`,
-  )
-  process.exit(1)
-}
-const dtsPath = join(piAiRoot.root, 'dist', 'types.d.ts')
-if (!existsSync(dtsPath)) {
-  console.error(
-    `  ✗ 实装 pi-ai 的 dist/types.d.ts 缺失: ${dtsPath}——恢复动作：确认 pnpm install 完整；若 pi-ai 改了类型文件布局，同步 scripts/check-thinking-levels.mjs 的定位逻辑`,
-  )
-  process.exit(1)
-}
-dtsText = readFileSync(dtsPath, 'utf-8')
-piAiVersion = JSON.parse(readFileSync(join(piAiRoot.root, 'package.json'), 'utf-8')).version
-
-const extracted = extractModelThinkingLevel(dtsText)
-if (extracted.error) {
-  console.error(
-    `  ✗ ModelThinkingLevel 提取失败: ${extracted.error}——恢复动作：人工核对 ${dtsPath} 的定义形态后同步 scripts/check-thinking-levels.mjs 的提取正则，重跑 node scripts/check-thinking-levels.mjs`,
-  )
-  process.exit(1)
-}
-const piMembers = extracted.values
-console.log(`thinking-levels 守卫：权威源 pi-ai ${piAiVersion} ModelThinkingLevel（${piMembers.length} 值）↔ 本地词表副本`)
-
-// ── 副本比对（T1 llm-shared / T2 pi-rpc / T3 subagent-core；fail 信息指向各自副本 + 设计文档）──
-
-const RECOVERY_SUFFIX = `——恢复动作：人工核对 ${dtsPath} 的 ModelThinkingLevel 定义后同步副本与 ${DESIGN_DOC} D5（pi 升级新增/移除档位即红灯），重跑 node scripts/check-thinking-levels.mjs`
-const T3_RECOVERY_SUFFIX = `——恢复动作：人工核对 ${dtsPath} 的 ModelThinkingLevel 定义后同步 THINKING_ORDER 与 ${DESIGN_DOC_18} D6（pi 升级新增/移除档位即红灯），重跑 node scripts/check-thinking-levels.mjs`
-
-function compareCopy(label, filePath, values, recoverySuffix = RECOVERY_SUFFIX) {
-  const { extra, missing } = setDiff(values, piMembers)
-  if (extra.length === 0 && missing.length === 0) {
-    ok(`${label} 与 pi-ai ${piAiVersion} ModelThinkingLevel 一致（${values.length} 值）`)
-    return
+function main() {
+  // 权威源读取
+  const piAiRoot = resolvePiAiRoot()
+  if (piAiRoot.error) {
+    console.error(
+      `  ✗ node_modules 实装 pi-ai 不可用（${piAiRoot.error}）——恢复动作：仓库根执行 pnpm install 后重跑 node scripts/check-thinking-levels.mjs`,
+    )
+    process.exit(1)
   }
-  const parts = []
-  if (extra.length > 0) parts.push(`副本多出: ${extra.join(', ')}`)
-  if (missing.length > 0) parts.push(`副本缺失: ${missing.join(', ')}`)
-  fail(`${label} 与 pi-ai ${piAiVersion} ModelThinkingLevel 漂移: ${parts.join('；')}${recoverySuffix}`)
-}
+  const dtsPath = join(piAiRoot.root, 'dist', 'types.d.ts')
+  if (!existsSync(dtsPath)) {
+    console.error(
+      `  ✗ 实装 pi-ai 的 dist/types.d.ts 缺失: ${dtsPath}——恢复动作：确认 pnpm install 完整；若 pi-ai 改了类型文件布局，同步 scripts/check-thinking-levels.mjs 的定位逻辑`,
+    )
+    process.exit(1)
+  }
+  const dtsText = readFileSync(dtsPath, 'utf-8')
+  const piAiVersion = JSON.parse(readFileSync(join(piAiRoot.root, 'package.json'), 'utf-8')).version
 
-// T1：llm-shared（extensions 侧唯一副本，D5 双登记裁决）
-{
-  if (!existsSync(LLM_SHARED_RESOLVE)) {
-    fail(`T1 llm-shared resolve.ts 缺失: ${LLM_SHARED_RESOLVE}——恢复动作：确认文件未被移动/删除（副本迁移时同步本守卫路径与 ${DESIGN_DOC} D5）`)
-  } else {
-    const r = extractConstListMembers(readFileSync(LLM_SHARED_RESOLVE, 'utf-8'), 'THINKING_LEVELS')
-    if (r.error) {
-      fail(`T1 llm-shared THINKING_LEVELS 提取失败: ${r.error}（${LLM_SHARED_RESOLVE}）${RECOVERY_SUFFIX}`)
+  const extracted = extractModelThinkingLevel(dtsText)
+  if (extracted.error) {
+    console.error(
+      `  ✗ ModelThinkingLevel 提取失败: ${extracted.error}——恢复动作：人工核对 ${dtsPath} 的定义形态后同步 scripts/check-thinking-levels.mjs 的提取正则，重跑 node scripts/check-thinking-levels.mjs`,
+    )
+    process.exit(1)
+  }
+  const piMembers = extracted.values
+  console.log(`thinking-levels 守卫：权威源 pi-ai ${piAiVersion} ModelThinkingLevel（${piMembers.length} 值）↔ 本地词表副本`)
+
+  // 副本比对（T1 llm-shared / T2 pi-rpc / T3 subagent-core；fail 信息指向各自副本 + 设计文档）
+  const RECOVERY_SUFFIX = `——恢复动作：人工核对 ${dtsPath} 的 ModelThinkingLevel 定义后同步副本与 ${DESIGN_DOC} D5（pi 升级新增/移除档位即红灯），重跑 node scripts/check-thinking-levels.mjs`
+  const T3_RECOVERY_SUFFIX = `——恢复动作：人工核对 ${dtsPath} 的 ModelThinkingLevel 定义后同步 THINKING_ORDER 与 ${DESIGN_DOC_18} D6（pi 升级新增/移除档位即红灯），重跑 node scripts/check-thinking-levels.mjs`
+
+  const compareCopy = (label, filePath, values, recoverySuffix = RECOVERY_SUFFIX) => {
+    const { extra, missing } = setDiff(values, piMembers)
+    if (extra.length === 0 && missing.length === 0) {
+      ok(`${label} 与 pi-ai ${piAiVersion} ModelThinkingLevel 一致（${values.length} 值）`)
+      return
+    }
+    const parts = []
+    if (extra.length > 0) parts.push(`副本多出: ${extra.join(', ')}`)
+    if (missing.length > 0) parts.push(`副本缺失: ${missing.join(', ')}`)
+    fail(`${label} 与 pi-ai ${piAiVersion} ModelThinkingLevel 漂移: ${parts.join('；')}${recoverySuffix}`)
+  }
+
+  // T1：llm-shared（extensions 侧唯一副本，D5 双登记裁决）
+  {
+    if (!existsSync(LLM_SHARED_RESOLVE)) {
+      fail(`T1 llm-shared resolve.ts 缺失: ${LLM_SHARED_RESOLVE}——恢复动作：确认文件未被移动/删除（副本迁移时同步本守卫路径与 ${DESIGN_DOC} D5）`)
     } else {
-      compareCopy('T1 llm-shared THINKING_LEVELS', LLM_SHARED_RESOLVE, r.values)
+      const r = extractConstListMembers(readFileSync(LLM_SHARED_RESOLVE, 'utf-8'), 'THINKING_LEVELS')
+      if (r.error) {
+        fail(`T1 llm-shared THINKING_LEVELS 提取失败: ${r.error}（${LLM_SHARED_RESOLVE}）${RECOVERY_SUFFIX}`)
+      } else {
+        compareCopy('T1 llm-shared THINKING_LEVELS', LLM_SHARED_RESOLVE, r.values)
+      }
     }
   }
-}
 
-// T2：pi-rpc（协议侧被迫独立副本，package.json 明文禁 subagent-core 依赖；顺带比对）
-{
-  if (!existsSync(PI_RPC_TYPES)) {
-    fail(`T2 pi-rpc types.ts 缺失: ${PI_RPC_TYPES}——恢复动作：确认文件未被移动/删除（副本迁移时同步本守卫路径）`)
-  } else {
-    const r = extractConstListMembers(readFileSync(PI_RPC_TYPES, 'utf-8'), 'THINKING_LEVELS')
-    if (r.error) {
-      fail(`T2 pi-rpc THINKING_LEVELS 提取失败: ${r.error}（${PI_RPC_TYPES}）${RECOVERY_SUFFIX}`)
+  // T2：pi-rpc（协议侧被迫独立副本，package.json 明文禁 subagent-core 依赖；顺带比对）
+  {
+    if (!existsSync(PI_RPC_TYPES)) {
+      fail(`T2 pi-rpc types.ts 缺失: ${PI_RPC_TYPES}——恢复动作：确认文件未被移动/删除（副本迁移时同步本守卫路径）`)
     } else {
-      compareCopy('T2 pi-rpc THINKING_LEVELS', PI_RPC_TYPES, r.values)
+      const r = extractConstListMembers(readFileSync(PI_RPC_TYPES, 'utf-8'), 'THINKING_LEVELS')
+      if (r.error) {
+        fail(`T2 pi-rpc THINKING_LEVELS 提取失败: ${r.error}（${PI_RPC_TYPES}）${RECOVERY_SUFFIX}`)
+      } else {
+        compareCopy('T2 pi-rpc THINKING_LEVELS', PI_RPC_TYPES, r.values)
+      }
     }
   }
-}
 
-// T3：subagent-core THINKING_ORDER（packages 侧唯一副本，ext-simplify-18 D6 纳入比对面）。
-// 有序数组但比对语义 = 成员集合一致性（setDiff 集合差异天然不判序）——低→高顺序语义
-// 由 subagent-core 自身测试锚定，守卫只抓成员漂移。
-{
-  if (!existsSync(SUBAGENT_CORE_MODEL_REF)) {
-    fail(`T3 subagent-core model-ref.ts 缺失: ${SUBAGENT_CORE_MODEL_REF}——恢复动作：确认文件未被移动/删除（副本迁移时同步本守卫路径与 ${DESIGN_DOC_18} D6）`)
-  } else {
-    const r = extractConstListMembers(readFileSync(SUBAGENT_CORE_MODEL_REF, 'utf-8'), 'THINKING_ORDER')
-    if (r.error) {
-      fail(`T3 subagent-core THINKING_ORDER 提取失败: ${r.error}（${SUBAGENT_CORE_MODEL_REF}）${T3_RECOVERY_SUFFIX}`)
+  // T3：subagent-core THINKING_ORDER（packages 侧唯一副本，ext-simplify-18 D6 纳入比对面）。
+  // 有序数组但比对语义 = 成员集合一致性（setDiff 集合差异天然不判序）——低→高顺序语义
+  // 由 subagent-core 自身测试锚定，守卫只抓成员漂移。
+  {
+    if (!existsSync(SUBAGENT_CORE_MODEL_REF)) {
+      fail(`T3 subagent-core model-ref.ts 缺失: ${SUBAGENT_CORE_MODEL_REF}——恢复动作：确认文件未被移动/删除（副本迁移时同步本守卫路径与 ${DESIGN_DOC_18} D6）`)
     } else {
-      compareCopy('T3 subagent-core THINKING_ORDER', SUBAGENT_CORE_MODEL_REF, r.values, T3_RECOVERY_SUFFIX)
+      const r = extractConstListMembers(readFileSync(SUBAGENT_CORE_MODEL_REF, 'utf-8'), 'THINKING_ORDER')
+      if (r.error) {
+        fail(`T3 subagent-core THINKING_ORDER 提取失败: ${r.error}（${SUBAGENT_CORE_MODEL_REF}）${T3_RECOVERY_SUFFIX}`)
+      } else {
+        compareCopy('T3 subagent-core THINKING_ORDER', SUBAGENT_CORE_MODEL_REF, r.values, T3_RECOVERY_SUFFIX)
+      }
     }
   }
+
+  // 汇总
+  if (failed === 0) {
+    console.log(`✓ thinking-levels 守卫通过（pi-ai ${piAiVersion} 权威源 ↔ llm-shared + pi-rpc + subagent-core 三副本词表一致）`)
+    process.exit(0)
+  }
+  console.error('thinking-levels 守卫未通过，按上方 ✗ 明细修复后重跑（每条报错自带恢复动作）')
+  process.exit(1)
 }
 
-// ── 汇总 ────────────────────────────────────────────────────────────
-if (failed === 0) {
-  console.log(`✓ thinking-levels 守卫通过（pi-ai ${piAiVersion} 权威源 ↔ llm-shared + pi-rpc + subagent-core 三副本词表一致）`)
-  process.exit(0)
-}
-console.error('thinking-levels 守卫未通过，按上方 ✗ 明细修复后重跑（每条报错自带恢复动作）')
-process.exit(1)
+const isMain = process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href
+if (isMain) main()
