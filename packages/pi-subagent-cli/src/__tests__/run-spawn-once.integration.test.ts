@@ -236,6 +236,12 @@ describe("runSpawnOnce 集成（fake pi 子进程）", () => {
         sessionRef: { sessionId: "fake-sess-1", sessionFile: result.sessionFile },
         });
 
+      // close 收尾面（镜像 exited / active-children 注销 / tee close flush）在 run
+      // resolve 之后异步到达（agent_settled resolve 早于收割）：先等 exited 镜像上报
+      // 再断言，避免与 close 事件赛跑。close finalizer 内 exited 之前的步骤（tee
+      // close / 注销登记）已同步完成，故 exited 到达即下列断言全部就绪。
+      await waitFor(() => h.stateChanges.some((s) => s.state === "exited"));
+
       // 镜像上报：childSpawned 先行 + running/exited 状态（killed=true = settled 收割）
       expect(h.childSpawned).toHaveLength(1);
       expect(h.childSpawned[0]!.recordId).toBe("rec-int-1");
