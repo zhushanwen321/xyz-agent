@@ -98,8 +98,9 @@ export function markRoundStartedImpl(id: string, ctx: RoundsCtx): boolean {
 /**
  * 意图原语：轮末收口——**写 idle**（[two-state-convergence U4/D3] A-lite 桥接退役：
  * 「轮已收口」回归 §3.2.2 事件表 `running --settle--> idle` 的单字段编码，对齐
- * markSettled/`.state` 收条/重建单规则。SP-5 兼容性已核验（设计 D3）：升级 gate
- * canUpgradeToConversation 查引擎能力不查 status；message 准入走 tryEnterRunning CAS
+ * markSettled/`.state` 收条/重建单规则。message 资资格核验已核验（设计 D3 + [modeless
+ * 波1] SP-5 记录级升级门 canUpgradeToConversation 消亡）：资格 = 引擎能力轴
+ * engineSupportsConversation（不查 status）；message 准入走 tryEnterRunning CAS
  * （idle→running）；onMessage 按 `status!=='running'` 分流进 revive 格——idle 形态
  * 本就是 revive 直通路径的设计输入）。簿记全集（①-⑪）：
  *   ① status 写 idle；② result 按 outcome 写入（成功=content / 失败=前值??

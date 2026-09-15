@@ -8,8 +8,9 @@
 // 单一职责：chat 域轮次编排——ConversationContinuation 实例表（continuations，本聚合
 // 唯一写者）+ 统一投递入口（deliverChatMessage）+ pi 会话形态轮次 detached 派发主干
 //（kickOffChatRound，one-shot 与 Continuation 轮同路）+ one-shot 轮 settled-watchdog
-// fire 处置 + 轮末收口协作（finalizeRoundToIdle / consumePendingArchive）+ SP-5 升级
-// gate（canUpgradeToConversation）+ Continuation 生命周期显式接口（清理/清队/在飞轮
+// fire 处置 + 轮末收口协作（finalizeRoundToIdle / consumePendingArchive）+ message
+// 资格引擎轴 gate（engineSupportsConversation——[modeless 波1] SP-5 记录级升级门
+// canUpgradeToConversation 消亡后的唯一资格判据）+ Continuation 生命周期显式接口（清理/清队/在飞轮
 // 查询）。run 域执行入口（execute/executeAndAwait/executeViaEngine）、引擎编排
 //（kickOffEngineRun/runEngineTask/adopt）、终态收口（settleOneShotOutcome）与
 // pool/worktree 资源装配留 run-orchestration。

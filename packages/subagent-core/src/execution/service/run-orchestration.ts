@@ -34,7 +34,7 @@
 //   #1 留壳共享依赖（store/manifestStore/modelService/notifyHost/pool/worktreeManager/
 //   collectCoordinator）getter 现读同一实例——深绑测试的 FR 替换语义保持。
 // 2. 转发壳写法：壳保留同名方法单行转发（execute/executeAndAwait/resolveModel 对外面 +
-//   executeWorkflowAgent → WorkflowDispatch / canUpgradeToConversation + deliverChatMessage
+//   executeWorkflowAgent → WorkflowDispatch / engineSupportsConversation + deliverChatMessage
 //   → ChatRounds，2026-09-13 接线）；聚合内部互调（executeViaEngine/
 //   settleOneShotOutcome 族等）不经壳。
 // 3. 跨聚合边收敛（r0-inventory 清单① C-4/C-5 + B-6）：
