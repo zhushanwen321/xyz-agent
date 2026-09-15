@@ -162,14 +162,9 @@ export interface SubagentRecord {
    * SSOT，extension 新增展示值时读侧不因类型收窄丢字段。
    */
   stopReason?: string
-  /**
-   * 对话模式标志（residual-fixes 设计）：chat 与否——侧栏执行态细分判据
-   * （one-shot 轮终 = chatMode 显式 false + result 有值 → 完成态；chat 轮终 → 等续聊）。
-   * 来源：自描述 subagent-record entry（register 起写入显式值，one-shot 为显式 false）；
-   * v1 前存量 entry 缺省 undefined——消费端按保守方向处理（无法确认不是 chat →
-   * 不宣告完成，落等续聊）。
-   */
-  chatMode?: boolean
+  /** [modeless 波4·已删除字段] chatMode（对话模式标志）随 core 写面停写一同消亡：万物可续后
+   * 「模式」不再是 record 状态——执行态细分（完成 vs 等续聊）无信息量，idle 统一按
+   * 「有 result=完成」展示。旧 entry 携带的该键在 runtime 投影层被忽略（读侧容忍）。 */
   /**
    * record 来源身份（H2 W1，设计 subagent-workflow-record-unification §3.3 D1）：
    * 'tool' = 主 agent 经 subagent 工具手动派发；'workflow' = workflow 脚本 agent()
