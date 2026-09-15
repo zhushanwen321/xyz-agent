@@ -13,6 +13,10 @@
 // 不做启发式自动认领——正确形态 = warn 留痕（含 recordId + 全路 miss 归因 + 人工
 // 排查指引）+ run 正常终态（resolveExit 必达、outcome 正常，不因缺锚点挂死/误报失败）。
 //
+// 时序（[modeless 波2] 后）：warn 属 close finalizer（收割后才发），而 run 在
+// agent_settled 已 resolve（应答不等收割）——断言前必须等 exited 镜像上报，
+// 否则与 close 事件赛跑（孤立跑必红、整包跑偶绿）。
+//
 // fixture 落 mkdtempSync 自建目录（tmpdir 白名单，不触碰真实数据目录）。
 
 import * as fs from "node:fs";
@@ -66,6 +70,16 @@ let logs: Array<{ level: LogLevel; component: string; message: string }>;
 
 interface Harness {
   handleReady: Array<{ sessionRef: Record<string, string> }>;
+  stateChanges: Array<{ state: "running" | "exited" }>;
+}
+
+/** 等待谓词成立（close 收尾事件在 run resolve 之后异步到达）。 */
+async function waitFor(pred: () => boolean, timeoutMs = 2000): Promise<void> {
+  const start = Date.now();
+  while (!pred()) {
+    if (Date.now() - start > timeoutMs) throw new Error("waitFor timeout");
+    await new Promise((r) => setTimeout(r, 25));
+  }
 }
 
 function makeHarness(): Harness {
@@ -82,14 +96,14 @@ function makeHarness(): Harness {
       logs.push({ level, component, message });
     },
   });
-  return { handleReady: [] };
+  return { handleReady: [], stateChanges: [] };
 }
 
 function callbacksOf(h: Harness): SpawnRunCallbacks {
   return {
     onEvent: () => {},
     onHandleReady: (p) => h.handleReady.push(p),
-    onChildStateChanged: () => {},
+    onChildStateChanged: (p) => h.stateChanges.push({ state: p.state }),
   };
 }
 
@@ -128,7 +142,10 @@ describe("close 时 sessionFile 缺失的响亮 warn（runSpawnOnce + fake pi �
     expect(result.sessionId).toBeUndefined();
     expect(h.handleReady).toHaveLength(0);
 
-    // 响亮 warn：含 recordId + unobtainable + 全路 miss 归因 + 人工排查指引
+    // 响亮 warn：含 recordId + unobtainable + 全路 miss 归因 + 人工排查指引。
+    // 等 exited 再断言：close finalizer 同帧内先报 exited 再发 warn，exited 到达
+    // 即 warn 已入 sink（run resolve 早于收割，不等则与 close 事件赛跑）。
+    await waitFor(() => h.stateChanges.some((s) => s.state === "exited"));
     const warns = logs
       .filter((l) => l.level === "warn" && l.message.includes("[sessionfile]"))
       .map((l) => l.message);
