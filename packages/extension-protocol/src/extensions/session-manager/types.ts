@@ -61,7 +61,10 @@ export interface SessionManagerAbortParams {
 // sessionService（曾以 undefined 流入 create 的 cwd/label/prompt）。
 
 function isRecord(v: unknown): v is Record<string, unknown> {
-  return typeof v === 'object' && v !== null
+  // 排数组严版（canonical = ext-guards isRecord），与同包 plugin-bridge /
+  // subagent-inflight 私有副本同款同义——六个 action 的 params schema 契约均为
+  // JSON object（extension 侧 Type.Object），数组属畸形输入走守卫拒绝闭环
+  return typeof v === 'object' && v !== null && !Array.isArray(v)
 }
 
 function isOptionalString(v: unknown): boolean {

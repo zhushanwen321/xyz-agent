@@ -100,10 +100,22 @@ export function collectActivePendingIds(entries: unknown[], opts?: CollectPendin
  * reopened → completed）——防新词落 default 被记为 completed 的误标（cancelled 同族
  * 事故先例：新枚举值漏映射静默落兜底）。
  *
- * 返回值 string：PendingStatus 枚举留在 pending-notifications（本包不引 extension 侧
- * 类型），产域恒在其联合内，消费方自行收窄。
+ * 返回值 MappedPendingStatus（本文件封闭字面量联合）：PendingStatus 枚举留在
+ * pending-notifications（本包不引 extension 侧类型），本联合是其终态子集——消费方
+ * 免 as 收窄直接赋值。
  */
-export function mapReasonToStatus(reason: string): string {
+/** mapReasonToStatus 的封闭返回值域：pending-notifications PendingStatus 的终态子集
+ * （不含初始态 active）。protocol 不引 extension 侧类型（分层裁决不变），以自有
+ * 字面量联合锁定值域，switch 分支编译期受限。 */
+export type MappedPendingStatus =
+  | 'completed'
+  | 'failed'
+  | 'cancelled'
+  | 'expired'
+  | 'time_limited'
+  | 'aborted'
+
+export function mapReasonToStatus(reason: string): MappedPendingStatus {
   switch (reason) {
     case 'completed':
       return 'completed'

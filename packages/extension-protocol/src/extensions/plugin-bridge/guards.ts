@@ -6,9 +6,9 @@
  * extension；runtime bridge-handler 的 5 处 `as string` 断言是后续批次的第二
  * 消费方（换校验的铺路，设计 D11 登记项）。
  *
- * isRecord 为模块内私有副本（排数组版——与 subagent-inflight 同款）：protocol
- * 不依赖 extensions 层的 ext-guards（分层边界裁决，D3 明确排除），包内已有
- * session-manager / subagent-inflight 两份私有副本并存。
+ * isRecord 为模块内私有副本（排数组严版——与 subagent-inflight / session-manager
+ * 副本同款同义）：protocol 不依赖 extensions 层的 ext-guards（分层边界裁决，D3
+ * 明确排除），包内三份私有副本并存是裁决下的既有惯例，语义必须一致。
  *
  * 设计权威源：docs/architecture/ext-simplify-17-shared-extraction.md §3.3 D11。
  */

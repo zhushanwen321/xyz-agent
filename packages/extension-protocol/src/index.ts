@@ -130,7 +130,11 @@ export type {
 export { SUBAGENTS_ENGINES_FILENAME } from './extensions/subagent-engine/contract'
 
 // ── pending-entries 差集核心（pending 事件流落盘形态语义：register 去重 + unregister 抵消；纯算法零 node 依赖）──
-export type { CollectPendingIdsOptions, PendingEntriesScan } from './pending-entries'
+export type {
+  CollectPendingIdsOptions,
+  MappedPendingStatus,
+  PendingEntriesScan,
+} from './pending-entries'
 export {
   PENDING_REGISTER_ENTRY_TYPE,
   PENDING_UNREGISTER_ENTRY_TYPE,
