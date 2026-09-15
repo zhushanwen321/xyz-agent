@@ -11,6 +11,7 @@
  */
 
 import { getConfigPath as getLlmSharedConfigPath, loadConfig } from "@zhushanwen/pi-llm-shared";
+import { isRecord, toErrorMessage } from "@zhushanwen/pi-ext-guards";
 import { getLogger } from "@zhushanwen/pi-extension-logger";
 
 import { DEFAULT_MAX_CONCURRENT_BACKGROUND } from "./background/spawn-background.ts";
@@ -49,10 +50,6 @@ export const DEFAULT_BASE_TOOL_ENHANCE_CONFIG: BaseToolEnhanceConfig = {
 /** 配置文件完整路径（诊断文案与测试用）。 */
 export function getConfigFilePath(): string {
 	return getLlmSharedConfigPath(CONFIG_PKG);
-}
-
-function isPlainObject(value: unknown): value is Record<string, unknown> {
-	return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function describeValue(value: unknown): string {
@@ -109,7 +106,7 @@ function normalizeForceBackgroundPatterns(raw: unknown): string[] {
 		} catch (err) {
 			logger.warn(
 				`Config key 'forceBackgroundPatterns[${index}]' is not a valid regex (${item}), dropped: ` +
-					`${err instanceof Error ? err.message : String(err)} (${getLlmSharedConfigPath(CONFIG_PKG)}).`,
+					`${toErrorMessage(err)} (${getLlmSharedConfigPath(CONFIG_PKG)}).`,
 			);
 			return;
 		}
@@ -138,7 +135,7 @@ function normalizeMaxConcurrentBackground(raw: unknown): number {
  * 问题在这里就地消化）。未知键忽略（前向兼容）。
  */
 export function normalizeBaseToolEnhanceConfig(raw: unknown): BaseToolEnhanceConfig {
-	if (!isPlainObject(raw)) {
+	if (!isRecord(raw)) {
 		if (raw !== undefined && raw !== null) {
 			logger.warn(
 				`Config root is not a JSON object (${describeValue(raw)}), using all defaults ` +

@@ -375,16 +375,15 @@ export class RecordAccess {
       rootSessionId: this.deps.getSessionRootId() ?? undefined,
       parentRecordId,
       depth,
-      chatMode: opts.conversation === true,
+      // [modeless 波1] conversation 参数 accepted-no-op：chatMode 不再落 record
+      //（「模式」不是 record 状态——万物可续）。idleTimeoutMs 对全 record 生效。
       idleTimeoutMs: opts.idleTimeoutMs,
       // P4 引擎留痕（D9①）：opts.engine/engineFallback 由引擎适配层写入（PiEngine.run
       // 从 RunContext 回填；缺省 = pi 投影，存量调用方零感知）
       engine: opts.engine,
       engineFallback: opts.engineFallback,
-      // subagent-sync-collect U2（偏差#4 接线）：sync record 落 collectMode——
-      // 协调器路由判据 + startHandler pendingSyncCount 枚举含本条的数据源。
-      // undefined = async（缺省语义，旧记录零迁移）。
-      collectMode: opts.collect === "sync" ? "sync" : undefined,
+      // [modeless 波3] collect 路由选项不在 record 落值——sync 成员由 executeViaEngine
+      // 派发时点登记进协调器（成员身份 = 登记态，非 record 字段）。
       controller,
     });
     // [H2 W2] 来源身份在对象构造点落位（origin/parentRunId 为 readonly，创建期一次性

@@ -2,10 +2,11 @@
  * Todo 渲染函数 — 状态栏、widget（双列）、tool result 渲染。
  */
 
-import type { Theme } from "@earendil-works/pi-coding-agent";
+import type { Theme, ThemeColor } from "@earendil-works/pi-coding-agent";
 import { truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 
 import {
+	todoProgress,
 	type Todo,
 	type TodoDetails,
 } from "./model";
@@ -24,25 +25,15 @@ const SINGLE_COLUMN_BUDGET = WIDGET_MAX_LINES - 1;
 
 /** 垂直分割线视觉宽度（" │ "） */
 const DIVIDER_VISUAL_WIDTH = 3;
-const ELLIPSIS_MIN_WIDTH = 3;
-
-/** 截断或补齐到精确视觉宽度，截断时追加 "..." */
-function fixedWidth(text: string, width: number): string {
-	const len = visibleWidth(text);
-	if (len <= width) {
-		return text + " ".repeat(width - len);
-	}
-	if (width <= ELLIPSIS_MIN_WIDTH) return "...".slice(0, width);
-	return truncateToWidth(text, width - ELLIPSIS_MIN_WIDTH) + "...";
-}
+/** 省略号视觉宽度（"..."） */
+const ELLIPSIS_WIDTH = 3;
 
 // ── 状态栏 ────────────────────────────────────────────
 
 export function renderStatusText(todoList: Todo[], th: Theme): string {
 	if (todoList.length === 0) return "";
 
-	const completed = todoList.filter((t) => t.status === "completed").length;
-	const total = todoList.length;
+	const { completed, total } = todoProgress(todoList);
 
 	if (completed === total) {
 		return th.fg("success", `\u2713 ${completed}/${total}`);
@@ -52,8 +43,9 @@ export function renderStatusText(todoList: Todo[], th: Theme): string {
 
 // ── Widget 双列渲染 ──────────────────────────────────
 
-/** 渲染单条 todo 的 widget 行（不含缩进），供 component.ts 复用 */
-function renderWidgetItem(t: Todo, th: Theme): string {
+/** 渲染单条 todo 的 widget 行（不含缩进），供 component.ts 复用。
+ * textColor = 非完成态文本颜色（widget 用 "text"，tool result 列表用 "muted"——历史差异显式保留，未做视觉统一）。 */
+function renderWidgetItem(t: Todo, th: Theme, textColor: ThemeColor = "text"): string {
 	const mark =
 		t.status === "completed"
 			? th.fg("success", "\u2713")
@@ -61,7 +53,7 @@ function renderWidgetItem(t: Todo, th: Theme): string {
 				? th.fg("warning", "\u25cf")
 				: th.fg("dim", "\u25cb"); // pending
 	const id = th.fg("accent", `#${t.id}`);
-	const text = t.status === "completed" ? th.fg("dim", t.text) : th.fg("text", t.text);
+	const text = t.status === "completed" ? th.fg("dim", t.text) : th.fg(textColor, t.text);
 	return `${mark} ${id} ${text}`;
 }
 
@@ -91,11 +83,22 @@ export function renderDualColumn(
 	const lines: string[] = [];
 	const half = Math.ceil(todos.length / COLUMN_COUNT);
 	const divider = " " + th.fg("borderMuted", "\u2502") + " ";
+	// 补齐/截断到列宽：可见输出与 D14 替换前的列宽逻辑逐字符一致（裁决零行为变化）——
+	// 截断列保持「前缀+6点」旧形态，不可简化为单调用 truncateToWidth(text, colWidth, "...", true)
+	// （会改为前缀+3点）；行为由 __tests__/render.test.ts 锁定。colWidth <= ELLIPSIS_WIDTH 走 pi-tui
+	// clipped-ellipsis 路径，可见一致（ANSI reset 包裹差异不影响渲染）。负列宽（病态窄终端）pi-tui 对
+	// maxWidth<=0 恒空串，无法复现旧 slice 负索引语义，保留原特判。
+	const fit = (text: string): string =>
+		colWidth < 0
+			? "...".slice(0, colWidth)
+			: visibleWidth(text) <= colWidth || colWidth <= ELLIPSIS_WIDTH
+				? truncateToWidth(text, colWidth, "...", true)
+				: truncateToWidth(text, colWidth - ELLIPSIS_WIDTH) + "...";
 	for (let row = 0; row < half; row++) {
-		const left = fixedWidth(indent + renderWidgetItem(todos[row], th), colWidth);
+		const left = fit(indent + renderWidgetItem(todos[row], th));
 		const rightIdx = row + half;
 		const right = rightIdx < todos.length
-			? fixedWidth(renderWidgetItem(todos[rightIdx], th), colWidth)
+			? fit(renderWidgetItem(todos[rightIdx], th))
 			: " ".repeat(colWidth);
 		lines.push(left + divider + right);
 	}
@@ -112,8 +115,7 @@ export function renderWidgetLines(
 
 	const width = termWidth ?? (process.stdout.columns || FALLBACK_TERM_WIDTH);
 	const lines: string[] = [];
-	const completed = todoList.filter((t) => t.status === "completed").length;
-	const total = todoList.length;
+	const { completed, total } = todoProgress(todoList);
 
 	lines.push(th.fg("accent", "\u2611") + th.fg("muted", ` ${completed}/${total}`));
 
@@ -141,15 +143,7 @@ function buildTodoListText(todoList: Todo[], options: { expanded: boolean }, the
 	let listText = theme.fg("muted", `${todoList.length} todos:`);
 	const display = options.expanded ? todoList : todoList.slice(0, MAX_COLLAPSED_ITEMS);
 	for (const t of display) {
-		const status = t.status;
-		const mark =
-			status === "completed"
-				? theme.fg("success", "\u2713")
-				: status === "in_progress"
-					? theme.fg("warning", "\u25cf")
-					: theme.fg("dim", "\u25cb"); // pending
-		const itemText = status === "completed" ? theme.fg("dim", t.text) : theme.fg("muted", t.text);
-		listText += `\n${mark} ${theme.fg("accent", `#${t.id}`)} ${itemText}`;
+		listText += `\n${renderWidgetItem(t, theme, "muted")}`;
 	}
 	if (!options.expanded && todoList.length > MAX_COLLAPSED_ITEMS) {
 		listText += `\n${theme.fg("dim", `... ${todoList.length - MAX_COLLAPSED_ITEMS} more`)}`;
@@ -160,12 +154,7 @@ function buildTodoListText(todoList: Todo[], options: { expanded: boolean }, the
 // ── Tool renderResult handler ────────────────────────
 
 import { Text } from "@earendil-works/pi-tui";
-
-/** content[0] 提取 text（缺失/非 text 类型 → 空串） */
-function firstContentText(r: { content: Array<{ type: string; text?: string }> }): string {
-	const text = r.content[0];
-	return text?.type === "text" ? (text.text ?? "") : "";
-}
+import { firstContentText } from "@xyz-agent/extension-protocol";
 
 export function renderTodoResult(result: unknown, options: { expanded: boolean }, theme: Theme): Text {
 	const r = result as { content: Array<{ type: string; text?: string }>; details?: unknown };

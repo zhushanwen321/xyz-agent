@@ -31,15 +31,20 @@ import type {
 } from "@earendil-works/pi-coding-agent";
 import {
 	BRIDGE_MARKER,
+	callMarkerRpc,
+	formatChannelErrorText,
+	isBridgeErrorResponse,
+	isBridgeToolExecuteResponse,
+	isBridgeSyncPayload,
+	isBridgeInterceptResponse,
+	isSyncedTool,
 	type BridgeErrorResponse,
 	type BridgeSyncPayload,
-	type BridgeToolExecuteResponse,
 	type BridgeRequest,
-	type BridgeInterceptResponse,
 } from "@xyz-agent/extension-protocol";
 import { getLogger, setPiHandle } from "@zhushanwen/pi-extension-logger";
 import type { TSchema } from "typebox";
-import { toErrorMessage } from "@zhushanwen/pi-ext-guards";
+import { isRecord, toErrorMessage } from "@zhushanwen/pi-ext-guards";
 
 // 模块级 logger（factory 首行 setPiHandle 注入后自动走 appendEntry 持久化，
 // 注入前/失败降级文件日志——见 extension-logger 三层通道设计）
@@ -61,73 +66,19 @@ const PROMPT_GATE_TIMEOUT_MS = 5_000;
 const RESPONSE_PREVIEW_LENGTH = 200;
 
 // ── 运行时形状守卫（extensions 约定：断言必须有运行时 guard 兜底）──
-
-function isRecord(v: unknown): v is Record<string, unknown> {
-	return typeof v === "object" && v !== null && !Array.isArray(v);
-}
-
-/** runtime 错误闭环形状 {error, hint?}（设计 §3.3-D1：不裸 reject） */
-function isBridgeErrorResponse(v: unknown): v is BridgeErrorResponse {
-	return isRecord(v) && typeof v.error === "string";
-}
-
-function isBridgeToolExecuteResponse(v: unknown): v is BridgeToolExecuteResponse {
-	return isRecord(v) && typeof v.content === "string" && (v.isError === undefined || typeof v.isError === "boolean");
-}
-
-function isBridgeSyncPayload(v: unknown): v is BridgeSyncPayload {
-	return isRecord(v) && v.success === true && Array.isArray(v.tools);
-}
-
-function isBridgeInterceptResponse(v: unknown): v is BridgeInterceptResponse {
-	return isRecord(v) && Array.isArray(v.injectedMessages);
-}
-
-/** sync 清单里的单个工具条目（parameters 顶层必须 type:'object'——OpenAI 兼容红线） */
-function isSyncedTool(v: unknown): v is BridgeSyncPayload["tools"][number] {
-	return (
-		isRecord(v) &&
-		typeof v.name === "string" &&
-		typeof v.description === "string" &&
-		isRecord(v.parameters) &&
-		v.parameters.type === "object"
-	);
-}
+// Bridge 回包五守卫（isBridgeErrorResponse / isBridgeToolExecuteResponse /
+// isBridgeSyncPayload / isBridgeInterceptResponse / isSyncedTool）已迁入 protocol 的
+// plugin-bridge 协议模块（D11：「marker + types + 守卫」同住），本包经 barrel import。
 
 /** 拦截注入消息的最小形状（旧 bridge 契约：{role, content}，content 任意类型） */
 function isInjectedMessage(v: unknown): v is { content: unknown } {
 	return isRecord(v) && "content" in v;
 }
 
-// ── pi 原生 Content 形态（@earendil-works/pi-ai TextContent/ImageContent 的结构形状；
-// pi-coding-agent 主入口不 re-export 这两个类型，按 subagent-workflow 同款局部接口先例）──
-
-/** TextContent 最小判定形状：textSignature 等可选字段守卫不检查、透传不丢失 */
-interface InjectedTextContent {
-	type: "text";
-	text: string;
-}
-
-/** ImageContent 同构形状：{type:'image', data, mimeType} */
-interface InjectedImageContent {
-	type: "image";
-	data: string;
-	mimeType: string;
-}
-
-function isTextContent(v: unknown): v is InjectedTextContent {
-	return isRecord(v) && v.type === "text" && typeof v.text === "string";
-}
-
-function isImageContent(v: unknown): v is InjectedImageContent {
-	return isRecord(v) && v.type === "image" && typeof v.data === "string" && typeof v.mimeType === "string";
-}
-
-/** 清单 miss 识别（设计 §3.4-E2）：错误闭环 {error:'Tool not found…'} 与工具结果
- * {content:'Tool not found…', isError:true}（runtime bridge-interop 实装形态）双覆盖 */
+/** 清单 miss 识别（设计 §3.4-E2）：工具结果形态 {content:'Tool not found…', isError:true}
+ * （runtime bridge-interop 唯一生产形态；error 闭环形态零供给方，分支已删） */
 function isToolNotFound(raw: unknown): boolean {
 	if (!isRecord(raw)) return false;
-	if (typeof raw.error === "string") return raw.error.startsWith("Tool not found");
 	return raw.isError === true && typeof raw.content === "string" && raw.content.startsWith("Tool not found");
 }
 
@@ -146,45 +97,40 @@ async function callBridge(
 	opts?: { signal?: AbortSignal; timeout?: number },
 ): Promise<unknown> {
 	if (ctx.mode !== "rpc") return null;
-	const payload = JSON.stringify(request);
-	try {
-		// signal 透传给 dialog：abort 后 pi 本地 resolve(undefined) 不 reject（rpc-mode
-		// pendingExtensionRequests），用户中断秒级打断挂起等待（G2）。timeout 同为 pi 本地
-		// resolve(undefined)（rpc-mode createDialogPromise），仅启动 sync 传入（控制面就绪
-		// 等待的自愈闸，见 syncOnce 注释）；工具 execute 不传——超时权威在 runtime 侧 D1
-		// 取值链，pi 侧挂 timer 会与 runtime 计时器赛跑。undefined 字段 pi 侧当无约束。
-		const value = await ctx.ui.select(BRIDGE_MARKER, [payload], { signal: opts?.signal, timeout: opts?.timeout });
-		if (value === undefined || value === null) return null;
-		try {
-			return JSON.parse(value);
-		} catch {
-			// 回包非 JSON = 协议版本不匹配（E5/E7 类），必须留痕不静默
-			logger.error(`[plugin-bridge] non-JSON response for ${request.method}`, {
-				responseHead: value.slice(0, RESPONSE_PREVIEW_LENGTH),
-			});
-			return null;
-		}
-	} catch (err) {
-		// select 通道异常（非用户取消/超时——那两类是 resolve undefined）：折叠 null 供
-		// 调用方统一转 isError，但必须留痕（静默吞 = runtime 故障不可排查）
-		logger.error(`[plugin-bridge] select channel threw for ${request.method}`, {
-			reason: toErrorMessage(err),
-		});
-		return null;
-	}
+	// 从 ExtensionContext 构造 GuiContext 最小子集（ask-user runRpcInteraction 同款先例）：
+	// ExtensionContext.ui.custom 泛型签名与 GuiContext.ui.custom 静态不兼容，直接传 ctx
+	// 过不了 tsc；callMarkerRpc 只读 ui.select。
+	const guiCtx = {
+		mode: ctx.mode,
+		hasUI: ctx.hasUI,
+		ui: { select: ctx.ui.select.bind(ctx.ui) },
+	};
+	// 传输核（select 调用 + catch 折叠 + JSON 检测）走 protocol 的 callMarkerRpc 原语（D8）：
+	// signal 透传给 dialog——abort 后 pi 本地 resolve(undefined) 不 reject（rpc-mode
+	// pendingExtensionRequests），用户中断秒级打断挂起等待（G2）；timeout 同为 pi 本地
+	// resolve(undefined)（rpc-mode createDialogPromise），仅启动 sync 传入（控制面就绪
+	// 等待的自愈闸，见 syncOnce 注释）；工具 execute 不传——超时权威在 runtime 侧 D1
+	// 取值链，pi 侧挂 timer 会与 runtime 计时器赛跑。通道异常与非 JSON 回包的留痕由
+	// 原语经注入的 log 承担；失败四态统一折叠 null，由各调用方按语义转 isError 或重试。
+	const result = await callMarkerRpc(guiCtx, BRIDGE_MARKER, JSON.stringify(request), {
+		signal: opts?.signal,
+		timeout: opts?.timeout,
+		log: (msg, detail) => logger.error(`[plugin-bridge] ${msg}`, detail),
+	});
+	if (!result.ok) return null;
+	// ok:true 时 value 必为合法 JSON（原语已检测）；parsed 消费（形状守卫族）留本包
+	return JSON.parse(result.value);
 }
 
-/** sessionId 从 ctx 取（ReadonlySessionManager.getSessionId）；session 文件可能尚未
- * 落盘（pi 延迟写入），取失败不阻断转发——sessionId 缺省时 runtime 按 marker 请求自身路由 */
-function getSessionId(ctx: ExtensionContext): string | undefined {
-	try {
-		return ctx.sessionManager.getSessionId();
-	} catch {
-		return undefined;
-	}
+/** sessionId 从 ctx 取（ReadonlySessionManager.getSessionId，pi 实装纯字段读不可 throw）——
+ * sessionId 缺省时 runtime 按 marker 请求自身路由 */
+function getSessionId(ctx: ExtensionContext): string {
+	return ctx.sessionManager.getSessionId();
 }
 
-// ── 工具执行结果类型（session-manager 同款：details 供下游消费，错误必须 isError）──
+// ── 工具执行结果类型（details 按仓内惯例写入：供 JSONL/devtools 人读诊断，本包无程序化
+// 消费方；error/cancelled/unexpected 是 isError 派生不出的失败原因族信号，保留；ok 无载荷——
+// content[0].text 已完整携带回包信息，不重复持久化。错误必须 isError）──
 
 // 【坑】isError 是 extension 侧约定字段——pi 0.84.4 的 AgentToolResult 接口无此字段
 // （实装锚点：node_modules/@earendil-works/pi-agent-core@0.84.4 dist/types.d.ts:317，
@@ -197,7 +143,7 @@ function getSessionId(ctx: ExtensionContext): string | undefined {
 interface PluginBridgeToolResult {
 	content: Array<{ type: "text"; text: string }>;
 	details:
-		| { kind: "ok"; result: BridgeToolExecuteResponse }
+		| { kind: "ok" }
 		| { kind: "error"; error: BridgeErrorResponse | { error: string } }
 		| { kind: "cancelled" }
 		| { kind: "unexpected"; response: unknown };
@@ -213,11 +159,10 @@ function cancelledResult(toolName: string): PluginBridgeToolResult {
 }
 
 function errorResult(err: BridgeErrorResponse | { error: string }): PluginBridgeToolResult {
-	const hint = "hint" in err && typeof err.hint === "string" ? err.hint : undefined;
-	const text = hint ? `${err.error}\nhint: ${hint}` : err.error;
+	// 文本拼接单源于 protocol 的 formatChannelErrorText（D8）——{error} 变体可赋值（hint 可选缺席）
 	return {
 		isError: true,
-		content: [{ type: "text" as const, text }],
+		content: [{ type: "text" as const, text: formatChannelErrorText(err) }],
 		details: { kind: "error", error: err },
 	};
 }
@@ -275,7 +220,6 @@ export default function pluginBridgeExtension(pi: ExtensionAPI): void {
 			});
 			registered++;
 		}
-		// commands 恒空忽略（设计 §3.3-D7：pi 侧命令发现另走 getCommands，死代码不复制）
 		return registered;
 	}
 
@@ -379,8 +323,6 @@ export default function pluginBridgeExtension(pi: ExtensionAPI): void {
 		// 即返回 Tool not found（不重新校验：本 turn 的 toolCall 已发出无法重试；R2 真相
 		// 修正——pi 0.84.4 registerTool 后下一个 LLM 请求即携带新工具，下一 turn 模型
 		// 重试即命中新清单，恢复时点 = 下一 turn 而非下个 session。防抖见 ensureSynced）。
-		// 兼容两种形态：错误闭环 {error:'Tool not found…'} 与工具结果
-		// {content:'Tool not found…', isError:true}（runtime bridge-interop 实装形态）
 		if (isToolNotFound(raw)) {
 			await ensureSynced(ctx);
 		}
@@ -390,7 +332,7 @@ export default function pluginBridgeExtension(pi: ExtensionAPI): void {
 		if (isBridgeToolExecuteResponse(raw)) {
 			return {
 				content: [{ type: "text", text: raw.content }],
-				details: { kind: "ok", result: raw },
+				details: { kind: "ok" },
 				isError: raw.isError === true ? true : undefined,
 			};
 		}
@@ -442,7 +384,8 @@ export default function pluginBridgeExtension(pi: ExtensionAPI): void {
 
 	// intercept：唯一允许 await 的转发（before_agent_start 本就是等待决策的语义）。
 	// 多条注入收窄为单条 CustomMessage 的 content 数组（pi 0.84.4 result 机制只有单
-	// message 槽位；类型零丢失——消息边界变化对 LLM 上下文等价，设计 §3.2 对比三 a 登记项）
+	// message 槽位；内容零丢失（消息边界收窄语义；结构化 Content 透传承诺已随 D1 降格
+	// 删除）——消息边界变化对 LLM 上下文等价，设计 §3.2 对比三 a 登记项）
 	pi.on("before_agent_start", async (data, ctx) => {
 		// 首个 prompt 准入闸（R2 真相修复，设计 §3.3-D4）：R2 动态实证（2026-09-05，
 		// /tmp/bridge-r2 payload 探针）pi 0.84.4 无固化——registerTool 完成后下一个 LLM
@@ -490,20 +433,15 @@ export default function pluginBridgeExtension(pi: ExtensionAPI): void {
 		const result: BeforeAgentStartEventResult = {
 			message: {
 				customType: "plugin-inject",
-				content: messages.map((content): InjectedTextContent | InjectedImageContent => {
-					// 已是 pi 原生 Content 形态（TextContent/ImageContent）→ 原样透传：
-					// CustomMessage.content 数组本就接受该形态（设计 §3.2「类型零丢失」
-					// 承诺——如 image 段被 stringify 成 text 会丢失多模态语义）
-					if (isTextContent(content) || isImageContent(content)) return content;
-					// 其余未知形态（含 string）fallback 为 text 段：content 契约是
-					// string | 结构化（旧 bridge 契约 {role, content}），非字符串序列化
-					// 保信息；undefined/null 兜底 String() 防 text 破约（JSON.stringify
-					// 对 undefined 返回 undefined 而非字符串）
-					return {
-						type: "text" as const,
-						text: typeof content === "string" ? content : (JSON.stringify(content) ?? String(content)),
-					};
-				}),
+				// content 映射恒两路（D1 string-only 裁决）：runtime 管线层校验恒产出
+				// string（非 string 条目管线层丢弃 + warn），string 直用；其余形态（版本
+				// 失配形态）序列化保信息。结构化透传分支已删（零供给方）；结构化注入若未来
+				// 立项，届时随管线层联合设计恢复消费端。undefined/null 兜底 String() 防
+				// text 破约（JSON.stringify 对 undefined 返回 undefined 而非字符串）
+				content: messages.map((content) => ({
+					type: "text" as const,
+					text: typeof content === "string" ? content : (JSON.stringify(content) ?? String(content)),
+				})),
 				display: false,
 				details: { count: messages.length },
 			},

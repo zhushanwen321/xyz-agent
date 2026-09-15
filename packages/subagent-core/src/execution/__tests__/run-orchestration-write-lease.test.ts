@@ -7,16 +7,16 @@
 //      `.alive` 存在且 pid=本进程；轮终（settleOneShotOutcome SP-5 → markRoundIdle）
 //      后 marker 跨轮保留（D3a/B5）；
 //   2. 非 pi 引擎死亡 adopt 形态（finalizeEngineOutcome 回填点）：sessionFile 回填
-//      即声明写权，record 保持 resumable、marker 在（adopt 不终态化 → 声明不释放）；
-//   3. settleOneShotOutcome 直驱：markRoundIdle 簿记（running-resumable / round+1 /
+//      即声明写权，record 保持可续聊纳管态、marker 在（adopt 不终态化 → 声明不释放）；
+//   3. settleOneShotOutcome 直驱：markRoundIdle 簿记（idle 翻边 / round+1 /
 //      result / closedReason 清除）+ `.alive` 不删 + pending:unregister 发射点②
 //      store 簿记⑧单轨发射（恰好一次）；
 //   4. workflow 域（executeAndAwait → runAndFinalize → outcomeToAgentResult 主回填
 //      点）：sessionFile 回填后 `.alive` 存在且 pid=本进程；
 //   5. [U2b 修复轮/D2] adoptEngineDeath 归口（adoptResumableAfterEngineDeath 三写
-//      error/result/resumable 语义等价，真实 store 链）。轮始 markRoundStarted 接线
+//      error/result/stopReason 语义等价，真实 store 链）。轮始 markRoundStarted 接线
 //      的真实链用例在 conversation-continuation.test.ts 集成面（续聊派发即清
-//      result/resumable + round 累加链不断）。
+//      result 清除 + round 累加链不断）。
 //
 // 测试纪律：registerFakePiEngine 协议替身（conversation-continuation.test.ts 同源
 // setup 形态，真实 timers + vi.waitFor）；sessionFile/marker 全部落 mkdtemp 自建目录；
@@ -117,9 +117,9 @@ describe("spawn 侧写权声明挂钩（D3a v8 时机①——U2b/C3）", () => 
       h.fake.runs[0]!.settle({ content: "done text", sessionFile });
 
       const record = h.store.getMutable(handle.subagentId);
-      await vi.waitFor(() => expect(record?.resumable).toBe(true));
-      // SP-5：成功轮保持 running-resumable（markRoundIdle 簿记）
-      expect(record?.status).toBe("running");
+      await vi.waitFor(() => expect(record?.status).toBe("idle"));
+      // SP-5：成功轮落 idle 可续聊（markRoundIdle 簿记；[two-state-convergence
+      // U4/D3] 翻边后 idle 即 resumable）
       expect(record?.closedReason).toBeUndefined();
       expect(record?.result).toBe("done text");
       expect(record?.sessionFile).toBe(sessionFile);
@@ -136,79 +136,41 @@ describe("spawn 侧写权声明挂钩（D3a v8 时机①——U2b/C3）", () => 
     }
   });
 
-  it("非 pi 引擎死亡 adopt 形态（finalizeEngineOutcome 回填点）：sessionFile 回填即声明写权，record 保持 resumable 且 marker 在", async () => {
+  it("[modeless 波1·adopt 链退役] 引擎死亡（run reject）→ Continuation 失败分支收口：record 落 idle 可恢复 + 失败通知，无监督器 adopt 接管", async () => {
     const h = makeService();
     try {
-      const sessionFile = path.join(h.agentDir, "adopt-session.jsonl");
-      fs.writeFileSync(sessionFile, "{}\n", "utf-8");
-      const record = createRecord("bg-adopt", {
+      const adoptSpy = vi.spyOn(
+        (h.service as unknown as { roundSupervisor: { adoptOnProcessDeath: (r: unknown, m: string) => void } })
+          .roundSupervisor,
+        "adoptOnProcessDeath",
+      );
+      const record = createRecord("bg-engine-death", {
         agent: "general-purpose",
         model: "prov/model-1",
         mode: "background",
         task: "t",
-        slug: "adopt",
+        slug: "engine-death",
         startedAt: 1000,
         rootSessionId: "root-session",
         controller: new AbortController(),
       });
       h.store.register(record);
 
-      const adopted = await h.runOrchestration.finalizeEngineOutcome(record, {
-        content: "",
-        engineId: "zcode",
-        error: "engine crashed: process killed by signal",
-        exitCode: null,
-        sessionFile,
+      // 引擎死亡 = run reject（prepare 期/进程死亡）→ Continuation onRoundRejected →
+      // settleRoundFailed（MF-6：idle 可恢复 + 失败通知）——旧 adopt 接管链（error
+      // 三写 + 监督器纳管 + merged notice）随 one-shot engine-run 编排消亡。
+      await h.service.chatActions.deliverChatMessage(record, "risky round");
+      await vi.waitFor(() => expect(h.fake.runs.length).toBe(1));
+      h.fake.runs[0]!.fail(Object.assign(new Error("engine process exited unexpectedly: signal SIGKILL"), {
+        name: "EngineSdkError",
+      }));
+
+      await vi.waitFor(() => {
+        expect(record.status).toBe("idle");
+        expect(record.lastError).toContain("engine process exited");
       });
-
-      // adopt 分支：record 保持 resumable 交监督器（不终态化 → 写权声明不释放）
-      expect(adopted).toBe(true);
-      expect(record.error).toContain("engine crashed");
-      expect(record.sessionFile).toBe(sessionFile);
-      expect(readAliveMarker(sessionFile)).toMatchObject({ pid: process.pid, id: "bg-adopt" });
-    } finally {
-      h.service.dispose();
-      clearEngines();
-      fs.rmSync(h.agentDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
-    }
-  });
-
-  it("[U2b 修复轮/D2] adoptEngineDeath 归口：error/result/resumable 三写语义等价（真实 store 链）", async () => {
-    const h = makeService();
-    try {
-      const sessionFile = path.join(h.agentDir, "adopt-writes.jsonl");
-      fs.writeFileSync(sessionFile, "{}\n", "utf-8");
-      const record = createRecord("bg-adopt-writes", {
-        agent: "general-purpose",
-        model: "prov/model-1",
-        mode: "background",
-        task: "t",
-        slug: "adopt",
-        startedAt: 1000,
-        rootSessionId: "root-session",
-        controller: new AbortController(),
-      });
-      // 收养前形态：上一轮 result 在盘 + 无 resumable 信号（被收养对象的典型前置）
-      record.result = "previous round output";
-      record.resumable = undefined;
-      h.store.register(record);
-
-      const adopted = await h.runOrchestration.finalizeEngineOutcome(record, {
-        content: "",
-        engineId: "zcode",
-        error: "engine crashed: SIGKILL",
-        exitCode: null,
-        sessionFile,
-      });
-
-      expect(adopted).toBe(true);
-      // 三写等价（store.adoptEngineDeath）：error 如实 + result 清（禁旧正文冒充
-      // 收养后产出）+ resumable=true（GUI waiting 判据）
-      expect(record.error).toBe("engine crashed: SIGKILL");
-      expect(record.result).toBeUndefined();
-      expect(record.resumable).toBe(true);
-      // 归口不改变 adopt 分支的产品语义：保持 running（不终态化、交监督器）
-      expect(record.status).toBe("running");
+      expect(record.round).toBe(1);
+      expect(adoptSpy).not.toHaveBeenCalled();
     } finally {
       h.service.dispose();
       clearEngines();
@@ -227,11 +189,12 @@ describe("spawn 侧写权声明挂钩（D3a v8 时机①——U2b/C3）", () => 
 
       // 成功应答映射（workflow 域 AgentResult.content 承载正文）
       expect(result.content).toBe("wf done");
-      const actives = h.store.listAllActive();
-      expect(actives).toHaveLength(1);
-      const rec = actives[0]!;
-      expect(rec.sessionFile).toBe(sessionFile);
-      expect(readAliveMarker(sessionFile)).toMatchObject({ pid: process.pid, id: rec.id });
+      // [two-state-convergence U4] 轮终翻边 idle——record 经 getMutable 断言
+      //（listAllActive 是 running 过滤视图，不再含轮终收口 record）。
+      const rec = h.store.getMutable(result.sessionId ?? "");
+      expect(rec).toBeDefined();
+      expect(rec!.sessionFile).toBe(sessionFile);
+      expect(readAliveMarker(sessionFile)).toMatchObject({ pid: process.pid, id: rec!.id });
     } finally {
       h.service.dispose();
       clearEngines();
@@ -268,9 +231,9 @@ describe("settleOneShotOutcome SP-5 成功分支 → store.markRoundIdle 接线�
         false,
       );
 
-      // 簿记①-⑥：保持 running + result 写入 + round+1 + closedReason 清除 + resumable
-      expect(record.status).toBe("running");
-      expect(record.resumable).toBe(true);
+      // 簿记①-⑥：翻边 idle（[two-state-convergence U4/D3]）+ result 写入 + round+1
+      // + closedReason 清除
+      expect(record.status).toBe("idle");
       expect(record.closedReason).toBeUndefined();
       expect(record.round).toBe(2);
       expect(record.result).toBe("round done");

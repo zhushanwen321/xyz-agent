@@ -142,9 +142,8 @@ describe("[D4-③] coldLookupForAction 冷查/复活链", () => {
     expect(record.status).toBe("running");
     expect(record.closedReason).toBeUndefined();
     expect(record.endedAt).toBeUndefined();
-    // [v4 A-3 → H1 U6 / D4-D5] 水合保留持久化 chatMode：候选未持久化 chatMode
+    // [modeless 波1] chatMode 水合丢弃（旧持久化残留键不进内存 record）
     //（undefined）→ 重建 false（升级置位归 Continuation revive 格 + gate，不在重建层）
-    expect(record.chatMode).toBe(false);
     // 身份/续聊字段从磁盘候选回填
     expect(record.sessionFile).toBe(sessionFile);
     expect(record.round).toBe(2);
@@ -181,6 +180,43 @@ describe("[D4-③] coldLookupForAction 冷查/复活链", () => {
     expect(fs.existsSync(`${sessionFile}.finalized`)).toBe(false);
     expect(vi.mocked(deps.register)).toHaveBeenCalledTimes(1);
     expect(vi.mocked(deps.reportRecordTransition)).toHaveBeenCalledTimes(1);
+  });
+
+  it("[P4-① ⛔ two-state-convergence U4] 轮终 idle record（markRoundIdle 产物：idle + .state 收条 + 无 closedReason）跨重启 readopt：wasClosed=true 三件套全量 + transition 恰一条 + .state 删除", () => {
+    // U4 写面翻边后正常轮终 = idle 形态落盘（stopReason=completed + .state 收条
+    // {status:"idle",reason:"completed"}，closedReason 无、endedAt 无）——跨重启
+    // message 冷查链 wasClosed = status!=='running' = true 路径，与旧 closed 可重连
+    // 形态统一 acquire（D3c 两形态统一）。
+    const sessionFile = writeSessionFixture({
+      state: JSON.stringify({ status: "idle", reason: "completed", endedAt: 1_700_000_050_000 }),
+    });
+    // 候选 = 轮终翻边产物形态：status=idle + stopReason 在场 + closedReason 无
+    const found = makeFound({
+      sessionFile,
+      status: "idle",
+      closedReason: undefined,
+      stopReason: "completed",
+      round: 1,
+    });
+    const deps = makeDeps({ disk: [found] });
+
+    const record = coldLookupForAction(deps, "sa-cold-1", true)!;
+
+    // 三件套全量（markResurrected wasClosed=true）：
+    //   ① 内存翻回 running（acquire marker 先行 + resurrectClosed 内存翻回）
+    expect(record.status).toBe("running");
+    //   ② .state 收条删除（wasClosed 分支 rmSync——磁盘重建面收敛活态，reload 不回退 idle）
+    expect(fs.existsSync(`${sessionFile}.state`)).toBe(false);
+    //   ③ .alive 写权声明 acquire 到当前进程
+    expect(readAliveMarker(sessionFile)).toMatchObject({ pid: process.pid, id: "sa-cold-1" });
+    // register + transition entry 恰一条（重生后立刻上报——live ≡ reload，SP-2 先例）
+    expect(vi.mocked(deps.register)).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(deps.register)).toHaveBeenCalledWith(record);
+    expect(vi.mocked(deps.reportRecordTransition)).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(deps.reportRecordTransition)).toHaveBeenCalledWith(record);
+    // 现状登记：resurrectColdRecord 的重建回填域不含 stopReason（候选的轮终停因展示位
+    // 不跨重启水合）——重建水合缺口归 U5/U6 重建面批次，本批不扩 readopt 行为。
+    expect(record.round).toBe(1);
   });
 
   it("负向对照：重生被守卫拒绝（worktree 绑定丢失）→ 终态 sidecar 不被误删", () => {
@@ -222,14 +258,13 @@ describe("[D4-③] coldLookupForAction 冷查/复活链", () => {
     expect(vi.mocked(deps.register)).toHaveBeenCalledWith(record);
   });
 
-  it("候选持久化 chatMode=true（chat 容器）→ 水合保留 true（续聊直接走，无需升级格）", () => {
+  it("候选持久化 chatMode=true（旧文件残留）→ [modeless 波1] 水合丢弃（message 资格只看引擎轴）", () => {
     const sessionFile = writeSessionFixture();
-    const deps = makeDeps({ disk: [makeFound({ sessionFile, status: "running", chatMode: true })] });
+    const deps = makeDeps({ disk: [makeFound({ sessionFile, status: "running" })] });
 
     const record = coldLookupForAction(deps, "sa-cold-1", true)!;
 
     expect(record.status).toBe("running");
-    expect(record.chatMode).toBe(true);
     expect(vi.mocked(deps.register)).toHaveBeenCalledTimes(1);
   });
 

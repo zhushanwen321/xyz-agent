@@ -47,8 +47,9 @@ export const DEFAULT_AGENT_NAME = "general-purpose";
  * §3.2.1/§3.2.2；U2 两态转正，终态概念删除）：
  *   running = 本轮有任务在飞；idle = 无任务在飞，随时可接下一条 message。
  *
- * 「上一轮为什么停」由 {@link StopReason} 承载（纯展示 + 排障，不参与资格判定）；
- * 旧 running 的隐性子态（resumable/纳管态）由「idle + transcriptRef 在」统一表达。
+ * 「上一轮为什么停」由 {@link StopReason} 承载（纯展示 + 排障；U6 起 stopReason
+ * 参与 isOccupied 占用判定——`running && stopReason === undefined`，W4 死亡纳管态
+ * 靠它排除）；旧 running 的隐性子态（resumable/纳管态）由「idle + transcriptRef 在」统一表达。
  *
  * [U2 桥接不变量 → U5 后现状] 旧「closed 终态」读判据 = `idle && closedReason !==
  * undefined`（读侧兼容位）：写侧只剩 workflow D7 例外族与监督器放弃继续产出
@@ -194,12 +195,15 @@ export type Intent = "active" | "archived";
  *   interrupted-by-parent    — 编排性关闭打断在飞轮（宿主 session fork/new 自动收起）
  *   reopened                 — 锚失效带历史重开（§3.2.3 reopen 降级，epoch+1 的首轮）
  *   completed / failed       — [A-lite] 正常轮终展示位（markRoundIdle 成功/失败轮写入；
- *                              status 保持 running-resumable 不变——U2 桥接策略不推翻，
- *                              本值只承担「上一轮为什么停」的展示 + `.state` 收条 reason
+ *                              status 翻 idle——[two-state-convergence U4/D3] 翻边后
+ *                              本值承担「上一轮为什么停」的展示 + `.state` 收条 reason
  *                              词；中断族走 markSettled interrupted 族不经 markRoundIdle，
  *                              与上 4 值无冲突）
- * 仅展示 + 排障（列表主展示用派生 outcome）；复活资格判据是物理三件套
- * （§3.2.3），本字段不参与任何资格判定。
+ * 展示 + 排障（列表主展示用派生 outcome）+ [U6] 占用资格判定（isOccupied =
+ * `running && stopReason === undefined`——W4 死亡纳管态据此排除，见下方字段注释）；
+ * 复活资格判据仍是物理三件套（§3.2.3）。在飞期本字段被轮始清点族清空
+ *（markRoundStarted / revive 格，[U6/D4]）——「stopReason 不参与任何资格判定」的
+ * 旧裁决随 two-state-convergence U6 退役。
  */
 export type StopReason =
   | ClosedReason
@@ -524,21 +528,13 @@ export interface ExecutionRecord {
    */
   readonly parentRunId?: string;
   /**
-   * 对话模式标志（可持续对话 subagent）。true = 轮次完成进 idle 态（保留 record +
-   * worktree）等待续聊，而非一次性终态化。
-   * undefined/false = 一次性模式（默认，行为完全不变）。
-   * 向后兼容：旧 record / 旧 session 文件无此字段，按一次性模式处理。
+   * [modeless 波1·已删除字段] chatMode（对话模式标志）停写删除：万物可续后
+   * 「模式」不再是 record 状态——每个 record 轮终落 idle 可续聊（message 即续、
+   * fork 可继承）。旧持久化数据（entry / binding / session identity）残留键读侧
+   * 自然忽略，legacy 缺省归 chat 语义与 modeless 天然一致，零迁移。
    */
-  readonly chatMode?: boolean;
   /**
-   * 执行态信号（residual-fixes 设计）：true = 该 record 无活进程驱动（轮终 idle /
-   * 重建孤儿兜底），处于「可续聊/等续聊」态——不是后台真在跑。轮终迁移
-   * （doFinalizeRoundToIdle）置 true，冷路径续轮（进程启动）清除；GUI 侧
-   * streaming/waiting 细分与 hasRunning 判据消费。缺省 falsy = 有进程或旧数据。
-   */
-  resumable?: boolean;
-  /**
-   * 空闲超时毫秒数（仅 chatMode 有意义）。覆盖默认 5min idle timeout。
+   * 空闲超时毫秒数（idle GC 回收节奏，全 record 生效）。覆盖默认 5min idle timeout。
    * 优先级：参数 > env XYZ_SUBAGENT_IDLE_TIMEOUT_MS > 默认 300000ms。
    * 向后兼容：旧 record 无此字段，按默认值处理。
    */
@@ -560,14 +556,9 @@ export interface ExecutionRecord {
    * 回填（sessionFile 即定位符）。持久化经 subagent-record entry。
    */
   engineHandle?: { sessionRef: Record<string, string>; journalPath?: string; poolKey: string };
-  /**
-   * 同步收集模式标记（subagent-sync-collect 设计 §3.1.3，U1 foundation 契约）。
-   * 创建时确定不可变；undefined = async（缺省语义，旧记录零迁移）。持久化经
-   * subagent-record entry（record-entry.ts 序列化白名单，entry 唯一写点）。
-   * 消费方：U2 collectCoordinator 路由（sync→批缓冲）、U5 E1 重建投影。
-   * U2 接线点：service.createRecordForMode 从 ExecuteOptions.collect 读入 identity。
-   */
-  readonly collectMode?: "sync";
+  // [modeless 波3·已删除字段] collectMode 随「collect = 派发时路由选项」语义消亡：
+  // sync 批成员身份 = collectCoordinator 登记态（executeViaEngine 派发时点注册），
+  // 非 record 身份；旧 entry 残留键读侧自然忽略，零迁移。
 
   // ── 状态（实时更新）──
   status: ExecutionStatus;
@@ -589,7 +580,8 @@ export interface ExecutionRecord {
    * 离开批的终局标记（subagent-sync-collect 设计 §3.1.3，U1 foundation 契约）。
    * 两出口统一落标：① 批闭合 flush 写账成功后；② E9 dispose 逐条转 async 写账后
    * （均 appendEntry 持久化，U3/U5 写点）。undefined = 未离开批 / 旧记录零迁移。
-   * 消费方：U5 E1 重建扫描只收「collectMode=sync 且无本标记」的成员（防双重通知）。
+   * 消费方：E9 dispose 转账落标 + flush 落标（[modeless 波3] 起 E1 排除判据随其
+   * 退役消亡，标记保留为批域审计/孤儿 merge 透传面）。
    */
   batchFinalized?: boolean;
 
@@ -603,7 +595,9 @@ export interface ExecutionRecord {
   intent?: Intent;
   /**
    * 展示维度：上一轮为什么停（旧 7 值 + 4 新展示值，见 {@link StopReason}）。
-   * undefined = 从未收口 / 旧数据。仅展示+排障，不参与资格判定。
+   * undefined = 从未收口 / 旧数据。展示+排障；U6 起参与 isOccupied 占用判定
+   * （`running && stopReason === undefined`——W4 死亡纳管态 stopReason=failed 据此
+   * 排除，[U5/D4] adoptEngineDeath 写点）。
    */
   stopReason?: StopReason;
   /**
@@ -631,8 +625,8 @@ export interface ExecutionRecord {
   /** 运行期最近一次 error 事件的消息（getEventLog 派生 error 条目用）。 */
   lastError: string | undefined;
   /**
-   * 对话轮次计数（仅 chatMode 有意义）。首轮运行时 = 0；每完成一轮（finalizeRoundToIdle
-   * 进 idle）+1。undefined 时视为 0。非 chatMode 不自增。
+   * 对话轮次计数（modeless 波1 起全 record 语义）。首轮运行时 = 0；每完成一轮
+   * （finalizeRoundToIdle 进 idle）+1。undefined 时视为 0。
    */
   round?: number;
   // [H1 U6 / D7 ③] roundBaseTurnIndex（增量通知 base 记账）已退役删除——消费函数
@@ -644,10 +638,11 @@ export interface ExecutionRecord {
    */
   idleSince?: number;
   /**
-   * close 优雅关闭标志（M2-B3）。chatMode record 运行中调 `close {force:false}` 时置 true；
-   * runAndFinalize 的 done 分流检查此标志——true 则终态化为 done（而非进 idle），并清标志。
-   * undefined/false = 正常 idle 分流（对话模式轮次完成进 idle 等续聊）。
-   * 仅 chatMode + running 时有意义；force:true（立即终止）不走此标志。
+   * close 优雅关闭标志（M2-B3）。record 运行中调 `close {force:false}` 时置 true；
+   * 收口轮的轮次通知送达后归档消费（Continuation settle 分支 / one-shot 主干尾部，
+   * 顺序约束 [写死]——intent 翻转必须在通知链之后）。
+   * undefined/false = 正常 idle 分流（轮次完成进 idle 等续聊）。
+   * 仅 running 时有意义；force:true（立即终止）不走此标志。
    */
   closeAfterRound?: boolean;
 
@@ -778,20 +773,21 @@ export interface ExecuteOptions {
   /** 覆盖执行 cwd（默认 mainCwd）。 */
   cwd?: string;
   /**
-   * 可持续对话模式（决策 8：独立 chatMode 标志，不扩展 ExecutionMode）。
-   * true = record 标记 chatMode，轮次完成进 idle 态（保留 record + worktree，等待 message 续聊）；
-   * undefined/false = 一次性模式（默认，行为完全不变）。service.execute 透传到 createRecordForMode。
+   * [modeless 波1·deprecated accepted-no-op] 可持续对话模式参数。chatMode 字段
+   * 消亡后本参数不再影响行为——一切 record 永续可续聊（idle 后 message 即续、
+   * fork 可继承）。保留 typed optional 一个弃用窗（上层 subagent-workflow 扩展
+   * 波 5 删参数，期间传了不报错）；capability-gate 仍按引擎 conversation 能力轴
+   * 预检（显式 true + unsupported 引擎 → 同步拒）。
    */
   conversation?: boolean;
   /**
    * 同步收集模式（subagent-sync-collect 设计 §3.1.3，U1 foundation 契约）。
+   * [modeless 波3] collect = 派发时通知路由选项（sync=完成通知攒批一次唤醒 +
+   * 批闭合自动 close 成员 / async=逐个通知），非 record 模式（collectMode 字段已
+   * 删除，成员身份 = 协调器登记态）。
    * undefined = config collectSync.default（缺省 "async"，新 session 生效）。
    * schema 层枚举限 "async"|"sync"；运行时宽收 string 与 engine 字段同风格
-   * （非法值 ≠ "sync" 按 async 处理）。
-   * "sync" + conversation:true 组合在 startHandler E4 校验即拒
-   * （immediate throw，不产生半启动 record）。
-   * U2 接线点：service.createRecordForMode 读入 createRecord identity.collectMode
-   * （U1 打通类型与 startHandler 透传，record 落点归 U2）。
+   * （非法值 ≠ "sync" 按 async 处理）。E4（sync+conversation 组合拒）已删。
    */
   collect?: string;
   /**
@@ -851,9 +847,6 @@ export interface SubagentListItem {
   /** 直接父 subagent record ID（顶层 record 为 undefined）。[v4 A-6] 从
    *  record.parentRecordId 派生，配合 A-5 直接父守卫（message/close 仅作用于直接子）。 */
   parent?: string;
-  /** 可冷路径 resume（running 且无活进程句柄）。[v4 A-6] B-1「可续聊」对外表达，
-   *  agent 据 list 判断哪些 running subagent 实际可续聊（vs 正在忙）。 */
-  resumable?: boolean;
   /**
    * 终态三态对外语义（U3 C-outcome 一等披露，projectOutcome 唯一出口）：
    * completed / failed / cancelled，历史 record 无 outcome 字段时兜底派生，
@@ -1030,22 +1023,15 @@ export interface SubagentRecord {
    */
   worktree?: boolean;
   /**
-   * 对话轮次计数（仅 chatMode idle record 有意义）。round 仅在内存维护（doFinalizeRoundToIdle
-   * 递增），跨重启不恢复（round 无磁盘持久化）；非对话模式 / 非 idle record 为 undefined。内存源由 recordToSubagent 从
-   * ExecutionRecord.round 投影。
+   * 对话轮次计数（modeless 波1 起全 record 语义）。round 仅在内存维护
+   * （doFinalizeRoundToIdle 递增），跨重启不恢复（round 无磁盘持久化）；
+   * 非 idle record 为 undefined。内存源由 recordToSubagent 从 ExecutionRecord.round 投影。
    */
   round?: number;
   /**
-   * 对话模式标志（与 ExecutionRecord.chatMode 同义；投影给 GUI 侧 streaming/waiting/done
-   * 细分判据——one-shot 轮终（chatMode 非 true + result 有值）显示完成态，chat 轮终显示
-   * 等续聊。内存源由 recordToSubagent 投影，磁盘源经 subagent-record entry 重建）。
+   * [modeless 波1·已删除字段] chatMode 投影随 ExecutionRecord.chatMode 消亡删除
+   * （旧 entry/binding 残留键读侧忽略——万物可续后该区分无信息量）。
    */
-  chatMode?: boolean;
-  /**
-   * 执行态信号（与 ExecutionRecord.resumable 同义）：true = 无活进程驱动的 running
-   * （轮终 idle / 重建孤儿兜底），GUI 侧据此排除「真在跑」判定。
-   */
-  resumable?: boolean;
   /** fork 模式下的 worktree handle。 */
   worktreeHandle?: WorktreeHandle;
   /**
@@ -1061,11 +1047,8 @@ export interface SubagentRecord {
    * subagent-engine-history）；缺省 = pi（走 JSONL 直读链）。
    */
   engineHandle?: { sessionRef: Record<string, string>; journalPath?: string; poolKey: string };
-  /**
-   * 同步收集模式标记（与 ExecutionRecord.collectMode 同源投影/重建，U1 foundation）。
-   * 缺省（存量 record）= async 投影，消费方零迁移。
-   */
-  collectMode?: "sync";
+  // [modeless 波3·已删除字段] collectMode 快照投影随字段消亡删除（读侧丢弃，
+  // 存量 entry 残留键零迁移）。
   /**
    * 离开批终局标记（与 ExecutionRecord.batchFinalized 同源投影/重建，U1 foundation）。
    * 缺省 = 未离开批；U5 E1 重建扫描据此排除已离场成员。
@@ -1138,8 +1121,6 @@ export interface RecordSnapshot {
   /** 短标签（≤35 字符）。来自 record.slug。 */
   readonly slug: string;
   readonly status: ExecutionStatus;
-  /** 对话模式标志（与 ExecutionRecord.chatMode 同源）。cancel 别名判定用。 */
-  readonly chatMode?: boolean;
   readonly turns: number;
   readonly totalTokens: number;
   readonly startedAt: number;

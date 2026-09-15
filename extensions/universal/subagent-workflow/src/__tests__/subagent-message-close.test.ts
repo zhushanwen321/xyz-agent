@@ -1,20 +1,30 @@
 // src/__tests__/subagent-message-close.test.ts
 //
-// M2-B3 message/close action handler + adapter + 四态映射测试。
+// M2-B3 message/close action handler + adapter + 两态映射测试。
 //
-// handler 层测试：mock SubagentService（getRecordForAction/resumeRound/deliverChatMessage/
-// closeSubagent），验证 messageHandler/closeHandler 的参数校验、状态分流、返回值。
-// 归属守卫/终态化/行为分流的真正逻辑在 service 层测试覆盖
-//（subagent-service-message-close.test.ts）。
+// handler 层测试：mock SubagentService（getRecordForAction/deliverChatMessage/closeSubagent/
+// engineSupportsConversation），验证 messageHandler/closeHandler 的参数校验、守卫链、
+// 统一投递入参、返回值。归属守卫/准入/翻边（revive）的真正逻辑在 service 层测试覆盖
+//（subagent-core conversation-continuation.test.ts / subagent-actions-core.test.ts）。
+//
+// [modeless 波1 迁移] 「模式」不再是 record 状态（ExecutionRecord.chatMode 停写删除）：
+// message 对任何归属内 record 直接续聊——原「one-shot → chatMode 升级」路径消亡，
+// handler 层判据链收敛为 归属校验（allowReconnect 冷查准入）→ workflow-origin 域边界
+// → 引擎能力轴 gate（engineSupportsConversation，unsupported 引擎硬拒 + 重派/fork 指引）。
+// 原「非 chatMode 状态分流（SP-5 one-shot upgrade）」组的 chatMode 置位断言迁移为
+// 「投递入参 / 唯一投递路径 / 引擎 gate」断言（chatMode 字段无对应行为面）；
+// interrupt 参数随 D2 打断统一语义退役（输入不参与分派，仅工具 schema 兼容面保留）。
 
 import { describe, expect, it, vi } from "vitest";
 
 import { createRecord } from "@zhushanwen/subagent-core/execution/persistence/execution-record.ts";
+import { EngineError } from "@zhushanwen/subagent-core/execution/engine/common/errors.ts";
 import type { SubagentService } from "@zhushanwen/subagent-core";
 import type { ExecutionRecord } from "@zhushanwen/subagent-core";
 import { adapter, closeHandler, mapExternalState, messageHandler } from "../interface/subagent-actions.ts";
 
-/** 构造测试用 record（默认非 chatMode running——chatMode 统一投递测试显式传 chatMode:true）。 */
+/** 构造测试用 record（modeless：无 chatMode 字段——「模式」不是 record 状态，
+ *  空闲即可续聊；status / closedReason / engine 变体由各用例显式 override）。 */
 function makeRecord(overrides: Partial<ExecutionRecord> = {}): ExecutionRecord {
   const r = createRecord("sa-test", {
     agent: "general-purpose",
@@ -24,7 +34,6 @@ function makeRecord(overrides: Partial<ExecutionRecord> = {}): ExecutionRecord {
     slug: "test",
     startedAt: 1000,
     rootSessionId: "root-session",
-    chatMode: false,
   });
   Object.assign(r, overrides);
   return r;
@@ -32,7 +41,10 @@ function makeRecord(overrides: Partial<ExecutionRecord> = {}): ExecutionRecord {
 
 /** mock SubagentService 的 message/close 相关方法子集。
  *  [D4 聚合跟随] message/close 生产消费面 = service.chatActions（平铺键保留供既有
- *  断言引用）。 */
+ *  断言引用）。
+ *  [modeless 波1] engineSupportsConversation 是平铺访问器（真实 service 同构——
+ *  subagent-service.ts 平铺方法，非 chatActions 成员）；缺成员即 TypeError。缺省
+ *  放行 = pi native 语义，拒绝分支由本文件「引擎能力轴 gate」组专测。 */
 function makeMockService(): SubagentService {
   const chatActions = {
     getRecordForAction: vi.fn(),
@@ -43,24 +55,25 @@ function makeMockService(): SubagentService {
     getRecordForAction: chatActions.getRecordForAction,
     deliverChatMessage: chatActions.deliverChatMessage,
     closeSubagent: chatActions.closeSubagent,
-    resumeRound: vi.fn(),
-    // [H1 U2 / D5 双写点①] SP-5 升级 gate（U2 编排改写新增消费面——mock 缺成员即
-    // TypeError，U2 偏差登记的 extensions 破损用例根因）；缺省放行，gate 拒绝分支
-    // 由 subagent-core subagent-actions-core.test.ts 专测。
-    canUpgradeToConversation: vi.fn(() => true),
+    engineSupportsConversation: vi.fn(() => true),
     chatActions,
   } as unknown as SubagentService;
 }
 
+/** mock 方法视作 vi.fn（既有断言范式）。 */
+function asSpy(fn: unknown): ReturnType<typeof vi.fn> {
+  return fn as ReturnType<typeof vi.fn>;
+}
+
 // ============================================================
-// mapExternalState 四态映射（决策 10 细则 3）
+// mapExternalState 两态映射（决策 10 细则 3）
 // ============================================================
 
 describe("mapExternalState 两态映射（v4 B-1：running/closed 收敛，决策 10 细则 3）", () => {
   it("running → active", () => {
     expect(mapExternalState("running")).toBe("active");
   });
-  it("closed → ended", () => {
+  it("idle → idle（可续聊语义，替代旧 ended）", () => {
     expect(mapExternalState("idle")).toBe("idle");
   });
 });
@@ -84,16 +97,17 @@ describe("messageHandler 参数校验", () => {
 });
 
 // ============================================================
-// messageHandler 非 chatMode 状态分流（SP-5 one-shot upgrade）
-// SP-5：非 chatMode active record（running/idle）收到 message 时自动升级为 chatMode，
-// 走 deliverChatMessage 统一投递路径（热路径或冷路径 resume）。
+// messageHandler 统一投递（[modeless 波1] 状态无关：任何归属内 record 同路）
+// 旧「非 chatMode 状态分流（SP-5 one-shot upgrade）」组对位迁移——chatMode 字段与
+// 「升级」概念随 modeless 重构消亡，原 4 个用例的覆盖去向：投递入参与唯一投递路径
+// 断言（详见下方用例注释）。
 // ============================================================
 
-describe("messageHandler 非 chatMode 状态分流（SP-5 one-shot upgrade）", () => {
-  it("running + interrupt:true → upgrade chatMode + deliverChatMessage(record, text)（[H1 U6] interrupt 退役）", async () => {
+describe("messageHandler 统一投递（modeless：状态无关，任何归属内 record 同路）", () => {
+  it("running + interrupt:true → deliverChatMessage(record, text)（[H1 U6] interrupt 退役：输入不参与分派）", async () => {
     const service = makeMockService();
     const record = makeRecord({ status: "running" });
-    (service.getRecordForAction as ReturnType<typeof vi.fn>).mockReturnValue(record);
+    asSpy(service.getRecordForAction).mockReturnValue(record);
 
     const result = await messageHandler(service, {
       subagentId: "sa-test",
@@ -101,10 +115,14 @@ describe("messageHandler 非 chatMode 状态分流（SP-5 one-shot upgrade）", 
       interrupt: true,
     });
 
-    // SP-5：非 chatMode running → upgrade chatMode → deliverChatMessage 统一投递
-    expect(record.chatMode).toBe(true);
+    // 归属校验入参契约（[U4] 万物可续：message 走 allowReconnect 冷查准入）
+    expect(service.getRecordForAction).toHaveBeenCalledWith("sa-test", { allowReconnect: true });
+    // 引擎能力轴 gate 收到的即归属校验返回的 record（唯一资格判据，与 record 形态无关）
+    expect(service.engineSupportsConversation).toHaveBeenCalledWith(record);
+    // 统一投递：record 身份原样 + text 透传（trim 见下一条用例）
     expect(service.deliverChatMessage).toHaveBeenCalledWith(record, "follow up");
-    expect(service.resumeRound).not.toHaveBeenCalled();
+    // 无第二条派发/归档路径（message 不归档、不 close）
+    expect(service.closeSubagent).not.toHaveBeenCalled();
     expect(result).toEqual({
       kind: "message",
       subagentId: "sa-test",
@@ -113,22 +131,21 @@ describe("messageHandler 非 chatMode 状态分流（SP-5 one-shot upgrade）", 
     });
   });
 
-  it("running + interrupt 默认 false → upgrade chatMode + deliverChatMessage(record, text)（[H1 U6] interrupt 退役）", async () => {
+  it("running + interrupt 缺省 → deliverChatMessage(record, text.trim())（与 interrupt:true 同路）", async () => {
     const service = makeMockService();
     const record = makeRecord({ status: "running" });
-    (service.getRecordForAction as ReturnType<typeof vi.fn>).mockReturnValue(record);
+    asSpy(service.getRecordForAction).mockReturnValue(record);
 
-    await messageHandler(service, { subagentId: "sa-test", text: "queue this" });
+    await messageHandler(service, { subagentId: "sa-test", text: "  queue this  " });
 
-    // SP-5：非 chatMode running → upgrade chatMode → deliverChatMessage 统一投递
-    expect(record.chatMode).toBe(true);
     expect(service.deliverChatMessage).toHaveBeenCalledWith(record, "queue this");
+    expect(service.closeSubagent).not.toHaveBeenCalled();
   });
 
-  it("running（进程回收态，旧 idle）→ upgrade chatMode + deliverChatMessage（统一派发新轮）", async () => {
+  it("running（进程回收态）→ deliverChatMessage（handler 不按 status 分流，判活/翻边归 Continuation）", async () => {
     const service = makeMockService();
     const record = makeRecord({ status: "running" });
-    (service.getRecordForAction as ReturnType<typeof vi.fn>).mockReturnValue(record);
+    asSpy(service.getRecordForAction).mockReturnValue(record);
 
     const result = await messageHandler(service, {
       subagentId: "sa-test",
@@ -136,23 +153,19 @@ describe("messageHandler 非 chatMode 状态分流（SP-5 one-shot upgrade）", 
       interrupt: true,
     });
 
-    // SP-5：非 chatMode running → upgrade chatMode → deliverChatMessage（v4 B-1：旧 idle 折入 running）
-    expect(record.chatMode).toBe(true);
     expect(service.deliverChatMessage).toHaveBeenCalledWith(record, "continue");
-    expect(service.resumeRound).not.toHaveBeenCalled();
     expect(result.response).toEqual({ delivered: true });
   });
 
-  it("[U4 万物可续] 旧终态遗留 record（idle + closedReason）→ 升级 chatMode + 放行投递（ended 拒绝格消亡）", async () => {
+  it("[U4 万物可续] idle + 遗留 closedReason（旧终态遗留 record）→ 放行投递（ended 拒绝格消亡）", async () => {
     const service = makeMockService();
-    const record = makeRecord({ status: "idle" });
-    record.closedReason = "gc";
-    (service.getRecordForAction as ReturnType<typeof vi.fn>).mockReturnValue(record);
+    const record = makeRecord({ status: "idle", closedReason: "gc" });
+    asSpy(service.getRecordForAction).mockReturnValue(record);
 
     const result = await messageHandler(service, { subagentId: "sa-test", text: "hi" });
 
-    // 形态枚举 gate 消亡：非 chatMode → 升级 gate（mock 放行）→ 统一投递
-    expect(record.chatMode).toBe(true);
+    // 形态枚举 gate 消亡：idle + 遗留 closedReason 不进任何拒绝分支 → 引擎轴 gate → 投递
+    expect(service.engineSupportsConversation).toHaveBeenCalledWith(record);
     expect(service.deliverChatMessage).toHaveBeenCalledWith(record, "hi");
     expect(result.response).toEqual({ delivered: true });
   });
@@ -161,7 +174,7 @@ describe("messageHandler 非 chatMode 状态分流（SP-5 one-shot upgrade）", 
     const service = makeMockService();
     const record = makeRecord({ status: "idle" });
     record.origin = "workflow";
-    (service.getRecordForAction as ReturnType<typeof vi.fn>).mockReturnValue(record);
+    asSpy(service.getRecordForAction).mockReturnValue(record);
 
     await expect(
       messageHandler(service, { subagentId: "sa-test", text: "hi" }),
@@ -171,7 +184,7 @@ describe("messageHandler 非 chatMode 状态分流（SP-5 one-shot upgrade）", 
 
   it("归属守卫：getRecordForAction throw 时透传（not found or not owned）", async () => {
     const service = makeMockService();
-    (service.getRecordForAction as ReturnType<typeof vi.fn>).mockImplementation(() => {
+    asSpy(service.getRecordForAction).mockImplementation(() => {
       throw new Error("subagent not found or not owned: sa-x");
     });
 
@@ -182,14 +195,63 @@ describe("messageHandler 非 chatMode 状态分流（SP-5 one-shot upgrade）", 
 });
 
 // ============================================================
-// messageHandler chatMode 统一投递（V2 决策 3）
+// messageHandler 引擎能力轴 gate（[modeless 波1] message 资格唯一判据）
+// 原 SP-5「canUpgradeToConversation」记录级升级门随 chatMode 消亡——资格判据与
+// record 无关：引擎 capabilities.conversation 非 'unsupported' 才放行（pi native /
+// zcode cold 均可续），unsupported 引擎硬拒 + 重派/fork/换引擎指引（防续聊行为悬空）。
+// 与 Continuation revive 翻边格（写点②）共用同一构造器，本组覆盖写点①。
 // ============================================================
 
-describe("messageHandler chatMode 统一投递（V2 决策 3）", () => {
-  it("chatMode running → deliverChatMessage（不走 resumeRound）", async () => {
+describe("messageHandler 引擎能力轴 gate（[modeless 波1] 升级门消亡后的唯一资格判据）", () => {
+  it("unsupported 引擎（engineSupportsConversation=false）→ 硬拒 + 重派/fork/换引擎指引（不投递）", async () => {
     const service = makeMockService();
-    const record = makeRecord({ chatMode: true, status: "running" });
-    (service.getRecordForAction as ReturnType<typeof vi.fn>).mockReturnValue(record);
+    const record = makeRecord({ status: "running", engine: "stub-unsupported" });
+    asSpy(service.getRecordForAction).mockReturnValue(record);
+    asSpy(service.engineSupportsConversation).mockReturnValue(false);
+
+    const err = await messageHandler(service, { subagentId: "sa-test", text: "hi" }).catch(
+      (e: unknown) => e,
+    );
+
+    expect(err).toBeInstanceOf(EngineError);
+    const engineErr = err as EngineError;
+    expect(engineErr.code).toBe("engine_capability_unsupported");
+    // 拒绝依据回显 record 的引擎 id（引擎轴判据，非 record 形态判据）
+    expect(engineErr.message).toContain("engine 'stub-unsupported' cannot continue this subagent by message");
+    expect(engineErr.message).toContain("capabilities.conversation = 'unsupported'");
+    // 拒绝即带恢复动作（错误 → 权威源 → 重试闭环）
+    expect(engineErr.recovery).toContain("action:'start'");
+    expect(engineErr.recovery).toContain("action:'fork-from'");
+    expect(engineErr.recovery).toContain("conversation capability");
+    // 拒绝发生在投递前：不产生悬空续聊
+    expect(service.deliverChatMessage).not.toHaveBeenCalled();
+  });
+
+  it("gate 放行（pi native 缺省）→ 投递：拒绝面只在引擎轴，与 record 形态无关", async () => {
+    const service = makeMockService();
+    const record = makeRecord({ status: "idle", closedReason: "cancelled" });
+    asSpy(service.getRecordForAction).mockReturnValue(record);
+
+    const result = await messageHandler(service, { subagentId: "sa-test", text: "hi" });
+
+    expect(service.engineSupportsConversation).toHaveBeenCalledWith(record);
+    expect(service.deliverChatMessage).toHaveBeenCalledWith(record, "hi");
+    expect(result.response).toEqual({ delivered: true });
+  });
+});
+
+// ============================================================
+// messageHandler 投递面唯一性（[modeless 波1] 无模式分支 / 无第二派发路径）
+// 旧「chatMode 统一投递（V2 决策 3）」组对位迁移——chatMode 字段消亡后该组与上一组
+// 同路，保留为「唯一投递路径」独立断言面：投递恰一次 + 无其它 chat action +
+// interrupt 两取值逐字等价（防未来重新引入分流分支时静默漂移）。
+// ============================================================
+
+describe("messageHandler 投递面唯一性（无模式分支 / 无第二派发路径）", () => {
+  it("running → deliverChatMessage 恰一次 + 无其它 chat action（无 resume 旁路）", async () => {
+    const service = makeMockService();
+    const record = makeRecord({ status: "running" });
+    asSpy(service.getRecordForAction).mockReturnValue(record);
 
     const result = await messageHandler(service, {
       subagentId: "sa-test",
@@ -197,29 +259,54 @@ describe("messageHandler chatMode 统一投递（V2 决策 3）", () => {
       interrupt: true,
     });
 
-    expect(service.deliverChatMessage).toHaveBeenCalledWith(record, "follow up");
-    expect(service.resumeRound).not.toHaveBeenCalled();
+    expect(service.deliverChatMessage).toHaveBeenCalledTimes(1);
+    expect(service.getRecordForAction).toHaveBeenCalledTimes(1);
+    expect(service.closeSubagent).not.toHaveBeenCalled();
     expect(result.response).toEqual({ delivered: true });
   });
 
-  it("chatMode running（旧 idle）→ deliverChatMessage（统一投递，不走 resumeRound——V2 进程长驻，判活分流）", async () => {
+  it("idle → deliverChatMessage 恰一次（status 翻边归 Continuation，handler 不分流）", async () => {
     const service = makeMockService();
-    const record = makeRecord({ chatMode: true, status: "running" });
-    (service.getRecordForAction as ReturnType<typeof vi.fn>).mockReturnValue(record);
+    const record = makeRecord({ status: "idle" });
+    asSpy(service.getRecordForAction).mockReturnValue(record);
 
     await messageHandler(service, { subagentId: "sa-test", text: "continue", interrupt: false });
 
+    expect(service.deliverChatMessage).toHaveBeenCalledTimes(1);
     expect(service.deliverChatMessage).toHaveBeenCalledWith(record, "continue");
-    expect(service.resumeRound).not.toHaveBeenCalled();
+    expect(service.closeSubagent).not.toHaveBeenCalled();
   });
 
-  it("chatMode running → deliverChatMessage 统一投递（[H1 U6] interrupt 输入不参与分派）", async () => {
-    const service = makeMockService();
-    const record = makeRecord({ chatMode: true, status: "running" });
-    (service.getRecordForAction as ReturnType<typeof vi.fn>).mockReturnValue(record);
+  it("interrupt:true / 缺省 false 两取值 → 投递参数逐字相同（[H1 U6] interrupt 输入不参与分派）", async () => {
+    const runOnce = async (interrupt?: boolean) => {
+      const service = makeMockService();
+      const record = makeRecord({ status: "running" });
+      asSpy(service.getRecordForAction).mockReturnValue(record);
+      await messageHandler(service, {
+        subagentId: "sa-test",
+        text: "stop",
+        ...(interrupt !== undefined ? { interrupt } : {}),
+      });
+      return {
+        deliverCalls: asSpy(service.deliverChatMessage).mock.calls,
+        gateCalls: asSpy(service.engineSupportsConversation).mock.calls.length,
+      };
+    };
 
-    await messageHandler(service, { subagentId: "sa-test", text: "stop", interrupt: true });
-    expect(service.deliverChatMessage).toHaveBeenCalledWith(record, "stop");
+    const withTrue = await runOnce(true);
+    const withFalse = await runOnce(false);
+    const withUndefined = await runOnce(undefined);
+
+    // 三种 interrupt 取值 → 投递入参恒为 (record, text) 二元组（无第三实参位：
+    // interrupt 不进投递签名，分派面不含该输入）
+    for (const calls of [withTrue.deliverCalls, withFalse.deliverCalls, withUndefined.deliverCalls]) {
+      expect(calls).toHaveLength(1);
+      expect(calls[0]!).toHaveLength(2);
+      expect(calls[0]![1]).toBe("stop");
+    }
+    // 资格 gate 查询次数与取值无关（无按 interrupt 分流的额外判据）
+    expect(withTrue.gateCalls).toBe(withFalse.gateCalls);
+    expect(withUndefined.gateCalls).toBe(withFalse.gateCalls);
   });
 });
 
@@ -236,8 +323,8 @@ describe("closeHandler", () => {
   it("正常 → closeSubagent 被调 + 返回 closed:true", async () => {
     const service = makeMockService();
     const record = makeRecord({ status: "running" });
-    (service.getRecordForAction as ReturnType<typeof vi.fn>).mockReturnValue(record);
-    (service.closeSubagent as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
+    asSpy(service.getRecordForAction).mockReturnValue(record);
+    asSpy(service.closeSubagent).mockResolvedValue(undefined);
 
     const result = await closeHandler(service, {
       subagentId: "sa-test",
@@ -255,8 +342,8 @@ describe("closeHandler", () => {
   it("force 默认 false", async () => {
     const service = makeMockService();
     const record = makeRecord({ status: "running" });
-    (service.getRecordForAction as ReturnType<typeof vi.fn>).mockReturnValue(record);
-    (service.closeSubagent as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
+    asSpy(service.getRecordForAction).mockReturnValue(record);
+    asSpy(service.closeSubagent).mockResolvedValue(undefined);
 
     await closeHandler(service, { subagentId: "sa-test" });
 

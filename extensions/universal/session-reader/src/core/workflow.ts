@@ -11,25 +11,20 @@
 // 升版连带编译期影响本扩展；且上游类型只描述 NEW，OLD 仍需自处理（TC-wf-snapshot-version-union）。
 // session-reader 作为纯读取者，按字段存在性 + v 标记分支做「结构化快照」式解析，与上游解耦。
 
-// ---- 类型守卫 helpers ----
+import { isRecord } from '@zhushanwen/pi-ext-guards'
 
-/** unknown → Record<string, unknown> 守卫（非对象或 null → false）。 */
-function isRecord(v: unknown): v is Record<string, unknown> {
-  return typeof v === 'object' && v !== null
-}
+// ---- 类型守卫 helpers ----
 
 /** unknown → string 收窄（非 string → undefined）。快照可选字符串字段的统一入口。 */
 function strOr(v: unknown): string | undefined {
   return typeof v === 'string' ? v : undefined
 }
 
-/** 字符串截断（超 max 加省略号）。概览预览用，全文走 detail。 */
+/** 字符串截断（超 max 加省略号）。step 行渲染用。 */
 function truncate(s: string, max: number): string {
   return s.length <= max ? s : s.slice(0, max) + '…'
 }
 
-/** contentPreview 截断长度（概览预览，全文走 detail）。 */
-const CONTENT_PREVIEW_MAX = 120
 /** step 行 call sessionId 显示截断长度（uuid 前缀段，LLM 可读）。 */
 const SESSION_ID_PREVIEW_MAX = 12
 
@@ -61,8 +56,6 @@ export interface WorkflowStep {
   description?: string
   /** NEW call.opts.model */
   model?: string
-  /** NEW call.opts.thinkingLevel */
-  thinkingLevel?: string
   /** NEW call.attempts / OLD 无 → undefined */
   attempts?: number
   /** NEW call.result.durationMs / OLD value.result.durationMs */
@@ -71,8 +64,6 @@ export interface WorkflowStep {
   sessionId?: string
   /** call.sessionFile 或 result.sessionFile（LLM 跳 outline/detail 的绝对路径入口，OLD 多数为 undefined） */
   sessionFile?: string
-  /** result.content 截断前 120 字（概览预览，全文走 detail） */
-  contentPreview?: string
 }
 
 /** workflow run 概览（parseRunSnapshot 输出 / renderWorkflowOverview 输入）。 */
@@ -83,7 +74,7 @@ export interface WorkflowOverview {
   stateFile: string
   /** NEW state.status / OLD 顶层 status */
   status: string
-  /** 格式标记（渲染/调试用）。v2 读取面形状与 v1 一致（pi-subagent-workflow 8.x 一次性生命周期） */
+  /** details 格式标记（随 details.runs 透传给程序化消费方，文本渲染不读）。v2 读取面形状与 v1 一致（pi-subagent-workflow 8.x 一次性生命周期） */
   version: 'wf-run-v1' | 'wf-run-v2' | 'legacy'
   /** NEW spec.scriptName / spec.name / OLD name */
   script?: string
@@ -138,19 +129,16 @@ function mapCallToStep(call: unknown, fallbackIndex: number): WorkflowStep {
   const index = typeof call.id === 'number' ? call.id : fallbackIndex
   const status = normalizeCallStatus(strOr(call.status) ?? '')
   const refs = pickSessionRefs(call, result)
-  const content = strOr(result.content)
 
   return {
     index,
     status,
     description: strOr(opts.description),
     model: strOr(opts.model),
-    thinkingLevel: strOr(opts.thinkingLevel),
     attempts: typeof call.attempts === 'number' ? call.attempts : undefined,
     durationMs: typeof result.durationMs === 'number' ? result.durationMs : undefined,
     sessionId: refs.sessionId,
     sessionFile: refs.sessionFile,
-    contentPreview: content !== undefined ? truncate(content, CONTENT_PREVIEW_MAX) : undefined,
   }
 }
 
@@ -162,11 +150,11 @@ function mapCacheEntryToStep(entry: unknown, index: number): WorkflowStep {
 
   // sessionFile/sessionId: value.sessionFile 或 value.result.sessionFile（OLD 多数缺失，探针 112 文件 0）
   const refs = pickSessionRefs(value, result)
-  // content：真实 OLD 数据 value.content（wf-skip-ok）与测试 fixture value.result.content 并存
+  // content：真实 OLD 数据 value.content（wf-skip-ok）与测试 fixture value.result.content 并存，
+  // 仅用于 status 推测（A4 死字段删除：contentPreview 已删，不再随 step 输出）
   const content = strOr(result.content) ?? strOr(value.content)
   // OLD 无 status 字段：有 sessionFile 或非空 content → done，否则 pending
-  //（空 content 如 wf-skip-ok 的 '' 不算完成标志，对齐 TC-w5-parse-old expected status='pending'；
-  // content 仍提取为 contentPreview=''）
+  //（空 content 如 wf-skip-ok 的 '' 不算完成标志，对齐 TC-w5-parse-old expected status='pending'）
   const hasContent = content !== undefined && content.length > 0
   const status: WorkflowStep['status'] =
     refs.sessionFile !== undefined || hasContent ? 'done' : 'pending'
@@ -177,7 +165,6 @@ function mapCacheEntryToStep(entry: unknown, index: number): WorkflowStep {
     durationMs: typeof result.durationMs === 'number' ? result.durationMs : undefined,
     sessionId: refs.sessionId,
     sessionFile: refs.sessionFile,
-    contentPreview: content !== undefined ? truncate(content, CONTENT_PREVIEW_MAX) : undefined,
   }
 }
 

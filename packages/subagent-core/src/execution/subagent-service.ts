@@ -10,7 +10,7 @@ import type { AgentResult as WorkflowAgentResult, AgentCallOpts } from "../orche
 import { bestEffort } from "./assembly/best-effort.ts";
 // [R2] 域 #5 聚合转发 getter 返回类型标注（值装配已迁聚合，仅 type 引用）。
 import type { CollectCoordinator } from "./assembly/collect-coordinator.ts";
-// [V2 决策 3] lifecycle-manager idle timer：chatMode record 的 disarm 面（终态化/取消
+// [V2 决策 3] lifecycle-manager idle timer：record 终态化/取消的 disarm 面
 // 路径防误杀）——[R3] 消费已随终态写面迁 service/record-lifecycle.ts；[R4]
 // DEFAULT_IDLE_TIMEOUT_MS 消费（assertIdleTimeoutMsSafe 错误文案基准）已随 run 域
 // 迁 service/run-orchestration.ts——本文件 lifecycle-manager 零 import。
@@ -234,12 +234,6 @@ export class SubagentService {
         reviveDisposed: () => {
           this._disposed = false;
         },
-        // [C-2 显式回调 → R2 已对接] #5 SyncCollect 的 settledRescanState 复活重置改指
-        // SyncCollectDomain 显式接口（resetSettledRescan）——聚合间零直写（G2）。晚绑定
-        // 闭包构造期零求值，syncCollect 后置构造安全（R1 打样时预留的对接点）。
-        resetSettledRescan: () => {
-          this.syncCollect.resetSettledRescan();
-        },
         getStore: () => this.store,
         getNotifyHost: () => this.notifyHost,
         // [跨域编排回调] initSession 复活后编排（R3/R4 域方法；抽取后改指聚合显式接口）。
@@ -291,9 +285,11 @@ export class SubagentService {
     this.syncCollect = new SyncCollectDomain({
       getStore: () => this.store,
       getNotifyHost: () => this.notifyHost,
-      getPi: () => this.pi,
+      // [modeless 波3] 批闭合自动 close（flush 投递后归档成员——一次性计算单元终态
+      // 收口，无续聊留守；归档编排本体在 RecordLifecycle.archiveBatchMembers，静默
+      // 变体：不发「已收起」提示，批通知即成员终态通知）。
+      closeMembers: (ids) => this.recordLifecycle.archiveBatchMembers(ids),
       getSessionRootId: () => this.sessionRootId,
-      getMainSessionFile: () => this.mainSessionFile,
       getCollectSyncSection: () => this.modelService.getGlobalConfig().collectSync,
     });
     // [R3] 域 #3/#8/#10/#13 聚合（record 读建面：孤儿恢复/查询投影/action 网关/身份解析
@@ -367,11 +363,10 @@ export class SubagentService {
         this.recordLifecycle.finalizeRecord(record, result, status, closedReason),
       finalizeFailed: (record, err) => this.recordLifecycle.finalizeFailed(record, err),
       finalizeAborted: (record) => this.recordLifecycle.finalizeAborted(record),
-      // [2026-09-13 design-code-sync 接线] chat 域轮次派发回调（本体在 ChatRounds——
-      // executeViaEngine 的 chatMode 首轮与 one-shot 派发调用点经此编排，G2「经壳编排」）。
-      startFirstChatRound: (record, task) => this.chatRounds.startFirstChatRound(record, task),
-      kickOffChatRound: (record, opts, identity, signal, priority) =>
-        this.chatRounds.kickOffChatRound(record, opts, identity, signal, priority),
+      // [2026-09-13 design-code-sync 接线 / modeless 波1 四象限坍缩] 首轮派发回调
+      //（本体在 ChatRounds——executeViaEngine 的唯一派发调用点经此编排，G2「经壳
+      // 编排」；one-shot 直派回调随分支消亡删除）。
+      startFirstChatRound: (record, opts) => this.chatRounds.startFirstChatRound(record, opts),
     });
     // [2026-09-13 design-code-sync 兑现] chat 域轮次编排聚合（Continuation 协作面 +
     // kickOffChatRound 族 + SP-5 升级 gate + Continuation 生命周期显式接口——自
@@ -534,11 +529,21 @@ export class SubagentService {
     return this.syncCollect.collectCoordinator;
   }
 
-  /** [E1] sync 批崩溃恢复（index.ts session_start 恢复编排处调用）。本体已迁
-   *  SyncCollectDomain（扫描/补发/落标/settled 重扫时序逐行等价随迁）；壳纯转发，
-   *  对外签名不变。 */
+  /** [modeless 波3·deprecated accepted-no-op] sync 批崩溃恢复（E1）已随 collectMode
+   *  记录态消亡退役：批协调状态 = 协调器内存登记态（executeViaEngine 派发登记），
+   *  随 session 生命周期消亡，崩溃后批次协调不恢复。成员 record 本体仍健全——已
+   *  settle 成员 idle+result（批通知已投递/缓冲随 dispose 转 async 兑底），崩溃在途
+   *  成员由孤儿恢复纠偏 idle+interrupted。调用方（subagent-workflow session-lifecycle
+   *  的 session_start 编排）保留 no-op 调用至波 5 清理。 */
   recoverSyncCollectBatch(): Promise<void> {
-    return this.syncCollect.recoverSyncCollectBatch();
+    return Promise.resolve();
+  }
+
+  /** [modeless 波3] 当前未闭合批的 sync 成员数（pendingSyncCount 口径，start 响应
+   *  回显段消费）：协调器登记态计数（executeViaEngine 派发时点登记 + flush 离场；
+   *  含本条——登记先于 start 响应构造）。 */
+  pendingSyncMemberCount(): number {
+    return this.syncCollect.memberCount;
   }
 
   /** collectSync.default 当前生效值（startHandler 缺省 collect 解析用；本体与配置读取
@@ -691,9 +696,8 @@ export class SubagentService {
   // 消费，删转发判据满足）。
 
   /**
-   * close action 的统一行为分流（running 子态 × force：chatMode abort+清队+立即终态 /
-   * one-shot closeAfterRound 挂起 / force 走 cancelBackground）。本体已迁 RecordLifecycle；
-   * 壳纯转发，签名不变。
+   * close action 的统一行为分流（running 子态 × force：优雅收口挂起 / force 走
+   * cancelBackground + 归档）。本体已迁 RecordLifecycle；壳纯转发，签名不变。
    */
   private closeSubagent(record: ExecutionRecord, force: boolean): Promise<void> {
     return this.recordLifecycle.closeSubagent(record, force);
@@ -781,16 +785,16 @@ export class SubagentService {
   }
 
   /**
-   * [D5 双写点 gate 判据] SP-5 升级（one-shot → chatMode）的 conversation 位检查。
-   *  本体已迁 ChatRounds（2026-09-13 design-code-sync 接线）；壳纯转发
-   * （subagent-actions-core 消费）。 */
-  canUpgradeToConversation(record: Pick<ExecutionRecord, "engine">): boolean {
-    return this.chatRounds.canUpgradeToConversation(record);
+   * [modeless 波1] message 资格的引擎能力轴检查（conversation 位——与 record 无关）。
+   *  本体在 ChatRounds；壳纯转发（subagent-actions-core 消费）。
+   */
+  engineSupportsConversation(record: Pick<ExecutionRecord, "engine">): boolean {
+    return this.chatRounds.engineSupportsConversation(record);
   }
 
   /**
-   * [V2 决策 3 → H1 U2 改写 / U6 定形] chatMode 统一投递入口。本体已迁
-   *  ChatRounds（2026-09-13 design-code-sync 接线）；壳纯转发（chatActions 聚合面消费）。 */
+   * [V2 决策 3 → H1 U2 改写 / U6 定形] message 统一投递入口（modeless：全 record）。
+   *  本体已迁 ChatRounds；壳纯转发（chatActions 聚合面消费）。 */
   private async deliverChatMessage(record: ExecutionRecord, text: string): Promise<void> {
     return this.chatRounds.deliverChatMessage(record, text);
   }
@@ -873,10 +877,6 @@ export class SubagentService {
     if (this._disposed) return;
     this._disposed = true;
     this.stopGcTimer();
-    // [v2 D4/C-1] settled 重扫 handler 惰化：原直改聚合内部态 settledRescanState.disposed
-    // （r0-inventory 清单① C-1 跨聚合边，R2 兑现收敛为显式接口）——时序契约注释随迁
-    // SyncCollectDomain.lazyDispose（trailing 边沿不扫描防「已落标未写账」的永久丢失）。
-    this.syncCollect.lazyDispose();
     // [dispose stub] 第一时间换 stub，防 trailing ui_request 调到 stale handler 闭包
     // （仍持有 disposed session 的 ctx）产生误导性 console.error。stub 干净降级为 cancelled。
     // 必须在 emit/abort 之前——这些步骤可能同步触发 trailing pump。

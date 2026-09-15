@@ -36,7 +36,19 @@ export interface ModelRefSource {
 // model-resolver re-export 保持既有 import 路径不变）
 // ============================================================
 
-/** thinking level 支持顺序（低→高）。spawn 侧 `:level` 后缀仅接受本白名单值。 */
+/**
+ * thinking level 支持顺序（低→高）。spawn 侧 `:level` 后缀仅接受本白名单值。
+ *
+ * 本数组为 packages 侧有序数组副本；其余两处——extensions 侧 llm-shared 一处
+ * （isThinkingLevel，extensions/shared/llm-shared/src/resolve.ts）与 packages 侧
+ * pi-rpc 协议包被迫独立一处（packages/pi-rpc/src/types.ts THINKING_LEVELS，
+ * 禁 subagent-core 依赖所致）。
+ * 词表变更须三处同步（词表守卫 scripts/check-thinking-levels.mjs 比对
+ * pi-ai ↔ llm-shared + pi-rpc + 本数组三副本，本数组为 T3 比对面
+ * 〔ext-simplify-18 D6〕——成员集合一致性校验，不判低→高顺序）。
+ * ext-simplify-17 D5 双登记裁决：两侧注释互指关联，不建跨包 import
+ * （universal 角色包禁 import subagent-core，反向则 shared 库依赖 packages/ 破坏分层）。
+ */
 export const THINKING_ORDER = ["off", "minimal", "low", "medium", "high", "xhigh", "max"] as const;
 
 /** 合法 thinking level 字面量联合（类型层面收窄，裸字符串不可达 spawn 拼接）。 */

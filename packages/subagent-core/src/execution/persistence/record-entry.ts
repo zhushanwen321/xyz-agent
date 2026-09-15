@@ -93,16 +93,13 @@ export interface SubagentRecordEntryData {
   patchFile?: string;
   /** 创建时是否启用 worktree 隔离。 */
   worktree?: boolean;
-  /** 对话轮次计数（仅 chatMode 有意义；round+1 由轮终迁移写点携带）。 */
+  /** 对话轮次计数（每轮轮终迁移写点携带 +1；modeless 波1 起全 record 自增）。 */
   round?: number;
   /**
-   * 对话模式标志（residual-fixes）：chat 与否——GUI 侧 done/waiting 细分判据
-   * （one-shot 轮终 chatMode=false + result 有值 → 完成态）。register 起写入显式值
-   * （one-shot 为显式 false）；v1 前存量 entry 缺省，消费端按保守方向处理。
+   * [modeless 波1·已删除字段] 对话模式标志 chatMode 停写删除：万物可续后「模式」
+   * 不再是 record 状态。旧 entry 残留键读侧自然忽略（legacy 缺省归 chat 语义与
+   * modeless 天然一致，零迁移）。
    */
-  chatMode?: boolean;
-  /** 执行态信号（residual-fixes）：true = 无活进程驱动的 running（轮终/孤儿兜底）。 */
-  resumable?: boolean;
   /**
    * 实际执行引擎 id（P4 路由留痕，D9①）。缺省（存量 entry）= pi 投影，消费方零迁移。
    */
@@ -114,12 +111,8 @@ export interface SubagentRecordEntryData {
    * 透传不枚举内部键（zcode = { sessionId, dbPath }）；缺省 = pi（存量 entry 零迁移）。
    */
   engineHandle?: { sessionRef: Record<string, string>; journalPath?: string; poolKey: string };
-  /**
-   * 同步收集模式标记（subagent-sync-collect 设计 §3.1.3，U1 foundation）。
-   * undefined = async（缺省语义，旧 entry 零迁移——undefined 经 JSON.stringify 自然缺省）。
-   * 消费方：U5 rebuildEntryRecord 投影扩展 + E1 重建扫描。
-   */
-  collectMode?: "sync";
+  // [modeless 波3·已删除字段] collectMode entry 字段停写删除（collect = 派发时路由
+  // 选项，成员身份 = 协调器登记态）；旧 entry 残留键读侧自然忽略，零迁移。
   /**
    * 离开批终局标记（subagent-sync-collect 设计 §3.1.3，U1 foundation）。两出口统一
    * 落标（批闭合 flush / E9 dispose 转换，均 appendEntry 持久化）。undefined =
@@ -174,14 +167,11 @@ export function toSubagentRecordEntry(record: SubagentRecord): SubagentRecordEnt
     patchFile: record.patchFile,
     worktree: record.worktree,
     round: record.round,
-    chatMode: record.chatMode,
-    resumable: record.resumable,
     engine: record.engine,
     engineFallback: record.engineFallback,
     engineHandle: record.engineHandle,
-    // 同步收集两字段（U1 foundation）：undefined 经 JSON.stringify 自然缺省，
-    // 旧记录/旧 entry 序列化产物字节不变（零迁移）。
-    collectMode: record.collectMode,
+    // [modeless 波3] collectMode 投影随字段消亡删除；batchFinalized（U1 foundation）
+    // undefined 经 JSON.stringify 自然缺省，旧 entry 序列化产物字节不变（零迁移）。
     batchFinalized: record.batchFinalized,
     // 来源身份两字段（H2 W1）：undefined 经 JSON.stringify 自然缺省，存量 entry
     // 序列化字节不变（零迁移）。

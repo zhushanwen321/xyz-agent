@@ -26,6 +26,9 @@
   "peerDependenciesMeta": {
     "@earendil-works/pi-ai": {
       "optional": true
+    },
+    "@zhushanwen/pi-goal": {
+      "optional": true
     }
   },
   "scripts": {
@@ -42,6 +45,7 @@
     "templates/"
   ],
   "dependencies": {
+    "@xyz-agent/extension-protocol": "workspace:*",
     "@zhushanwen/pi-ext-guards": "workspace:*",
     "@zhushanwen/pi-extension-logger": "workspace:*"
   }

@@ -70,7 +70,6 @@ function makeRecord(id: string, overrides: Partial<ExecutionRecord> = {}): Execu
     slug: "rebuild",
     startedAt: 1000,
     rootSessionId: "root-session",
-    chatMode: false,
     controller: new AbortController(),
   });
   Object.assign(r, overrides);
@@ -289,7 +288,7 @@ describe("[U4c/G2] manifest 词汇双写——四写面旧三态投影 + executi
     const store = new RecordStore(sessionsDir, undefined, undefined, recordsDir);
     const sessionFile = path.join(sessionsDir, "20260912T000008_idle.jsonl");
     fs.writeFileSync(sessionFile, "{}\n", "utf-8");
-    const record = makeRecord("sa-idle", { sessionFile, resumable: true });
+    const record = makeRecord("sa-idle", { sessionFile });
 
     store.markIdleArchived(record);
     const manifest = readManifest("sa-idle");

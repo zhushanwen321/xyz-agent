@@ -1,53 +1,11 @@
 // src/execution/persistence/sync-rebuild.ts
 //
-// [E1 恢复批语义修复] sync 批崩溃恢复（E1）与批闭合 flush（S11 兜底）的两条
-// BgNotifyRecord/SubagentRecord 映射，从 subagent-service 拆出（D4 按变化轴拆分：
-// 改恢复批的通知语义 / 落标数据源形态，只改本文件）。两函数均纯映射——零 service/
-// store 依赖，rootSessionId 由调用方注入。
+// 批闭合 flush（S11 兜底）的 BgNotifyRecord → SubagentRecord 映射，自 subagent-service
+// 拆出（D4 按变化轴拆分）。纯映射——零 service/store 依赖，rootSessionId 由调用方注入。
+// [modeless 波3] 旧 syncRebuildToNotifyMember（E1 恢复批补发映射）随 E1 恢复面退役删除。
 
-import { deriveOutcome } from "./execution-record.ts";
 import type { BgNotifyRecord } from "../notify/notifier.ts";
 import type { SubagentRecord } from "../assembly/types.ts";
-
-/**
- * E1 末条 entry 终态快照 → BgNotifyRecord（补发成员；sync 仅 one-shot，round/
- * sessionFile 不透传——与 route() 缓冲快照的 one-shot 形态对齐）。
- *
- * [E1 恢复批语义修复] status/outcome/patchFile 三点对齐 notify-host toNotifyRecord
- * 的映射（正常 flush 路径对同一成员的补发形态），不再直通 rec.status：
- * - status：one-shot 成功成员崩溃时末条 entry 恒为 running+resumable（SP-5 轮终
- *   形态，resumable 豁免正据此放行其入批）——直通会让补发记录仍是 running 形态：
- *   buildBatchLlmContent 批头只统计 closed 成员（全员成功的恢复批显示
- *   「0 finished, 0 failed, 0 cancelled」），条目文案落「finished a round」
- *   （对话轮次语义）。同 toNotifyRecord：closed 或非 chatMode → "closed"（仅
- *   chatMode 轮次形态保持 running——sync 成员恒 one-shot，此分支为防御完整性）。
- * - outcome：closed 状态物化（单一权威 deriveOutcome）——resumable 成员末条未
- *   终态化，closedReason 缺省与正常 flush 路径同形，无 error 即 completed、有
- *   error 即 failed；notifier.notifyBatch 投影边界的 `??` 兜底对此幂等。
- * - patchFile：透传（依赖 rebuildEntryRecord 的同名投影）——worktree one-shot
- *   成员的 git-apply 回收指针只在 closed+completed 分支文案携带（running 分支
- *   不含），正常 flush 路径经 toNotifyRecord 特意携带，恢复批不得缺失。
- */
-export function syncRebuildToNotifyMember(rec: SubagentRecord): BgNotifyRecord {
-  // [U2 桥接判据] 旧「closed 终态」读形态 ⟺ idle ∧ closedReason 有值（两态迁移不变量）。
-  const status: BgNotifyRecord["status"] =
-    (rec.status === "idle" && rec.closedReason !== undefined) || !rec.chatMode
-      ? "closed"
-      : "running";
-  return {
-    id: rec.id,
-    status,
-    closedReason: rec.closedReason,
-    outcome: status === "closed" ? deriveOutcome(rec.closedReason, rec.error) : undefined,
-    agent: rec.agent,
-    model: rec.model,
-    result: rec.result,
-    error: rec.error,
-    startedAt: rec.startedAt,
-    endedAt: rec.endedAt,
-    patchFile: rec.patchFile,
-  };
-}
 
 /**
  * [S11] getFullRecord miss 成员的缓冲快照兜底 → 最小 SubagentRecord（batchFinalized
@@ -88,7 +46,6 @@ export function bufferedMemberFallbackRecord(
     result: m.result,
     error: m.error,
     sessionFile: undefined,
-    chatMode: false,
     patchFile: m.patchFile,
   };
 }

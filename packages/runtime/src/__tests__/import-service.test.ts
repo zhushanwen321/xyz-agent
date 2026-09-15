@@ -53,6 +53,8 @@ vi.mock('node:fs/promises', async (importOriginal) => {
 import { encodeCwd, getSessionsDir } from '../infra/pi/pi-paths.js'
 import { getPiGlobalAgentDir } from '../infra/pi/pi-maintenance.js'
 import { ImportService, ImportServiceError } from '../services/session/import-service.js'
+// B5 摘碑双路径②验证（memory-leak-remediation §3.2-B5）：import 同 id 复活的 tombstone 摘除
+import { SessionDataStore, isSessionDataCleared } from '../services/plugin-service/session-data-store.js'
 
 let fixturesRoot: string
 
@@ -177,8 +179,12 @@ describe('ImportService.listCandidates', () => {
     ].join('\n'))
 
     const svc = makeImportService()
-    // 任意搜索词：不抛错（修复前在此 TypeError）
-    const reply = await svc.listCandidates({ rootDir: root, query: 'xx' })
+    // 任意搜索词：不抛错（修复前在此 TypeError）。搜索词用长哨兵串而非短词——
+    // [HISTORICAL 2026-09-15] 曾用 query 'xx'，CI 上 mkdtemp 随机后缀恰好为
+    // 'bWC4Xx'（含大小写不敏感的 'xx'），sourcePath 子串匹配意外命中 good 会话
+    // → 断言「结果为空」偶发红；短查询词会撞随机路径，哨兵串（含连字符 +
+    // 4 连字符外字符）在 mkdtemp 字母表与 fixture 字段中不可能出现。
+    const reply = await svc.listCandidates({ rootDir: root, query: 'zzzz-no-match' })
     expect(reply.items).toEqual([])
     // 无 query 的全集同样不含该文件（候选侧前置拒收，与导入侧 import_invalid_session 同清单）
     const full = await svc.listCandidates({ rootDir: root })
@@ -439,5 +445,56 @@ describe('ImportService.importSession', () => {
     expect(reply.warning).toBeUndefined()
     // cwd 解码无损 → targetPath 按真实（无 U+FFFD）cwd 构造
     expect(reply.targetPath).toBe(join(getSessionsDir(), encodeCwd(cwd), 'cjk.jsonl'))
+  })
+})
+
+describe('ImportService × B5 摘碑（memory-leak-remediation §3.2-B5 双路径②：doImport 尾部）', () => {
+  /** 预置 tombstone 的最小装置：注入 mock trash port（同步移除文件模拟 trash 语义） */
+  function makeTombstonedStore(storeDir: string, sid: string): SessionDataStore {
+    const store = new SessionDataStore(storeDir, undefined, undefined, async (p) => {
+      rmSync(p, { force: true })
+    })
+    store.set(sid, 'k1', 'v1')
+    store.flushSession(sid)
+    return store
+  }
+
+  it('import 同 id 复活成功 → tombstone 摘除（import 后未打开窗口内插件合法写不被误杀）', async () => {
+    const root = join(fixturesRoot, 'tomb-root')
+    mkdirSync(root, { recursive: true })
+    const sid = 'imp-tomb-00001'
+    const src = join(root, 'tomb.jsonl')
+    writeSessionJsonl(src, sid, '/tmp/tomb-cwd', 'Tomb')
+
+    // 预置 tombstone（模拟该 id session 先前被删除：clearSession 登记）
+    const store = makeTombstonedStore(join(fixturesRoot, 'tomb-store'), sid)
+    await store.clearSession(sid)
+    expect(isSessionDataCleared(sid)).toBe(true)
+    store.dispose()
+
+    const svc = makeImportService()
+    const reply = await svc.importSession({ sourcePath: src, projectId: 'proj-1' })
+    expect(reply.sessionId).toBe(sid)
+
+    // doImport 尾部显式摘碑（纯文件级导入不投 didCreate，主线程无创建收敛点可依赖）
+    expect(isSessionDataCleared(sid)).toBe(false)
+  })
+
+  it('import 失败（marker 文件名拒绝，不达尾部）→ tombstone 保留（碑只随成功复活摘）', async () => {
+    const root = join(fixturesRoot, 'tomb-fail-root')
+    mkdirSync(root, { recursive: true })
+    const sid = 'imp-tomb-00002'
+    const src = join(root, 'x.tmp-import-residue.jsonl')
+    writeSessionJsonl(src, sid, '/tmp/tomb-fail-cwd', 'TombFail')
+
+    const store = makeTombstonedStore(join(fixturesRoot, 'tomb-fail-store'), sid)
+    await store.clearSession(sid)
+
+    const svc = makeImportService()
+    await expect(catchCode(() => svc.importSession({ sourcePath: src, projectId: 'proj-1' })))
+      .resolves.toBe('import_marker_filename')
+
+    expect(isSessionDataCleared(sid)).toBe(true) // 未摘
+    store.dispose()
   })
 })

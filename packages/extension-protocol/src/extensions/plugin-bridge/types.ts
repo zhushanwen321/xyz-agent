@@ -7,6 +7,7 @@
  * marker 检测后按 method 分发到对应 handler 分支。
  */
 import type { BRIDGE_METHODS } from './marker.js'
+import type { ChannelErrorResult } from '../../core/select-rpc.js'
 
 /** 协议 v2 的 4 个 method（从 BRIDGE_METHODS 集合派生，值与类型同源） */
 export type BridgeMethod = (typeof BRIDGE_METHODS)[number]
@@ -30,9 +31,9 @@ export interface BridgeRequest {
 }
 
 // ── 回包形状（runtime → pi bridge extension，JSON 序列化后经 select 通道回传）──
-// 本包零运行时依赖，无法 re-export runtime 侧定义——以下形状与
-// packages/runtime/src/services/plugin-service/plugin-types.ts 的同名接口
-// 逐字段对应（runtime 是实现侧权威；runtime 侧改动时同步此处）。
+// 本模块是 Bridge* 回包形状的唯一定义源（D4 单源化）：runtime
+// （services/plugin-service/plugin-types.ts）与 plugin-sdk 均经本包 re-export 消费，
+// 不存在第二份定义。
 // 回包必须由 runtime 侧先 JSON.stringify 传字符串：pi 帧级 `String(response)`
 // 对对象产出 '[object Object]'（设计 §3.3-D1 序列化陷阱）。
 // bridge:event 是 fire-and-forget（禁止 await 回包），无回包形状。
@@ -43,10 +44,9 @@ export interface BridgeToolExecuteResponse {
   isError?: boolean
 }
 
-/** sync 回包：工具清单快照（commands 恒空——pi 侧命令发现另走 getCommands） */
+/** sync 回包：工具清单快照（pi 侧命令发现不走本协议，另走 getCommands 通路） */
 export interface BridgeSyncPayload {
   tools: Array<{ name: string; description: string; parameters: Record<string, unknown> }>
-  commands: Array<{ name: string }>
   success: true
 }
 
@@ -57,8 +57,7 @@ export interface BridgeInterceptResponse {
   injectedMessages: unknown[]
 }
 
-/** 错误回包：runtime 侧异常折叠（不裸 reject；bridge 侧解析后以 isError 返回） */
-export interface BridgeErrorResponse {
-  error: string
-  hint?: string
-}
+/** 错误回包：runtime 侧异常折叠（不裸 reject；bridge 侧解析后以 isError 返回）。
+ * D8 单源化：底层形状 alias 到 core 的 ChannelErrorResult（导出名与文件位置不变，
+ * public API 零破坏）。 */
+export type BridgeErrorResponse = ChannelErrorResult

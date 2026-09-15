@@ -3,10 +3,12 @@ import {
   guiResult,
   guiComponent,
   guiSetWidget,
+  setWidgetDual,
   isGuiCapable,
   isGuiComponent,
   isGuiRenderResult,
   extractGui,
+  firstContentText,
   GUI_WIDGET_MARKER,
   PROTOCOL_VERSION,
   type GuiContext,
@@ -136,6 +138,67 @@ describe('guiSetWidget', () => {
   })
 })
 
+describe('setWidgetDual（双模分派单点：清屏/推送 × GUI/TUI）', () => {
+  const content = {
+    gui: guiResult(guiComponent('stats-line', { items: [{ value: 'x' }] })),
+    text: ['todo: 1/3', 'running'],
+  }
+
+  function captureCtx(mode: GuiContext['mode']): { ctx: GuiContext; calls: Array<{ key: string; lines: string[] | undefined }> } {
+    const calls: Array<{ key: string; lines: string[] | undefined }> = []
+    const ctx: GuiContext = {
+      mode,
+      hasUI: true,
+      ui: {
+        setWidget: (key, lines) => {
+          calls.push({ key, lines })
+        },
+      },
+    }
+    return { ctx, calls }
+  }
+
+  it('TUI 模式 + 有内容：推原生文本行原样，结构性不产 marker 行（P3 负面断言）', () => {
+    const { ctx, calls } = captureCtx('tui')
+    setWidgetDual(ctx, 'todo', content)
+    expect(calls).toEqual([{ key: 'todo', lines: content.text }])
+    for (const line of calls[0].lines ?? []) {
+      expect(line.startsWith(GUI_WIDGET_MARKER)).toBe(false)
+    }
+  })
+
+  it('json 模式（非 rpc 非 tui）+ 有内容：同落文本行分支（isGuiCapable 单一判据）', () => {
+    const { ctx, calls } = captureCtx('json')
+    setWidgetDual(ctx, 'todo', content)
+    expect(calls).toEqual([{ key: 'todo', lines: content.text }])
+  })
+
+  it('RPC 模式 + 有内容：经 guiSetWidget 走 marker 编码通道', () => {
+    const { ctx, calls } = captureCtx('rpc')
+    setWidgetDual(ctx, 'todo', content)
+    expect(calls).toHaveLength(1)
+    expect(calls[0].lines![0].startsWith(GUI_WIDGET_MARKER)).toBe(true)
+  })
+
+  it('undefined 清屏（TUI）：setWidget(key, undefined)，模式无关不经 marker 路径', () => {
+    const { ctx, calls } = captureCtx('tui')
+    setWidgetDual(ctx, 'todo', undefined)
+    expect(calls).toEqual([{ key: 'todo', lines: undefined }])
+  })
+
+  it('undefined 清屏（RPC）：同落 setWidget(key, undefined)（清屏死分支消除的等价面）', () => {
+    const { ctx, calls } = captureCtx('rpc')
+    setWidgetDual(ctx, 'todo', undefined)
+    expect(calls).toEqual([{ key: 'todo', lines: undefined }])
+  })
+
+  it('无 ui.setWidget（headless）：推送与清屏均安全无操作', () => {
+    const headless: GuiContext = { mode: 'json', hasUI: false }
+    expect(() => setWidgetDual(headless, 'todo', content)).not.toThrow()
+    expect(() => setWidgetDual(headless, 'todo', undefined)).not.toThrow()
+  })
+})
+
 describe('isGuiRenderResult', () => {
   it('v1.1 信封（v + 合法 component）→ true，meta 可选', () => {
     expect(isGuiRenderResult(guiResult(guiComponent('list-tree', { items: [] })))).toBe(true)
@@ -207,5 +270,27 @@ describe('isGuiComponent', () => {
     expect(isGuiComponent(null)).toBe(false)
     expect(isGuiComponent('string')).toBe(false)
     expect(isGuiComponent(undefined)).toBe(false)
+  })
+})
+
+describe('firstContentText', () => {
+  it('content[0] 为 text 块 → 取其 text', () => {
+    expect(
+      firstContentText({ content: [{ type: 'text', text: 'hello' }] })
+    ).toBe('hello')
+  })
+
+  it('content[0] 非 text 块 → 空串', () => {
+    expect(
+      firstContentText({ content: [{ type: 'image', url: 'x' } as { type: string }] })
+    ).toBe('')
+  })
+
+  it('content 为空数组 → 空串', () => {
+    expect(firstContentText({ content: [] })).toBe('')
+  })
+
+  it('text 块缺失 text 字段（undefined）→ 空串', () => {
+    expect(firstContentText({ content: [{ type: 'text' }] })).toBe('')
   })
 })

@@ -346,7 +346,7 @@ describe("setupSessionLifecycle — bootstrap seam（设计 §3.1）", () => {
     expect(result.storeHealthy).toBe(true);
   });
 
-  it("子进程 env 注入时 identity custom entry 落 appendEntry（类型 13 字段随迁块，写入 12——不含 @deprecated parentSessionId）", async () => {
+  it("子进程 env 注入时 identity custom entry 落 appendEntry（随迁块不含 chatMode——modeless 波5 停写）", async () => {
     vi.stubEnv("PI_SUBAGENT_SELF_RECORD_ID", "rec-seam-1");
     vi.stubEnv("PI_SUBAGENT_AGENT", "fixer");
     vi.stubEnv("PI_SUBAGENT_MODE", "background");
@@ -365,8 +365,8 @@ describe("setupSessionLifecycle — bootstrap seam（设计 §3.1）", () => {
       mode: "background",
       task: "do stuff",
       worktree: true,
-      chatMode: false,
     });
+    expect(Object.keys(identityEntry!.data as object)).not.toContain("chatMode");
   });
 
   it("主进程（无 PI_SUBAGENT_SELF_RECORD_ID）不写 identity custom entry", async () => {

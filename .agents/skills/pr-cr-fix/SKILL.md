@@ -228,14 +228,14 @@ node <zsw-cli> workflow --workflow <repo>/.agents/skills/pr-cr-fix/workflows/pr-
 | scriptResult.status | 主 agent 动作 |
 |---|---|
 | `awaiting-push` | ① **逐项披露 skippedSteps**（每项 step + reason——被跳过的门禁必须让用户知情后才谈 push）；② 汇报 prUrl / gates（coverage/metrics/premerge）/ terminated / simplify；③ 请求 push 授权。**3b 恒 `git push github HEAD:<branch> --force-with-lease`**（与 workflow 内 pr-submit.sh 同构：无条件 `--force-with-lease`，`force_push` 判定链在本路径不存在）；push 后验证远端 ref（`git rev-parse HEAD github/<branch>` 一致） |
-| `failed` | 按 `failedStep` + `error`（内含恢复指引）+ `resumeCommand` 处置后 resume：gate 修复子循环 3 轮超限 → 人工修复、显式路径 commit 后续跑；coverage/metrics exit 2（工具错误）→ 按输出修复后 resume；real-pi 凭证预检未过 / 输出检出 skip 标记 → 补 `~/.pi` 三源凭证后 resume，**不得凭 skip 宣布 PASS**；pr-submit exit 2/3/5 → 按 error 指引（远端连通性 / `gh auth status` / 检查 runId 目录 title-body 产物）后 resume；cr-fix `stuck`/`max-rounds`/`needs-redesign` → 读 error 中 aggregated 路径（嵌套产物 `~/.review-fix-loop/<repo-slug>/<wf-id>/`，报告在 `batch-N/round-M/` 子目录）人工判定：**误报 → resume 带 `--skip-steps cr-fix`（接管，终态逐项披露）；真问题 → 修复 commit 后 resume** |
+| `failed` | 按 `failedStep` + `error`（内含恢复指引）+ `resumeCommand` 处置后 resume：gate 修复子循环 3 轮超限 → 人工修复、显式路径 commit 后续跑；coverage/metrics exit 2（工具错误）→ 按输出修复后 resume；real-pi skip 标记属 unit 轨预期输出、不构成失败（见「real-pi 测试分工」）；pr-submit exit 2/3/5 → 按 error 指引（远端连通性 / `gh auth status` / 检查 runId 目录 title-body 产物）后 resume；cr-fix `stuck`/`max-rounds`/`needs-redesign` → 读 error 中 aggregated 路径（嵌套产物 `~/.review-fix-loop/<repo-slug>/<wf-id>/`，报告在 `batch-N/round-M/` 子目录）人工判定：**误报 → resume 带 `--skip-steps cr-fix`（接管，终态逐项披露）；真问题 → 修复 commit 后 resume** |
 
 **断点恢复语义摘要**：恢复最小单位 = step（done/skipped 一律跳过；failed/in_progress 整体重跑）；resume 入口六道守卫依次执行——state 存在性与版本 / repo 一致 / 分支一致 / 活性双通道（引擎 state 主通道 + pid 降级，未知值视为 running）/ 工作区干净（`.review/` 除外）/ HEAD 外部变更需显式 `--allow-external-changes`；`--skip-steps` 命中的未完成 step 落 `skippedSteps` 披露；全 step done 且 HEAD 未变时幂等回放同一终态，HEAD 已变则 fail-fast 指引起新 run。cr-fix 重跑 = loop 整体重跑（fix commit 已进 git 历史，重跑面向当前 diff，已修复问题不再报出，通常 1-2 轮收敛）。
 
 **门禁语义映射声明（相对路径 1/3 手工流程的四处收紧/承接，均非降级）**：
 
 1. **修复范围收紧**：嵌套 review-fix-loop 修复全部等级（must-fix + suggestion）且 clean 判定要求 suggestion 同为 0——严于路径 3「SUGGESTION 顺手修、INFO 忽略」。
-2. **real-pi 承接**：阶段 3a 的 real-pi 义务由 final-gates 内 `--test-result` 实跑的 test:runtime 原位承接，另加凭证预检双保险——预检缺失即 failed、输出检出 skip 标记即 failed（**不得凭 skip 宣布 PASS**）。
+2. **real-pi 移出**（2026-09-15 e2e 执行准则，SSOT = AGENTS.md「测试」节）：3a 的 test:runtime 以 `XYZ_SKIP_REAL_PI=1` 只跑 unit 轨（与 CI test-runtime job 同口径），real-pi 等价性用例不在 PR/merge 承接——移到开发阶段按改动面跑（tech-design e2e 影响面评估 + dev-flow 验收计划表圈定）。旧「凭证预检双保险 / 输出检出 skip 即 failed」语义随之作废：skip 标记是 unit 轨的预期输出。
 3. **stuck 收紧为 failed**：`stuck`/`max-rounds`/`needs-redesign` 一律 failed 人工接管。对照路径 1 Gate-2 原语义（`terminated ∈ {clean, converged, stuck}` 均可进阶段 3，`stuck` 的「误报可人工 ack」处置见失败恢复表 pi 行）——本路径该放行语义不存在：接管必须经 `--skip-steps` 逃生舱，且终态逐项披露保证知情。
 4. **Gate-3 三分量承接**：`pr_exists` = pr-submit step done；`premerge.result == "PASS"` = final-gates step done；`local_ahead_of_origin == 0` 由 3b push 动作本身达成（push 后验证远端 ref）。
 
@@ -335,11 +335,11 @@ bash scripts/pr-pre-merge.sh --test-result <PASS|FAIL> --quiet
 
 **Gate-3a**（硬 gate）：三道 gate 全部 exit 0 且 marker `result=PASS` 才继续。coverage-gate exit 1 → 增量不足派测试 subagent 补测试 / 测试失败按失败用例派 worker；metrics-gate fail → 派 worker 修复；pre-merge FAIL → 按失败步骤对应工种修复。
 
-**real-pi 测试分工 [MANDATORY]**：CI 不跑 real-pi 测试（ci.yml test-runtime 显式设 `XYZ_SKIP_REAL_PI=1`，只跑凭证无关子集）；**开发验收必须跑 real-pi**——义务由 ③ `--test-result` 模式内实跑的 `test:runtime` 步骤（`cd packages/runtime && npx vitest run`）原位承接：不设 `XYZ_SKIP_REAL_PI`，双池全量含 real-pi 等价性测试（live ≡ reload 基线，SSOT 见 TEST-STRATEGY.md「等价性测试双轨」；步骤名 / 命令 / 不设 skip 均未变，与该 SSOT 表述一致）。凭证缺失时用例以显式理由 skip——**输出中出现 real-pi skip 即视为开发验收不完整**，须补凭证（`~/.pi` 三源探测，见 `pi-fixture.ts` `REAL_PI_READY`）后重跑，不得凭 skip 输出宣布 PASS。
+**real-pi 测试分工 [MANDATORY]**：CI 不跑 real-pi 测试（ci.yml test-runtime 显式设 `XYZ_SKIP_REAL_PI=1`，只跑凭证无关子集）；**PR/merge 门禁同样不跑**（2026-09-15 e2e 执行准则，SSOT = AGENTS.md「测试」节）——3a 的 `test:runtime` 以 `XYZ_SKIP_REAL_PI=1` 只跑 unit 轨，与 CI 完全同口径（skip 标记属预期输出，不是验收缺口）。真实 pi 等价性用例（live ≡ reload 基线，SSOT 见 TEST-STRATEGY.md「等价性测试双轨」）在**开发阶段按改动面**执行：清单由 tech-design 设计文档的 e2e 影响面评估圈定、dev-flow 验收计划表承接，空载串行跑（跨包并发会饱和 CPU 使真实 LLM 轮次延迟越过事件预算）；涉及 pi 协议链路 / entry reducer / replicated-states 失效收敛的改动，开发期跑对应子集，不进 PR/merge。
 
 ### 本地验证缩窄声明（CI 承接）
 
-本流程下**未被 diff 触及的包本地测试 0 遍**（原「1.1/3a 无条件三线全量」已取消）。承接证据：CI 四个 test job 覆盖全部测试线——test-runtime / test-renderer（含全量 thresholds）/ test-main / test-extensions（`pnpm extensions:test` 跑全部 pi-* 包）。**real-pi 例外**：CI 显式 skip，仅由本地 3a `test:runtime` 实跑承接（见上）。被 diff 触及的包测试恰 2 遍（1.6 插桩 + 3a 插桩终值；runtime 线 = 1.6 插桩 + 3a 无插桩专项，物理不可合并）。
+本流程下**未被 diff 触及的包本地测试 0 遍**（原「1.1/3a 无条件三线全量」已取消）。承接证据：CI 四个 test job 覆盖全部测试线——test-runtime / test-renderer（含全量 thresholds）/ test-main / test-extensions（`pnpm extensions:test` 跑全部 pi-* 包）。**real-pi 无例外承接方**：CI skip、本地 3a 也以 `XYZ_SKIP_REAL_PI=1` 只跑 unit 轨——real-pi 由开发阶段按改动面承接（见「real-pi 测试分工」）。被 diff 触及的包测试恰 2 遍（1.6 插桩 + 3a 插桩终值；runtime 线 = 1.6 插桩 + 3a 无插桩专项，物理不可合并）。
 
 ### 3b — push（需用户授权）
 

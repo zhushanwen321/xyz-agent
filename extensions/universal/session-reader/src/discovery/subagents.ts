@@ -2,9 +2,10 @@ import { readFile, readdir, open, stat } from 'node:fs/promises'
 import type { FileHandle } from 'node:fs/promises'
 import { join, basename } from 'node:path'
 import type { Entry } from '../core/parser.js'
-import type { Family, SessionRef, SubagentRef } from '../core/family.js'
+import type { Family, SessionRef } from '../core/family.js'
 import { buildFamilyIndex, resolveFamily } from '../core/family.js'
-import { listMainSessions, listSubagentSessions, resolveSessionRoots, type SessionFileMeta } from './roots.js'
+import { resolveSessionRoots, type SessionFileMeta } from './roots.js'
+import { parseSessionHeader, readSessionHeaderFirstLine } from './session-header.js'
 import { resolveWorkflows } from './workflows.js'
 
 /**
@@ -56,8 +57,8 @@ export async function buildFamilyFromFs(sessionId: string, agentDir: string): Pr
   const index = buildFamilyIndex(scan.headers, scan.identities, scan.fileStats)
   const family = resolveFamily(sessionId, index)
 
-  // ---- 6. 补 M1 占位字段（fileName / subagent cwd）+ workflows ----
-  enrichRefs(family, scan.pathToRef)
+  // ---- 6. workflows（enrichRefs 回填已删除，ext-simplify-04 U4/E2：fileName/cwd 占位
+  //      零文本读者，family 路径维持 core 层占位空串；富字段的消费者 = formatFamilyText 展示）----
   family.workflows = await resolveWorkflows(sessionId, scan.sessionIdToPath, scan.pathToRef)
 
   return family
@@ -71,10 +72,12 @@ export async function buildFamilyFromFs(sessionId: string, agentDir: string): Pr
  * not-found 错误文案：列出实际扫描过的 main 候选根（U1 并入部分，design §6.1 自证能力
  * ——「没有这条 session」与「根配错了」必须可区分，错误信息携带发现层内部状态）。
  * 仅失败路径调用，额外一次 resolveSessionRoots 的扫描成本可接受；根过滤条件与
- * collectMainSessions 实扫集合一致（listMainSessions = agentDir 信号包下未去重的 main 根）。
+ * collectMainSessions 实扫集合一致（agentDir 信号包下未去重的 main 根）。
  */
 async function formatSessionNotFound(sessionId: string, agentDir: string): Promise<string> {
-  const mainRoots = (await resolveSessionRoots({ agentDir })).filter(
+  // subagents:'stat'——本路径只渲染 main 根行，subagent 根不做深扫（ext-simplify-04 A2：
+  // 原默认 'scan' 白扫整个 subagent 根后 filter 丢弃）
+  const mainRoots = (await resolveSessionRoots({ agentDir }, { subagents: 'stat' })).filter(
     (r) => r.source === 'main' && r.dedupedInto === undefined,
   )
   const lines = mainRoots.map((r) => {
@@ -97,9 +100,9 @@ interface FamilyFsScan {
   identities: Entry[]
   /** sessionId → { mtime, size }（buildFamilyIndex 存活判定素材） */
   fileStats: Map<string, { mtime: number; size: number }>
-  /** sessionId → 真实文件路径，供 workflows 找目标文件 + enrich 补 fileName */
+  /** sessionId → 真实文件路径，供 workflows 找目标文件 */
   sessionIdToPath: Map<string, string>
-  /** path → 完整 SessionRef（含真实 cwd/fileName/mtime/size），供 enrich + workflow calls 反查 */
+  /** path → 完整 SessionRef（含真实 cwd/fileName/mtime/size），供 workflow calls 反查 */
   pathToRef: Map<string, SessionRef>
   /** 已扫描到的 subagent 文件路径集合，供 manifest 孤儿判定（alive 则跳过 manifest） */
   aliveSubPaths: Set<string>
@@ -114,9 +117,13 @@ function indexManifestsBySessionFile(manifests: RecordManifest[]): Map<string, R
 
 /** 步骤 1：main sessions —— 首行 header → headers + fileStats + 路径反查 */
 async function collectMainSessions(agentDir: string, scan: FamilyFsScan): Promise<void> {
-  const mainMetas = await listMainSessions(agentDir)
+  // A3（ext-simplify-04）：直调 resolveSessionRoots + filter（原 listMainSessions 薄包装
+  // 已删除）——agentDir 信号包下 main 源未去重根（[default]+[legacy]，被 [live] 去重的除外）的文件并集
+  const mainMetas = (await resolveSessionRoots({ agentDir }))
+    .filter((r) => r.source === 'main' && r.dedupedInto === undefined)
+    .flatMap((r) => r.files)
   for (const meta of mainMetas) {
-    const h = parseHeaderLine(await readFirstLine(meta.path))
+    const h = parseSessionHeader(await readSessionHeaderFirstLine(meta.path))
     if (!h) continue // 非 session/坏 header → 跳过（不入 byId）
     const entry: Entry = { type: 'session', id: h.id, parentId: null, cwd: h.cwd ?? '' }
     if (h.parentSession) entry.parentSession = h.parentSession
@@ -171,9 +178,12 @@ async function collectSubagentIdentities(
 ): Promise<void> {
   // U4 数据流：manifest 命中透全字段；未命中 P-fallback 读尾行 identity 取 task/slug/agent
   //（model/status 不可回退，留 undefined）；无 manifest 无 identity（运行中/异常）跳过。
-  const subMetas = await listSubagentSessions(agentDir)
+  // A3（ext-simplify-04）：直调 resolveSessionRoots（原 listSubagentSessions 薄包装已删除）
+  //——agentDir 信号包下 [subagent] 根 = <agentDir>/subagents（常量推导，恒唯一）
+  const subMetas =
+    (await resolveSessionRoots({ agentDir })).find((r) => r.kind === 'subagent')?.files ?? []
   for (const meta of subMetas) {
-    const h = parseHeaderLine(await readFirstLine(meta.path))
+    const h = parseSessionHeader(await readSessionHeaderFirstLine(meta.path))
     if (!h) continue // 非 session/坏 header → 无真实 session id，无法 id 修正，跳过
     const realId = h.id
     // header 可解析即视为 alive（MF-3）：identity 在文件尾行、完成时才写入，运行中的 subagent
@@ -244,54 +254,11 @@ function appendOrphanIdentities(manifests: RecordManifest[], scan: FamilyFsScan)
 
 // ============================================================
 // 文件读取 helpers（定长 buffer，避免全文读：subagent 文件均 269KB、总量 ~923MB）
+// 首行 header 读取/解析在 session-header.ts（D5 单源）；本文件仅保留尾行 identity 读取。
 // ============================================================
 
-/** 首行读取 buffer 上限。session header（id/cwd/parentSession）实测 < 300 字节，8KB 足够。 */
-const HEADER_READ_BYTES = 8192
 /** 尾行 identity 读取 buffer 上限。identity 含完整 task 文本可达数 KB；实测 64KB 覆盖 3203/3430。 */
 const TAIL_READ_BYTES = 65536
-
-/** 读文件首行（header）。定长 8KB 一次 read；空文件/读失败返回 undefined。 */
-async function readFirstLine(path: string): Promise<string | undefined> {
-  let fh: FileHandle | undefined
-  try {
-    fh = await open(path, 'r')
-    const buf = Buffer.alloc(HEADER_READ_BYTES)
-    const { bytesRead } = await fh.read(buf, 0, HEADER_READ_BYTES, 0)
-    if (bytesRead === 0) return undefined
-    const text = buf.subarray(0, bytesRead).toString('utf8')
-    const nl = text.indexOf('\n')
-    return nl === -1 ? text : text.slice(0, nl)
-  } catch {
-    return undefined
-  } finally {
-    await fh?.close().catch(() => {})
-  }
-}
-
-interface SessionHeader {
-  id: string
-  cwd?: string
-  parentSession?: string
-}
-
-/** 解析 header 首行为 SessionHeader。非 session 行/缺 id → null。 */
-function parseHeaderLine(line: string | undefined): SessionHeader | null {
-  if (!line) return null
-  let raw: unknown
-  try {
-    raw = JSON.parse(line)
-  } catch {
-    return null
-  }
-  if (typeof raw !== 'object' || raw === null) return null
-  const o = raw as Record<string, unknown>
-  if (o.type !== 'session' || typeof o.id !== 'string') return null
-  const h: SessionHeader = { id: o.id }
-  if (typeof o.cwd === 'string') h.cwd = o.cwd
-  if (typeof o.parentSession === 'string') h.parentSession = o.parentSession
-  return h
-}
 
 /** readTailIdentity 的成功返回形状（rootSessionId 必有，其余存在才带） */
 type TailIdentity = {
@@ -487,42 +454,4 @@ export function extractSessionIdFromFilename(name: string): string {
   const idx = noExt.lastIndexOf('_')
   const candidate = idx >= 0 ? noExt.slice(idx + 1) : noExt
   return /^[0-9a-f-]{8,}$/i.test(candidate) ? candidate : ''
-}
-
-// ============================================================
-// enrich：补 M1 占位字段（fileName / subagent cwd）
-// ============================================================
-
-/**
- * M1 buildFamilyIndex 设 SessionRef.fileName=''（header 推不出路径）、subagent cwd=''
- *（identity 无 cwd）。此处用已扫描的真实文件信息补全：alive 的 ref 补 fileName + cwd；
- * cleanedUp 孤儿（无文件）保持占位。
- */
-function enrichRefs(family: Family, pathToRef: Map<string, SessionRef>): void {
-  // sessionId → 完整 ref（含真实 fileName/cwd），由 pathToRef 反建
-  const bySid = new Map<string, SessionRef>()
-  for (const ref of pathToRef.values()) bySid.set(ref.sessionId, ref)
-
-  const enrichSessionRef = (ref: SessionRef): SessionRef => {
-    const full = bySid.get(ref.sessionId)
-    if (!full) return ref
-    return {
-      ...ref,
-      fileName: full.fileName || ref.fileName,
-      cwd: full.cwd || ref.cwd,
-    }
-  }
-
-  family.root = enrichSessionRef(family.root)
-  family.parents = family.parents.map(enrichSessionRef)
-  family.forks = family.forks.map(enrichSessionRef)
-  family.subagents = family.subagents.map((s) => {
-    const full = bySid.get(s.sessionId)
-    if (!full) return s
-    return {
-      ...s,
-      fileName: full.fileName || s.fileName,
-      cwd: full.cwd || s.cwd,
-    } as SubagentRef
-  })
 }

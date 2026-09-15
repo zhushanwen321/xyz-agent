@@ -1,18 +1,27 @@
 // src/__tests__/conversation-wiring.test.ts
 //
-// [M9] conversation:true → record.chatMode 接线穿透测试。
+// [M9 → modeless 波5 迁移] conversation 参数接线穿透测试。
 //
-// 背景：「持续对话」特性的 LLM 入口接线（subagent-tool params → startHandler 透传 →
-// execute → createRecordForMode 的 `chatMode: opts.conversation === true` +
-// `idleTimeoutMs: opts.idleTimeoutMs`，subagent-service.ts L1234-1235）此前无任何测试——
-// 全部 chatMode 测试手工构造 chatMode:true record，startHandler 测试不传 conversation。
-// 若参数名漂移或透传丢失（subagent-actions.ts L206-207），1970 个用例仍全绿。
+// 原断言（M9）：conversation:true → record.chatMode === true + idleTimeoutMs 生效
+//（subagent-tool params → startHandler 透传 → execute → createRecordForMode 的
+// `chatMode: opts.conversation === true`）。[modeless 波1] chatMode 字段消亡 +
+// [modeless 波5] LLM 面 schema 删 conversation 参数后，该断言的落值不存在了——
+// 本文件迁移为「当前真实接线面」的等价断言（回归保护不缩水）：
+//   1. conversation 参数现状 = **accepted-no-op**（ExecuteOptions/StartHandlerInput 的
+//      弃用窗字段，透传不报错但不产生任何 record 落值；唯一残留行为 = capability-gate
+//      的引擎 conversation 能力轴预检，core __tests__/chat-engine-routing.test.ts
+//      已覆盖，不在本文件重复）
+//   2. createRecordForMode 现存形态判据：idleTimeoutMs 归属 record（全 record 生效的
+//      idle GC 节奏，不再限定「对话模式」）+ record 无 chatMode 键（模式标志不得复活）
+//   3. idle 续聊语义：续聊资格 = 引擎能力轴 service.engineSupportsConversation(record)
+//      （messageHandler 唯一门槛）——显式传 conversation 或缺省同权可续，「一次性 record
+//      不可续」的记录级形态已消亡
 //
 // 两层验证：
 //   1. 接线层：真实 SubagentService.execute（fake 引擎 run 永不 settle——阻断 detached
-//      收尾，record 停在 running）→ 断言内存 record.chatMode === true / idleTimeoutMs 生效；
-//      缺省对照 chatMode === false
+//      收尾，record 停在 running）→ 断言 record 创建字段集合 + 派发链（resume 锚点）
 //   2. 透传层：startHandler + mock service → 断言 execute 收到 conversation/idleTimeoutMs 原值
+//      （弃用窗内参数逐字透传，不静默吞）
 //
 // [W3 改写] 原(mock inproc session-runner.runSpawn 永挂) 随 inproc pi 引擎目录删除消亡；
 // 换 registerFakePiEngine 协议替身（FakeRun promise 永不 settle 同语义），派发观测点
@@ -69,10 +78,10 @@ interface ServiceInternals {
 }
 
 // ============================================================
-// 1. 接线层：execute({conversation, idleTimeoutMs}) → record 字段
+// 1. 接线层：execute({conversation, idleTimeoutMs}) → record 字段 + 派发链
 // ============================================================
 
-describe("[M9] conversation:true 接线：execute → createRecordForMode", () => {
+describe("[modeless 波1/波5] conversation（accepted-no-op）+ idleTimeoutMs 接线：execute → createRecordForMode", () => {
   let agentDir: string;
   let service: SubagentService;
   let store: RecordStore;
@@ -100,7 +109,7 @@ describe("[M9] conversation:true 接线：execute → createRecordForMode", () =
     fs.rmSync(agentDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
   });
 
-  it("conversation:true + idleTimeoutMs:12345 → record.chatMode===true、idleTimeoutMs 生效", async () => {
+  it("conversation:true（弃用窗）+ idleTimeoutMs:12345 → idleTimeoutMs 落 record、无 chatMode 键、仍可续聊", async () => {
     const handle = await service.execute({
       task: "keep chatting with me",
       slug: "conv-test",
@@ -110,17 +119,21 @@ describe("[M9] conversation:true 接线：execute → createRecordForMode", () =
 
     const record = store.getMutable(handle.subagentId);
     expect(record).toBeDefined();
-    expect(record!.chatMode).toBe(true);
+    // idleTimeoutMs 归属 record（全 record 生效的 idle GC 节奏；优先级 参数 > env > 默认）
     expect(record!.idleTimeoutMs).toBe(12345);
+    // [modeless 波1] 模式标志消亡：conversation:true 不得复活 record 级 chatMode 落值
+    expect(Object.keys(record!)).not.toContain("chatMode");
     expect(record!.status).toBe("running");
-    // execute 走到 kickOffChatRound（engine.run 已派发）——完整接线而非 early return
+    // idle 续聊资格 = 引擎能力轴（messageHandler 唯一门槛），与参数/record 形态无关
+    expect(service.engineSupportsConversation(record!)).toBe(true);
+    // execute 走到首轮派发（engine.run 已派发）——完整接线而非 early return
     await vi.waitFor(() => expect(fake.runs).toHaveLength(1));
-    // chat 会话形态接线：run ctx 携带 chat.recordId（协议 run.params.chat 承载位）
+    // 会话形态由 resume 锚点承载（协议 run 的 ctx.resume.recordId——[modeless 波2]
+    // task.conversation 协议键已删，本轮起「每轮 = 新 run + resume 锚点」唯一形态）
     expect(fake.runs[0].ctx.resume?.recordId).toBe(handle.subagentId);
-    expect(fake.runs[0].task.conversation).toBe(true);
   });
 
-  it("conversation 缺省 → record.chatMode===false、idleTimeoutMs undefined（一次性模式不误升级）", async () => {
+  it("conversation 缺省 → idleTimeoutMs undefined（不误置）+ 无 chatMode 键 + 仍可续聊（万物可续不依赖参数）", async () => {
     const handle = await service.execute({
       task: "one shot task",
       slug: "oneshot-test",
@@ -128,13 +141,18 @@ describe("[M9] conversation:true 接线：execute → createRecordForMode", () =
 
     const record = store.getMutable(handle.subagentId);
     expect(record).toBeDefined();
-    expect(record!.chatMode).toBe(false);
     expect(record!.idleTimeoutMs).toBeUndefined();
+    expect(Object.keys(record!)).not.toContain("chatMode");
+    // 缺省派发与显式 conversation:true 同权可续——「一次性 record 不可续」的
+    // 记录级形态已消亡（原 chatMode === false 断言的等价承接）
+    expect(service.engineSupportsConversation(record!)).toBe(true);
   });
 });
 
 // ============================================================
 // 2. 透传层：startHandler(service, {conversation, idleTimeoutMs}) → service.execute
+//    弃用窗语义：参数逐字透传（不静默吞），core 侧 accepted-no-op 不再产生 record 落值
+//    ——接线回归保护（参数名漂移 / 透传丢失即红）
 // ============================================================
 
 function makeHandle(subagentId: string): ExecutionHandle {
@@ -167,7 +185,7 @@ function makeService(): SubagentService & { execute: ReturnType<typeof vi.fn> } 
   } as unknown as SubagentService & { execute: ReturnType<typeof vi.fn> };
 }
 
-describe("[M9] startHandler 透传：conversation/idleTimeoutMs → execute 入参", () => {
+describe("[M9 → modeless 波5] startHandler 透传（弃用窗）：conversation/idleTimeoutMs → execute 入参", () => {
   it("conversation:true + idleTimeoutMs:12345 原值透传给 service.execute", async () => {
     const svc = makeService();
     const result = await startHandler(

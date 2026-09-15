@@ -218,7 +218,6 @@ describe("[U4 / §3.2.3] 万物可续矩阵：closedReason × message + 唯一�
     record.result = "round one conclusion";
     record.turnCount = 7;
     record.totalTokens = 500;
-    (record as { -readonly [K in keyof typeof record]: typeof record[K] }).chatMode = true;
     record.controller = new AbortController();
 
     fs.rmSync(file); // 锚失效：transcript 被 GC 回收
@@ -234,7 +233,9 @@ describe("[U4 / §3.2.3] 万物可续矩阵：closedReason × message + 唯一�
     expect(record.status).toBe("running");
     expect(record.round).toBe(0);
     expect(record.epoch).toBe(1);
-    expect(record.stopReason).toBe("reopened");
+    // [U6/D4 轮始清点族扩字段] reopened 展示位随清点族退役——markReopened 写入的
+    // stopReason='reopened' 被 revive 格同步清（重开信息由摘要 prompt 体感承载）。
+    expect(record.stopReason).toBeUndefined();
 
     // resume:undefined（引擎开新 session——新锚由 run 应答回填）
     expect(fake.runs[0]!.ctx.resume?.resume).toBeUndefined();

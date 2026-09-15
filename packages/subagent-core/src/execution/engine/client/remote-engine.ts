@@ -120,6 +120,17 @@ export class RemoteEngine implements EnginePort {
   }
 
   /**
+   * [stdout-wedge self-heal] 协议客户端只读暴露面：service 层（chat-rounds 的
+   * settled-watchdog fire 处置）读取 run 事件计数 / 在册路由数（
+   * eventsReceivedForRun / activeRunCount）并触发楔死自愈杀链
+   * （killEngineForStdoutWedge）。诊断 / 自愈专用——运行路径不消费本成员，
+   * RemoteEngine 行为零参与。
+   */
+  get protocolClient(): EngineClient {
+    return this.opts.client;
+  }
+
+  /**
    * listModels 三态映射（必写死）：
    *   省略 modelCatalog / models null → 返回 null（buildCoreAlignedHint 语义）；
    *   显式 `models: []` → 返回 []（buildEmptyModelsHint）；
@@ -475,7 +486,6 @@ function toSdkTaskSubset(task: AgentCallOpts): SdkAgentCallOpts {
     // 缺省 undefined 不落 wire（JSON 序列化丢弃，与相邻可选字段同语义）。
     forkSource: task.forkSource,
     worktree: task.worktree,
-    conversation: task.conversation,
     idleTimeoutMs: task.idleTimeoutMs,
     denyTools: task.denyTools,
     permissionMode: task.permissionMode,

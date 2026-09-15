@@ -131,12 +131,17 @@ afterEach(async () => {
 
 describe('pi tee size 轮转（D7，.1.gz 口径）', () => {
   it('超限旋段：旧段 gzip 单代 .1.gz + 主档截断续写，pi- 前缀保持，跨段行级连续止于尾行', async () => {
-    logger = await loadLogger({ XYZ_LOG_MAX_BYTES: '200' })
+    // 阈值/行数口径（flake 根修 2026-09-15）：行 ~28B、600B 阈值 → 轮转边界落在
+    // i≈21 / i≈41，末段（主档）≈20 行。轮转窗口的 pending 回放时序会让边界漂移
+    // ±数行（真实 fs flush 时机不定，200B/40 行口径下实测幸存尾行数 9..15 波动，
+    // 「≥10」断言余量被吃穿）——600B/61 行让末段相对断言下限留 10 行余量，两个
+    // 轮转边界仍覆盖「单代 gzip rename 原子覆盖」语义。行级不变式（连续 / 止于
+    // 尾行 / 恰 2 文件）与边界位置无关，不受漂移影响。
+    logger = await loadLogger({ XYZ_LOG_MAX_BYTES: '600' })
     logger.initLogger(dataDir)
     const sid = 'rot-sid-1'
     const sessionLog = logger.createPiSessionLog(sid)
-    // 每行 ~27B，200B 阈值 → 多次轮转；单代 gzip 下早期段被覆盖，幸存的 .1.gz + 主档 = 末 2 段
-    for (let i = 0; i < 40; i++) {
+    for (let i = 0; i < 61; i++) {
       sessionLog.write(JSON.stringify({ i, pad: 'x'.repeat(10) }))
       await settleWrite()
     }
@@ -155,11 +160,11 @@ describe('pi tee size 轮转（D7，.1.gz 口径）', () => {
     expect(rolled[0]).toMatch(/^pi-.*\.jsonl\.1\.gz$/)
     // 跨段行级连续：.1.gz 解压段（旧段）+ 主档（新段）拼接无缺行、单调递增、止于最后写入行
     const indices = [...gunzipLines(rolled[0]), ...readLines(main[0])].flatMap((l) => extractIndices(l))
-    expect(indices.length).toBeGreaterThanOrEqual(10) // 至少覆盖一个完整轮转周期的尾部
+    expect(indices.length).toBeGreaterThanOrEqual(10) // 末段 ≈20 行（余量见上方口径注释）
     for (let i = 1; i < indices.length; i++) {
       expect(indices[i]).toBe(indices[i - 1] + 1)
     }
-    expect(indices[indices.length - 1]).toBe(39)
+    expect(indices[indices.length - 1]).toBe(60)
   })
 
   it('尾部 flush 走新流：轮转完成后写入的尾部行经 closeLogger 落在新主档（A5）', async () => {

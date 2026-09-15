@@ -204,12 +204,13 @@ describe("registerSubagentsCommand — RPC message/start dispatch + 留痕", () 
     await def.handler(argsStr, ctx as ExtensionCommandContext);
   }
 
-  /** chatMode record mock（messageHandler 经 getRecordForAction 取到）。 */
+  /** message 目标 record mock（messageHandler 经 getRecordForAction 取到）。
+   *  [modeless 波5] 无 chatMode——message 资格 = 引擎能力轴（fake 的
+   *  engineSupportsConversation），与 record 形态无关。 */
   function makeRecord(overrides: Record<string, unknown> = {}): Record<string, unknown> {
     return {
       id: "sa-1",
       slug: "build-api",
-      chatMode: true,
       status: "running",
       ...overrides,
     };
@@ -218,18 +219,24 @@ describe("registerSubagentsCommand — RPC message/start dispatch + 留痕", () 
   it("message 正常（非 streaming）→ messageHandler 接线 + 留痕 entry 立即落盘", async () => {
     const record = makeRecord();
     const deliverChatMessage = vi.fn();
+    const getRecordForAction = vi.fn(() => record);
+    const engineSupportsConversation = vi.fn(() => true);
     // [D4 聚合跟随] message/close 生产消费面 = service.chatActions
     injectFakeService({
       chatActions: {
-        getRecordForAction: vi.fn(() => record),
+        getRecordForAction,
         deliverChatMessage,
       },
+      engineSupportsConversation,
     });
 
     // 转义协议：字面 \n 传输，解析侧还原（P3）
     await runHandler("message sa-1 第一条消息\\n带换行");
 
-    // 真实 messageHandler 跑通：deliverChatMessage(record, 还原后文本)（[H1 U6] interrupt 退役）
+    // 归属校验（reconnect 放行）→ 引擎能力轴 gate（[modeless 波1] message 资格唯一门槛）
+    // → 真实 messageHandler 跑通：deliverChatMessage(record, 还原后文本)
+    expect(getRecordForAction).toHaveBeenCalledWith("sa-1", { allowReconnect: true });
+    expect(engineSupportsConversation).toHaveBeenCalledWith(record);
     expect(deliverChatMessage).toHaveBeenCalledWith(record, "第一条消息\n带换行");
     // 留痕：subagent-directive custom_message（§3.3.3——customType/content/details 契约）
     expect(sendMessageMock).toHaveBeenCalledTimes(1);
@@ -259,6 +266,9 @@ describe("registerSubagentsCommand — RPC message/start dispatch + 留痕", () 
         getRecordForAction: vi.fn(() => record),
         deliverChatMessage,
       },
+      // [modeless 波1] message 资格引擎轴 gate（messageHandler 现流程第二道）；streaming
+      // 分流发生在 gate 之后的留痕段——不喂门则 message 被引擎轴拒、留痕不落
+      engineSupportsConversation: vi.fn(() => true),
     });
     // 主 agent turn 进行中（ctx.isIdle()=false）
     ctx.isIdle = vi.fn(() => false);

@@ -78,7 +78,6 @@ function writeSessionJsonl(
     rootSessionId: string;
     parentRecordId?: string;
     depth?: number;
-    chatMode?: boolean;
     worktree?: boolean;
   },
 ): string {
@@ -110,7 +109,6 @@ function writeSessionJsonl(
         rootSessionId: identity.rootSessionId,
         ...(identity.parentRecordId !== undefined ? { parentRecordId: identity.parentRecordId } : {}),
         ...(identity.depth !== undefined ? { depth: identity.depth } : {}),
-        ...(identity.chatMode !== undefined ? { chatMode: identity.chatMode } : {}),
         ...(identity.worktree !== undefined ? { worktree: identity.worktree } : {}),
       },
     }),
@@ -213,7 +211,9 @@ describe("[v8.5 D] 透明重生：ended 记录同 id 续写原 session", () => {
         expect(snap?.sessionFile).toBe(file); // 身份字段复原：原 session 文件
       });
       const snap = service.queries.findRecord("sa-d-happy");
-      expect(snap?.chatMode).toBe(true);
+      // [modeless 波5] chatMode 字段消亡：模式不是 record 状态，message 直接续聊
+      // （无 one-shot → chat 升级概念）；续聊语义由 status 翻 running + resume 触达承载。
+      expect(snap?.chatMode).toBeUndefined();
 
       // resume 触达（[W3 观测点改写] 原 runAndFinalize 边界捕获 → 协议 engine.run 捕获）：
       // 原 sessionFile 作为续写锚点传递（ctx.resume.resume.sessionRef.sessionFile = --session

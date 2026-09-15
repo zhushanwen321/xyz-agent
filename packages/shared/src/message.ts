@@ -233,7 +233,7 @@ export interface BgNotifyRecord {
   patchFile?: string
   /** L2 关闭原因子枚举（仅 status="closed" 时有意义）。对齐 notifier.ts ClosedReason。 */
   closedReason?: string
-  /** 对话轮次计数（仅 running 轮次通知有意义，非 chatMode 恒定）。dedup key 按 id:round 去重。 */
+  /** 对话轮次计数（仅 running 轮次通知有意义，非轮次通知恒定）。dedup key 按 id:round 去重。 */
   round?: number
 }
 

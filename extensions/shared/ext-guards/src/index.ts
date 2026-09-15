@@ -83,6 +83,58 @@ export function toErrorMessage(e: unknown): string {
 	return e instanceof Error ? e.message : String(e);
 }
 
+/**
+ * 判断 value 是否为非 null、非数组的 object（`Record` 语义本义：可按字符串键安全取值）。
+ *
+ * canonical 来自 ext-simplify-17 D3（排数组严版，设计文档
+ * docs/architecture/ext-simplify-17-shared-extraction.md §3.1）。
+ */
+export function isRecord(value: unknown): value is Record<string, unknown> {
+	return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/**
+ * 判断 err 是否为 Node fs 的 ENOENT 错误（`Error` 实例且 `code === "ENOENT"`）。
+ *
+ * canonical 来自 ext-simplify-17 D2（scheduler 严版，`"code" in err` 收窄避免
+ * `as Record` 强转——taste/no-unsafe-cast）。
+ */
+export function isEnoentError(err: unknown): boolean {
+	return err instanceof Error && "code" in err && err.code === "ENOENT";
+}
+
+// ── subagent 进程判据（isSubagentProcess，ext-simplify-17 D4）────────────
+//
+// 背景：extension 需要知道「当前 pi 进程是否引擎链上的 subagent 子进程」来决定降级
+// （base-tool-enhance background 降级——bte background 生命周期设计的 D14 项，
+// commit 8599abd0c，该设计未在现行 docs 留档 / smart-context R6 不注册工具，
+// 规则定义见 smart-context src/index.ts R 规则族注释）。判据锚
+// XYZ_AGENT_SUBAGENT=1——subagent-engine-sdk env.ts 的 buildEngineChildEnv 对每个引擎
+// 子进程恒注入（L0 层最后写入），再经引擎内二次 spawn（buildOutboundChildEnv 全量
+// 继承）传到 subagent 内的 bash。旧判据（PI_SUBAGENT_ROOT_SESSION_ID /
+// PI_SUBAGENT_SELF_RECORD_ID 两键）在引擎协议化后已无写入方（20260914 探针证实，
+// 报告 .tmp/dev-flow/ext-simplify-17-d4-probe.md），判据失效态由 D4 重锚收敛于此。
+
+/** subagent 进程标记 env 键（引擎 spawn 链恒注入 "1"，subagent-engine-sdk env.ts L0）。 */
+export const SUBAGENT_MARKER_ENV = "XYZ_AGENT_SUBAGENT";
+
+/**
+ * 判断当前进程是否引擎链上的 subagent 子进程。
+ *
+ * 判据 = `env[SUBAGENT_MARKER_ENV] === "1"`（canonical 来自 ext-simplify-17 D4，
+ * 设计文档 docs/architecture/ext-simplify-17-shared-extraction.md §3.1）。口径
+ * 「宁缺勿污」：只有引擎 spawn 链上的真 subagent 才命中——人工 export 旧
+ * PI_SUBAGENT_ROOT_SESSION_ID / PI_SUBAGENT_SELF_RECORD_ID 身份键不再算（两键现
+ * 无写入方，见分节注释）。
+ *
+ * @param env env 快照；缺省读 process.env，显式传入即与宿主进程环境完全隔离（测试注入用）
+ */
+export function isSubagentProcess(
+	env: Record<string, string | undefined> = process.env,
+): boolean {
+	return env[SUBAGENT_MARKER_ENV] === "1";
+}
+
 // ── stale ctx 守卫（guardStaleCtx，崩溃韧性 D1）────────────────────────
 //
 // 背景（docs/design/crash-resilience.md §3.3 D1 / §2.2 事件 E1）：pi 的 extension API

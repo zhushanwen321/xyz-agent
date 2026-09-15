@@ -16,7 +16,8 @@
  * ① subagent-core——notify-host.ts / orchestration/lifecycle.ts /
  *   worker-message-pump.ts / round-supervisor/reconcile-sweep.ts（崩溃恢复 sweep
  *   补注销）；② base-tool-enhance——bash 投影（notify.ts register/unregister 主链 +
- *   process-exit-guard.ts / pending-reconcile.ts 收殓对账尽力补）；
+ *   process-exit-guard.ts 退出边沿尽力补 emit（pending-reconcile 对账走 appendEntry
+ *   权威路径，不经 emit））；
  * ③ subagent-workflow——仅崩溃恢复时 emit pending:unregister（session-lifecycle.ts
  *   recoverCrashedRuns 回调））：
  * - emit("pending:register", { id, type, name })
@@ -35,6 +36,7 @@
  */
 
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { mapReasonToStatus as mapReasonToStatusImpl } from "@xyz-agent/extension-protocol";
 import { getLogger } from "@zhushanwen/pi-extension-logger";
 import { Type } from "typebox";
 
@@ -183,7 +185,8 @@ export default function pendingNotificationsExtension(pi: ExtensionAPI): void {
 		debugLog("debug", "listener: pending:unregister parsed", parsed);
 
 		// 未知/已注销 id 忽略（U8）：对 entries 现算（有 register 且无任何 unregister
-		// 才落盘）——bte 对账已直接落盘的注销在此同样生效，收尾尽力补 emit 天然幂等。
+		// 才落盘）——bte 对账已直接落盘的注销在此同样生效，任一发送方重复 unregister
+		// 被本前置判断拦截，天然不重复落盘。
 		const status = mapReasonToStatus(parsed.reason);
 		if (!isPendingActive(currentEntries(), parsed.id)) {
 			debugLog("debug", "listener: pending:unregister ignored (unknown id)", { id: parsed.id });
@@ -278,27 +281,12 @@ function parseUnregisterEvent(data: unknown): ParsedUnregister | null {
 }
 
 /** 将事件 reason 映射为 pending:unregister entry 的 status 字段（落盘契约组成部分）。
- *  [U5 / 永久会话模型 §3.2.5 通知词表对齐] subagent-core 新 stopReason 展示值经注销
- *  reason 通道到达（interrupted/interrupted-by-restart/interrupted-by-parent → aborted、
- *  reopened → completed）——防新词落 default 被记为 completed 的误标（cancelled 同族
- *  事故先例：新枚举值漏映射静默落兜底）。 */
+ *  权威单点在 protocol pending-entries（ext-simplify-17 D10）——本函数是对 protocol
+ *  导出的类型收窄包装（PendingStatus 枚举留在本包，protocol 不引 extension 侧类型），
+ *  既有调用点零改动；bte 对账写侧同引 protocol 单点，两侧映射不再可能漂移。
+ *  词表演化背景（U5 / §3.2.5 通知词表对齐）见 protocol 实现处 JSDoc。 */
 function mapReasonToStatus(reason: string): PendingStatus {
-	switch (reason) {
-		case "completed": return "completed";
-		case "failed": return "failed";
-		case "cancelled": return "cancelled";
-		case "expired": return "expired";
-		case "time_limited": return "time_limited";
-		case "budget_limited": return "failed";
-		case "aborted": return "aborted";
-		case "interrupted":
-		case "interrupted-by-restart":
-		case "interrupted-by-parent":
-			return "aborted";
-		case "reopened":
-			return "completed";
-		default: return "completed";
-	}
+	return mapReasonToStatusImpl(reason) as PendingStatus;
 }
 
 /** 格式化 active 列表为可读文本 */

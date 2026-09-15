@@ -7,6 +7,8 @@
  * - settled 边沿 → busy 复核通过 → flush；有订阅装配下 busy 只依赖边沿 + watch-dog（不退避强发）
  * - watch-dog 低频复核（D8 兜底层①：settled 事件丢失的恢复路径）
  * - port.send 失败 → 消息留在途、按 backoff 有限重试，达上限 settle rejected（D4 错误重试）
+ * - 终态上报 per-message（ext-simplify-08 D1/B1）：onSettled 对批次内每条消息各回调
+ *   一次，msg 为该条原始消息（非 composed 合批消息）；单消息批次行为不变
  * - sendChecked() 统一经投递循环：resolve 挂钩 port.send 受理结果（busy 时经
  *   streaming 受理入 pi 队列即回，以此确认可达）；首次受理失败即 reject（入口即拦）
  * - in-flight 防重：单 handle 至多一个 port.send 在途
@@ -128,6 +130,41 @@ function settleChecked(
   return rejected
 }
 
+// ─── isIdle 安全调用（catch → 视为不可发送） ──────────────
+function safeIsIdle(port: DeliveryPort): boolean {
+  try {
+    return port.isIdle()
+  } catch {
+    // session 已关闭等异常 → 视为不可发送
+    return false
+  }
+}
+
+// ─── busy 判定（isIdle + hasPendingMessages 双条件，G4）────
+// 旧 scheduler gate 为 !isIdle() || hasPendingMessages()；内核单判 isIdle 会把
+// 「idle 但 pi 队列尚有消息未注入」误判为可投，提前投递与迁移前不等价。
+function isBusy(port: DeliveryPort): boolean {
+  if (!safeIsIdle(port)) return true
+  try {
+    return port.hasPendingMessages()
+  } catch {
+    // 探测异常（session 关闭等）→ 保守视为 busy 不投
+    return true
+  }
+}
+
+// ─── warn 辅助（U4 出口参数化）────────────────────────────
+// 注入优先（装配方接 extensionLogger 落盘）；缺省 console.warn 保持通用包
+// 零 logger 依赖（投递失败必须可见）。
+function resolveWarnSink(config?: DeliveryConfigWithWarn): (msg: string, err?: unknown) => void {
+  return (
+    config?.warn ??
+    ((msg: string, err?: unknown) => {
+      console.warn(`[session-delivery] ${msg}`, err ?? '')
+    })
+  )
+}
+
 /**
  * 创建投递句柄。
  *
@@ -194,28 +231,8 @@ export function createDelivery(
     armMergeTimer()
   }
 
-  // ─── busy 判定（isIdle + hasPendingMessages 双条件，G4）────
-  // 旧 scheduler gate 为 !isIdle() || hasPendingMessages()；内核单判 isIdle 会把
-  // 「idle 但 pi 队列尚有消息未注入」误判为可投，提前投递与迁移前不等价。
-  function isBusy(): boolean {
-    if (!safeIsIdle()) return true
-    try {
-      return port.hasPendingMessages()
-    } catch {
-      // 探测异常（session 关闭等）→ 保守视为 busy 不投
-      return true
-    }
-  }
-
-  // ─── isIdle 安全调用（catch → 视为不可发送） ──────────────
-  function safeIsIdle(): boolean {
-    try {
-      return port.isIdle()
-    } catch {
-      // session 已关闭等异常 → 视为不可发送
-      return false
-    }
-  }
+  // ─── busy 判定 / isIdle 安全调用 ──────────────────────────
+  // isBusy / safeIsIdle 见模块级（仅依赖 port，无闭包状态）
 
   // ─── settled 订阅管理 ──────────────────────────────────────
   function ensureSettledSub(): void {
@@ -223,7 +240,7 @@ export function createDelivery(
     settledUnsub = port.subscribeSettled(() => {
       if (disposed) return
       // settled 边沿 → busy 复核（isIdle 已先于事件复位，agent-session.js:327-336）→ flush
-      if (!isBusy()) {
+      if (!isBusy(port)) {
         flush()
       }
     })
@@ -243,7 +260,7 @@ export function createDelivery(
     watchdogTimer = setInterval(() => {
       if (disposed || inFlight) return
       if (queue.length === 0) return
-      if (!isBusy()) {
+      if (!isBusy(port)) {
         flush()
       }
     }, cfg.watchdogMs)
@@ -268,14 +285,14 @@ export function createDelivery(
       const result = port.send(composed, intent)
       if (isThenable(result)) {
         result.then(
-          (receipt) => onSendReceipt(composed, receipt),
-          (err: unknown) => onSendFail(composed, err),
+          (receipt) => onSendReceipt(receipt),
+          (err: unknown) => onSendFail(err),
         )
       } else {
-        onSendReceipt(composed, result)
+        onSendReceipt(result)
       }
     } catch (err) {
-      onSendFail(composed, err)
+      onSendFail(err)
     }
   }
 
@@ -283,26 +300,32 @@ export function createDelivery(
    * 受理判定（U2 回执口径）：显式 `{accepted:false}` → 发送失败路径（错误重试 /
    * reject 链路）；void / `{accepted:true}` / 其他形态 = 受理成功（旧 port 兼容）。
    */
-  function onSendReceipt(composed: DeliveryMessage, receipt: SendReceipt | void): void {
+  function onSendReceipt(receipt: SendReceipt | void): void {
     if (receipt !== undefined && receipt.accepted === false) {
-      onSendFail(composed, new Error(receipt.reason ?? 'port.send rejected (accepted:false)'))
+      onSendFail(new Error(receipt.reason ?? 'port.send rejected (accepted:false)'))
       return
     }
-    onSendOk(composed)
+    onSendOk()
   }
 
-  function onSendOk(composed: DeliveryMessage): void {
+  function onSendOk(): void {
     if (disposed) return
     const delivered = inflightBatch
     inFlight = false
     inflightBatch = []
     sendAttempts = 0
     settleChecked(delivered, undefined, checkedPending)
-    cfg.onSettled?.(composed, 'delivered')
+    // per-message 终态（ext-simplify-08 D1/B1）：批次内每条各回调一次，msg 为该条
+    // 原始消息（composed 只带首条 identity，非首条收不到回调 = 合批记账断头）；
+    // 回调内 dispose → 剩余条目不再回调（与 dispose 丢弃队列不触发 onSettled 契约一致）
+    for (const m of delivered) {
+      if (disposed) break
+      cfg.onSettled?.(m, 'delivered')
+    }
     pump()
   }
 
-  function onSendFail(composed: DeliveryMessage, err: unknown): void {
+  function onSendFail(err: unknown): void {
     if (disposed) return
     sendAttempts++
     // 入口即拦：checked 消息首次受理失败即 reject，并从在途剔除（失败同步交给调用方，
@@ -321,12 +344,17 @@ export function createDelivery(
       return
     }
     if (sendAttempts > cfg.backoff.max) {
-      // 达上限 → 终态 rejected（D4 错误重试：不无限静默积压）
+      // 达上限 → 终态 rejected（D4 错误重试：不无限静默积压）；置空前捕获批次，
+      // 逐条 per-message 回调（口径同 onSendOk）
+      const rejectedBatch = inflightBatch
       inFlight = false
       inflightBatch = []
       sendAttempts = 0
       warn('port.send failed after max retries', err)
-      cfg.onSettled?.(composed, 'rejected')
+      for (const m of rejectedBatch) {
+        if (disposed) break
+        cfg.onSettled?.(m, 'rejected')
+      }
       pump()
       return
     }
@@ -397,7 +425,7 @@ export function createDelivery(
     }
 
     // busy gate（isIdle + hasPendingMessages 双条件）
-    if (isBusy() && attempt < cfg.backoff.max) {
+    if (isBusy(port) && attempt < cfg.backoff.max) {
       if (port.subscribeSettled) {
         // 有订阅装配：busy 消息由 settled 边沿驱动，退避强发不启动（与事件驱动
         // 竞速会提前注入正在进行的 run）；watch-dog 兜底 settled 丢失（D8）
@@ -417,13 +445,8 @@ export function createDelivery(
   }
 
   // ─── warn 辅助（U4 出口参数化）────────────────────────────
-  // 注入优先（装配方接 extensionLogger 落盘）；缺省 console.warn 保持通用包
-  // 零 logger 依赖（投递失败必须可见）。
-  const warnSink: (msg: string, err?: unknown) => void =
-    config?.warn ??
-    ((msg: string, err?: unknown) => {
-      console.warn(`[session-delivery] ${msg}`, err ?? '')
-    })
+  // 出口解析见模块级 resolveWarnSink（注入优先，缺省 console.warn）。
+  const warnSink = resolveWarnSink(config)
 
   function warn(msg: string, err?: unknown): void {
     warnSink(msg, err)

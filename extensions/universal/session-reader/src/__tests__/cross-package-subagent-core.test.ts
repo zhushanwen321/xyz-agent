@@ -213,13 +213,14 @@ describe('跨包集成：subagent-core E1 落标 manifest → session-reader res
     return childFile
   }
 
-  /** 种「崩溃前主文件末条序列」：register（running+sync）→ 轮终（running+resumable+
-   *  result 全文 + sessionFile）——成功成员崩溃时的真实末条形态。 */
+  /** 种「崩溃前主文件末条序列」：register（running+sync）→ 轮终（idle + result
+   *  全文 + sessionFile）——[U4/D4] 翻边后成功成员崩溃时的真实末条形态（U5 前的
+   *  running+resumable 桥接形态已随字段退役消亡）。 */
   function seedRoundTerminalEntries(m: MemberSeed, childFile: string): void {
     const store = makeSeedStore()
     store.reportSubagentRecord(memberRecord({ id: m.id, sessionFile: childFile, model: m.model }))
     store.reportSubagentRecord(
-      memberRecord({ id: m.id, sessionFile: childFile, model: m.model, resumable: true, result: m.resultText }),
+      memberRecord({ id: m.id, sessionFile: childFile, model: m.model, status: 'idle', result: m.resultText }),
     )
   }
 
@@ -280,7 +281,7 @@ describe('跨包集成：subagent-core E1 落标 manifest → session-reader res
     })
 
     // session-reader 侧：sa- id 反查（v1 此处报「无匹配 record」——manifest 惰性不落盘）
-    const r = await handleSessionRead({ action: 'result', session: 'sa-cross-1' }, agentDir)
+    const r = await handleSessionRead({ action: 'result', session: 'sa-cross-1' }, { agentDir })
     // 同源语义：跨 assistant message "\n\n" join、thinking 块排除——与 record.result 逐字节一致
     expect(r.content[0]?.text).toBe(resultText)
     const d = r.details as {
@@ -304,7 +305,7 @@ describe('跨包集成：subagent-core E1 落标 manifest → session-reader res
     ]
     await driveSyncBatchRecovery(members)
 
-    const r = await handleSessionRead({ action: 'result', session: 'sa-cross-a,sa-cross-b' }, agentDir)
+    const r = await handleSessionRead({ action: 'result', session: 'sa-cross-a,sa-cross-b' }, { agentDir })
     const text = r.content[0]?.text ?? ''
     expect(text).toContain('[1/2] sa-cross-a')
     expect(text).toContain('[2/2] sa-cross-b')

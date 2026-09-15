@@ -178,11 +178,11 @@ export async function markBatchFinalizedImpl(records: readonly SubagentRecord[],
       }
     }
   }
-  // 批通知写账（barrier 之后）：显式覆写 collectMode/batchFinalized 落标——防非
-  // entry 源重建（getFullRecord sidecar/manifest 分支）丢标记（对齐
-  // appendBatchFinalizedEntry 现状）。
+  // 批通知写账（barrier 之后）：显式覆写 batchFinalized 落标——防非 entry 源重建
+  //（getFullRecord sidecar/manifest 分支）丢标记。[modeless 波3] collectMode 覆写
+  // 随字段消亡删除。
   for (const rec of records) {
-    ctx.reportSubagentRecord({ ...rec, collectMode: "sync", batchFinalized: true });
+    ctx.reportSubagentRecord({ ...rec, batchFinalized: true });
   }
 }
 
@@ -351,7 +351,7 @@ export function releaseWriteLeaseImpl(record: ExecutionRecord, ctx: TerminalCtx)
  * record.endedAt 不写（非终态，duration 语义保持 running 起算）。
  *
  * @param stopReason 展示值（成功/失败轮用旧值族、中断轮用 interrupted 族——
- *        值域见 types.ts StopReason；纯展示 + 排障，不参与资格判定）。
+ *        值域见 types.ts StopReason；展示 + 排障，U6 起参与 isOccupied 判定）。
  * @returns true = 收口完成；false = CAS 拒绝（record 非 running）。
  */
 export function markSettledImpl(record: ExecutionRecord, stopReason: StopReason, ctx: TerminalCtx): boolean {
@@ -502,7 +502,6 @@ export function fullBindingPayload(record: ExecutionRecord, transcriptRef: Trans
     slug: record.slug,
     mode: "background",
     startedAt: record.startedAt,
-    chatMode: record.chatMode === true,
     model: record.model,
     thinkingLevel: record.thinkingLevel,
     worktree: record.worktreeHandle !== undefined || record.hadWorktree === true,

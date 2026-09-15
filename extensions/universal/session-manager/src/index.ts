@@ -2,7 +2,14 @@
 // 6 个 session 管理工具，通过 ctx.ui.select(SESSION_MANAGER_MARKER) 通道与 runtime handler 通信。
 
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { SESSION_MANAGER_MARKER, type SessionManagerAction } from "@xyz-agent/extension-protocol";
+import {
+	SESSION_MANAGER_MARKER,
+	callMarkerRpc,
+	formatChannelErrorText,
+	isChannelErrorResult,
+	type MarkerRpcResult,
+	type SessionManagerAction,
+} from "@xyz-agent/extension-protocol";
 import { getLogger, setPiHandle } from "@zhushanwen/pi-extension-logger";
 import { Type, type Static, type TObject } from "typebox";
 
@@ -50,52 +57,38 @@ const SELECT_TIMEOUT_MS: Record<SessionManagerAction, number> = {
 	abort: 30_000,
 };
 
-/** runtime handler respond 的 JSON 形状（错误闭环：{ error, hint?, sessionId? }） */
-interface SessionManagerRawError {
-	error: string;
-	hint?: string;
-	sessionId?: string;
-}
-
-/** 工具 details 的可消费形状（下游消费不再 any） */
-type SessionManagerToolDetails =
-	| { kind: "error"; error: SessionManagerRawError }
-	| { kind: "ok"; result: unknown }
-	| { kind: "cancelled" };
-
 /**
- * 通过 select 通道向 runtime handler 发送 session 管理请求。
- * 返回 handler respond 的 JSON 字符串，用户取消/超时返回 null。
+ * 通过 select 通道向 runtime handler 发送 session 管理请求（传输核走 protocol 的
+ * callMarkerRpc 原语，D8）。回包为 handler respond 的 JSON 字符串（value 恒 raw）；
+ * 失败四态（cancelled/timeout/channel-error/non-json）由 executeTool 统一折叠 isError。
+ * 通道异常与非 JSON 回包的留痕由原语经注入的 log 承担。
  */
-async function callSessionManager(
+function callSessionManager(
 	ctx: ExtensionContext,
 	action: SessionManagerAction,
 	params: Record<string, unknown>,
-): Promise<string | null> {
-	// 契约 SSOT：SessionManagerRequest = { action, params }（协议包 extension-protocol 的
-	// session-manager 模块 types.ts，嵌套 params）。runtime event-adapter 的 marker
+): Promise<MarkerRpcResult> {
+	// 契约 SSOT：请求体 = 嵌套 { action, params } 形状（协议包 @xyz-agent/extension-protocol
+	// 的 session-manager 模块）。runtime event-adapter 的 marker
 	// 分支按 data.params 提取——若扁平化展开（{action, ...params}）params 会丢失变 {}。
 	const payload = JSON.stringify({ action, params });
-	try {
-		const value = await ctx.ui.select(
-			SESSION_MANAGER_MARKER,
-			[payload],
-			{ timeout: SELECT_TIMEOUT_MS[action] },
-		);
-		return value ?? null;
-	} catch (err) {
-		// select 通道异常（非用户取消/超时——那两类是 resolve null）：折叠为 null 供
-		// executeTool 统一转 isError，但必须留痕（静默吞 = runtime handler 故障不可排查）
-		logger.error(`[session-manager] select channel threw for action="${action}"`, {
-			reason: err instanceof Error ? err.message : String(err),
-		});
-		return null;
-	}
+	// 从 ExtensionContext 构造 GuiContext 最小子集（ask-user runRpcInteraction 同款先例）：
+	// ExtensionContext.ui.custom 泛型签名与 GuiContext.ui.custom 静态不兼容，直接传 ctx
+	// 过不了 tsc；callMarkerRpc 只读 ui.select。
+	const guiCtx = {
+		mode: ctx.mode,
+		hasUI: ctx.hasUI,
+		ui: { select: ctx.ui.select.bind(ctx.ui) },
+	};
+	return callMarkerRpc(guiCtx, SESSION_MANAGER_MARKER, payload, {
+		timeout: SELECT_TIMEOUT_MS[action],
+		log: (msg, detail) => logger.error(`[session-manager] ${msg}`, detail),
+	});
 }
 
 /**
  * 统一的 execute 包装：调用 select 通道并解析结果。
- * 返回标准 AgentToolResult 形状；select 取消/超时/异常是错误路径，
+ * 返回标准 AgentToolResult 形状；select 取消/超时/异常/非 JSON 回包是错误路径，
  * 必须带 isError: true（extension-conventions「禁止错误成功模式」——
  * 调用方 agent 需能区分成功与失败以决定重试/放弃）。
  */
@@ -103,36 +96,39 @@ async function executeTool(
 	ctx: ExtensionContext,
 	action: SessionManagerAction,
 	params: Record<string, unknown>,
-): Promise<{ isError?: boolean; content: Array<{ type: "text"; text: string }>; details: SessionManagerToolDetails }> {
-	const raw = await callSessionManager(ctx, action, params);
-	if (raw === null) {
-		return {
-			isError: true,
-			content: [{ type: "text" as const, text: `Session manager ${action}: cancelled or timed out.` }],
-			details: { kind: "cancelled" },
-		};
-	}
-	// runtime 错误闭环（respond({error}) 走同一 select 通道）——解析后检测 error 字段，
-	// 命中即 isError: true（extension-conventions「禁止错误成功模式」：agent 需能区分
-	// 成功与同步失败以决定重试/放弃，不能靠读 content 文本自行判错）。
-	let parsed: unknown;
-	try {
-		parsed = JSON.parse(raw);
-	} catch {
-		parsed = undefined;
-	}
-	if (parsed !== null && typeof parsed === "object" && typeof (parsed as SessionManagerRawError).error === "string") {
-		const err = parsed as SessionManagerRawError;
-		const text = err.hint ? `${err.error}\nhint: ${err.hint}` : err.error;
+): Promise<{ isError?: boolean; content: Array<{ type: "text"; text: string }>; details: undefined }> {
+	const result = await callSessionManager(ctx, action, params);
+	if (!result.ok) {
+		// 行为微变①（D8，有意——对齐 plugin-bridge 形态）：非 JSON 回包从「catch 后
+		// parsed=undefined 静默当成功文本返回」改为 isError + 提示文本（留痕由原语
+		// 经注入的 logger.error 承担）；其余三态维持原 cancelled/timeout 折叠文案。
+		const text =
+			result.reason === "non-json"
+				? `Session manager ${action}: non-JSON response from runtime (protocol mismatch — redeploy same-version runtime + extension; see extension logs).`
+				: `Session manager ${action}: cancelled or timed out.`;
 		return {
 			isError: true,
 			content: [{ type: "text" as const, text }],
-			details: { kind: "error", error: err },
+			details: undefined,
+		};
+	}
+	const raw = result.value;
+	// 合法性已由原语检测（ok:true ⇒ 同一字符串 JSON.parse 必成功），parse 只为字段检测。
+	// runtime 错误闭环（respond({error}) 走同一 select 通道）——检测与文本拼接单源于
+	// protocol 的 isChannelErrorResult / formatChannelErrorText（D8）：命中即 isError: true
+	//（extension-conventions「禁止错误成功模式」：agent 需能区分成功与同步失败以决定
+	// 重试/放弃，不能靠读 content 文本自行判错）。
+	const parsed: unknown = JSON.parse(raw);
+	if (isChannelErrorResult(parsed)) {
+		return {
+			isError: true,
+			content: [{ type: "text" as const, text: formatChannelErrorText(parsed) }],
+			details: undefined,
 		};
 	}
 	return {
 		content: [{ type: "text" as const, text: raw }],
-		details: { kind: "ok", result: parsed },
+		details: undefined,
 	};
 }
 
@@ -179,7 +175,7 @@ export default function sessionManagerExtension(pi: ExtensionAPI): void {
 	registerSessionTool(pi, {
 		name: "create_managed_session",
 		label: "Create Managed Session",
-		description: "Create a new agent-managed session in the specified working directory. Optionally provide an initial prompt, which is sent immediately (new sessions are always idle, so it is delivered directly). Returns a session ID and initial status.",
+		description: "Create a new agent-managed session in the specified working directory. Optionally provide an initial prompt, which is sent immediately (new sessions are always idle, so it is delivered directly). Returns a session ID and initial status. Requires the xyz-agent desktop runtime; standalone pi CLI will time out.",
 		parameters: CreateManagedSessionParams,
 		action: "create",
 		toParams: (p) => ({ cwd: p.cwd, label: p.label, prompt: p.prompt }),
@@ -188,7 +184,7 @@ export default function sessionManagerExtension(pi: ExtensionAPI): void {
 	registerSessionTool(pi, {
 		name: "send_to_session",
 		label: "Send to Session",
-		description: "Send a prompt/message to an existing managed session. The message is asynchronously queued: if the target session is busy (generating/compacting/running bash) it is delivered at its next turn boundary, and {queued: true} is returned immediately. On synchronous failure the tool returns an error result (isError) with a hint (check get_session_status, then retry).",
+		description: "Send a prompt/message to an existing managed session. The message is asynchronously queued: if the target session is busy (generating/compacting/running bash) it is delivered at its next turn boundary, and {queued: true} is returned immediately. On synchronous failure the tool returns an error result (isError) with a hint (check get_session_status, then retry). Requires the xyz-agent desktop runtime; standalone pi CLI will time out.",
 		parameters: SendToSessionParams,
 		action: "send",
 		toParams: (p) => ({ sessionId: p.sessionId, prompt: p.prompt }),
@@ -197,7 +193,7 @@ export default function sessionManagerExtension(pi: ExtensionAPI): void {
 	registerSessionTool(pi, {
 		name: "read_session_history",
 		label: "Read Session History",
-		description: "Read the conversation history of a managed session. Optionally limit to the last N turns.",
+		description: "Read the conversation history of a managed session. Optionally limit to the last N turns. Requires the xyz-agent desktop runtime; standalone pi CLI will time out.",
 		parameters: ReadSessionHistoryParams,
 		action: "history",
 		toParams: (p) => ({ sessionId: p.sessionId, tailTurns: p.tailTurns }),
@@ -206,7 +202,7 @@ export default function sessionManagerExtension(pi: ExtensionAPI): void {
 	registerSessionTool(pi, {
 		name: "list_my_sessions",
 		label: "List My Sessions",
-		description: "List all sessions managed by the current agent. Returns session IDs, labels, and statuses.",
+		description: "List all sessions managed by the current agent. Returns session IDs, labels, and statuses. Requires the xyz-agent desktop runtime; standalone pi CLI will time out.",
 		parameters: ListMySessionsParams,
 		action: "list",
 		toParams: () => ({}),
@@ -215,7 +211,7 @@ export default function sessionManagerExtension(pi: ExtensionAPI): void {
 	registerSessionTool(pi, {
 		name: "get_session_status",
 		label: "Get Session Status",
-		description: "Get the current status of a managed session (active, idle, error, etc.) and its model info.",
+		description: "Get the current status of a managed session (active, idle, error, etc.) and its model info. Requires the xyz-agent desktop runtime; standalone pi CLI will time out.",
 		parameters: GetSessionStatusParams,
 		action: "status",
 		toParams: (p) => ({ sessionId: p.sessionId }),
@@ -224,7 +220,7 @@ export default function sessionManagerExtension(pi: ExtensionAPI): void {
 	registerSessionTool(pi, {
 		name: "abort_session",
 		label: "Abort Session",
-		description: "Abort a running managed session. The session stops processing; its final status will be 'stopped'.",
+		description: "Abort a running managed session. The session stops processing; its final status will be 'stopped'. Requires the xyz-agent desktop runtime; standalone pi CLI will time out.",
 		parameters: AbortSessionParams,
 		action: "abort",
 		toParams: (p) => ({ sessionId: p.sessionId }),

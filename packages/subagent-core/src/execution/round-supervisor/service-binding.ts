@@ -63,9 +63,7 @@ function supervisorRecordView(binding: RoundSupervisorBinding, id: string): Supe
       id: memory.id,
       // [U2 桥接判据] 旧「closed 终态」读形态 ⟺ idle ∧ closedReason 有值（两态迁移不变量）。
       status: memory.status === "idle" && memory.closedReason !== undefined ? "closed" : "running",
-      resumable: memory.resumable === true,
       hasResult: memory.result !== undefined,
-      chatMode: memory.chatMode === true,
       origin: memory.origin,
       rootSessionId: memory.rootSessionId,
       agent: memory.agent,
@@ -79,9 +77,7 @@ function supervisorRecordView(binding: RoundSupervisorBinding, id: string): Supe
   return {
     id: disk.id,
     status: disk.status === "idle" && disk.closedReason !== undefined ? "closed" : "running",
-    resumable: disk.resumable === true,
     hasResult: disk.result !== undefined,
-    chatMode: disk.chatMode === true,
     origin: disk.origin,
     rootSessionId: disk.rootSessionId,
     agent: disk.agent,
@@ -186,16 +182,13 @@ async function supervisorGiveUp(
       rootSessionId: disk.rootSessionId,
       parentRecordId: disk.parentRecordId,
       depth: disk.depth,
-      chatMode: disk.chatMode === true,
       engine: disk.engine,
       engineFallback: disk.engineFallback,
-      collectMode: disk.collectMode,
     }),
     ...(disk.engineHandle !== undefined ? { engineHandle: disk.engineHandle } : {}),
   };
   record.sessionFile = disk.sessionFile;
   record.round = disk.round;
-  record.resumable = disk.resumable;
   record.hadWorktree = disk.worktree === true;
   record.result = disk.result;
   record.turnCount = disk.turns;
@@ -290,7 +283,9 @@ export function runPendingReconcileSweepForService(binding: RoundSupervisorBindi
     runReconcileSweep({
       sessionFile: binding.getMainSessionFile(),
       lookupRecordState: (id) => {
-        // [U2 桥接判据] 旧「closed 终态」读形态 ⟺ idle ∧ closedReason 有值（两态迁移不变量）。
+        // [U2 桥接判据] 旧「closed 终态」读形态 ⟺ idle ∧ closedReason 有值（两态迁移
+        // 不变量）。[two-state-convergence U4] 轮终翻边 idle（无 closedReason）归 active
+        // ——sweep 对账面行为不变（轮终注销已随 markRoundIdle 簿记⑧发射，不在册）。
         const memory = binding.getStore().getMutable(id);
         if (memory !== undefined) {
           return memory.status === "idle" && memory.closedReason !== undefined

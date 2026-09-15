@@ -6,8 +6,9 @@
  */
 
 import { estimateTokens } from "@earendil-works/pi-coding-agent";
+import { isRecord } from "@zhushanwen/pi-ext-guards";
 import type { ModelSelector } from "@zhushanwen/pi-llm-shared";
-import { loadConfig } from "@zhushanwen/pi-llm-shared";
+import { loadConfig, normalizeModelSelector } from "@zhushanwen/pi-llm-shared";
 
 // ──────────────────────── 配置 schema（D8） ────────────────────────
 
@@ -59,13 +60,8 @@ export function normalizeSmartContextConfig(raw: unknown): SmartContextConfig {
 
 	const enabled = typeof r.enabled === "boolean" ? r.enabled : base.enabled;
 
-	const rawModel = typeof r.compactModel === "object" && r.compactModel !== null
-		? (r.compactModel as Record<string, unknown>)
-		: null;
 	const compactModel: ModelSelector =
-		rawModel?.type === "ref" && typeof rawModel.ref === "string"
-			? { type: "ref", ref: rawModel.ref }
-			: { type: "ref", ref: "" };
+		normalizeModelSelector(r.compactModel) ?? { type: "ref", ref: "" };
 
 	const rawThresholds = Array.isArray(r.reminderThresholds)
 		? r.reminderThresholds
@@ -249,16 +245,6 @@ export function buildReinjectSection(contents: ReadonlyArray<{ path: string; con
 	return `\n\n<recently-read-files>\n${parts.join("\n\n")}\n</recently-read-files>`;
 }
 
-// ──────────────────────── subagent 识别（R6） ────────────────────────
-
-/**
- * subagent 子进程检测（D9/R6）：subagent-core session-runner 无条件注入 PI_SUBAGENT_ROOT_SESSION_ID。
- * 命中 → 本进程不注册工具、不提醒（宁缺勿污）。
- */
-export function isSubagentProcess(env: NodeJS.ProcessEnv = process.env): boolean {
-	return env.PI_SUBAGENT_ROOT_SESSION_ID !== undefined;
-}
-
 // ──────────────────────── session entries 统计（D13 纯函数） ────────────────────────
 
 /** sessionManager entries 的宽松形状（降智计数）。 */
@@ -269,11 +255,6 @@ export interface EntryLike {
 /** 累计 compaction 次数（D13-12 判据）。 */
 export function countCompactions(entries: ReadonlyArray<EntryLike>): number {
 	return entries.filter((e) => e.type === "compaction").length;
-}
-
-/** unknown 的对象收窄（Record 视图；字段消费再经 typeof / Array.isArray 收窄）。 */
-function isRecord(value: unknown): value is Record<string, unknown> {
-	return typeof value === "object" && value !== null;
 }
 
 /**

@@ -56,7 +56,7 @@ import { killRecordChildWithEscalation } from "../engine/host/spawned-children.t
 // 本模块不得被 inflight-snapshot 反向依赖，import 方向单向安全）。
 import { notifyInFlightChanged } from "../engine/inflight-snapshot.ts";
 import { startIdleGc } from "../persistence/idle-gc.ts";
-// [V2 决策 3] lifecycle-manager idle timer：chatMode record 的 disarm 面（终态化/取消
+// [V2 决策 3] lifecycle-manager idle timer：record 终态化/取消的 disarm 面
 // 路径防误杀）。
 import { disarmIdleTimer } from "../lifecycle/lifecycle-manager.ts";
 import { isIdle, isResumable } from "../lifecycle/lifecycle-predicates.ts";
@@ -272,7 +272,7 @@ export class RecordLifecycle {
    *
    *   running + force:true  → cancel 语义立即打断（abort + settle interrupted + 放弃
    *                           轮标记）+ 随即归档
-   *   running + force:false（chatMode 在飞轮 / one-shot 有活进程）
+   *   running + force:false 且有活进程
    *                         → 置 closeAfterRound 挂起（**优雅收口**——不打断在飞轮），
    *                           收口轮 settle → 轮次通知送达 → 归档（消费点：
    *                           Continuation settle 分支 / one-shot 主干尾部，
@@ -322,7 +322,7 @@ export class RecordLifecycle {
    *   Step 0 机制挂载归档点）→ worktree 立即回收 → store.markArchived（intent 翻转
    *   + `.alive` release + manifest，§3.2.4 release 出口①）→ 归档点补发注销（承接
    *   原 emitUnregister 语义，发射点①挂载归档原语）→ notifyClosed「已收起」提示
-   *   （chatMode 一条——终态通知消亡后的归档提示载体，载荷判据经 toNotifyRecord
+   *   （归档提示载体，载荷判据经 toNotifyRecord
    *   的 archived 分支落 closed+completed）。
    *
    * 顺序约束 [写死]：挂起路径（closeAfterRound）本方法只能在**收口轮轮次通知送达
@@ -337,8 +337,8 @@ export class RecordLifecycle {
     this.deps.getStore().markArchived(record);
     // 归档点补发注销（pending-notifications registry 记账——通知由通知链自有路径）。
     this.deps.getNotifyHost().emitPendingUnregister(record.id, "archived");
-    // 「已收起」提示（chatMode；one-shot 显式静默——notifyClosed 内部 chatMode 门，
-    // G4 one-shot close 字节不变承诺延续）。归档后调用：toNotifyRecord 的 archived
+    // 「已收起」提示（[modeless 波1] 全 record——万物可续下归档提示对任何 record
+    // 都有信息：record 仍在、可寻回复活）。归档后调用：toNotifyRecord 的 archived
     // 分支放行 closed 载荷。
     this.deps.getNotifyHost().notifyClosed(record, true);
   }
@@ -392,6 +392,35 @@ export class RecordLifecycle {
     disarmRoundFromProtocol(record.id);
     killRecordChildWithEscalation(record.id, "archiveIdleRecord");
     await this.archiveRecord(record, "close(idle)");
+  }
+
+  /** [modeless 波3] 批闭合自动 close：collect 批 flush 投递后对成员执行归档
+   *  （SyncCollectDomain flushBatch 闭包消费，经壳装配闭包注入）。
+   *
+   *  archiveIdleRecord 的静默变体：保活进程回收 + 监护器撤下 + 归档编排（worktree
+   *  patch 前移/cleanup + markArchived + pending 注销）全部同款，唯一差异 = **不发
+   *  「已收起」提示**（notifyClosed）——批通知即成员的终态通知（closed 载荷带
+   *  result，随 flush 投递），逐成员归档提示会击穿「攒批一次唤醒」语义。归档幂等
+   *  （markArchived no-op）；成员已离场（getMutable 落空——GC/早前归档）安全跳过。
+   *  归档后续聊路径 = fork-from（归档 record 可 fork，已有能力）。 */
+  async archiveBatchMembers(recordIds: readonly string[]): Promise<void> {
+    for (const id of recordIds) {
+      const record = this.deps.getStore().getMutable(id);
+      if (!record) continue;
+      disarmIdleTimer(record.id);
+      disarmSettledWatchdog(record.id);
+      disarmRoundFromProtocol(record.id);
+      killRecordChildWithEscalation(record.id, "archiveBatchMembers");
+      if (record.worktreeHandle) {
+        await this.archiveWorktreeResources(record, "batch-close");
+      }
+      // 批域标记随归档 entry 透传：落标 entry（batchFinalized=true）由 flush 的重建
+      // record 写出，本内存 record 不携带——归档 entry（last-writer-wins）若不补标记
+      // 会把落标标记抹掉。归档即成员离场，标记语义为真。
+      record.batchFinalized = true;
+      this.deps.getStore().markArchived(record);
+      this.deps.getNotifyHost().emitPendingUnregister(record.id, "archived");
+    }
   }
 
   /**
@@ -518,9 +547,10 @@ export class RecordLifecycle {
    * swallow 策略）。
    *
    * [U5 / §3.2.2 事件表 settle 行] 失败轮**不终态化**（旧 closed+gc 一次性销毁退役）：
-   * markRoundIdle failed（保持 running-resumable——与成功 SP-5 同形态，失败轮同样
-   * 万物可续 G1；stopReason/批次投影归轮终簿记）。CAS 前置检查防 cancel/dispose 抢先
-   * settle 后 double bookkeeping（与簿记之间无 await——单线程同步段原子）。
+   * markRoundIdle failed（落 idle——与成功 SP-5 同形态 [two-state-convergence U4/D3]，
+   * 失败轮同样万物可续 G1；stopReason/批次投影归轮终簿记）。CAS 前置检查防
+   * cancel/dispose 抢先 settle 后 double bookkeeping（与簿记之间无 await——单线程
+   * 同步段原子）。
    *
    * [W3 契约变更⑤退役] 旧 worktree cleanup 随终态化退役：失败轮 record 留内存，
    * worktree 随续聊保留 / 随归档（close）回收 / 随 idle-gc（30 天）回收。

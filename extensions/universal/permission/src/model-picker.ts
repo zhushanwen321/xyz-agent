@@ -21,12 +21,10 @@
 
 import { type Component, Container, type SelectItem, SelectList, type SelectListTheme, truncateToWidth } from "@earendil-works/pi-tui";
 import type { Api, Model } from "@earendil-works/pi-ai";
+import { parseModelRef } from "@zhushanwen/pi-llm-shared";
 
 import type { ResolvedModelEntry } from "./classifier/model-resolver.js";
 import { DEFAULT_SELECT_THEME } from "./select-theme.js";
-
-// 保持既有 public 名（model-picker.test.ts MPT7 直接消费此路径）。
-export { DEFAULT_SELECT_THEME };
 
 // ──────────────────────── 类型 ────────────────────────
 
@@ -134,11 +132,6 @@ export class ProviderModelSelectorComponent extends Container {
 		return lines;
 	}
 
-	/** 退出（外部 abort 用）。复用 _resolved 守卫防二次 done。 */
-	cancel(): void {
-		this.settle(undefined);
-	}
-
 	private settle(result: SelectionResult | undefined): void {
 		if (this._resolved) return;
 		this._resolved = true;
@@ -190,13 +183,16 @@ export class ProviderModelSelectorComponent extends Container {
 		return items;
 	}
 
-	/** 计算 provider stage 预选 index（currentSpec='auto' → 0；'provider/model' → findIndex）。 */
+	/**
+	 * 计算 provider stage 预选 index（currentSpec='auto' → 0；'provider/model' → findIndex）。
+	 * 无效 ref（缺 / 或前后为空，如 'provider/'）→ parseModelRef 返 null → 0（整体回 Auto，
+	 * ext-simplify-18 D4 登记的行为微变：不再预选半截 provider）。
+	 */
 	private computeProviderSelectedIndex(): number {
 		if (this.currentSpec === "auto") return 0;
-		const slashIdx = this.currentSpec.indexOf("/");
-		if (slashIdx <= 0) return 0;
-		const provider = this.currentSpec.slice(0, slashIdx);
-		const idx = this.providers.indexOf(provider);
+		const parsed = parseModelRef(this.currentSpec);
+		if (!parsed) return 0;
+		const idx = this.providers.indexOf(parsed.provider);
 		return idx >= 0 ? idx + 1 : 0; // +1 跳过 'Auto'
 	}
 
@@ -235,12 +231,11 @@ export class ProviderModelSelectorComponent extends Container {
 		return list;
 	}
 
-	/** 计算 model stage 预选 index。 */
+	/** 计算 model stage 预选 index（无效 ref → parseModelRef 返 null → 0）。 */
 	private computeModelSelectedIndex(models: readonly ResolvedModelEntry[]): number {
-		const slashIdx = this.currentSpec.indexOf("/");
-		if (slashIdx <= 0) return 0;
-		const modelId = this.currentSpec.slice(slashIdx + 1);
-		const idx = models.findIndex((m) => m.id === modelId);
+		const parsed = parseModelRef(this.currentSpec);
+		if (!parsed) return 0;
+		const idx = models.findIndex((m) => m.id === parsed.modelId);
 		return idx >= 0 ? idx : 0;
 	}
 
@@ -282,47 +277,33 @@ export interface ModelPickerContext {
 	};
 }
 
-/** listAvailableModels 注入签名（E2 改走 ctx.modelRegistry，签名带 ctx；便于测试 mock）。 */
-export type ListAvailableModelsFn = (
-	ctx: ModelPickerContext,
-) => Map<string, ResolvedModelEntry[]>;
-
 /**
  * 通过 overlay 选择模型（provider/model 或 auto）。
  *
  * @param ctx UI 上下文（mode + ui.*）
  * @param currentSpec 当前 classifier.model（'auto' 或 'provider/model-id'），用于预选
- * @param models 可选，预加载的 models Map（避免重复读盘）；未传则用默认 listAvailableModels
+ * @param models 可用模型 Map（listAvailableModels 产物，按 provider 分组；调用方判空降级）
  * @returns 'auto' / 'provider/model-id' / undefined（cancel 或 headless 降级）
  */
 export async function pickModelViaOverlay(
 	ctx: ModelPickerContext,
 	currentSpec: string,
-	models?: Map<string, ResolvedModelEntry[]>,
+	models: Map<string, ResolvedModelEntry[]>,
 ): Promise<string | undefined> {
-	const modelsByProvider = models ?? listAvailableModelsDefault(ctx);
-	if (modelsByProvider.size === 0) return undefined;
+	if (models.size === 0) return undefined;
 
-	const providers = [...modelsByProvider.keys()];
+	const providers = [...models.keys()];
 
 	switch (ctx.mode) {
 		case "tui":
-			return await pickViaTui(ctx, currentSpec, providers, modelsByProvider);
+			return await pickViaTui(ctx, currentSpec, providers, models);
 		case "rpc":
-			return await pickViaRpc(ctx, currentSpec, providers, modelsByProvider);
+			return await pickViaRpc(ctx, currentSpec, providers, models);
 		case "json":
 		case "print":
 		default:
 			return undefined;
 	}
-}
-
-/** 默认 listAvailableModels（生产路径用，index.ts 装配时注入真实实现）。 */
-let listAvailableModelsDefault: ListAvailableModelsFn = (): Map<string, ResolvedModelEntry[]> => new Map();
-
-/** 注入默认 listAvailableModels 实现（index.ts 装配时调用，或测试覆盖）。 */
-export function setDefaultListAvailableModels(fn: ListAvailableModelsFn): void {
-	listAvailableModelsDefault = fn;
 }
 
 // ──────────────────────── TUI 分支 ────────────────────────
