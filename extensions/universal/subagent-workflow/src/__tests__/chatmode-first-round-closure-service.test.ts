@@ -83,7 +83,7 @@ function makePi(): PiLike & {
   return { appendEntry: vi.fn(), events: { emit: vi.fn() }, sendMessage: vi.fn() };
 }
 
-function makeRecord(chatMode: boolean, id = "sa-test"): ExecutionRecord {
+function makeRecord(id = "sa-test"): ExecutionRecord {
   return createRecord(id, {
     agent: "general-purpose",
     model: "test-model",
@@ -92,7 +92,6 @@ function makeRecord(chatMode: boolean, id = "sa-test"): ExecutionRecord {
     slug: "test",
     startedAt: 1000,
     rootSessionId: "root-session",
-    chatMode,
   });
 }
 
@@ -148,7 +147,7 @@ describe("[V2 决策 2/3] chatMode 首轮闭环：run 应答 settle（协议形�
     service.initSession({ pi, sessionId: "root-session" }); // 换上带 spy 的 pi
     const spy = vi.spyOn(internals.notifyHost, "notify");
 
-    const handle = await service.execute({ task: "do something", slug: "test", conversation: true });
+    const handle = await service.execute({ task: "do something", slug: "test" });
     await vi.waitFor(() => expect(fake.runs).toHaveLength(1));
     const run = fake.runs[0];
     expect(run.ctx.resume?.recordId).toBe(handle.subagentId); // 会话形态已声明（[H1 U6] resume 键）
@@ -179,7 +178,7 @@ describe("[V2 决策 2/3] chatMode 首轮闭环：run 应答 settle（协议形�
   });
 
   it("onRoundSettled 连续两轮（冷路径续轮）：round 累加（1→2，dedup key 区分每轮）", async () => {
-    const handle = await service.execute({ task: "do something", slug: "test", conversation: true });
+    const handle = await service.execute({ task: "do something", slug: "test" });
     await vi.waitFor(() => expect(fake.runs).toHaveLength(1));
     const run1 = fake.runs[0];
     // [H1 U6] settle 交棒 = run 应答驱动（旧 idle 相位帧随相位机退役）。锚文件实体落盘：
@@ -223,7 +222,7 @@ describe("[V2 决策 2/3] chatMode 首轮闭环：run 应答 settle（协议形�
     // core 的增量权威 = outcome.content，非 turns 派生）。
     const pi = makePi();
     service.initSession({ pi, sessionId: "root-session" }); // 换上带 spy 的 pi
-    const handle = await service.execute({ task: "do something", slug: "test", conversation: true });
+    const handle = await service.execute({ task: "do something", slug: "test" });
     await vi.waitFor(() => expect(fake.runs).toHaveLength(1));
     const run = fake.runs[0];
     run.settle({ content: "first-round-done" }); // [H1 U6] run 应答 settle（= agent_settled）
@@ -246,13 +245,13 @@ describe("[V2 决策 2/3] chatMode 首轮闭环：run 应答 settle（协议形�
 
     // 对照：真在跑的 background 工作（镜像活进程 + 无 timer）仍计入合并窗口——closed 通知
     // 挂 60s 不立即发送（合并窗口语义对真正的并发完成保留）。
-    const busy = makeRecord(false, "sa-busy");
+    const busy = makeRecord("sa-busy");
     busy.status = "running";
     internals.store.register(busy);
     // 协议形态的「活进程」记账 = core 侧 spawnedChildren 镜像活位（原 mock getChildByRecord
     // 活句柄的等价物；hasRunningBackground 判据 hasLiveProcessHandle 读本镜像）。
     coreSpawnedChildrenMirror().register(busy.id, { pid: 4321, killed: false });
-    const done = makeRecord(false, "sa-done");
+    const done = makeRecord("sa-done");
     done.status = "closed"; // 终态 notify（toNotifyRecord 放行 closed）
     internals.store.register(done);
     internals.notifyHost.notifyComplete(done);
@@ -293,11 +292,12 @@ describe("[N1] one-shot 成功完成通知：SP-5 回退 resumable 后仍送达"
     fs.rmSync(agentDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 20 });
   });
 
-  it("真实 execute + 协议应答(success) → 恰 1 条 subagent-bg-notify（status=closed、正文含真实结果），record 保持可升级", async () => {
-    // 真实链路：execute → kickOffChatRound（非 chatMode 一次性 run）→ 协议应答 →
-    // settleOneShotOutcome（SP-5 分支 → finalizeRoundToIdle 回退 running-resumable）→
+  it("真实 execute + 协议应答(success) → 恰 1 条 subagent-bg-notify（轮终通知 status=running、正文含真实结果），record idle 留守可续聊", async () => {
+    // 真实链路：execute → 一次性 run → 协议应答 → 轮终 idle 化 →
     // collectCoordinator 回注 → BgNotifier → pi.sendMessage。
-    // round2 审查实证：旧守卫（closed/isIdle only）对 SP-5 完成态恒拒绝 → 发送数 0。
+    // [modeless 波5] 完成语义改写：one-shot 成功 = 轮终通知（status=running、正文带
+    // 本轮 Reply），不再折 closed——record 留 idle 等待 message/fork-from 续聊，
+    // 归档由 idle GC 到期承接。
     const pi = makePi();
     service.initSession({ pi, sessionId: "root-session" }); // 换上带 spy 的 pi
 
@@ -314,18 +314,17 @@ describe("[N1] one-shot 成功完成通知：SP-5 回退 resumable 后仍送达"
       details?: { status?: string };
     };
     expect(sentMsg.customType).toBe("subagent-bg-notify");
-    // 完成语义：status=closed（对齐 tool 契约 "runs once, notifies on completion"；
-    // running 分支文案不含 worktree patchFile 提示，one-shot 需要 closed 分支）
-    expect(sentMsg.details?.status).toBe("closed");
-    expect(sentMsg.content).toContain("completed");
+    // 完成语义 [modeless]：轮终通知 status=running（旧 idle 折入 running 携带本轮
+    // Reply）；closed 仅归档/GC/cancel 路径出现
+    expect(sentMsg.details?.status).toBe("running");
+    expect(sentMsg.content).toContain("finished a round");
     expect(sentMsg.content).toContain("done"); // 应答 content，经 MF-2 写入 record.result
 
-    // 恰好 1 条：无第二个通知点（轮次 settle 仅 chatMode；回注后无再触发）
+    // 恰好 1 条：无第二个通知点（轮终 settle 单写点；回注同 id:round 被 dedup 吞）
     await new Promise((r) => setTimeout(r, 20));
     expect(pi.sendMessage).toHaveBeenCalledTimes(1);
 
-    // SP-5 语义不破坏：record 落 idle 可续聊（[two-state-convergence U4/D3] 翻边后
-    // idle 即 resumable，可 message 升级续聊），未终态化
+    // record 落 idle 留守可续聊（万物可续：message 直接续、fork-from 可继承），未终态化
     const record = internals.store.getMutable(handle.subagentId);
     expect(record).toBeDefined();
     expect(record!.status).toBe("idle");

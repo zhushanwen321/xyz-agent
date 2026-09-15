@@ -35,6 +35,20 @@ vi.mock("@zhushanwen/subagent-core/orchestration/lifecycle.ts", async (importOri
   return { ...actual, terminateRunningRuns: mockTerminateRunningRuns };
 });
 
+// [modeless 波5 测试修复] logger mock：本文件 beforeEach resetModules 后，失败路径首次
+// logger.warn 触发 fresh logger 模块的同步初始化（~100ms 量级，实测 probe 阻塞事件循
+// 环），把真实定时器的 30ms 重试窗口挤爆——重试语义断言（maxAttempts 放弃/ack 清零）
+// 变成冷加载时序的赌局。本文件主题是 reporter 重试语义，非日志行为，隔离之。
+const { inflightLoggerFns } = vi.hoisted(() => ({
+  inflightLoggerFns: { debug: vi.fn(), warn: vi.fn(), info: vi.fn(), error: vi.fn() },
+}));
+vi.mock("@zhushanwen/pi-extension-logger", () => ({
+  getLogger: () => inflightLoggerFns,
+  // index.ts factory 顶层调用 setPiHandle（把 pi handle 注入全局 logger，供深层 getLogger
+  // 走 appendEntry）——本文件隔离日志行为，stub 之（对齐 parent-child-matrix.test.ts）。
+  setPiHandle: vi.fn(),
+}));
+
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import {
   INFLIGHT_REPORT_ACK,

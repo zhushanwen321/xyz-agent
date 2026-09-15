@@ -8,9 +8,9 @@
 //   1. 子进程（PI_SUBAGENT_SELF_RECORD_ID 存在）：调 pi.appendEntry 写
 //      customType="subagent-identity" 的 custom entry，data 字段与 env 组装的
 //      SubagentIdentityData 一致（id/agent/mode/task/slug/startedAt/rootSessionId/
-//      parentRecordId/depth/forkDepth/chatMode/worktree）。
+//      parentRecordId/depth/forkDepth/worktree）。
 //   2. 主进程（无 PI_SUBAGENT_SELF_RECORD_ID）：不写 identity custom entry。
-//   3. 可选字段缺失（chatMode/slug/parentRecordId/forkDepth/worktree 未注入）：identity 仍写入，
+//   3. 可选字段缺失（slug/parentRecordId/forkDepth/worktree 未注入）：identity 仍写入，
 //      可选字段为 undefined / false，不抛错。
 //   4. 主进程分支下 loadAll 裁剪接线（21 done → 20）与 identity 共存（W3TC9）——
 //      装配结果 result.runs 直接观察（旧形态经 registerWorkflowsCommand 捕获 runs
@@ -50,7 +50,6 @@ const IDENTITY_ENV_KEYS = [
   "PI_SUBAGENT_PARENT_RECORD_ID",
   "PI_SUBAGENT_DEPTH",
   "PI_SUBAGENT_FORK_DEPTH",
-  "PI_SUBAGENT_CHAT_MODE",
   "PI_SUBAGENT_WORKTREE",
 ] as const;
 
@@ -141,7 +140,6 @@ describe("session_start identity 子进程写入（M4 / V2 决策 5）", () => {
     process.env.PI_SUBAGENT_PARENT_RECORD_ID = "rec-parent-0";
     process.env.PI_SUBAGENT_DEPTH = "2";
     process.env.PI_SUBAGENT_FORK_DEPTH = "1";
-    process.env.PI_SUBAGENT_CHAT_MODE = "true";
     process.env.PI_SUBAGENT_WORKTREE = "true";
 
     const { pi, appendEntrySpy } = createFakePi();
@@ -169,11 +167,12 @@ describe("session_start identity 子进程写入（M4 / V2 决策 5）", () => {
       parentRecordId: "rec-parent-0",
       depth: 2,
       forkDepth: 1,
-      chatMode: true,
+      // [modeless 波5] chatMode 不再入 identity（模式消亡，写面停写）
       // [review round2] worktree 隔离标志经 env 贯穿写入 identity entry（跨重启重建
       // 拒绝续聊的数据源）
       worktree: true,
     });
+    expect(Object.keys(data)).not.toContain("chatMode");
   });
 
   it("主进程（无 PI_SUBAGENT_SELF_RECORD_ID）：不写 identity custom entry", async () => {
@@ -190,7 +189,7 @@ describe("session_start identity 子进程写入（M4 / V2 决策 5）", () => {
     expect(identityCall).toBeUndefined();
   });
 
-  it("可选字段缺失（chatMode/slug/parentRecordId/forkDepth/worktree 未注入）：identity 仍写入，可选字段为默认", async () => {
+  it("可选字段缺失（slug/parentRecordId/forkDepth/worktree 未注入）：identity 仍写入，可选字段为默认", async () => {
     process.env.PI_SUBAGENT_SELF_RECORD_ID = "rec-child-2";
     process.env.PI_SUBAGENT_AGENT = "explorer";
     process.env.PI_SUBAGENT_MODE = "background";
@@ -198,7 +197,7 @@ describe("session_start identity 子进程写入（M4 / V2 决策 5）", () => {
     process.env.PI_SUBAGENT_STARTED_AT = "1700000000002";
     process.env.PI_SUBAGENT_ROOT_SESSION_ID = "root-9";
     process.env.PI_SUBAGENT_DEPTH = "1";
-    // 不设 SLUG / PARENT_RECORD_ID / FORK_DEPTH / CHAT_MODE / WORKTREE
+    // 不设 SLUG / PARENT_RECORD_ID / FORK_DEPTH / WORKTREE
 
     const { pi, appendEntrySpy } = createFakePi();
     const { setupSessionLifecycle } = await import("../session-lifecycle.ts");
@@ -215,8 +214,8 @@ describe("session_start identity 子进程写入（M4 / V2 决策 5）", () => {
     expect(data.agent).toBe("explorer");
     expect(data.mode).toBe("background");
     expect(data.startedAt).toBe(1700000000002);
-    // 可选字段缺失 → undefined / false
-    expect(data.chatMode).toBe(false);
+    // 可选字段缺失 → undefined / false（chatMode 已随 modeless 波1 停写，键不存在）
+    expect(Object.keys(data)).not.toContain("chatMode");
     expect(data.slug).toBeUndefined();
     expect(data.parentRecordId).toBeUndefined();
     expect(data.forkDepth).toBeUndefined();
