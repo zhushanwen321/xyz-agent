@@ -1,5 +1,11 @@
 # @zhushanwen/subagent-engine-sdk
 
+## 0.5.0
+
+### Minor Changes
+
+- 64f17310a: modeless 波次漏声明补登记（check-version-changes UNDECLARED 追补）：pi-subagent-cli 删除 SpawnRunParams.chatMode 并统一 agent_settled 收割生命周期（resolve 先于收割）；subagent-engine-sdk 协议契约删除 task.conversation 键（contract-types / engine-protocol / error-codes 同批）；zcode-subagent-cli 引擎侧接线同步；session-delivery 跟随 notify 面小改。
+
 ## 0.4.0
 
 ### Minor Changes
