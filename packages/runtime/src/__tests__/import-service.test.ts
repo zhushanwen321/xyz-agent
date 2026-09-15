@@ -179,8 +179,12 @@ describe('ImportService.listCandidates', () => {
     ].join('\n'))
 
     const svc = makeImportService()
-    // 任意搜索词：不抛错（修复前在此 TypeError）
-    const reply = await svc.listCandidates({ rootDir: root, query: 'xx' })
+    // 任意搜索词：不抛错（修复前在此 TypeError）。搜索词用长哨兵串而非短词——
+    // [HISTORICAL 2026-09-15] 曾用 query 'xx'，CI 上 mkdtemp 随机后缀恰好为
+    // 'bWC4Xx'（含大小写不敏感的 'xx'），sourcePath 子串匹配意外命中 good 会话
+    // → 断言「结果为空」偶发红；短查询词会撞随机路径，哨兵串（含连字符 +
+    // 4 连字符外字符）在 mkdtemp 字母表与 fixture 字段中不可能出现。
+    const reply = await svc.listCandidates({ rootDir: root, query: 'zzzz-no-match' })
     expect(reply.items).toEqual([])
     // 无 query 的全集同样不含该文件（候选侧前置拒收，与导入侧 import_invalid_session 同清单）
     const full = await svc.listCandidates({ rootDir: root })
